@@ -67,7 +67,8 @@ dnf5 install -y \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
     rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
-    gcc-c++ cmake ninja-build meson uv
+    gcc-c++ cmake ninja-build meson uv \
+    guestfs-tools libguestfs libguestfs-xfs virt-v2v
 
 dnf5 group install -y development-tools
 
