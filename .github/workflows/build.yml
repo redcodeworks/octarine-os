@@ -148,6 +148,7 @@ jobs:
             check "firefox removed" "! rpm -q firefox"
             check "toolbox removed" "! rpm -q toolbox"
             check "distrobox present" "rpm -q distrobox"
+            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"OctarineOS\\\"\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"

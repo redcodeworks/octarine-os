@@ -96,6 +96,11 @@ for pkg in firefox firefox-langpacks toolbox; do
     fi
 done
 
+# Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
+# VERSION_ID stay as they are, because update tooling and third-party software read them.
+sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release
+grep -qx 'PRETTY_NAME="OctarineOS"' /usr/lib/os-release
+
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
 
