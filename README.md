@@ -1,4 +1,4 @@
-# ublue-os
+# octarine-os
 
 A personal [bootc](https://github.com/bootc-dev/bootc) image built on Universal Blue's
 `silverblue-main` (Fedora Silverblue plus codecs and a few conveniences). It adds the niri
@@ -15,14 +15,14 @@ This is one person's configuration, with no promises. Read what it changes befor
 ## Use it
 
 ```
-sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest
+sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 ```
 
 Reboot, then run `ujust add-user-groups` to join the `gamemode`, `input` and `libvirt` groups.
 Images are signed with [cosign](https://github.com/sigstore/cosign). To check one yourself:
 
 ```
-cosign verify --key cosign.pub ghcr.io/redcodeworks/ublue-os:latest
+cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest
 ```
 
 The image also installs a container signature policy for its own registry path, so `bootc upgrade`
@@ -55,9 +55,9 @@ scheduled build on `main` refreshes `latest` too. Merge with a merge commit, not
 so `testing` stays in line with `main`. Dependabot proposes changes to `testing`.
 
 Every build runs a smoke test before anything is pushed, signs every tag it pushes, and verifies each
-tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/ublue-os:testing`.
+tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing`.
 To pin or roll back, use a dated or per-commit tag, for example
-`sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
+`sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
 the previous deployment.
 
 ### Pruning old testing images

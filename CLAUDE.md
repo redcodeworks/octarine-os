@@ -6,7 +6,7 @@ secrets, hostnames or personal data in it.
 
 ## What this is
 
-A personal, publicly shared bootc image (`ghcr.io/redcodeworks/ublue-os`) built on
+A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) built on
 `ghcr.io/ublue-os/silverblue-main:45`. It exists to make one desktop reproducible. See `README.md`
 for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setup.
 

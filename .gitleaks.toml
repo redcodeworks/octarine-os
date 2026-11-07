@@ -1,4 +1,4 @@
-title = "ublue-os gitleaks config"
+title = "octarine-os gitleaks config"
 
 [extend]
 useDefault = true
