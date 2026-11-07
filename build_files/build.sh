@@ -78,7 +78,8 @@ dnf5 install -y \
     cockpit-packagekit cockpit-sosreport cockpit-kdump \
     pcp python3-pcp \
     powertop iotop-c lm_sensors usbip \
-    gnome-shell-extension-gsconnect nautilus-gsconnect nautilus-python \
+    gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
+    nautilus-gsconnect nautilus-python \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
     rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
