@@ -25,7 +25,7 @@ dnf5 install -y \
     gstreamer1-plugins-bad gstreamer1-plugins-ugly \
     niri noctalia \
     libvirt qemu-kvm \
-    fuse-libs pam-u2f snapper steam-devices tailscale \
+    fuse-libs pam-u2f snapper btrfs-assistant steam-devices tailscale \
     cockpit cockpit-machines cockpit-podman cockpit-storaged \
     cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files \
     cockpit-packagekit cockpit-sosreport cockpit-kdump \
