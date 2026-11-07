@@ -1,0 +1,14 @@
+[Unit]
+Description=Copy the Gruvbox Material GTK theme into ~/.themes for Flatpak apps
+Documentation=https://github.com/redcodeworks/gnome-themes
+ConditionPathExists=/usr/share/themes/Gruvbox-Material
+
+[Service]
+Type=oneshot
+# Flatpak apps see ~/.themes (permission ~/.themes:ro) but not the host's /usr/share/themes, and they
+# cannot follow symlinks out of the sandbox, so install real copies. Runs at every login and so follows
+# image updates.
+ExecStart=/usr/bin/sh -c 'mkdir -p "$HOME/.themes" && rm -rf "$HOME/.themes/Gruvbox-Material" && cp -a /usr/share/themes/Gruvbox-Material "$HOME/.themes/Gruvbox-Material"'
+
+[Install]
+WantedBy=default.target

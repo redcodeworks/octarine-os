@@ -95,6 +95,25 @@ for pkg in firefox firefox-langpacks toolbox; do
     fi
 done
 
+### Themes: Gruvbox Material (GTK3, GTK4) from github.com/redcodeworks/gnome-themes, pinned to a commit
+# Bump GNOME_THEMES_REF to take a newer revision (git log in that repo). A failure here fails the build on
+# purpose: shipping an image without its theme would be a visible regression. Installed as real files
+# into /usr/share/themes; gnome-themes-sync.service copies them to ~/.themes at login because Flatpak
+# apps cannot see the host's /usr/share/themes. The GNOME Shell themes still come from system_files/.
+GNOME_THEMES_REF=9a123105003b6caba7a1bcf7b41d4443f7c71edf
+themes_tmp="$(mktemp -d)"
+git clone --quiet https://github.com/redcodeworks/gnome-themes.git "${themes_tmp}"
+git -C "${themes_tmp}" checkout --quiet "${GNOME_THEMES_REF}"
+cp -a "${themes_tmp}/gruvbox-material/themes/." /usr/share/themes/
+rm -rf "${themes_tmp}"
+test -f /usr/share/themes/Gruvbox-Material/gtk-3.0/gtk-dark.css
+test -f /usr/share/themes/Gruvbox-Material/gtk-4.0/gtk-dark.css
+
+### Papirus icon theme (Fedora packages). Optional: a failure here must not block the build.
+dnf5 install -y --skip-unavailable papirus-icon-theme papirus-icon-theme-dark \
+    || echo "WARNING: papirus-icon-theme could not be installed; continuing without it"
+[ -d /usr/share/icons/Papirus-Dark ] || echo "WARNING: Papirus-Dark is not present in the image"
+
 # Use a COPR Example:
 #
 # dnf5 -y copr enable ublue-os/staging
@@ -114,7 +133,7 @@ systemctl enable \
     flatpak-preinstall.service
 
 # Rootless Podman API socket for every user (socket-activated, so it costs nothing until used)
-systemctl --global enable podman.socket
+systemctl --global enable podman.socket gnome-themes-sync.service
 
 # The base image enables mcelog, which is useless on AMD CPUs (masked on the host too)
 systemctl mask mcelog.service
