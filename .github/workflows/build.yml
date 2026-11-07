@@ -94,6 +94,18 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
           echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
+      # Fail early and clearly if the base image tag in the Containerfile cannot be pulled
+      - name: Check the base image can be pulled
+        run: |
+          base=$(sed -n 's/^FROM \(ghcr.io\/ublue-os\/[^ ]*\).*/\1/p' Containerfile | tail -n1)
+          [[ -n "${base}" ]] || { echo "::error::No ghcr.io/ublue-os base image found in the Containerfile"; exit 1; }
+          echo "BASE_IMAGE=${base}" >> "${GITHUB_ENV}"
+          if ! podman pull "${base}" >/dev/null; then
+            echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${base%%:*})"
+            exit 1
+          fi
+          podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
+
       # This actually builds the container image
       - name: Build Image
         id: build-image
@@ -117,10 +129,12 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_IMAGE##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
             fail=0
             check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
+            echo "== os-release (the Fedora release the base tag resolved to)"
+            cat /etc/os-release
             echo "== enabled system units"
             systemctl list-unit-files --state=enabled --no-legend --no-pager || true
             echo "== enabled user units (global)"
@@ -151,6 +165,8 @@ jobs:
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
+            check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
+            check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
             check "sudoers valid" "visudo -c"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"

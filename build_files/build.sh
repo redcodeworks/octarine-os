@@ -2,6 +2,10 @@
 
 set -ouex pipefail
 
+# Which Fedora release is the base image? The log must say what this build started from.
+echo "== base image os-release"
+cat /usr/lib/os-release
+
 # --- Guard: refuse to build if secrets or personal key material ended up in system_files ---
 # A security key registration (pam_u2f's u2f_keys) or a private key copied here would be baked into a
 # public image. Check names first, then content (this also catches a renamed copy).
@@ -57,6 +61,14 @@ fi
 # --- end signature policy ---
 
 ### Install packages
+#
+# Release-specific parts of this script (the base tag in the Containerfile decides the Fedora release):
+# the package names below, since a package can be renamed, retired or not yet built for a release
+# (niri, noctalia, btrfs-assistant, the rocm-*/hipcc set, the cockpit-* modules, usbip, nautilus-python
+# and the gnome-shell-extension-* names are the likeliest); the negativo17 gstreamer replacement of the
+# -free variants; and the removal list further down. dnf5 stops with an error on a name it cannot find
+# (no --skip-unavailable here) and the smoke test checks the results, so a release difference should
+# fail the build instead of shipping an image without something.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images
@@ -101,6 +113,8 @@ done
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release
 grep -qx 'PRETTY_NAME="OctarineOS"' /usr/lib/os-release
+echo "== resulting os-release"
+cat /usr/lib/os-release
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
