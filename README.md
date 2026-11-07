@@ -42,12 +42,13 @@ rejects an unsigned or wrongly signed image.
 ## Builds
 
 `build.yml` publishes every build as `latest`, plus dated and per-commit tags (`latest-<date>`,
-`latest-<sha>`), and signs it. It runs on pushes that change the image, on pull requests (build
+`latest-<sha>`, `latest-<date>-<sha>`), and signs every tag it pushes. A final step verifies each
+tag against `cosign.pub`. It runs on pushes that change the image, on pull requests (build
 only), on a daily schedule and on demand. Before anything is pushed, a smoke test fails the build
 if a required package, unit or file is missing.
 
 To pin or roll back, use a dated or per-commit tag, for example
-`sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>`, or `sudo bootc rollback` to boot
+`sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
 the previous deployment.
 
 ## Recipes

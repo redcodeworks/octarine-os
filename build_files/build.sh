@@ -71,8 +71,9 @@ dnf5 install -y \
 
 dnf5 group install -y development-tools
 
-# Remove the Firefox RPM (use a Flatpak browser instead), only if the base still ships it
-for pkg in firefox firefox-langpacks; do
+# Remove RPMs the base ships that this image replaces, only if they are still present:
+# Firefox (use the Flatpak) and toolbox (distrobox covers it)
+for pkg in firefox firefox-langpacks toolbox; do
     if rpm -q "$pkg" &>/dev/null; then
         dnf5 remove -y "$pkg"
     fi

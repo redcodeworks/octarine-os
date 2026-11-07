@@ -106,6 +106,8 @@ jobs:
               check "package $p" "rpm -q $p"
             done
             check "firefox removed" "! rpm -q firefox"
+            check "toolbox removed" "! rpm -q toolbox"
+            check "distrobox present" "rpm -q distrobox"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
@@ -174,13 +176,18 @@ jobs:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
+          : > /tmp/digests
           for tag in ${ALIAS_TAGS}; do
             podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
+            cat /tmp/digestfile >> /tmp/digests
+            echo >> /tmp/digests
           done
 
-          digest=$(< /tmp/digestfile)
+          # The tags do not all end up with the same manifest digest (the first one pushed
+          # differs), so keep every distinct digest and sign each of them
+          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
 
-          echo "digest=${digest}" >> $GITHUB_OUTPUT
+          echo "digests=${digests}" >> $GITHUB_OUTPUT
 
       # This section is optional and only needs to be enabled if you plan on distributing
       # your project for others to consume. You will need to create a public and private key
@@ -199,10 +206,23 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          DIGEST: ${{ steps.push-image.outputs.digest }}
+          DIGESTS: ${{ steps.push-image.outputs.digests }}
         run: |
           # https://github.com/containers/container-libs/issues/388
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
-          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${DIGEST}
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}
+          done
+
+      - name: Verify every pushed tag is signed
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done
 
