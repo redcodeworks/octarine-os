@@ -122,36 +122,6 @@ extest-steam-reset $lib=`echo "$HOME/.local/lib/extest"`:
     mv -- "$tmp" "$file"
     echo "Removed the extest entries from $file"
 
-# Let every Flatpak app read the host's GTK config, icons and ~/.themes (read-only)
-flatpak-theme-access:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Flatpak apps only see the host theme if these paths are exposed. This is a global override,
-    # so it applies to every app. Undo with: ujust flatpak-theme-reset
-    flatpak override --user \
-        --filesystem=xdg-config/gtk-3.0:ro \
-        --filesystem=xdg-config/gtk-4.0:ro \
-        --filesystem=xdg-data/icons:ro \
-        --filesystem=~/.themes:ro
-    echo "Flatpak apps can now read your GTK config, icons and ~/.themes. Restart running apps."
-
-# Undo flatpak-theme-access by deleting only its four entries from the global override
-flatpak-theme-reset:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/global"
-    [ -f "$file" ] || { echo "No global override file at $file; nothing to do"; exit 0; }
-    # `flatpak override --reset` would also drop unrelated global overrides, so edit the list
-    # (literal matching, not regex)
-    content=$(<"$file")
-    for p in 'xdg-config/gtk-3.0:ro' 'xdg-config/gtk-4.0:ro' 'xdg-data/icons:ro' '~/.themes:ro'; do
-        content=${content//"$p;"/}
-    done
-    tmp=$(mktemp "$file.XXXXXX")
-    printf '%s\n' "$content" > "$tmp"
-    mv -- "$tmp" "$file"
-    echo "Removed the theme entries from $file"
-
 # Give the Flatpak game launchers (Steam, Bottles, Lutris) access to a games directory
 flatpak-games-access $path=`echo "$HOME/Games"`:
     #!/usr/bin/env bash
