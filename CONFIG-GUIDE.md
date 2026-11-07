@@ -39,7 +39,7 @@ Everything system-level that used to be hand-layered now lives in this repo:
   plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
-  signature policy for the image itself, and the Gruvbox themes.
+  signature policy for the image itself.
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
   Flatseal and Extension Manager.
 - **Build checks:** every build runs a smoke test before it is pushed and signed. See the README.
@@ -92,8 +92,9 @@ timers are installed but not enabled. Turn on what you use.
 - **niri needs a polkit agent** started with the session, and a portal config that prefers the
   GNOME and GTK portals.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
-  and 4, terminals, Helix, bat, fzf, starship, btop and more. The shell and GTK themes ship in the
-  image under `/usr/share/themes`.
+  and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
+  `ujust themes-install` fetches them from github.com/redcodeworks/gnome-themes and `ujust
+  icons-install` fetches the Papirus icons, both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
   Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
@@ -209,6 +210,9 @@ shows the result.
 |---|---|
 | `add-user-groups [user]` | Adds you, or the user you name, to `gamemode`, `input` and `libvirt`. These groups exist only in `/usr/lib/group`, so it copies their lines into `/etc/group` first. |
 | `flatpak-theme-access` / `flatpak-theme-reset` | Lets every Flatpak app read the host GTK config, icons and `~/.themes`, read-only, with a global override. The reset removes just those entries. |
+| `themes-install [name...]` | Clones github.com/redcodeworks/gnome-themes into `~/.cache/gnome-themes` and runs its `just install`: a checklist (names skip it) that copies the chosen GTK and GNOME Shell themes into `~/.themes` as real files, which Flatpak apps can read. `GNOME_THEMES_REF` picks a branch, tag or commit. Needs network, git and just. |
+| `themes-libadwaita [force]` | Installs the repo's libadwaita colour file as `~/.config/gtk-4.0/gtk.css`. It refuses to overwrite a different file unless you pass `force` (the old one is kept as `.bak`). |
+| `icons-install` | Clones the Papirus repo shallowly and copies Papirus, Papirus-Dark and Papirus-Light into `~/.local/share/icons`. `PAPIRUS_THEMES` and `PAPIRUS_REF` narrow it. |
 | `flatpak-games-access [path]` | Gives Steam, Bottles and Lutris access to a games directory (default `~/Games`). |
 | `steam-gamescope-setup` / `steam-gamescope-reset` | Installs the gamescope Flatpak layer matching Steam's runtime and puts its `bin` directory on Steam's `PATH`. The reset removes only that line. |
 | `steam-flatpak-devices` | Lets Flatpak Steam see USB and input devices (controllers). This widens the sandbox. |
