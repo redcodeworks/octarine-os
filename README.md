@@ -34,7 +34,7 @@ rejects an unsigned or wrongly signed image.
 |---|---|
 | `Containerfile` | The base image and the single build step |
 | `build_files/build.sh` | Package installs, service enablement and the signature policy |
-| `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, themes, Flatpak preinstall list, `ujust` recipes) |
+| `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, Flatpak preinstall list, `ujust` recipes) |
 | `image-template.env` | Image name, owner, description and default tag |
 | `disk_config/` | Installer settings for ISO and disk images |
 | `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images |
@@ -92,11 +92,15 @@ just --list                # everything else
 ## Fork it
 
 1. Edit `image-template.env`: `IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`.
-2. Create your own signing key and store the private half as a repository secret. Commit the
-   public half as `cosign.pub`, replacing mine:
+2. Create your own signing key and store the private half as a secret in a protected environment
+   named `signing`, limited to `main` and `testing`, so no other branch's workflow can read it. Commit
+   the public half as `cosign.pub`, replacing mine:
    ```
    COSIGN_PASSWORD="" cosign generate-key-pair
-   gh secret set SIGNING_SECRET < cosign.key
+   gh api -X PUT repos/<owner>/<repo>/environments/signing --input - <<< '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=main -f type=branch
+   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=testing -f type=branch
+   gh secret set SIGNING_SECRET --env signing < cosign.key
    ```
    Never commit `cosign.key`. It is in `.gitignore`.
 3. Point `disk_config/iso.toml` at your image (`ghcr.io/<owner>/<image>:latest`).
@@ -121,7 +125,7 @@ These ship to everyone who uses the image as-is:
   big (roughly 11 GB on disk).
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled. `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.
-- **Flatpaks and themes:** a preinstall list of apps, and Gruvbox themes under `/usr/share/themes`.
+- **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image: `ujust gnome-themes <recipe>` fetches them from their own repos.
 
 ## License
 
