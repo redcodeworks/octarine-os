@@ -94,7 +94,7 @@ timers are installed but not enabled. Turn on what you use.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
   `ujust gnome-themes install-themes` fetches them from github.com/redcodeworks/gnome-themes and
-  `ujust gnome-themes install-icons` fetches the Papirus icons, both into your home directory.
+  `ujust gnome-themes install-icons` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
   Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
