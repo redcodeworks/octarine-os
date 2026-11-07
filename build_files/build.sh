@@ -32,7 +32,8 @@ dnf5 install -y \
     pcp python3-pcp \
     powertop iotop-c lm_sensors usbip \
     nautilus-gsconnect nautilus-python \
-    podman-compose kind podman-docker \
+    podman-compose kind podman-docker podman-tui \
+    borgbackup restic rclone socat wtype \
     rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
     gnome-shell-extension-caffeine gnome-shell-extension-user-theme \
     gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock \
