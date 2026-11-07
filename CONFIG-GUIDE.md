@@ -113,8 +113,11 @@ timers are installed but not enabled. Turn on what you use.
 - Put system binaries ahead of Homebrew's in `PATH`. A brew `glib` once shadowed the system `gdbus`.
 - The usual modern tools: Helix, starship, atuin, zoxide, fzf, bat, eza, yazi and Zellij.
 - Terminals: Ghostty, Ptyxis and kitty.
-- Homebrew's installer is a vendor `curl | bash` script. Read it before running it, and treat it as
-  the exception to a no-pipe-to-shell rule.
+- Homebrew's installer is a vendor script, which is why Homebrew is not baked into the image (its
+  prefix has to be owned by the user who runs it). `ujust user-package-managers` installs it, and
+  uv, SDKMAN, nvm, rustup and pixi, from a checklist. It downloads each installer to a file, prints
+  its hash, lets you read it, runs it only after you confirm, and blocks sudo. Treat each installer
+  as vendor code you are trusting.
 
 ## Containers
 
@@ -128,9 +131,10 @@ timers are installed but not enabled. Turn on what you use.
   data science, Arch for AUR and bleeding-edge tools, Debian as a stand-in on-prem server, an AI
   stack, and a Steam container. Only the Fedora one shares the real home; the others get an isolated
   one.
-- **Toolchain wrappers.** `distrobox-export` puts `cc`, `gcc`, `make`, `cmake`, `uv` and friends in
+- **Toolchain wrappers.** `distrobox-export` puts `cc`, `gcc`, `make`, `cmake` and friends in
   `~/.local/bin`, so the host feels like it has a compiler. Add a stdin guard to the wrappers, or
-  they hang tools that talk over stdio.
+  they hang tools that talk over stdio. `ujust user-package-managers` does the same for `rustup`
+  and its proxies and for `sdk` after installing them in the Fedora box (see Recipes).
 - Containers on the host network share loopback, so containers see host services. They also share `/tmp`.
 - **Datastores:** Postgres, Valkey and SeaweedFS run in one shared pod on loopback, with a
   least-privilege role per database.
@@ -193,7 +197,8 @@ Some of these are tradeoffs you may not want.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
    from the manifest. Restore app data before first launch where it matters (browser profiles).
-7. **Homebrew,** then `brew bundle` from the Brewfile.
+7. **Homebrew:** run the one-time `sudo mkdir` and `chown` for its prefix that
+   `ujust user-package-managers brew` prints, run the recipe, then `brew bundle` from the Brewfile.
 8. **Containers:** recreate the distroboxes from their config, enable lingering, restore Quadlets.
 9. **Opt in to services:** `tailscaled`, `sshd`, `cockpit.socket`, the snapper timers.
 10. **Restore data from borg,** then check `systemctl --failed`, the firewall zone,
@@ -217,6 +222,7 @@ shows the result.
 | `podman-desktop-deny-docker-socket` | Stops Podman Desktop reaching a Docker socket. |
 | `chrome-flatpak-webapps` | Lets Flatpak Chrome write web app launchers and icons. |
 | `gearlever-applications` | Lets Gear Lever manage AppImages in `~/Applications`. |
+| `user-package-managers [--list] [--force] [tool ...]` | Installs uv, Homebrew, SDKMAN, nvm, rustup and (optional, unticked) pixi from a checklist (SPACE toggles, ENTER confirms, q cancels), or the tools you name. Each installer is downloaded to a temp file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first on `PATH` and `no_new_privs` set, so nothing can use sudo. Homebrew runs on the host and needs its prefix (`/home/linuxbrew/.linuxbrew`) created and owned by you first; the recipe prints the one-time `sudo` commands instead of running them. uv, SDKMAN, nvm and rustup install inside the `fedora-toolbox` distrobox, and the recipe exports `rustup`, its proxies and an `sdk` wrapper to `~/.local/bin` (never overwriting an existing file; what it created is listed in `$XDG_STATE_HOME/ublue-os/user-package-managers`, so undo is deleting those files). uv lands in `~/.local/bin` itself because the home is shared. nvm exports nothing. It never edits shell rc files; it prints what to add. |
 | `extest-build`, `extest-steam-setup` / `extest-steam-reset` | **Experimental.** Builds extest (an X11 XTEST to uinput shim that lets Steam Input work on Wayland without the "Allow Remote Interaction" prompt) and preloads it into Flatpak Steam. See the notes below. |
 
 Notes on the extest recipes: the Flathub Steam package does not bundle extest, so the library
