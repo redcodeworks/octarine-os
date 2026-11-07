@@ -90,10 +90,12 @@ jobs:
             for u in pmcd.service pmlogger.service flatpak-preinstall.service; do
               check "enabled $u" "systemctl is-enabled $u"
             done
+            check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             for p in niri noctalia libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
                      gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
-                     nautilus-gsconnect gnome-shell-extension-dash-to-dock; do
+                     nautilus-gsconnect gnome-shell-extension-dash-to-dock \
+                     podman-compose kind podman-docker; do
               check "package $p" "rpm -q $p"
             done
             check "firefox removed" "! rpm -q firefox"
