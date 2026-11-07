@@ -60,6 +60,14 @@ To pin or roll back, use a dated or per-commit tag, for example
 `sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
 the previous deployment.
 
+### Pruning old testing images
+
+GHCR has no retention policy, so `prune-testing.yml` runs weekly (from `main`) and deletes `testing`
+builds beyond the newest 10, together with their cosign signatures and any untagged versions older
+than a week. It never touches a version carrying a `latest*` tag. Scheduled runs only delete after
+you set the repository variable `PRUNE_ENABLED` to `true`; until then they are dry runs. To see
+the plan first, run the workflow from the Actions tab with `dry_run` on.
+
 ## Recipes
 
 The image ships `ujust` recipes in `system_files/usr/share/ublue-os/just/60-custom.just`, covering
