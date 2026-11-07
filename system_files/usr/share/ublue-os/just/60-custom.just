@@ -209,3 +209,67 @@ gearlever-applications:
     mkdir -p "$HOME/Applications"
     flatpak override --user --filesystem=~/Applications it.mijorus.gearlever
     echo "Gear Lever can now use ~/Applications"
+
+# Pick which of the image's themes to copy into ~/.themes as real files (Flatpak apps see ~/.themes, not /usr/share/themes, and cannot follow symlinks). Give names to skip the prompt; re-run after an image update to refresh them
+[positional-arguments]
+install-user-themes *names:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src="${THEMES_SRC:-/usr/share/themes}"
+    dest="${THEMES_DEST:-$HOME/.themes}"
+    # Offer every theme folder with a GTK or Shell part, except GTK's own stock ones
+    themes=()
+    for d in "$src"/*/; do
+        n=$(basename "$d")
+        case "$n" in Default|Emacs|Raleigh|HighContrast*) continue ;; esac
+        if [ -d "$d/gtk-3.0" ] || [ -d "$d/gtk-4.0" ] || [ -d "$d/gnome-shell" ]; then themes+=("$n"); fi
+    done
+    if [ "${#themes[@]}" -eq 0 ]; then echo "No themes found in $src"; exit 1; fi
+    on=()   # on[i]=1 when themes[i] is selected
+    for i in "${!themes[@]}"; do on[i]=0; done
+    if [ "$#" -gt 0 ]; then
+        for want in "$@"; do
+            found=0
+            for i in "${!themes[@]}"; do if [ "${themes[i]}" = "$want" ]; then on[i]=1; found=1; fi; done
+            [ "$found" -eq 1 ] || { echo "'$want' is not an installed theme (see: ls $src)"; exit 1; }
+        done
+    else
+        # Preselect what is already in ~/.themes, or Gruvbox-Material on a first run
+        any=0
+        for i in "${!themes[@]}"; do if [ -e "$dest/${themes[i]}" ]; then on[i]=1; any=1; fi; done
+        if [ "$any" -eq 0 ]; then
+            for i in "${!themes[@]}"; do if [ "${themes[i]}" = Gruvbox-Material ]; then on[i]=1; fi; done
+        fi
+        if command -v gum >/dev/null 2>&1 && [ -t 0 ]; then
+            pre=""; for i in "${!themes[@]}"; do if [ "${on[i]}" -eq 1 ]; then pre="${pre:+$pre,}${themes[i]}"; fi; done
+            picked=$(gum choose --no-limit --selected="$pre" --header "Themes to copy into $dest (space toggles, enter confirms)" "${themes[@]}" || true)
+            for i in "${!themes[@]}"; do on[i]=0; if printf '%s\n' "$picked" | grep -qx -- "${themes[i]}"; then on[i]=1; fi; done
+        else
+            while true; do
+                echo; echo "Themes to copy into $dest:"
+                for i in "${!themes[@]}"; do
+                    mark=" "; if [ "${on[i]}" -eq 1 ]; then mark="x"; fi
+                    printf ' %2d) [%s] %s\n' "$((i+1))" "$mark" "${themes[i]}"
+                done
+                read -r -p "Number toggles, a = all, n = none, Enter = install, q = quit: " a || a=q
+                case "$a" in
+                    "") break ;;
+                    q) echo "Nothing installed."; exit 0 ;;
+                    a) for i in "${!themes[@]}"; do on[i]=1; done ;;
+                    n) for i in "${!themes[@]}"; do on[i]=0; done ;;
+                    *[!0-9]*) echo "Not a number: $a" ;;
+                    *) if [ "$a" -ge 1 ] && [ "$a" -le "${#themes[@]}" ]; then i=$((a-1)); on[i]=$((1-on[i])); else echo "Out of range: $a"; fi ;;
+                esac
+            done
+        fi
+    fi
+    mkdir -p "$dest"
+    count=0
+    for i in "${!themes[@]}"; do
+        if [ "${on[i]}" -ne 1 ]; then continue; fi
+        rm -rf "${dest:?}/${themes[i]}"
+        cp -a "$src/${themes[i]}" "$dest/${themes[i]}"
+        echo "Installed ${themes[i]} -> $dest/${themes[i]}"
+        count=$((count+1))
+    done
+    if [ "$count" -eq 0 ]; then echo "Nothing selected."; else echo "Restart GTK apps (and Flatpaks) to pick up the changes."; fi
