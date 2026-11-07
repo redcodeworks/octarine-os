@@ -1,0 +1,4 @@
+#!/bin/bash
+
+export PROTON_FSR4_UPGRADE=1
+export PROTON_ENABLE_WAYLAND=1

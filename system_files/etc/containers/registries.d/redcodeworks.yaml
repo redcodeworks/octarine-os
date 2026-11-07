@@ -1,0 +1,3 @@
+docker:
+  ghcr.io/redcodeworks:
+    use-sigstore-attachments: true

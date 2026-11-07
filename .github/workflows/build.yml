@@ -74,6 +74,40 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
+      # Fail the build before anything is pushed if the image is missing what it should have
+      - name: Smoke test image
+        run: |
+          podman run --rm "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+            fail=0
+            check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+
+            echo "== enabled system units"
+            systemctl list-unit-files --state=enabled --no-legend --no-pager || true
+            echo "== enabled user units (global)"
+            systemctl --global list-unit-files --state=enabled --no-legend --no-pager || true
+            echo "== checks"
+
+            for u in pmcd.service pmlogger.service flatpak-preinstall.service; do
+              check "enabled $u" "systemctl is-enabled $u"
+            done
+
+            for p in niri noctalia libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
+                     gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
+                     nautilus-gsconnect gnome-shell-extension-dash-to-dock; do
+              check "package $p" "rpm -q $p"
+            done
+            check "firefox removed" "! rpm -q firefox"
+
+            check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
+            check "sudoers valid" "visudo -c"
+            check "firewalld config valid" "firewall-offline-cmd --check-config"
+            check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
+            check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
+            check "themes installed" "test -f /usr/share/themes/Gruvbox-Dark/gtk-3.0/gtk.css -a -f /usr/share/themes/Gruvbox-Material-Shell-Dark/gnome-shell/gnome-shell.css"
+            check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            exit $fail
+          '
+
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree
         id: rechunk

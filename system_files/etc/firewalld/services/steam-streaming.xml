@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>Steam streaming</short>
+  <description>Steam Remote Play host (including the PyroWave codec): the ports Valve documents for streaming to Steam Link and other Steam clients on the LAN.</description>
+  <port port="27036" protocol="tcp"/>
+  <port port="27037" protocol="tcp"/>
+  <port port="27031" protocol="udp"/>
+  <port port="27036" protocol="udp"/>
+</service>

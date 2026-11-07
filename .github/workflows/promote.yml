@@ -1,0 +1,126 @@
+---
+name: Promote testing to stable
+
+# build.yml publishes every build under the `testing` tags. This workflow moves the
+# `stable` tag to a testing build that has soaked long enough. It copies the existing
+# image by digest (no rebuild), so the cosign signature stays valid.
+on:
+  schedule:
+    - cron: '30 11 * * *'  # 11:30am UTC everyday, after the 10:05 build
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: "Tag to promote, e.g. testing-20261107 (blank = newest dated testing build old enough)"
+        required: false
+        default: ""
+      skip_soak:
+        description: "Ignore the soak period and pick the newest dated testing build"
+        required: false
+        default: false
+        type: boolean
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"
+  SOAK_DAYS: 3        # normal soak period
+  SOAK_DAYS_CORE: 7   # when the kernel, mesa or mutter changed
+
+concurrency:
+  group: promote-stable
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote to stable
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Promote
+        env:
+          SOURCE_TAG: ${{ inputs.source_tag }}
+          SKIP_SOAK: ${{ inputs.skip_soak }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          command -v skopeo >/dev/null || sudo apt-get install -y skopeo
+
+          IMAGE_NAME=$(sed -n 's/^IMAGE_NAME=//p' image-template.env | tr -d '"')
+          REF="${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}"
+          echo "${GH_TOKEN}" | skopeo login ghcr.io -u "${GH_ACTOR}" --password-stdin
+
+          # newest testing-YYYYMMDD tag whose date is at least $1 days old
+          pick_candidate() {
+            local cutoff
+            cutoff=$(date -u -d "-$1 days" +%Y%m%d)
+            skopeo list-tags "docker://${REF}" | jq -r '.Tags[]' \
+              | grep -E '^testing-[0-9]{8}$' | sort -r \
+              | awk -v c="testing-${cutoff}" '$0 <= c { print; exit }'
+          }
+          digest_of()  { skopeo inspect --format '{{.Digest}}'  "docker://${REF}$1" 2>/dev/null || true; }
+          created_of() { skopeo inspect --format '{{.Created}}' "docker://${REF}$1" 2>/dev/null || true; }
+          core_versions() {
+            podman run --rm --entrypoint rpm "${REF}@$1" -q --qf '%{NAME}-%{VERSION}-%{RELEASE}\n' \
+              kernel mesa-dri-drivers mutter 2>&1 | sort
+          }
+
+          stable_digest=$(digest_of ":stable")
+
+          if [ -n "${SOURCE_TAG}" ]; then
+            candidate="${SOURCE_TAG}"
+            echo "Promoting the requested tag ${candidate}"
+          else
+            soak="${SOAK_DAYS}"
+            [ "${SKIP_SOAK}" = "true" ] && soak=0
+            candidate=$(pick_candidate "${soak}")
+            [ -n "${candidate}" ] || { echo "No testing build is ${soak} days old yet; nothing to do."; exit 0; }
+          fi
+
+          cand_digest=$(digest_of ":${candidate}")
+          [ -n "${cand_digest}" ] || { echo "::error::Tag ${candidate} not found"; exit 1; }
+
+          if [ -z "${SOURCE_TAG}" ] && [ -n "${stable_digest}" ]; then
+            if [ "${cand_digest}" = "${stable_digest}" ]; then
+              echo "stable already points at ${candidate}; nothing to do."; exit 0
+            fi
+            # Never move stable backwards on its own; use source_tag for a deliberate rollback
+            if [[ "$(created_of ":${candidate}")" < "$(created_of ":stable")" ]]; then
+              echo "${candidate} is older than the current stable; nothing to do."; exit 0
+            fi
+            # Longer soak when the kernel, mesa or mutter changed
+            if [ "${SKIP_SOAK}" != "true" ] && [ "$(core_versions "${cand_digest}")" != "$(core_versions "${stable_digest}")" ]; then
+              echo "Kernel, mesa or mutter changed; requiring ${SOAK_DAYS_CORE} days of soak."
+              candidate=$(pick_candidate "${SOAK_DAYS_CORE}")
+              [ -n "${candidate}" ] || { echo "No build is ${SOAK_DAYS_CORE} days old yet; nothing to do."; exit 0; }
+              cand_digest=$(digest_of ":${candidate}")
+              if [ "${cand_digest}" = "${stable_digest}" ] || [[ "$(created_of ":${candidate}")" < "$(created_of ":stable")" ]]; then
+                echo "No newer build has soaked ${SOAK_DAYS_CORE} days; nothing to do."; exit 0
+              fi
+            fi
+          fi
+
+          echo "Verifying the signature of ${REF}@${cand_digest}"
+          cosign verify --key cosign.pub "${REF}@${cand_digest}" >/dev/null
+
+          today=$(date -u +%Y%m%d)
+          skopeo copy --all --preserve-digests "docker://${REF}@${cand_digest}" "docker://${REF}:stable"
+          skopeo copy --all --preserve-digests "docker://${REF}@${cand_digest}" "docker://${REF}:stable-${today}"
+
+          [ "$(digest_of ':stable')" = "${cand_digest}" ] || { echo "::error::stable does not match ${cand_digest}"; exit 1; }
+          {
+            echo "### Promoted to stable"
+            echo "- Source tag: \`${candidate}\`"
+            echo "- Digest: \`${cand_digest}\`"
+            echo "- Previous stable: \`${stable_digest:-none}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"

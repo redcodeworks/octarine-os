@@ -1,0 +1,10 @@
+#%PAM-1.0
+auth       [success=2 default=ignore]  pam_exec.so quiet /bin/sh -c [test -z "$PAM_TTY"]
+auth       [success=1 default=ignore]  pam_exec.so quiet /bin/sh -c [who | grep -F "$(echo "$PAM_TTY" | sed "s,/dev/,,")" | grep -q "("]
+auth       sufficient   pam_u2f.so cue nouserok origin=pam://sudo appid=pam://sudo
+auth       include      system-auth
+account    include      system-auth
+password   include      system-auth
+session    optional     pam_keyinit.so revoke
+session    required     pam_limits.so
+session    include      system-auth

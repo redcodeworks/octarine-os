@@ -5,6 +5,10 @@ set -ouex pipefail
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
+# sudo ignores sudoers.d files that are not mode 0440; git does not track modes
+chmod 0440 /etc/sudoers.d/10-timestamp-timeout
+visudo -c
+
 ### Install packages
 
 # Packages can be installed from any enabled yum repo on the image.
@@ -24,7 +28,14 @@ dnf5 install -y \
     fuse-libs pam-u2f snapper steam-devices tailscale \
     cockpit cockpit-machines cockpit-podman cockpit-storaged \
     cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files \
-    cockpit-packagekit cockpit-sosreport cockpit-kdump
+    cockpit-packagekit cockpit-sosreport cockpit-kdump \
+    pcp python3-pcp \
+    powertop iotop-c lm_sensors usbip \
+    nautilus-gsconnect nautilus-python \
+    gnome-shell-extension-caffeine gnome-shell-extension-user-theme \
+    gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock \
+    gnome-shell-extension-blur-my-shell gnome-shell-extension-gsconnect \
+    gnome-shell-extension-auto-move-windows
 
 dnf5 group install -y development-tools
 
@@ -44,6 +55,15 @@ done
 
 #### Example for enabling a System Unit File
 
-systemctl enable podman.socket
-systemctl enable tailscaled
-systemctl enable cockpit.socket
+# Only what has to run by default. sshd, tailscaled, cockpit.socket, the snapper timers
+# and podman.socket are installed but left off; enable them on demand, e.g.
+#   sudo systemctl enable --now tailscaled
+#   systemctl --user enable --now podman.socket
+# libvirt relies on its packaged presets and socket activation, and the base image
+# already enables automatic update staging (rpm-ostreed-automatic.timer).
+systemctl enable \
+    pmcd.service pmlogger.service \
+    flatpak-preinstall.service
+
+# The base image enables mcelog, which is useless on AMD CPUs (masked on the host too)
+systemctl mask mcelog.service

@@ -316,3 +316,23 @@ These are images derived from this template (or similar enough to this template)
 - [Homer](https://github.com/bketelsen/homer/)
 - [Amy OS](https://github.com/astrovm/amyos)
 - [VeneOS](https://github.com/Venefilyn/veneos)
+
+## Release channels (testing and stable)
+
+`build.yml` publishes every build as `testing` (plus dated and per-commit tags). `promote.yml`
+moves the `stable` tag to a testing build that has soaked for 3 days (7 if the kernel, mesa or
+mutter changed). It copies the existing image by digest, after verifying its cosign signature.
+Run it by hand from the Actions tab to promote right away (`skip_soak`) or to roll back by
+promoting an older tag (`source_tag`, for example `testing-20261107`).
+
+```
+sudo bootc switch ghcr.io/redcodeworks/ublue-os:stable
+```
+
+`stable` does not exist until the first promotion. After the first successful `build.yml` run,
+start `promote.yml` with `skip_soak` enabled.
+
+## Group membership
+
+`just` recipes shipped in the image are available through `ujust`. To add yourself to the
+`gamemode`, `input` and `libvirt` groups, run `ujust add-user-groups` (or pass another user name).

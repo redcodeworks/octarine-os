@@ -1,0 +1,2 @@
+# Keep the sudo password for 30 minutes (mirrors the host's /etc/sudoers.d/00_kevin)
+Defaults:kevin timestamp_timeout=1800
