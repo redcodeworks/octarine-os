@@ -66,7 +66,8 @@ dnf5 install -y \
     gnome-shell-extension-gsconnect nautilus-gsconnect nautilus-python \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
-    rocm-hip rocm-opencl rocm-smi rocminfo hipcc
+    rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
+    gcc-c++ cmake ninja-build meson uv
 
 dnf5 group install -y development-tools
 
