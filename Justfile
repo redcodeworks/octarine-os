@@ -465,9 +465,9 @@ format:
     # Run shfmt on all Bash scripts
     find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
 
-# Build the local repo into a qcow2 named after a registry channel (default testing, so updates inside the VM follow it) and create a libvirt VM from it. The disk goes in the given storage pool
+# Create a libvirt test VM from the local repo, built under a registry channel (default testing, so updates inside the VM follow it). An existing test VM is kept and started, because updating it is the normal way to test; pass recreate=true to rebuild it from scratch
 [group('Test')]
-test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $channel="testing":
+test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $channel="testing" $recreate="false":
     #!/usr/bin/env bash
     set -euo pipefail
     export LIBVIRT_DEFAULT_URI=qemu:///system
@@ -475,6 +475,22 @@ test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $ch
     [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "VM name may only contain letters, digits, dot, dash and underscore"; exit 1; }
     [[ "$ram" =~ ^[0-9]+$ && "$cpus" =~ ^[0-9]+$ ]] || { echo "ram (MiB) and cpus must be numbers"; exit 1; }
     [[ "$channel" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "channel must be an image tag such as testing or latest"; exit 1; }
+    [[ "$recreate" == "true" || "$recreate" == "false" ]] || { echo "recreate must be true or false"; exit 1; }
+
+    # Keep an existing test VM (updating it is the point), unless asked to rebuild it
+    if virsh dominfo "$name" >/dev/null 2>&1; then
+        if ! virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
+            echo "A VM named '$name' already exists and was not created by this recipe. Pick another name."
+            exit 1
+        fi
+        if [[ "$recreate" != "true" ]]; then
+            virsh start "$name" >/dev/null 2>&1 || true
+            echo "VM '$name' already exists and was kept. To test a new build, update it from inside the VM:"
+            echo "  sudo bootc upgrade && sudo systemctl reboot"
+            echo "To rebuild it from scratch: just test-vm $name $ram $cpus $pool $channel true"
+            exit 0
+        fi
+    fi
 
     # Build the local repo under the registry name of the channel (ghcr.io/<owner>/<image>:<channel>).
     # bootc-image-builder records the name it is given as the installed system's update source, so
@@ -482,15 +498,10 @@ test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $ch
     image="ghcr.io/${repo_organization,,}/${image_name,,}"
     "{{ just_executable() }}" rebuild-qcow2 "$image" "$channel"
 
-    # Replace a previous test VM, but never a VM this recipe did not create
+    # Only a VM this recipe created reaches this point; recreate=true replaces it
     if virsh dominfo "$name" >/dev/null 2>&1; then
-        if virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
-            virsh destroy "$name" >/dev/null 2>&1 || true
-            virsh undefine "$name" --nvram --remove-all-storage
-        else
-            echo "A VM named '$name' already exists and was not created by this recipe. Pick another name."
-            exit 1
-        fi
+        virsh destroy "$name" >/dev/null 2>&1 || true
+        virsh undefine "$name" --nvram --remove-all-storage
     fi
 
     virsh pool-info "$pool" >/dev/null 2>&1 || { echo "No libvirt storage pool named '$pool'. Pools: $(virsh pool-list --all --name | xargs)"; exit 1; }
