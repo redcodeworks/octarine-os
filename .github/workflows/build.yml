@@ -9,8 +9,14 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**/README.md'
+    # Only changes that can alter the image start a build; docs and the promote workflow do not
+    paths:
+      - 'Containerfile'
+      - 'Justfile'
+      - 'image-template.env'
+      - 'build_files/**'
+      - 'system_files/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch:
 
 env:
