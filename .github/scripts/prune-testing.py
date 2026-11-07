@@ -7,7 +7,7 @@ unless DRY_RUN=true deletes it with `gh api -X DELETE`.
 Rules:
   * A "build" is the set of versions that share a git sha in their tags. Keep the newest KEEP builds.
   * Only versions whose tags ALL start with `testing` are candidates. Anything carrying a `latest*`
-    tag (`stable*` included, or any other tag) is never deleted. The same script runs once per image.
+    tag (or any other tag) is never deleted.
   * Delete the cosign signature version (`sha256-<digest>.sig`) of every deleted image, and any
     signature whose image no longer exists.
   * Delete untagged image versions older than UNTAGGED_DAYS.
@@ -93,7 +93,7 @@ def main():
 
     # Safety nets
     for v in doomed:
-        assert not any(t.startswith(("latest", "stable")) or re.match(r"^\d{8}", t) for t in tags_of(v)), label(v)
+        assert not any(t.startswith("latest") or re.match(r"^\d{8}", t) for t in tags_of(v)), label(v)
     plan = doomed + doomed_sigs
     print(f"{len(versions)} versions: {len(builds)} testing builds, keeping the newest {KEEP}")
     for sha, vs in builds[:KEEP]:

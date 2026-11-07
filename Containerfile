@@ -4,19 +4,12 @@ COPY build_files /
 COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
-# Base image tag. 45 builds octarine-os; the octarine-os-stable image passes STABLE_BASE_TAG from
-# image-template.env (currently `latest`, ublue's Fedora 44 line). Nothing else differs.
-ARG BASE_TAG=45
-
 # Base Image
-FROM ghcr.io/ublue-os/silverblue-main:${BASE_TAG}
+FROM ghcr.io/ublue-os/silverblue-main:45
 
-# Passed in by `just build` from image-template.env; used to scope the signature policy.
-# IMAGE_NAMES lists every image built from this Containerfile, so each carries a policy entry for all
-# of them and a host can `bootc switch` between them with signature checking.
+# Passed in by `just build` from image-template.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
 ARG IMAGE_NAME
-ARG IMAGE_NAMES
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:stable
 # FROM ghcr.io/ublue-os/bazzite:testing
