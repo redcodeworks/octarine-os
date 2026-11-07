@@ -32,6 +32,7 @@ dnf5 install -y \
     pcp python3-pcp \
     powertop iotop-c lm_sensors usbip \
     nautilus-gsconnect nautilus-python \
+    rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
     gnome-shell-extension-caffeine gnome-shell-extension-user-theme \
     gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock \
     gnome-shell-extension-blur-my-shell gnome-shell-extension-gsconnect \
