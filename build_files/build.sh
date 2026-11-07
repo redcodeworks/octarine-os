@@ -2,6 +2,21 @@
 
 set -ouex pipefail
 
+# --- Guard: refuse to build if secrets or personal key material ended up in system_files ---
+# A security key registration (pam_u2f's u2f_keys) or a private key copied here would be baked into a
+# public image. Check names first, then content (this also catches a renamed copy).
+forbidden=$(find /ctx/system_files \( -name 'u2f_keys' -o -name 'u2f_mappings' -o -name 'Yubico' \
+    -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name 'id_rsa*' -o -name 'id_ed25519*' \
+    -o -name 'id_ecdsa*' -o -name 'authorized_keys' -o -name '.env' \) -print)
+forbidden+=$'\n'$(grep -rIlE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+    -e ',(es256|eddsa|rs256),\+?(presence|verification|pin)?' /ctx/system_files || true)
+forbidden=$(echo "$forbidden" | sed '/^$/d')
+if [[ -n "$forbidden" ]]; then
+    echo "Refusing to build: sensitive files found in system_files:" >&2
+    echo "$forbidden" >&2
+    exit 1
+fi
+
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 

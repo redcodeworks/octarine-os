@@ -1,0 +1,25 @@
+# Keeps secrets and bulky local artifacts out of the container build context.
+# The Containerfile copies only build_files, system_files and cosign.pub.
+.git
+.github
+.claude
+.idea
+.vscode
+output
+_build*
+*.qcow2
+*.raw
+*.iso
+**/__pycache__
+cosign.key
+**/*.key
+**/*.pem
+**/.env
+**/.env.*
+**/u2f_keys
+**/u2f_mappings
+**/Yubico
+**/id_rsa*
+**/id_ed25519*
+**/id_ecdsa*
+**/authorized_keys
