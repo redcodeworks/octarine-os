@@ -570,3 +570,11 @@ release $merge="false":
     else
         echo "When the checks pass, merge it with: just release true   (or: gh pr merge --merge)"
     fi
+
+# Use this repository's git hooks (a gitleaks scan of what you push)
+[group('Security')]
+install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git config core.hooksPath githooks
+    echo "Git hooks enabled from githooks/. The pre-push scan needs gitleaks: brew install gitleaks"

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Scan the commits being pushed for secrets before they leave this machine.
+# Enable it in a clone with: just install-hooks    (skip once with: git push --no-verify)
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-push: gitleaks is not installed, so no secret scan ran (brew install gitleaks)" >&2
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel)
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    [[ "$local_sha" == "$zero" ]] && continue # deleting a branch
+    if [[ "$remote_sha" == "$zero" ]]; then
+        range="$local_sha --not --remotes" # a new branch: everything not on any remote
+    else
+        range="${remote_sha}..${local_sha}"
+    fi
+    gitleaks git --config "$root/.gitleaks.toml" --log-opts="$range" --redact --no-banner "$root" || status=1
+done
+
+if [[ $status -ne 0 ]]; then
+    echo "pre-push: gitleaks found possible secrets, so the push was blocked" >&2
+fi
+exit $status
