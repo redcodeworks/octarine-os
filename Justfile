@@ -465,15 +465,22 @@ format:
     # Run shfmt on all Bash scripts
     find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
 
-# Build the local repo into a qcow2 and create a libvirt VM from it for testing (system libvirt, default network, UEFI)
+# Build the local repo into a qcow2 named after a registry channel (default testing, so updates inside the VM follow it) and create a libvirt VM from it. The disk goes in the given storage pool
 [group('Test')]
-test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
+test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $channel="testing":
     #!/usr/bin/env bash
     set -euo pipefail
     export LIBVIRT_DEFAULT_URI=qemu:///system
     marker="created by just test-vm"
     [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "VM name may only contain letters, digits, dot, dash and underscore"; exit 1; }
     [[ "$ram" =~ ^[0-9]+$ && "$cpus" =~ ^[0-9]+$ ]] || { echo "ram (MiB) and cpus must be numbers"; exit 1; }
+    [[ "$channel" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "channel must be an image tag such as testing or latest"; exit 1; }
+
+    # Build the local repo under the registry name of the channel (ghcr.io/<owner>/<image>:<channel>).
+    # bootc-image-builder records the name it is given as the installed system's update source, so
+    # `bootc upgrade` inside the VM follows that channel instead of a local image that does not exist there.
+    image="ghcr.io/${repo_organization,,}/${image_name,,}"
+    "{{ just_executable() }}" rebuild-qcow2 "$image" "$channel"
 
     # Replace a previous test VM, but never a VM this recipe did not create
     if virsh dominfo "$name" >/dev/null 2>&1; then
@@ -486,10 +493,17 @@ test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
         fi
     fi
 
-    pool=$(virsh pool-dumpxml default 2>/dev/null | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
-    dest="${pool:-/var/lib/libvirt/images}/$name.qcow2"
-    sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
-    sudo restorecon "$dest" 2>/dev/null || true
+    virsh pool-info "$pool" >/dev/null 2>&1 || { echo "No libvirt storage pool named '$pool'. Pools: $(virsh pool-list --all --name | xargs)"; exit 1; }
+    virsh pool-start "$pool" >/dev/null 2>&1 || true
+    dir=$(virsh pool-dumpxml "$pool" | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
+    [[ -n "$dir" ]] || { echo "Could not read the path of storage pool '$pool'"; exit 1; }
+    dest="$dir/$name.qcow2"
+    if [[ -w "$dir" ]]; then
+        cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
+    else
+        sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
+    fi
+    virsh pool-refresh "$pool" >/dev/null
 
     virt-install \
         --name "$name" \
@@ -508,6 +522,8 @@ test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
 
     echo
     echo "VM '$name' is running. The first boot opens GNOME Initial Setup to create a user."
+    echo "  Updates inside it follow $image:$channel. To make bootc verify signatures, run once in the VM:"
+    echo "    sudo bootc switch --enforce-container-sigpolicy $image:$channel"
     echo "  View it:    virt-viewer --connect qemu:///system $name   (or open it in Cockpit or virt-manager)"
     echo "  Delete it:  just test-vm-delete $name"
 
@@ -525,3 +541,32 @@ test-vm-delete $name="ublue-test":
     fi
     virsh destroy "$name" >/dev/null 2>&1 || true
     virsh undefine "$name" --nvram --remove-all-storage
+
+# Open the release pull request from testing into main. Pass true to also wait for the required checks and merge it
+[group('Release')]
+release $merge="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch -q origin
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    [[ "$branch" == "testing" ]] || { echo "Switch to the testing branch first (you are on '$branch')"; exit 1; }
+    [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "Commit or stash your changes first"; exit 1; }
+    [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/testing)" ]] || { echo "testing is not in sync with origin/testing: push (or pull) first"; exit 1; }
+    [[ "$(git rev-list --count origin/main..origin/testing)" -gt 0 ]] || { echo "testing has nothing that main does not already have"; exit 0; }
+
+    url=$(gh pr list --base main --head testing --state open --json url --jq '.[0].url // empty')
+    if [[ -z "$url" ]]; then
+        url=$(gh pr create --base main --head testing \
+            --title "Release $(date +%Y-%m-%d)" \
+            --body "$(git log --format='- %s' origin/main..origin/testing)")
+    fi
+    echo "$url"
+
+    if [[ "$merge" == "true" ]]; then
+        echo "Waiting for the required checks (the testing build can take about 20 minutes)..."
+        gh pr checks "$url" --watch --required
+        gh pr merge "$url" --merge
+        echo "Merged. The latest build is running: gh run list --branch main --limit 1"
+    else
+        echo "When the checks pass, merge it with: just release true   (or: gh pr merge --merge)"
+    fi
