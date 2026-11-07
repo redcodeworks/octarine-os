@@ -57,3 +57,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   packages and units to it.
 - Package names cannot be checked from the sandbox (no mirror access); the first CI build confirms them.
 - Shell blocks in workflows and recipes: check with `bash -n`.
+- `tests/dev-toolbox.sh` tests the `dev-toolbox` and `brew` recipes with fake curl, distrobox and podman (no
+  network, temp HOME); run it after any change to those recipes or to
+  `system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini`.
+- The image carries no compilers or build tools; they live in the toolbox the definition describes.

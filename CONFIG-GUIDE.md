@@ -114,10 +114,12 @@ timers are installed but not enabled. Turn on what you use.
 - The usual modern tools: Helix, starship, atuin, zoxide, fzf, bat, eza, yazi and Zellij.
 - Terminals: Ghostty, Ptyxis and kitty.
 - Homebrew's installer is a vendor script, which is why Homebrew is not baked into the image (its
-  prefix has to be owned by the user who runs it). `ujust user-package-managers` installs it, and
-  uv, SDKMAN, nvm, rustup and pixi, from a checklist. It downloads each installer to a file, prints
-  its hash, lets you read it, runs it only after you confirm, and blocks sudo. Treat each installer
-  as vendor code you are trusting.
+  prefix has to be owned by the user who runs it). `ujust brew` installs it on the host. It downloads
+  the installer to a file, prints its hash, lets you read it, runs it only after you confirm, and
+  blocks sudo. Treat the installer as vendor code you are trusting.
+- **The rule for installing software:** in the toolbox, use dnf packages. An installer script is
+  only for something that has no package (SDKMAN and nvm), and nothing may need sudo. Homebrew stays
+  a separate host recipe. The image itself has no compilers or build tools.
 
 ## Containers
 
@@ -131,10 +133,14 @@ timers are installed but not enabled. Turn on what you use.
   data science, Arch for AUR and bleeding-edge tools, Debian as a stand-in on-prem server, an AI
   stack, and a Steam container. Only the Fedora one shares the real home; the others get an isolated
   one.
-- **Toolchain wrappers.** `distrobox-export` puts `cc`, `gcc`, `make`, `cmake` and friends in
-  `~/.local/bin`, so the host feels like it has a compiler. Add a stdin guard to the wrappers, or
-  they hang tools that talk over stdio. `ujust user-package-managers` does the same for `rustup`
-  and its proxies and for `sdk` after installing them in the Fedora box (see Recipes).
+- **No build tools on the host.** The image carries no gcc, make, cmake, ninja, meson or the
+  development-tools group, because builds belong in the Fedora toolbox and a compiler on the host
+  invites installs that bypass it. `ujust dev-toolbox` creates that box from
+  `/usr/share/ublue-os/distrobox/fedora-toolbox.ini` and runs `distrobox-export` so that `cc`, `gcc`,
+  `make`, `cmake`, `uv`, the rustup proxies, `sdk` and a few CLI tools appear in `~/.local/bin`, and
+  the host feels like it has a compiler. Add a stdin guard to the wrappers, or they hang tools that
+  talk over stdio. See the recipe notes below for `--recreate`, `--remove`, `--upgrade`, `--update`
+  and `--ide`.
 - Containers on the host network share loopback, so containers see host services. They also share `/tmp`.
 - **Datastores:** Postgres, Valkey and SeaweedFS run in one shared pod on loopback, with a
   least-privilege role per database.
@@ -197,8 +203,10 @@ Some of these are tradeoffs you may not want.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
    from the manifest. Restore app data before first launch where it matters (browser profiles).
-7. **Homebrew:** run the one-time `sudo mkdir` and `chown` for its prefix that
-   `ujust user-package-managers brew` prints, run the recipe, then `brew bundle` from the Brewfile.
+7. **Dev toolbox, then Homebrew:** `ujust dev-toolbox` (builds the box, installs nothing on the host),
+   then run the one-time `sudo mkdir` and `chown` for brew's prefix that `ujust brew` prints, run
+   `ujust brew`, then `brew bundle` from the Brewfile. If brew came after the box, run
+   `ujust dev-toolbox --recreate` so the box gets the read-only brew mount.
 8. **Containers:** recreate the distroboxes from their config, enable lingering, restore Quadlets.
 9. **Opt in to services:** `tailscaled`, `sshd`, `cockpit.socket`, the snapper timers.
 10. **Restore data from borg,** then check `systemctl --failed`, the firewall zone,
@@ -222,7 +230,8 @@ shows the result.
 | `podman-desktop-deny-docker-socket` | Stops Podman Desktop reaching a Docker socket. |
 | `chrome-flatpak-webapps` | Lets Flatpak Chrome write web app launchers and icons. |
 | `gearlever-applications` | Lets Gear Lever manage AppImages in `~/Applications`. |
-| `user-package-managers [--list] [--force] [tool ...]` | Installs uv, Homebrew, SDKMAN, nvm, rustup and (optional, unticked) pixi from a checklist (SPACE toggles, ENTER confirms, q cancels), or the tools you name. Each installer is downloaded to a temp file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first on `PATH` and `no_new_privs` set, so nothing can use sudo. Homebrew runs on the host and needs its prefix (`/home/linuxbrew/.linuxbrew`) created and owned by you first; the recipe prints the one-time `sudo` commands instead of running them. uv, SDKMAN, nvm and rustup install inside the `fedora-toolbox` distrobox, and the recipe exports `rustup`, its proxies and an `sdk` wrapper to `~/.local/bin` (never overwriting an existing file; what it created is listed in `$XDG_STATE_HOME/ublue-os/user-package-managers`, so undo is deleting those files). uv lands in `~/.local/bin` itself because the home is shared. nvm exports nothing. It never edits shell rc files; it prints what to add. |
+| `dev-toolbox [--list] [--recreate] [--remove [--dry-run]] [--upgrade [--check]] [--update] [--ide ...] [tool ...]` | Builds the `fedora-toolbox` distrobox from the image's definition, makes it the default for `distrobox enter`, sets up uv, rustup, SDKMAN and nvm in it, and exports the build chain and CLI tools to `~/.local/bin`. Details in the notes below. |
+| `brew` | Installs Homebrew on the host. The prefix `/home/linuxbrew/.linuxbrew` (`/home` is `/var/home` here) must exist and be yours first; if not, the recipe prints the one-time `sudo mkdir` and `chown` for you to run and stops. The installer is downloaded to a temp file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first on `PATH` and `no_new_privs` set. It prints the `brew shellenv` lines for bash and fish and edits no rc files. |
 | `extest-build`, `extest-steam-setup` / `extest-steam-reset` | **Experimental.** Builds extest (an X11 XTEST to uinput shim that lets Steam Input work on Wayland without the "Allow Remote Interaction" prompt) and preloads it into Flatpak Steam. See the notes below. |
 
 Notes on the extest recipes: the Flathub Steam package does not bundle extest, so the library
@@ -230,6 +239,84 @@ has to be built (it needs `cargo` and a C linker) and exposed to the sandbox. Th
 the upstream commit the setup was tested with and preload the 64-bit build, since the Steam client
 is 64-bit. Working inside the Flatpak client has not been verified end to end, and this may only be
 a short-term workaround.
+
+Notes on `dev-toolbox`:
+
+- **What it does, in order.** It creates the box with `distrobox assemble create` from the definition
+  (`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, an Universal Blue toolbox image with the packages
+  of the old host setup; it asks first), sets `container_name_default="fedora-toolbox"` in
+  `~/.config/distrobox/distrobox.conf` (creating the file, or changing only that key and asking before
+  replacing another value), shows a checklist for uv, rustup, SDKMAN and nvm (SPACE toggles, ENTER
+  confirms, q skips; or name them: `ujust dev-toolbox sdkman nvm`), and exports to `~/.local/bin` (or
+  `$UPM_EXPORT_DIR`) with `distrobox-export --bin`: the build chain (`cc gcc g++ c++ make cmake ninja
+  meson ld as ar nm objdump strip ranlib pkg-config`, whichever exist in the box), `lsscsi nicstat
+  waypipe evtest guestfish virt-v2v flatpak-builder`, `uv`/`uvx`, `rustup` and the rustup proxies, and an
+  `sdk` wrapper script (sdk is a shell function). `--list` shows the box, the default name, each tool's
+  source (`dnf:<package>` or `installer`) and export state. It never overwrites an existing file or
+  link, edits no rc files, uses no sudo and never runs as root.
+- **dnf packages first.** uv and rustup are dnf packages in the definition, so the recipe only
+  exports them, and for rustup runs `rustup default stable` (a normal download from
+  static.rust-lang.org, asked first) when no toolchain exists. If a package is missing from the box,
+  it says so and points at `--recreate`: it cannot install packages itself, because that would need
+  sudo. SDKMAN and nvm have no Fedora package, so they are the only vendor installer scripts: each is
+  downloaded to a file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first
+  on `PATH` and `no_new_privs` set. Installs of SDKMAN, nvm and the rustup toolchains live in the
+  shared home.
+- **Shared home.** The definition has no `home=` key on purpose, so the box's `$HOME` is yours:
+  `~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches and dotfiles are shared.
+- **Brew mount.** The definition mounts `/home/linuxbrew` read-only so Python source builds can see
+  brew's Python. The directory must exist when the box is created and the recipe cannot create it
+  (that needs root), so while it is missing the recipe drops the `volume=` line from a temporary copy
+  of the definition and says so. After `ujust brew`, run `ujust dev-toolbox --recreate`.
+- **Trying it before the image ships it.** Run it straight from a checkout, without `ujust`:
+  `DEV_TOOLBOX_DEFINITION=system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini just --justfile
+  system_files/usr/share/ublue-os/just/60-custom.just dev-toolbox` (the justfile has no imports, so
+  this works as is; `DEV_TOOLBOX_DEFINITION` defaults to the installed path).
+- **`--recreate` (replace the box).** Asks, then removes the old container, removes the export files
+  the state file lists (never a file it did not create), and creates the box again from the
+  definition. Wipe by hand with `distrobox rm --force fedora-toolbox`. What survives: your whole
+  shared home (`~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches). What does not: dnf-installed
+  packages and everything else in the container's own filesystem.
+- **`--remove` (clean up everything it made).** Differs from `--recreate`: nothing is rebuilt. It
+  records in `$XDG_STATE_HOME/ublue-os/dev-toolbox` (default `~/.local/state/ublue-os/dev-toolbox`)
+  what it created, including whether `~/.sdkman`, `~/.nvm`, `~/.rustup` and `~/.cargo` existed before
+  its install steps. It deletes only what the state file says it created and skips, with the reason,
+  any directory that already existed. It lists everything with sizes (exports, launchers, the
+  `container_name_default` key, the container, the directories, the state file), warns that
+  `~/.cargo` and `~/.sdkman` can hold things you installed afterwards (cargo install binaries, JDKs,
+  Spark, Hadoop), and needs you to type `yes`. `--remove --dry-run` only prints the list. Order:
+  exports and launchers, the default-name setting, the container, the directories, the state file
+  last; a failed step stops and leaves the state file, so running it again finishes the job. It never
+  touches `/usr` or `/etc`, never removes `~/.local/bin` itself and uses no sudo.
+- **`--upgrade` (newer base image) and `--update` (package updates).** A container never changes its
+  base after creation. `--upgrade` pulls the image named in the definition, compares its image id
+  with the one the box was created from, and says `already on the latest base` if they match.
+  `--upgrade --check` only reports both digests and the Fedora release of each and changes nothing.
+  If the base is newer it warns when the Fedora major changes (the definition has release-specific
+  names such as `libgit2-devel`; Fedora 45 calls it `libgit2_1.9-devel`), then checks that the
+  definition's packages resolve on the new image in a throwaway container (`podman run --rm <image>
+  dnf5 install --assumeno ...`), and aborts with the resolver's message, leaving the old box
+  untouched, if they do not. Otherwise it asks for `yes` and replaces the box the way `--recreate`
+  does. `--update` is separate and only runs `distrobox upgrade fedora-toolbox` (package updates
+  inside the existing container).
+- **`--ide` (launchers that start an IDE inside the box).** Writes
+  `~/.local/share/applications/fedora-toolbox-<id>.desktop` with
+  `Exec=distrobox enter -n fedora-toolbox -- <launcher> %F`, so the IDE is a process of the container:
+  its terminals, run configurations and language servers use the box's compilers, libraries and
+  package managers, without relying on exports. It only detects, never installs, and the box must
+  already exist (it offers to start a stopped box, and never creates one). JetBrains IDEs (`pycharm
+  idea datagrip rustrover clion goland webstorm`) use the stable shell scripts JetBrains Toolbox
+  generates, in `~/.local/share/JetBrains/Toolbox/scripts` by default; turn on "Generate shell
+  scripts" in the Toolbox settings if they are missing. The icon is taken from the IDE directory the
+  script launches, so no versioned path is hardcoded. VS Code (`vscode`) uses a `code` found inside the
+  box or a tarball under `~/.local/opt`, `~/opt` or `~/Applications`; it does not add Microsoft's
+  repo, and a Flatpak cannot be used from the box. `--ide-custom NAME COMMAND [ICON]` covers any other
+  executable under your home. Pick from a checklist (`ujust dev-toolbox --ide`) or name them (`--ide
+  pycharm datagrip`); `--ide --list` shows detection and state; `--ide --remove` deletes only the
+  launchers the state file lists. It never overwrites a file it did not create (JetBrains Toolbox's own
+  entries are untouched). Downloads made inside the IDE (JDKs, plugins) land in the shared home, and a
+  recreated box needs no new launchers. The `StartupWMClass` values (`jetbrains-pycharm`,
+  `jetbrains-idea`, `Code`, ...) are from memory and not verified.
 
 Ideas for more, each a candidate for its own recipe:
 

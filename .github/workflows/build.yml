@@ -137,7 +137,6 @@ jobs:
                      nautilus-gsconnect gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
                      podman-compose kind podman-docker podman-tui \
                      borgbackup restic rclone socat wtype btrfs-assistant \
-                     gcc-c++ cmake ninja-build meson \
                      guestfs-tools libguestfs libguestfs-xfs virt-v2v; do
               check "package $p" "rpm -q $p"
             done
@@ -156,6 +155,8 @@ jobs:
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
+            check "dev toolbox definition" "grep -q \"^\\[fedora-toolbox\\]\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
+            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '

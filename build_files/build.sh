@@ -83,10 +83,11 @@ dnf5 install -y \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
     rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
-    gcc-c++ cmake ninja-build meson \
     guestfs-tools libguestfs libguestfs-xfs virt-v2v
 
-dnf5 group install -y development-tools
+# No compilers or build tools (gcc, make, cmake, ninja, meson, the development-tools group):
+# builds happen in the fedora-toolbox distrobox, created by `ujust dev-toolbox` from
+# /usr/share/ublue-os/distrobox/fedora-toolbox.ini. Nothing here compiles from source.
 
 # Remove RPMs the base ships that this image replaces, only if they are still present:
 # Firefox (use the Flatpak) and toolbox (distrobox covers it)
