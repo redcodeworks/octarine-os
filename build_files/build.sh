@@ -12,8 +12,28 @@ cp -avf "/ctx/system_files"/. /
 # List of rpmfusion packages can be found here:
 # https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/43/x86_64/repoview/index.html&protocol=https&redirect=1
 
-# this installs a package from fedora repos
-dnf5 install -y tmux
+# distrobox, ffmpeg and pam-u2f already ship in silverblue-main (dnf5 skips them).
+# Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
+# packages from the host are not used: gstreamer1-plugins-bad/-ugly below are
+# the negativo17 equivalents (they replace the -free variants), and there is
+# no negativo17 equivalent of mesa-va-drivers-freeworld.
+dnf5 install -y \
+    gstreamer1-plugins-bad gstreamer1-plugins-ugly \
+    niri noctalia \
+    libvirt qemu-kvm \
+    fuse-libs pam-u2f snapper steam-devices tailscale \
+    cockpit cockpit-machines cockpit-podman cockpit-storaged \
+    cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files \
+    cockpit-packagekit cockpit-sosreport cockpit-kdump
+
+dnf5 group install -y development-tools
+
+# Remove the Firefox RPM (use a Flatpak browser instead), only if the base still ships it
+for pkg in firefox firefox-langpacks; do
+    if rpm -q "$pkg" &>/dev/null; then
+        dnf5 remove -y "$pkg"
+    fi
+done
 
 # Use a COPR Example:
 #
@@ -25,3 +45,5 @@ dnf5 install -y tmux
 #### Example for enabling a System Unit File
 
 systemctl enable podman.socket
+systemctl enable tailscaled
+systemctl enable cockpit.socket

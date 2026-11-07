@@ -1,6 +1,28 @@
+# Signing keys (cosign.pub is public and should be committed)
 cosign.key
+*.key
+*.pem
+
+# Local build artifacts (Justfile)
 _build_*
-output
 _build-*/**
+output
+output.env
 *_chunkah_*
 *_rpm-ostree_*
+
+# Disk images produced by bootc-image-builder
+*.qcow2
+*.raw
+*.iso
+
+# Local environment overrides
+.env
+.env.*
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
