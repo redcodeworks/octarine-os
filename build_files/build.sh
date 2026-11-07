@@ -98,8 +98,9 @@ done
 ### Themes: Gruvbox Material (GTK3, GTK4) from github.com/redcodeworks/gnome-themes, pinned to a commit
 # Bump GNOME_THEMES_REF to take a newer revision (git log in that repo). A failure here fails the build on
 # purpose: shipping an image without its theme would be a visible regression. Installed as real files
-# into /usr/share/themes; `ujust install-user-themes` copies the ones you pick to ~/.themes because Flatpak
-# apps cannot see the host's /usr/share/themes. The GNOME Shell themes still come from system_files/.
+# into /usr/share/themes. Flatpak apps cannot see the host's /usr/share/themes: for them, clone the repo and
+# run `just pick` there (needs only just; copies the themes you choose into ~/.themes). The GNOME Shell
+# themes still come from system_files/ until the repo's stock-based Shell themes are pinned here.
 GNOME_THEMES_REF=9a123105003b6caba7a1bcf7b41d4443f7c71edf
 themes_tmp="$(mktemp -d)"
 git clone --quiet https://github.com/redcodeworks/gnome-themes.git "${themes_tmp}"

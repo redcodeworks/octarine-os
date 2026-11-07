@@ -209,7 +209,6 @@ shows the result.
 |---|---|
 | `add-user-groups [user]` | Adds you, or the user you name, to `gamemode`, `input` and `libvirt`. These groups exist only in `/usr/lib/group`, so it copies their lines into `/etc/group` first. |
 | `flatpak-theme-access` / `flatpak-theme-reset` | Lets every Flatpak app read the host GTK config, icons and `~/.themes`, read-only, with a global override. The reset removes just those entries. |
-| `install-user-themes [name...]` | Copies themes from `/usr/share/themes` into `~/.themes` as real files, because Flatpak apps see `~/.themes` but not the host's themes and cannot follow symlinks. With no names it shows a checklist (`gum` if installed, otherwise a numbered toggle list) with the themes already in `~/.themes`, or Gruvbox-Material on a first run, ticked. Re-run it after an image update to refresh the copies. |
 | `flatpak-games-access [path]` | Gives Steam, Bottles and Lutris access to a games directory (default `~/Games`). |
 | `steam-gamescope-setup` / `steam-gamescope-reset` | Installs the gamescope Flatpak layer matching Steam's runtime and puts its `bin` directory on Steam's `PATH`. The reset removes only that line. |
 | `steam-flatpak-devices` | Lets Flatpak Steam see USB and input devices (controllers). This widens the sandbox. |
