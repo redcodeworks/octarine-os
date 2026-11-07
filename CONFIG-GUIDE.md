@@ -39,9 +39,13 @@ Everything system-level that used to be hand-layered now lives in this repo:
   plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
-  signature policy for the image itself.
+  signature policy for the image itself and its `-stable` sibling.
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
   Flatseal and Extension Manager.
+- **Two images:** `octarine-os` (Fedora 45 base, built daily) and `octarine-os-stable` (the base
+  image's `latest` tag, `STABLE_BASE_TAG` in `image-template.env`, built every second week). Same content; switch with
+  `sudo bootc switch ghcr.io/<owner>/octarine-os-stable:stable` (or `octarine-os:latest` to go back).
+  Pin a dated tag with `...:stable-<date>-<sha>`, undo with `sudo bootc rollback`. See the README.
 - **Build checks:** every build runs a smoke test before it is pushed and signed. See the README.
 
 What the image deliberately leaves to you: `sshd`, `tailscaled`, `cockpit.socket` and the snapper
@@ -196,7 +200,8 @@ Some of these are tradeoffs you may not want.
 1. **Before wiping:** push the dotfiles, run the capture scripts, run the data backup, confirm sync
    clients are up to date and passphrases are stored elsewhere.
 2. **Install Fedora Silverblue** to the OS drive only. UID 1000, same subuid/subgid range.
-3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest`, then reboot.
+3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest` (or `<image>-stable:stable` for the
+   every-second-week build), then reboot.
    Remove old layered packages first, since local layers get in the way of `bootc upgrade`.
 4. **Fix identity:** run `ujust add-user-groups` for `gamemode`, `input` and `libvirt`, restore the
    `crypttab` and `fstab` lines for the data drives, and re-enroll TPM unlock.

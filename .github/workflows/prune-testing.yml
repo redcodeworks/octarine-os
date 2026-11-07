@@ -3,7 +3,7 @@ name: Prune testing images
 
 # GHCR has no retention policy, so old `testing` builds are removed here. Keeps the newest builds,
 # deletes older ones together with their cosign signatures, and never touches anything tagged
-# latest*. Scheduled runs only delete once the repository variable PRUNE_ENABLED is "true"; until
+# latest* or stable*. Runs once per image (octarine-os and octarine-os-stable). Scheduled runs only delete once the repository variable PRUNE_ENABLED is "true"; until
 # then they are dry runs. Start it by hand with dry_run on to see the plan first.
 on:
   schedule:
@@ -24,8 +24,12 @@ concurrency:
 
 jobs:
   prune:
-    name: Prune testing images
+    name: Prune testing images (${{ matrix.image_var }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image_var: [IMAGE_NAME, IMAGE_NAME_STABLE]
     permissions:
       contents: read
       packages: write
@@ -41,9 +45,10 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run }}
           INPUT_KEEP: ${{ inputs.keep }}
           PRUNE_ENABLED: ${{ vars.PRUNE_ENABLED }}
+          IMAGE_VAR: ${{ matrix.image_var }}
         run: |
           set -euo pipefail
-          image=$(sed -n 's/^IMAGE_NAME=//p' image-template.env | tr -d '"')
+          image=$(sed -n "s/^${IMAGE_VAR}=//p" image-template.env | tr -d '"')
           image="${image,,}"
           kind=$(gh api "users/${OWNER}" --jq '.type')
           if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi
@@ -60,4 +65,14 @@ jobs:
           export KEEP="${INPUT_KEEP:-10}"
           echo "Package ${API_BASE}, keep ${KEEP}, dry run: ${DRY_RUN}"
 
-          gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-testing.py
+          # A package that has not been published yet (the stable image before its first push) answers 404
+          errfile=$(mktemp)
+          if ! versions=$(gh api --paginate "${API_BASE}/versions?per_page=100" 2>"${errfile}"); then
+            if grep -q "404" "${errfile}"; then
+              echo "No package ${image} yet: nothing to prune."
+              exit 0
+            fi
+            cat "${errfile}" >&2
+            exit 1
+          fi
+          python3 .github/scripts/prune-testing.py <<<"${versions}"

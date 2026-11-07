@@ -2,6 +2,11 @@
 
 set -ouex pipefail
 
+# Which Fedora release did the base image resolve to? Matters for the octarine-os-stable image, whose
+# base tag (`latest`) can move between releases; the log must say what it built on.
+echo "== base image os-release"
+cat /usr/lib/os-release
+
 # --- Guard: refuse to build if secrets or personal key material ended up in system_files ---
 # A security key registration (pam_u2f's u2f_keys) or a private key copied here would be baked into a
 # public image. Check names first, then content (this also catches a renamed copy).
@@ -24,39 +29,22 @@ cp -avf "/ctx/system_files"/. /
 chmod 0440 /etc/sudoers.d/10-timestamp-timeout
 visudo -c
 
-# --- Container signature policy for this image's own registry path ---
-# Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
-# Everything is derived from them, so a fork only changes image-template.env and cosign.pub.
-if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
-    org="${IMAGE_ORG,,}"
-    name="${IMAGE_NAME,,}"
-    ref="ghcr.io/${org}/${name}"
-    key="/etc/pki/containers/${org}-${name}.pub"
-    install -Dm644 /ctx/cosign.pub "${key}"
-    printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
-        >"/etc/containers/registries.d/${org}-${name}.yaml"
-    python3 - "${ref}" "${key}" <<'PY'
-import json
-import sys
-
-ref, key = sys.argv[1], sys.argv[2]
-path = "/etc/containers/policy.json"
-policy = json.load(open(path))
-scopes = policy["transports"]["docker"]
-catch_all = scopes.pop("", None)
-scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
-if catch_all is not None:
-    scopes[""] = catch_all
-with open(path, "w") as f:
-    json.dump(policy, f, indent=4)
-    f.write("\n")
-PY
-else
-    echo "IMAGE_ORG, IMAGE_NAME or cosign.pub missing: not adding a signature policy for this image"
-fi
+# --- Container signature policy for this repo's images ---
+# Needs IMAGE_ORG, IMAGE_NAME and IMAGE_NAMES (Containerfile build args) and cosign.pub from the repo root.
+# Every image built from this Containerfile gets an entry, so a host can switch between them with
+# signature checking. A fork only changes image-template.env and cosign.pub. See signature-policy.sh.
+bash /ctx/signature-policy.sh
 # --- end signature policy ---
 
 ### Install packages
+#
+# Release-specific parts of this script (the base tag decides the Fedora release, 45 or whatever
+# the stable image's base currently is): the package names below, since a package can be renamed, retired or not yet
+# built for a release (niri, noctalia, btrfs-assistant, the rocm-*/hipcc set, the cockpit-* modules,
+# usbip, nautilus-python and the gnome-shell-extension-* names are the likeliest); the negativo17
+# gstreamer replacement of the -free variants; and the removal list further down. dnf5 stops with
+# an error on a name it cannot find (no --skip-unavailable here) and the smoke test checks the results,
+# so a release difference fails the build instead of shipping an image without something.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images
@@ -101,6 +89,8 @@ done
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release
 grep -qx 'PRETTY_NAME="OctarineOS"' /usr/lib/os-release
+echo "== resulting os-release"
+cat /usr/lib/os-release
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
