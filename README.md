@@ -2,7 +2,7 @@
 
 A personal [bootc](https://github.com/bootc-dev/bootc) image built on Universal Blue's
 `silverblue-main` (Fedora Silverblue plus codecs and a few conveniences). It adds the niri
-compositor with the Noctalia shell, libvirt, Cockpit, backup tools, GNOME extensions and a set
+compositor with the Noctalia shell, libvirt, Cockpit, backup tools and a set
 of hardening and tuning defaults, and it is meant to make one desktop reproducible. It is shared
 publicly in case parts of it are useful to you.
 
@@ -99,7 +99,7 @@ These ship to everyone who uses the image as-is:
 - **sysctl:** `vm.overcommit_memory=1` (for Valkey), `kptr_restrict`, `ptrace_scope`, a very high
   `vm.max_map_count`, and SysRq enabled.
 - **Kernel argument:** `iommu=pt`.
-- **Packages:** ROCm, the development-tools group and a large GNOME extension set make the image
+- **Packages:** ROCm and the development-tools group make the image
   big (roughly 11 GB on disk).
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled. `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.

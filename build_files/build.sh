@@ -63,14 +63,10 @@ dnf5 install -y \
     cockpit-packagekit cockpit-sosreport cockpit-kdump \
     pcp python3-pcp \
     powertop iotop-c lm_sensors usbip \
-    nautilus-gsconnect nautilus-python \
+    gnome-shell-extension-gsconnect nautilus-gsconnect nautilus-python \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
-    rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
-    gnome-shell-extension-caffeine gnome-shell-extension-user-theme \
-    gnome-shell-extension-appindicator gnome-shell-extension-dash-to-dock \
-    gnome-shell-extension-blur-my-shell gnome-shell-extension-gsconnect \
-    gnome-shell-extension-auto-move-windows
+    rocm-hip rocm-opencl rocm-smi rocminfo hipcc
 
 dnf5 group install -y development-tools
 

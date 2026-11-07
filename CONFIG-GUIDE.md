@@ -36,7 +36,7 @@ Two ideas run through everything:
 Everything system-level that used to be hand-layered now lives in this repo:
 
 - **Packages:** the niri compositor with the Noctalia shell, libvirt and QEMU, Cockpit and its
-  plugins, PCP for Cockpit metrics, backup tools, GNOME extensions and more. See `build_files/build.sh`.
+  plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
   signature policy for the image itself, and the Gruvbox themes.
@@ -94,9 +94,11 @@ timers are installed but not enabled. Turn on what you use.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The shell and GTK themes ship in the
   image under `/usr/share/themes`.
-- **GNOME extensions:** Dash to Dock, Blur My Shell, User Themes, GSConnect, Caffeine, AppIndicator,
-  Auto Move Windows. Auto Move Windows sends apps to fixed workspaces: general, browsers, media and
-  chat, games.
+- **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
+  per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
+  Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
+  and Auto Move Windows, which sends apps to fixed workspaces: general, browsers, media and chat,
+  games.
 - **Keybindings for a keyboard with no arrow keys.** Right Command becomes Hyper and right Alt
   becomes Meh. Meh moves focus, Hyper moves windows, Super stays OS-level, Super+Alt launches apps,
   and Ctrl and Ctrl+Shift stay for applications and terminals. The same chords are mirrored in

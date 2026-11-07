@@ -99,7 +99,7 @@ jobs:
 
             for p in niri noctalia libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
                      gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
-                     nautilus-gsconnect gnome-shell-extension-dash-to-dock \
+                     nautilus-gsconnect gnome-shell-extension-gsconnect \
                      podman-compose kind podman-docker podman-tui \
                      borgbackup restic rclone socat wtype btrfs-assistant; do
               check "package $p" "rpm -q $p"
