@@ -210,54 +210,21 @@ gearlever-applications:
     flatpak override --user --filesystem=~/Applications it.mijorus.gearlever
     echo "Gear Lever can now use ~/Applications"
 
-# Install the Gruvbox Material GTK and GNOME Shell themes from github.com/redcodeworks/gnome-themes into ~/.themes, from a checklist (give theme names to skip it). Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-themes install-themes` or `ujust gnome-themes switch-icons Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
 [positional-arguments]
-themes-install *names:
+gnome-themes *args:
     #!/usr/bin/env bash
     set -euo pipefail
     url="${GNOME_THEMES_URL:-https://github.com/redcodeworks/gnome-themes.git}"
     ref="${GNOME_THEMES_REF:-main}"
-    dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes"
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes/repo"
     if [ -d "$dir/.git" ]; then
         git -C "$dir" remote set-url origin "$url"
         git -C "$dir" fetch --quiet --tags origin
     else
+        mkdir -p "$(dirname "$dir")"
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
-    echo "gnome-themes at $(git -C "$dir" rev-parse --short HEAD)"
-    exec just --justfile "$dir/justfile" --working-directory "$dir" install "$@"
-
-# Install the libadwaita colour file from the gnome-themes repo as ~/.config/gtk-4.0/gtk.css (libadwaita apps read only that file); it refuses to overwrite a different file, run `ujust themes-libadwaita force` to replace it (the old one is kept as .bak)
-[positional-arguments]
-themes-libadwaita force="":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes"
-    [ -d "$dir/.git" ] || { echo "Run 'ujust themes-install' first (it fetches the repo)."; exit 1; }
-    exec just --justfile "$dir/justfile" --working-directory "$dir" install-libadwaita gruvbox-material "$1"
-
-# Install the Papirus icon theme from github.com/PapirusDevelopmentTeam/papirus-icon-theme into ~/.local/share/icons. Needs network and git. PAPIRUS_THEMES lists the variants (default: Papirus Papirus-Dark Papirus-Light), PAPIRUS_REF a tag or branch (default: the default branch)
-icons-install:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    url="${PAPIRUS_URL:-https://github.com/PapirusDevelopmentTeam/papirus-icon-theme.git}"
-    dest="${ICONS_DEST:-${XDG_DATA_HOME:-$HOME/.local/share}/icons}"
-    variants="${PAPIRUS_THEMES:-Papirus Papirus-Dark Papirus-Light}"
-    tmp=$(mktemp -d)
-    trap 'rm -rf "${tmp:?}"' EXIT
-    if [ -n "${PAPIRUS_REF:-}" ]; then
-        git clone --quiet --depth 1 --branch "$PAPIRUS_REF" "$url" "$tmp/src"
-    else
-        git clone --quiet --depth 1 "$url" "$tmp/src"
-    fi
-    mkdir -p "$dest"
-    for t in $variants; do
-        if [ ! -d "$tmp/src/$t" ]; then echo "No $t in the repo, skipping"; continue; fi
-        rm -rf "${dest:?}/$t"
-        cp -a "$tmp/src/$t" "$dest/$t"
-        gtk-update-icon-cache -q -f -t "$dest/$t" 2>/dev/null || true
-        echo "Installed $t -> $dest/$t"
-    done
-    echo "Set it with: gsettings set org.gnome.desktop.interface icon-theme Papirus-Dark"
+    exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 

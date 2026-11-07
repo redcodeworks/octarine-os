@@ -96,7 +96,7 @@ for pkg in firefox firefox-langpacks toolbox; do
 done
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
-# `ujust themes-install` (github.com/redcodeworks/gnome-themes) and `ujust icons-install` (Papirus).
+# `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
 
 # Use a COPR Example:
 #

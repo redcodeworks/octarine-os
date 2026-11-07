@@ -93,8 +93,8 @@ timers are installed but not enabled. Turn on what you use.
   GNOME and GTK portals.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
-  `ujust themes-install` fetches them from github.com/redcodeworks/gnome-themes and `ujust
-  icons-install` fetches the Papirus icons, both into your home directory.
+  `ujust gnome-themes install-themes` fetches them from github.com/redcodeworks/gnome-themes and
+  `ujust gnome-themes install-icons` fetches the Papirus icons, both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
   Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
@@ -210,9 +210,7 @@ shows the result.
 |---|---|
 | `add-user-groups [user]` | Adds you, or the user you name, to `gamemode`, `input` and `libvirt`. These groups exist only in `/usr/lib/group`, so it copies their lines into `/etc/group` first. |
 | `flatpak-theme-access` / `flatpak-theme-reset` | Lets every Flatpak app read the host GTK config, icons and `~/.themes`, read-only, with a global override. The reset removes just those entries. |
-| `themes-install [name...]` | Clones github.com/redcodeworks/gnome-themes into `~/.cache/gnome-themes` and runs its `just install`: a checklist (names skip it) that copies the chosen GTK and GNOME Shell themes into `~/.themes` as real files, which Flatpak apps can read. `GNOME_THEMES_REF` picks a branch, tag or commit. Needs network, git and just. |
-| `themes-libadwaita [force]` | Installs the repo's libadwaita colour file as `~/.config/gtk-4.0/gtk.css`. It refuses to overwrite a different file unless you pass `force` (the old one is kept as `.bak`). |
-| `icons-install` | Clones the Papirus repo shallowly and copies Papirus, Papirus-Dark and Papirus-Light into `~/.local/share/icons`. `PAPIRUS_THEMES` and `PAPIRUS_REF` narrow it. |
+| `gnome-themes [recipe] [name]` | Runs a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout in `~/.cache/gnome-themes/repo`: `install-themes`, `update-themes`, `remove-themes`, `list-themes`, `switch-theme`, and the same five for icons (`install-icons`, `update-icons`, `remove-icons`, `list-icons`, `switch-icons`). Without a name the install, remove and switch recipes show a checklist. Themes land in `~/.themes` and icons in `~/.local/share/icons`, as real files Flatpak apps can read. Needs network, git and just; `GNOME_THEMES_REF` picks a branch, tag or commit. |
 | `flatpak-games-access [path]` | Gives Steam, Bottles and Lutris access to a games directory (default `~/Games`). |
 | `steam-gamescope-setup` / `steam-gamescope-reset` | Installs the gamescope Flatpak layer matching Steam's runtime and puts its `bin` directory on Steam's `PATH`. The reset removes only that line. |
 | `steam-flatpak-devices` | Lets Flatpak Steam see USB and input devices (controllers). This widens the sandbox. |
