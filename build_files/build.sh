@@ -70,7 +70,7 @@ fi
 # no negativo17 equivalent of mesa-va-drivers-freeworld.
 dnf5 install -y \
     gstreamer1-plugins-bad gstreamer1-plugins-ugly \
-    niri noctalia \
+    niri noctalia fish \
     libvirt qemu-kvm \
     fuse-libs pam-u2f snapper btrfs-assistant steam-devices tailscale \
     cockpit cockpit-machines cockpit-podman cockpit-storaged \

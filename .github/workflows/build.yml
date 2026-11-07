@@ -132,7 +132,7 @@ jobs:
             done
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
-            for p in niri noctalia libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
+            for p in niri noctalia fish libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
                      gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
                      nautilus-gsconnect gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
                      podman-compose kind podman-docker podman-tui \
