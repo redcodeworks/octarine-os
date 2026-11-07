@@ -39,14 +39,23 @@ rejects an unsigned or wrongly signed image.
 | `disk_config/` | Installer settings for ISO and disk images |
 | `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images |
 
-## Builds
+## Branches and releases
 
-`build.yml` publishes every build as `latest`, plus dated and per-commit tags (`latest-<date>`,
-`latest-<sha>`, `latest-<date>-<sha>`), and signs every tag it pushes. A final step verifies each
-tag against `cosign.pub`. It runs on pushes that change the image, on pull requests (build
-only), on a daily schedule and on demand. Before anything is pushed, a smoke test fails the build
-if a required package, unit or file is missing.
+Two branches, two images:
 
+| Branch | Image tags | How it changes |
+|---|---|---|
+| `testing` | `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>` | Push to it directly |
+| `main` | `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>` | Only by pull request from `testing` |
+
+`main` is protected. To release, open a pull request from `testing` into `main`. It can merge only
+when the `Build and push image` check passed on the tip of `testing` and the `require-testing-branch`
+check passes (it rejects any other source branch). The merge builds and publishes `latest`. A daily
+scheduled build on `main` refreshes `latest` too. Merge with a merge commit, not a squash or rebase,
+so `testing` stays in line with `main`. Dependabot proposes changes to `testing`.
+
+Every build runs a smoke test before anything is pushed, signs every tag it pushes, and verifies each
+tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/ublue-os:testing`.
 To pin or roll back, use a dated or per-commit tag, for example
 `sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
 the previous deployment.

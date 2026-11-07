@@ -208,10 +208,14 @@ generate-build-tags $target_image=image_name $tag=default_tag:
         GIT_SHA=$(git rev-parse --short HEAD)
         BUILD_TAGS+=("${tag}-${GIT_SHA}")
         BUILD_TAGS+=("${tag}-${DATE}-${GIT_SHA}")
-        BUILD_TAGS+=("${DATE}-${GIT_SHA}")
+        if [[ "$tag" == "latest" ]]; then
+            BUILD_TAGS+=("${DATE}-${GIT_SHA}")
+        fi
     fi
 
-    BUILD_TAGS+=("${DATE}")
+    if [[ "$tag" == "latest" ]]; then
+        BUILD_TAGS+=("${DATE}")
+    fi
     BUILD_TAGS+=("${tag}")
     BUILD_TAGS+=("${tag}-${DATE}")
 

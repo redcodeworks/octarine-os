@@ -1,22 +1,18 @@
 ---
 name: Build container image
+# Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
+# through a pull request from `testing`, whose merge publishes `latest`. Every push builds (no path
+# filter) so the required "Build and push image" check always exists for the commit being promoted.
 on:
   pull_request:
     branches:
-      - main
+      - testing
   schedule:
-    - cron: '05 10 * * *'  # 10:05am UTC everyday
+    - cron: '05 10 * * *'  # 10:05am UTC everyday (runs on the default branch, so it refreshes latest)
   push:
     branches:
       - main
-    # Only changes that can alter the image start a build; docs do not
-    paths:
-      - 'Containerfile'
-      - 'Justfile'
-      - 'image-template.env'
-      - 'build_files/**'
-      - 'system_files/**'
-      - '.github/workflows/build.yml'
+      - testing
   workflow_dispatch:
 
 env:
@@ -40,6 +36,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # main publishes `latest`, testing publishes `testing`; pull request builds publish nothing
+      - name: Choose channel
+        id: channel
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          publish=false
+          tag=testing
+          if [[ "${EVENT}" != "pull_request" ]]; then
+            case "${REF}" in
+              refs/heads/main) publish=true; tag=latest ;;
+              refs/heads/testing) publish=true ;;
+            esac
+          fi
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Channel: tag=${tag} publish=${publish}"
+
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
 
@@ -60,10 +75,10 @@ jobs:
 
       - name: Default Tag
         id: gen-default-tag
+        env:
+          TAG: ${{ steps.channel.outputs.tag }}
         run: |
-          DEFAULT_TAG=$(just generate-default-tag)
-
-          echo "DEFAULT_TAG=${DEFAULT_TAG}" >> $GITHUB_ENV
+          echo "DEFAULT_TAG=${TAG}" >> $GITHUB_ENV
 
       - name: Prepare environment
         run: |
@@ -163,14 +178,14 @@ jobs:
       # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: steps.channel.outputs.publish == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push To GHCR
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: steps.channel.outputs.publish == 'true'
         id: push-image
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
@@ -195,14 +210,14 @@ jobs:
       # to consume. For more details, review the image signing section of the README.
       - name: Install Cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: steps.channel.outputs.publish == 'true'
         with:
           # be careful when upgrading major versions
           cosign-release: 'v3.1.4'
 
       - name: Sign container image
         id: sign-image
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: steps.channel.outputs.publish == 'true'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -216,7 +231,7 @@ jobs:
           done
 
       - name: Verify every pushed tag is signed
-        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        if: steps.channel.outputs.publish == 'true'
         env:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: |
