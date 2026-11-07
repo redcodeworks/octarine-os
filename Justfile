@@ -460,3 +460,64 @@ format:
     fi
     # Run shfmt on all Bash scripts
     find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
+
+# Build the local repo into a qcow2 and create a libvirt VM from it for testing (system libvirt, default network, UEFI)
+[group('Test')]
+test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export LIBVIRT_DEFAULT_URI=qemu:///system
+    marker="created by just test-vm"
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "VM name may only contain letters, digits, dot, dash and underscore"; exit 1; }
+    [[ "$ram" =~ ^[0-9]+$ && "$cpus" =~ ^[0-9]+$ ]] || { echo "ram (MiB) and cpus must be numbers"; exit 1; }
+
+    # Replace a previous test VM, but never a VM this recipe did not create
+    if virsh dominfo "$name" >/dev/null 2>&1; then
+        if virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
+            virsh destroy "$name" >/dev/null 2>&1 || true
+            virsh undefine "$name" --nvram --remove-all-storage
+        else
+            echo "A VM named '$name' already exists and was not created by this recipe. Pick another name."
+            exit 1
+        fi
+    fi
+
+    pool=$(virsh pool-dumpxml default 2>/dev/null | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
+    dest="${pool:-/var/lib/libvirt/images}/$name.qcow2"
+    sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
+    sudo restorecon "$dest" 2>/dev/null || true
+
+    virt-install \
+        --name "$name" \
+        --memory "$ram" \
+        --vcpus "$cpus" \
+        --cpu host-passthrough \
+        --import \
+        --disk path="$dest",format=qcow2,bus=virtio \
+        --osinfo fedora-unknown \
+        --network network=default,model=virtio \
+        --graphics spice \
+        --video virtio \
+        --boot uefi \
+        --metadata description="$marker" \
+        --noautoconsole
+
+    echo
+    echo "VM '$name' is running. The first boot opens GNOME Initial Setup to create a user."
+    echo "  View it:    virt-viewer --connect qemu:///system $name   (or open it in Cockpit or virt-manager)"
+    echo "  Delete it:  just test-vm-delete $name"
+
+# Delete a VM created by test-vm, together with its disk
+[group('Test')]
+test-vm-delete $name="ublue-test":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export LIBVIRT_DEFAULT_URI=qemu:///system
+    marker="created by just test-vm"
+    virsh dominfo "$name" >/dev/null 2>&1 || { echo "No VM named '$name'"; exit 0; }
+    if ! virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
+        echo "'$name' was not created by just test-vm; refusing to delete it."
+        exit 1
+    fi
+    virsh destroy "$name" >/dev/null 2>&1 || true
+    virsh undefine "$name" --nvram --remove-all-storage
