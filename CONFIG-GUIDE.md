@@ -158,7 +158,9 @@ Some of these are tradeoffs you may not want.
 - **YubiKey for sudo and polkit** with `pam_u2f sufficient` and `nouserok`: a touch alone gives
   root, and a missing key falls back to the password. That is weaker than stock Fedora, and was
   accepted knowingly.
-- **sshd:** key-only login, no root login, no forwarding. Check that `authorized_keys` works first.
+- **sshd:** the image disables root login and X11 and TCP forwarding, and leaves sshd off. Key-only
+  login (`PasswordAuthentication no`) is a separate drop-in that is not shipped, so set it yourself
+  once your `authorized_keys` works.
 - **Firewall:** the default zone keeps a short allow-list of named services plus Tailscale's UDP
   port, with the wide high-port range removed. A zone that names a missing service makes firewalld
   silently fall back to the wide stock config. Check with `firewall-cmd --check-config`.
