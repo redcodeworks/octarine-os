@@ -99,6 +99,8 @@ build $target_image=image_name $tag=default_tag:
     set -euox pipefail
 
     BUILD_ARGS=()
+    BUILD_ARGS+=("--build-arg" "IMAGE_ORG={{ repo_organization }}")
+    BUILD_ARGS+=("--build-arg" "IMAGE_NAME={{ image_name }}")
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)

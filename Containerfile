@@ -2,9 +2,14 @@
 FROM scratch AS ctx
 COPY build_files /
 COPY system_files /system_files
+COPY cosign.pub /cosign.pub
 
 # Base Image
 FROM ghcr.io/ublue-os/silverblue-main:45
+
+# Passed in by `just build` from image-template.env; used to scope the signature policy to this image
+ARG IMAGE_ORG
+ARG IMAGE_NAME
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:stable
 # FROM ghcr.io/ublue-os/bazzite:testing

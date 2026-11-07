@@ -9,7 +9,7 @@ on:
   push:
     branches:
       - main
-    # Only changes that can alter the image start a build; docs and the promote workflow do not
+    # Only changes that can alter the image start a build; docs do not
     paths:
       - 'Containerfile'
       - 'Justfile'
@@ -83,7 +83,7 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
             fail=0
             check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
@@ -108,6 +108,7 @@ jobs:
             check "firefox removed" "! rpm -q firefox"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
+            check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
             check "sudoers valid" "visudo -c"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
