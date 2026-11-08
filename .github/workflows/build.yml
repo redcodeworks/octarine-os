@@ -255,7 +255,7 @@ jobs:
             check "gnome-software removed" "! rpm -q gnome-software"
             for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
             check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
-            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"OctarineOS\\\"\" /etc/os-release"
+            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"Octarine OS\\\"\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
