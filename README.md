@@ -102,13 +102,10 @@ See `LICENSE`.
 
 ## Credits
 
-The Tux logo (GDM login screen and Plymouth boot screen) is [Linux_mascot_tux.png](https://commons.wikimedia.org/wiki/File:Linux_mascot_tux.png)
-on Wikimedia Commons, [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors
-from Pixabay, based on Tux by Larry Ewing and The GIMP (credit is a courtesy, not required).
-
-The Tux logo (GDM login screen and Plymouth boot screen) is [Linux_mascot_tux.png](https://commons.wikimedia.org/wiki/File:Linux_mascot_tux.png)
-on Wikimedia Commons, [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors
-from Pixabay, based on Tux by Larry Ewing and The GIMP (credit is a courtesy, not required).
+The Tux logo (GDM login screen and Plymouth boot screen) is an image edited by Kevin, derived from
+[Linux_mascot_tux.png](https://commons.wikimedia.org/wiki/File:Linux_mascot_tux.png) on Wikimedia Commons,
+[CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors from Pixabay, based on Tux
+by Larry Ewing and The GIMP (credit is a courtesy, not required).
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.
