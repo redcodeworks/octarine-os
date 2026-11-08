@@ -16,16 +16,9 @@
 # workflow-level `paths:` filter, because required checks of a skipped workflow stay pending forever.
 set -euo pipefail
 
-# The one place that lists the files that do not need an image build:
-# top-level *.md (this covers README.md, AGENTS.md, CLAUDE.md, CONFIG-GUIDE.md), docs/**, LICENSE and
-# .gitignore.
-is_docs() {
-    case "$1" in
-        */*) [[ "$1" == docs/* ]] ;;
-        *.md | LICENSE | .gitignore) return 0 ;;
-        *) return 1 ;;
-    esac
-}
+# is_docs (the docs-only list) lives in docs-only.sh, the one place for it.
+# shellcheck source=docs-only.sh
+source "$(dirname "${BASH_SOURCE[0]}")/docs-only.sh"
 
 event="${1:?event}"
 before="${2-}"

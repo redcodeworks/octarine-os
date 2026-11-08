@@ -60,6 +60,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
@@ -71,7 +72,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 ## CI and signing flow
 
 - **Tags.** `testing` pushes publish `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>`.
-  `main` publishes `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>`
+  `main` publishes (build, or promote of the tested `testing` digest) `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>`
   (`just generate-build-tags`). A daily schedule on `main` (10:05 UTC) refreshes `latest`. Pull requests
   into `testing` build without publishing. Dependabot proposes changes to `testing`.
 - **Promotion.** `main` merges only when `Build and push image` passed on the tip of `testing` and
@@ -101,11 +102,31 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
   request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`
-  (the list is `is_docs` in that script, one place). The heavy `build_push` job (named `Build image`) and
+  (the list is `is_docs` in `.github/scripts/docs-only.sh`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
   `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
   An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
   Required checks are `Build and push image`, `require-testing-branch` and `Sign and verify images`; do not
   rename them (a skipped `sign` job counts as passing).
+- **Promotion (build once, promote).** A merge into `main` retags the already tested and signed `testing`
+  image as `latest` instead of rebuilding. Off unless the repository variable `PROMOTE_ENABLED` is `true`
+  (the owner sets it; the workflow never does). `plan-promote.sh` (tests: `tests/plan-promote.sh`, with a fake
+  registry lookup) promotes only when the push is to `main`, the commit is a merge (two parents), every file
+  differing between `HEAD^2` (the testing tip) and `HEAD` is docs-only, and walking first-parent history back
+  from `HEAD^2` reaches a commit C with a published `testing-<short sha>` tag without crossing a non-docs
+  change (so a docs-only testing tip, which has no image of its own, promotes the image of the commit behind
+  it). The plan job then verifies the digest against `cosign.pub`; if that fails it falls back to the normal
+  build and sign. The `promote` job copies the manifest with `skopeo copy --all --preserve-digests` (skopeo is
+  preinstalled on the runners) to every tag `just generate-build-tags` emits for `latest` (`latest`,
+  `latest-<date>`, `latest-<sha>`, `latest-<date>-<sha>`, `<date>`, `<date>-<sha>`, with the merge commit's
+  sha) and compares the digest (`registry-digest.sh`, raw manifest bytes) before and after each copy. The
+  `sign` job only verifies on this path: the digest before and each new tag after. Retagging the manifest is
+  enough for the bootc image: the rechunked layers, the config (labels, ostree commit label) and the
+  signature (which belongs to the digest) all stay as they were; the only difference from a rebuild is that
+  the content, `created` label and base-image snapshot are those of the testing build, and the daily schedule
+  still rebuilds `latest` from the current base. Always build: schedule, `workflow_dispatch`, non-merge pushes
+  to `main`, differing trees, no matching image, failed verification, `PROMOTE_ENABLED` not `true`. The
+  aggregate `Build and push image` counts a successful promote as the build. Pruning stays safe: a version
+  carrying `latest*` next to `testing*` tags is never a candidate (`tests/prune-testing.sh`).
 - **Disk images.** `build-disk.yml` runs only on `workflow_dispatch` (Run workflow in the Actions tab, or
   `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
   `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
