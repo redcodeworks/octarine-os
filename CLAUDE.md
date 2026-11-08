@@ -85,7 +85,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   the Containerfile and fails naming the tag if it does not exist), `just build`, an image-size guard
   (15 GiB), the smoke test, `just ostree-rechunk`, tags, push. The smoke test runs the image and checks
   units, packages, PAM fallbacks, the signature policy, os-release (`ID=fedora`, and `VERSION_ID` against
-  a numeric base tag), sudoers, firewalld, the toolbox definition `dev.ini`/`dev.conf` and the preinstall
+  a numeric base tag), sudoers, firewalld, the toolbox definition `dev-toolbox.ini`/`dev-toolbox.conf` and the preinstall
   list. Add new packages and units to it.
 - **Labels.** `just build` sets the OCI labels (source `https://github.com/<owner>/<image>`, licenses,
   title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
@@ -176,10 +176,10 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 
 - **Scope.** `<name>` selects `/usr/share/ublue-os/distrobox/<name>.ini` (override the directory with
   `TOOLBOX_DEFINITIONS`); the `[<name>]` section is the container name. `image=` points at an image built in the
-  `fedora-toolbox` repo (`dev`: `ghcr.io/redcodeworks/fedora-toolbox:latest`, weekly, packages baked in);
+  `fedora-toolbox` repo (`dev-toolbox`: `ghcr.io/redcodeworks/fedora-toolbox:latest`, weekly, packages baked in);
   `TOOLBOX_IMAGE` overrides the reference of the named toolbox and the recipe prints the image it uses. No name
   lists the definitions with box state (missing, stopped, running), the default marker and the image. An
-  unknown name fails with the known ones. `dev-toolbox` was removed without an alias.
+  unknown name fails with the known ones. `dev` is the old name of `dev-toolbox` (renamed 2026-11): with a `dev` state file it still means the old box, for `--remove` only; otherwise it is an alias.
 - **Sidecar `<name>.conf`.** Plain `KEY=value`, parsed as data and never sourced; values may hold only letters,
   digits, space and `. _ + -` (anything else is ignored with a warning). `TOOLS` selects checklist rows from the
   recipe's catalogue (uv, rustup, sdkman, nvm), `EXPORT_BINS` the commands exported with `distrobox-export`,

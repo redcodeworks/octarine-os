@@ -265,11 +265,11 @@ jobs:
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
-            check "dev toolbox definition" "grep -q \"^\\[dev\\]\" /usr/share/ublue-os/distrobox/dev.ini"
-            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
+            check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
             check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
             check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
-            check "dev toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev.conf"
+            check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
