@@ -216,6 +216,14 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
   (`--help` shows the options). Run `ujust toolbox dev --recreate` after `ujust brew` so the box gets the
   read-only brew mount.
+- **`toolbox gaming`:** a second Steam client in its own container with its own home. The Flatpak Steam on the
+  host stays the primary client; the container never shares its library folders (the isolated home guarantees
+  it), so do not point both at the same library. It exports a `gaming-steam` launcher to the host.
+  Two optional variables in your own shell environment: `TOOLBOX_HOMES_DIR` (where isolated homes live, default
+  `~/.local/share/toolbox-homes`; point it at a bigger disk, then the home is `$TOOLBOX_HOMES_DIR/gaming`) and
+  `TOOLBOX_VOLUMES` (extra binds `src:dst[:opts]`, space-separated, for example your games disk, applied when the
+  box is created; use `--recreate` after changing it). `--remove` keeps the home; `--remove --purge-home` deletes
+  it after a typed `yes`.
 - **`brew`:** installs Homebrew after a confirm; if `/home/linuxbrew/.linuxbrew` is missing it prints the
   one-time `sudo mkdir` and `chown` for you to run, and edits no rc files.
 - **Steam and Flatpak recipes** (`steam-gamescope-setup`, `steam-flatpak-devices`, `flatpak-games-access`

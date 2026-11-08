@@ -182,6 +182,33 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   recipe's catalogue (uv, rustup, sdkman, nvm), `EXPORT_BINS` the commands exported with `distrobox-export`,
   `IDES` the launchers `--ide` offers. No sidecar means no tools, exports or launchers. The catalogue and notes
   stay in the recipe's `rows` table.
+- **Sidecar keys for isolated toolboxes.** `ISOLATED_HOME=true` gives the container its own HOME: the recipe adds
+  `home=<dir>` to the temporary copy of the definition, `<dir>` being `$TOOLBOX_HOMES_DIR/<name>` (default
+  `~/.local/share/toolbox-homes/<name>`; a personal location is set in the user's own environment, never in shipped
+  files or tests). It creates the directory itself (`mkdir -p`, no sudo), records `home <path> created|existed`,
+  prints the path, and refuses to continue when the path is relative, holds odd characters or `..`, exists but is not
+  a directory, or is not writable. `EXPORT_APPS="steam"` exports each app's launcher with `distrobox-export --app`
+  run in the box (the launcher lands in the host's `~/.local/share/applications/<name>-<app>.desktop` because
+  distrobox knows the host home); a file the recipe did not create is never overwritten, each created launcher is
+  recorded as `app <path>`, `--list` shows state per app (`exported`, `not exported`, `foreign file`), `--remove`
+  deletes only recorded launchers, `--recreate` removes them first and exports again. The exported icon files stay.
+  The overview (`ujust toolbox`) adds one line per such toolbox: home path and state, apps and state.
+- **`TOOLBOX_VOLUMES`.** Space-separated `src:dst[:opts]` entries add `volume=` lines to the temporary definition of
+  any toolbox, applied when the box is created (use `--recreate` after changing it). Each entry needs absolute
+  paths, an existing source directory, no `..` and only letters, digits and `/ _ . + - @`; invalid entries are
+  skipped and reported.
+- **Removing an isolated home.** `--remove` never deletes the home (Steam library, Proton prefixes, saves) and
+  prints its path; the state file then keeps just the `home` record. `--remove --purge-home` (also with
+  `--dry-run`) lists the home with its size, warns, asks for `yes` and deletes only the directory recorded as
+  `created` whose basename is the box name, never a symlink, `/` or the user's home. A home that `existed`
+  before the recipe is adopted but never purged (delete it by hand).
+- **The `gaming` toolbox.** `gaming.ini` and `gaming.conf` describe `ghcr.io/redcodeworks/fedora-gaming`
+  (built in the fedora-toolbox repo: RPM Fusion Steam, gamescope, mangohud, gamemode, protontricks and more; no
+  Terra). `init=false`, `nvidia=false`, distrobox's default privileged host-network container (`unshare_netns=true`
+  is only a documented fallback for `bwrap ... resolv.conf` errors after suspend), isolated home, `steam` launcher
+  exported, no tools, bins or IDEs. It replaces nothing: the host Flatpak Steam stays the primary client, and the
+  isolated home guarantees the two never share library folders. Try from a checkout:
+  `TOOLBOX_DEFINITIONS=system_files/usr/share/ublue-os/distrobox TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-gaming:testing just --justfile system_files/usr/share/ublue-os/just/60-custom.just toolbox gaming`.
 - **State per toolbox** in `$XDG_STATE_HOME/ublue-os/toolbox/<name>`: `box`, `export`, `launcher`, `conf` and
   `dir ... created|existed` lines. `--remove` acts only on that file. A shared home directory (`~/.cargo`,
   `~/.rustup`, `~/.sdkman`, `~/.nvm`) is recorded as created by the first toolbox; a toolbox that finds a tool

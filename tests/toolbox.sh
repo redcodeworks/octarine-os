@@ -10,6 +10,8 @@ justfile="$here/../system_files/usr/share/ublue-os/just/60-custom.just"
 shipped_dir="$here/../system_files/usr/share/ublue-os/distrobox"
 shipped_def="$shipped_dir/dev.ini"
 shipped_conf="$shipped_dir/dev.conf"
+gaming_def="$shipped_dir/gaming.ini"
+gaming_conf="$shipped_dir/gaming.conf"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0
@@ -107,6 +109,7 @@ case "$1" in
         mv -- "$FAKE_STATE/boxes.new" "$FAKE_STATE/boxes"
         ;;
     enter)
+        export CONTAINER_ID=$2
         shift 2
         [ "$1" = -- ] && shift
         export PATH="$FAKE_BOXBIN"
@@ -156,13 +159,22 @@ cat >"$tpl/distrobox-export" <<'EOF'
 #!/bin/bash
 bin=""
 dir=""
+app=""
 while [ $# -gt 0 ]; do
     case "$1" in
+        --app) app=$2; shift 2 ;;
         --bin) bin=$2; shift 2 ;;
         --export-path) dir=$2; shift 2 ;;
         *) shift ;;
     esac
 done
+if [ -n "$app" ]; then
+    echo "export app=$app" >>"$LOG"
+    [ -n "${FAKE_APP_FAIL:-}" ] && exit 1
+    mkdir -p "$HOME/.local/share/applications"
+    printf '[Desktop Entry]\nName=%s\n' "$app" >"$HOME/.local/share/applications/${CONTAINER_ID:-box}-$app.desktop"
+    exit 0
+fi
 echo "export bin=$bin" >>"$LOG"
 printf '#!/bin/sh\n# exported %s\n' "$bin" >"$dir/$(basename "$bin")"
 chmod +x "$dir/$(basename "$bin")"
@@ -204,7 +216,7 @@ newenv() { # fresh HOME, temp dir, fake box tools and log
     export UPM_BREW_DIR="$E/linuxbrew" UPM_BREW_PREFIX="$E/linuxbrew/.linuxbrew"
     export LOG="$E/log" FAKE_STATE="$E/fake" FAKE_BOXBIN="$E/boxbin"
     : >"$LOG"
-    unset FAKE_SUDO FAKE_CURL_FAIL FAKE_ASSEMBLE_FAIL FAKE_RM_FAIL FAKE_BOX_STATUS TOOLBOX_IMAGE XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
+    unset FAKE_SUDO FAKE_CURL_FAIL FAKE_ASSEMBLE_FAIL FAKE_RM_FAIL FAKE_BOX_STATUS TOOLBOX_IMAGE TOOLBOX_HOMES_DIR TOOLBOX_VOLUMES FAKE_APP_FAIL XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
     apps="$HOME/.local/share/applications"
     export UPM_JB_SCRIPTS="$E/jb/scripts"
     mkdir -p "$E/jb/scripts" "$E/jb/apps/PyCharm/ch-0/9.9/bin" "$E/jb/apps/DataGrip/ch-0/9.9/bin"
@@ -215,7 +227,7 @@ newenv() { # fresh HOME, temp dir, fake box tools and log
         printf '<svg/>' >"$E/jb/apps/$D/ch-0/9.9/bin/$t.svg"
     done
     mkdir -p "$E/defs"
-    cp "$shipped_dir/dev.ini" "$shipped_dir/dev.conf" "$E/defs/"
+    cp "$shipped_dir/dev.ini" "$shipped_dir/dev.conf" "$shipped_dir/gaming.ini" "$shipped_dir/gaming.conf" "$E/defs/"
     printf '[plain]\nimage=example.invalid/plain:latest\nvolume="/home/linuxbrew:/home/linuxbrew:ro"\n' >"$E/defs/plain.ini"
     export TOOLBOX_DEFINITIONS="$E/defs"
     name=dev
@@ -829,7 +841,7 @@ rawrun --remove
 check "an option without a name exits 2" test "$rc" -eq 2
 rawrun nosuch
 check "unknown name exits 2" test "$rc" -eq 2
-check "unknown name lists the known ones" has "Known toolboxes: dev plain"
+check "unknown name lists the known ones" has "Known toolboxes: dev gaming plain"
 rawrun ../dev
 check "a name with a path is refused" test "$rc" -eq 2
 rawrun nosuch --remove
@@ -971,6 +983,207 @@ check "list shows definition images, not the override" has "ghcr.io/redcodeworks
 run "y" sdkman
 check "TOOLBOX_IMAGE applies to the named toolbox" grep -qx 'image=example.invalid/other:tag' "$FAKE_STATE/assembled.ini"
 unset TOOLBOX_IMAGE
+
+# ---- the gaming toolbox: isolated home, app export, extra volumes ---------------------------------------
+check "gaming definition has the gaming section" grep -qx '\[gaming\]' "$gaming_def"
+check "gaming definition uses the gaming image" grep -qx 'image=ghcr.io/redcodeworks/fedora-gaming:latest' "$gaming_def"
+check "gaming definition: no init, no nvidia" bash -c "grep -qx 'init=false' '$gaming_def' && grep -qx 'nvidia=false' '$gaming_def'"
+check "gaming definition has no home, volume or additional_packages line" bash -c "! grep -qE '^(home|volume|additional_packages|unshare_netns)=' '$gaming_def'"
+check "gaming sidecar isolates the home and exports steam" bash -c "grep -qx 'ISOLATED_HOME=true' '$gaming_conf' && grep -qx 'EXPORT_APPS=\"steam\"' '$gaming_conf'"
+check "gaming sidecar has no tools, bins or IDEs" bash -c "grep -qx 'TOOLS=\"\"' '$gaming_conf' && grep -qx 'EXPORT_BINS=\"\"' '$gaming_conf' && grep -qx 'IDES=\"\"' '$gaming_conf'"
+check "shipped files hold no personal path" bash -c "! grep -qE '/var/mnt|/mnt/container_data|kevin|linux_data' '$gaming_def' '$gaming_conf'"
+
+newenv
+name=gaming
+gstate="$HOME/.local/state/ublue-os/toolbox/gaming"
+ghome="$HOME/.local/share/toolbox-homes/gaming"
+rawrun
+check "overview lists gaming, dev and plain" bash -c "grep -q '^gaming ' '$root/out' && grep -q '^dev ' '$root/out' && grep -q '^plain ' '$root/out'"
+check "overview shows the gaming image" has "ghcr.io/redcodeworks/fedora-gaming:latest"
+run "" --list
+check "gaming --list shows its home missing" has "$ghome (missing"
+check "gaming --list shows the app not exported" grep -qE '^steam +not exported' "$root/out"
+check "gaming --list has no tool table" hasnt "TOOL "
+run "y"
+check "gaming first run exits 0" test "$rc" -eq 0
+check "gaming home created" test -d "$ghome"
+check "gaming home creation recorded" bash -c "grep -qxF 'home $ghome created' '$gstate'"
+check "gaming prints the home path" has "Isolated home: $ghome (created)"
+check "assembled definition has home=" grep -qxF "home=$ghome" "$FAKE_STATE/assembled.ini"
+check "assembled definition keeps init=false" grep -qx 'init=false' "$FAKE_STATE/assembled.ini"
+check "assembled definition has no brew volume (shipped has none)" bash -c "! grep -q linuxbrew '$FAKE_STATE/assembled.ini'"
+check "steam launcher exported" test -e "$apps/gaming-steam.desktop"
+check "steam launcher recorded" bash -c "grep -qxF 'app $apps/gaming-steam.desktop' '$gstate'"
+check "no tools are offered or installed" notlogged "curl url="
+check "nothing exported to ~/.local/bin" bash -c "! ls '$HOME/.local/bin'/* >/dev/null 2>&1"
+check "dev's state file untouched" test ! -e "$HOME/.local/state/ublue-os/toolbox/dev"
+run "" --list
+check "gaming --list shows the home exists" has "$ghome (exists"
+check "gaming --list shows the app exported" grep -qE '^steam +exported' "$root/out"
+rawrun
+check "overview shows home and app state" bash -c "grep -qF 'gaming: isolated home $ghome (exists); app steam (exported)' '$root/out'"
+: >"$LOG"
+run ""
+check "rerun exits 0" test "$rc" -eq 0
+check "rerun does not export again" notlogged "export app="
+check "rerun says already exported" has "already exported"
+run "" --ide
+check "--ide is refused cleanly for gaming" test "$rc" -eq 1
+check "--ide says there are no IDES" has "offers no IDE launchers"
+run "" --purge-home
+check "--purge-home without --remove exits 2" test "$rc" -eq 2
+
+# --remove keeps the home; the launcher goes
+echo hello >"$ghome/save.dat"
+run "yes
+" --remove
+check "gaming --remove exits 0" test "$rc" -eq 0
+check "the launcher is removed" test ! -e "$apps/gaming-steam.desktop"
+check "the box is removed" logged "rm --force gaming"
+check "the home is kept with its data" test -s "$ghome/save.dat"
+check "the home kept message names the path" has "The isolated home was kept: $ghome"
+check "the plain remove mentions --purge-home" has "--purge-home"
+check "the state file keeps only the home record" bash -c "[ \"\$(cat '$gstate')\" = 'home $ghome created' ]"
+
+# --remove --purge-home: dry run, declined, accepted
+mkbox_g() { echo gaming >"$FAKE_STATE/boxes"; }
+run "" --remove --dry-run --purge-home
+check "dry run lists the home with its size" bash -c "grep -qE 'home +$ghome +\(' '$root/out'"
+check "dry run warns what the home holds" has "Steam library"
+check "dry run deletes nothing" test -s "$ghome/save.dat"
+run "no
+" --remove --purge-home
+check "declined purge removes nothing" test -s "$ghome/save.dat"
+check "declined purge says so" has "Nothing was removed"
+run "yes
+" --remove --purge-home
+check "accepted purge deletes the home" test ! -e "$ghome"
+check "accepted purge removes the state file" test ! -e "$gstate"
+check "the parent directory is left" test -d "$HOME/.local/share/toolbox-homes"
+
+# an existing directory is adopted, never purged
+newenv
+name=gaming
+ghome="$HOME/.local/share/toolbox-homes/gaming"
+gstate="$HOME/.local/state/ublue-os/toolbox/gaming"
+mkdir -p "$ghome"
+echo keep >"$ghome/old"
+run "y"
+check "existing home: run succeeds" test "$rc" -eq 0
+check "existing home: said so" has "already existed"
+check "existing home recorded as existed" bash -c "grep -qxF 'home $ghome existed' '$gstate'"
+check "existing home content untouched" test -s "$ghome/old"
+run "yes
+" --remove --purge-home
+check "an existing home is not purged" test -s "$ghome/old"
+check "an existing home is reported as left alone" has "existed before this recipe"
+
+# a path that is not a directory, and an unwritable one
+newenv
+name=gaming
+mkdir -p "$HOME/.local/share/toolbox-homes"
+echo x >"$HOME/.local/share/toolbox-homes/gaming"
+run "y"
+check "a file in place of the home stops the run" test "$rc" -ne 0
+check "the refusal says it is not a directory" has "is not a directory"
+check "no box was created" notlogged "assemble "
+newenv
+name=gaming
+mkdir -p "$HOME/.local/share/toolbox-homes/gaming"
+chmod 500 "$HOME/.local/share/toolbox-homes/gaming"
+if [ "$(id -u)" -ne 0 ]; then
+    run "y"
+    check "an unwritable home stops the run" test "$rc" -ne 0
+    check "the refusal says it is not writable" has "is not writable"
+fi
+chmod 700 "$HOME/.local/share/toolbox-homes/gaming"
+
+# TOOLBOX_HOMES_DIR
+newenv
+name=gaming
+export TOOLBOX_HOMES_DIR="$E/elsewhere/homes"
+run "y"
+check "TOOLBOX_HOMES_DIR sets the home" test -d "$E/elsewhere/homes/gaming"
+check "TOOLBOX_HOMES_DIR reaches the definition" grep -qxF "home=$E/elsewhere/homes/gaming" "$FAKE_STATE/assembled.ini"
+newenv
+name=gaming
+export TOOLBOX_HOMES_DIR="relative/dir"
+run "y"
+check "a relative TOOLBOX_HOMES_DIR is refused" test "$rc" -ne 0
+check "the refusal asks for an absolute path" has "absolute"
+unset TOOLBOX_HOMES_DIR
+
+# TOOLBOX_VOLUMES, for gaming and for another toolbox
+newenv
+name=gaming
+mkdir -p "$E/games" "$E/more"
+export TOOLBOX_VOLUMES="$E/games:/mnt/games $E/more:/mnt/more:ro relative:/x $E/nodir:/y $E/games:/a/../b $E/games:rel $E/games"
+run "y"
+check "volumes: run succeeds" test "$rc" -eq 0
+check "volumes: a valid entry becomes a volume line" grep -qxF "volume=\"$E/games:/mnt/games\"" "$FAKE_STATE/assembled.ini"
+check "volumes: options are kept" grep -qxF "volume=\"$E/more:/mnt/more:ro\"" "$FAKE_STATE/assembled.ini"
+check "volumes: a relative source is skipped" has "Skipped volume 'relative:/x'"
+check "volumes: a missing source is skipped" has "Skipped volume '$E/nodir:/y'"
+check "volumes: .. is skipped" has "/a/../b'"
+check "volumes: a relative destination is skipped" has "Skipped volume '$E/games:rel'"
+check "volumes: a lone path is skipped" has "Skipped volume '$E/games': use src:dst"
+check "volumes: only the two valid entries are in the definition" bash -c "[ \$(grep -c '^volume=' '$FAKE_STATE/assembled.ini') -eq 2 ]"
+newenv
+name=plain
+mkdir -p "$E/games"
+export TOOLBOX_VOLUMES="$E/games:/mnt/games"
+mkdir -p "$UPM_BREW_DIR"
+run "y"
+check "volumes also apply to another toolbox" grep -qxF "volume=\"$E/games:/mnt/games\"" "$FAKE_STATE/assembled.ini"
+check "the other toolbox keeps its own volume" grep -q linuxbrew "$FAKE_STATE/assembled.ini"
+check "a plain toolbox has no home= line" bash -c "! grep -q '^home=' '$FAKE_STATE/assembled.ini'"
+unset TOOLBOX_VOLUMES
+
+# app export: foreign file, failure, recreate, state isolation from dev
+newenv
+name=gaming
+mkdir -p "$apps"
+echo mine >"$apps/gaming-steam.desktop"
+run "y"
+check "a foreign launcher is not overwritten" grep -qx mine "$apps/gaming-steam.desktop"
+check "the skip is reported" has "not overwritten"
+check "a foreign launcher is not recorded" bash -c "! grep -q '^app ' '$HOME/.local/state/ublue-os/toolbox/gaming'"
+run "" --list
+check "--list shows a foreign file" grep -qE '^steam +foreign file' "$root/out"
+run "yes
+" --remove
+check "--remove leaves the foreign launcher" grep -qx mine "$apps/gaming-steam.desktop"
+newenv
+name=gaming
+export FAKE_APP_FAIL=1
+run "y"
+check "a failing export is reported and fails the run" bash -c "[ $rc -ne 0 ] && grep -q 'Could not export steam' '$root/out'"
+unset FAKE_APP_FAIL
+newenv
+name=gaming
+run "y"
+rm -f "$apps/gaming-steam.desktop.mine"
+check "recreate: first export exists" test -e "$apps/gaming-steam.desktop"
+: >"$LOG"
+run "yy" --recreate
+check "recreate: exits 0" test "$rc" -eq 0
+check "recreate: removes the old launcher" has "Removed old app launcher"
+check "recreate: exports it again" logged "export app=steam"
+check "recreate: launcher exists again and is recorded" bash -c "test -e '$apps/gaming-steam.desktop' && grep -qxF 'app $apps/gaming-steam.desktop' '$HOME/.local/state/ublue-os/toolbox/gaming'"
+check "recreate keeps the home" test -d "$HOME/.local/share/toolbox-homes/gaming"
+run "" --upgrade --check
+check "--upgrade --check works for gaming" test "$rc" -eq 0
+run "" --set-default
+check "--set-default works for gaming" grep -qx 'container_name_default="gaming"' "$conf"
+run "" --update
+check "--update works for gaming" logged "upgrade gaming"
+# dev next to gaming: separate state, no home line, no app line
+name=dev
+run "yyy"
+check "dev has its own state file" test -s "$HOME/.local/state/ublue-os/toolbox/dev"
+check "dev's state has no home or app lines" bash -c "! grep -qE '^(home|app) ' '$HOME/.local/state/ublue-os/toolbox/dev'"
+check "dev's assembled definition has no home=" bash -c "! grep -q '^home=' '$FAKE_STATE/assembled.ini'"
+check "gaming's state has no export lines" bash -c "! grep -q '^export ' '$HOME/.local/state/ublue-os/toolbox/gaming'"
 
 echo
 echo "$pass passed, $failn failed"
