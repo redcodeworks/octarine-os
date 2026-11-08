@@ -17,7 +17,7 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
-- `.github/workflows/`: `build.yml` (build, smoke test, push, then a separate `sign` job in the `signing`
+- `.github/workflows/`: `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -58,6 +58,8 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   packages and units to it.
 - Package names cannot be checked from the sandbox (no mirror access); the first CI build confirms them.
 - Shell blocks in workflows and recipes: check with `bash -n`.
+- `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
+  `.github/scripts/plan-build.sh`.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
@@ -96,9 +98,18 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
   or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
   hand with `dry_run` on to see the plan.
-- **Disk images.** `build-disk.yml` runs by hand or after a push to `main` has published the image
-  (`workflow_run`, not after the daily schedule, never on pull requests, which have no `latest` to build
-  from). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
+- **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
+  `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
+  request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`
+  (the list is `is_docs` in that script, one place). The heavy `build_push` job (named `Build image`) and
+  `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
+  An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
+  Required checks are `Build and push image`, `require-testing-branch` and `Sign and verify images`; do not
+  rename them (a skipped `sign` job counts as passing).
+- **Disk images.** `build-disk.yml` runs only on `workflow_dispatch` (Run workflow in the Actions tab, or
+  `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
+  `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
+  container`). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
 
 ## Forking
 
@@ -165,12 +176,19 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `~/Applications`. `StartupWMClass` values are from memory and unverified.
 - **Adding a toolbox.** Ship `<name>.ini` (section `[<name>]`) and optionally `<name>.conf` in
   `system_files/usr/share/ublue-os/distrobox/`, with an image from the fedora-toolbox repo; extend `tests/toolbox.sh`.
+- **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
+- **Installer scripts.** SDKMAN and nvm (in the toolbox) and Homebrew (`ujust brew`) are the only installer
+  scripts; nothing here needs sudo.
 - **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref). `ujust brew` needs the prefix to exist and be
   the user's (otherwise it prints the `sudo mkdir`/`chown`), prints the shellenv lines and edits no rc files.
   `add-user-groups` copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group`
   first. The extest recipes build a pinned upstream commit and preload the 64-bit build into Flatpak Steam.
-  Flatpak recipes only add or remove their own override entries.
+  Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
+  idempotent, and each override-changing one has a matching reset. `steam-flatpak-devices` widens the sandbox.
+  Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-themes` needs network, git and just, and
+  without a name shows a checklist. The extest recipes need `cargo` and a C linker (the host has none; use the
+  toolbox) and are not verified end to end.
 
 ## Image hygiene notes
 

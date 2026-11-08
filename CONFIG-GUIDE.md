@@ -114,8 +114,8 @@ timers are installed but not enabled. Turn on what you use.
 - The usual modern tools: Helix, starship, atuin, zoxide, fzf, bat, eza, yazi and Zellij.
 - Terminals: Ghostty, Ptyxis and kitty.
 - Homebrew is not in the image (its prefix has to belong to your user): `ujust brew` installs it on the
-  host after you confirm. The toolbox's tools come with its image; SDKMAN and nvm are the only
-  installer scripts, and nothing here needs sudo. The host has no compilers.
+  host after you confirm. The toolbox's tools come with its image; nothing here needs sudo. The host has
+  no compilers.
 
 ## Containers
 
@@ -131,8 +131,7 @@ timers are installed but not enabled. Turn on what you use.
   one.
 - **No build tools on the host.** Builds belong in the dev toolbox (`ujust toolbox dev`): a distrobox
   with a shared home whose build chain, `uv`, the rustup proxies and a few CLI tools are exported to
-  `~/.local/bin`, so the host feels like it has a compiler. Add a stdin guard to the wrappers, or they hang
-  tools that talk over stdio. `ujust toolbox` lists the toolboxes; `--help` shows the options.
+  `~/.local/bin`, so the host feels like it has a compiler.
 - Containers on the host network share loopback, so containers see host services. They also share `/tmp`.
 - **Datastores:** Postgres, Valkey and SeaweedFS run in one shared pod on loopback, with a
   least-privilege role per database.
@@ -207,26 +206,20 @@ Some of these are tradeoffs you may not want.
 ## Recipes (`ujust`)
 
 Recipes run through `ujust`; arguments are positional, for example `ujust flatpak-games-access /mnt/games`.
-They are idempotent, and the Flatpak ones only touch their own entries (Flatseal shows the result). The
-README has the one-line list; `ujust --list` is the index. What you need to know to use them:
+They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
+and safeguards are in `CLAUDE.md`. What you need to use them:
 
-- **`add-user-groups [user]`:** joins `gamemode`, `input` and `libvirt` (they exist only in
-  `/usr/lib/group`, so their lines are copied into `/etc/group` first).
-- **`gnome-themes <recipe> [name]`:** runs a recipe of the gnome-themes repo (`install-themes`,
-  `switch-theme`, `install-icons`, `switch-icons` and so on; without a name you get a checklist). Themes
-  land in `~/.themes` and icons in `~/.local/share/icons`. Needs network, git and just.
-- **`toolbox [<name> [options]]`:** lists the toolboxes, or creates and manages one. Every option acts
-  only on the named toolbox (`--list`, `--recreate`, `--remove [--dry-run]`, `--upgrade [--check]`,
-  `--update`, `--set-default`, `--ide`). After `ujust brew`, run `ujust toolbox dev --recreate` so the box
-  gets the read-only brew mount. To try a checkout or another image tag, set `TOOLBOX_DEFINITIONS` or
-  `TOOLBOX_IMAGE`.
-- **`brew`:** needs `/home/linuxbrew/.linuxbrew` to exist and be yours; if not, it prints the one-time
-  `sudo mkdir` and `chown` for you to run. It prints the `brew shellenv` lines and edits no rc files.
+- **`add-user-groups [user]`:** joins `gamemode`, `input` and `libvirt`.
+- **`gnome-themes <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
+  directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
+- **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
+  (`--help` shows the options). Run `ujust toolbox dev --recreate` after `ujust brew` so the box gets the
+  read-only brew mount.
+- **`brew`:** installs Homebrew after a confirm; if `/home/linuxbrew/.linuxbrew` is missing it prints the
+  one-time `sudo mkdir` and `chown` for you to run, and edits no rc files.
 - **Steam and Flatpak recipes** (`steam-gamescope-setup`, `steam-flatpak-devices`, `flatpak-games-access`
-  and the rest): each has a matching reset where it changes an override. `steam-flatpak-devices` widens
-  the sandbox.
-- **extest (experimental):** the Flathub Steam package does not bundle extest, so it is built from a pinned
-  upstream commit (needs `cargo` and a C linker) and preloaded into Flatpak Steam. Not verified end to end.
+  and others): most have a matching reset. `steam-flatpak-devices` widens the sandbox.
+- **extest (experimental):** preloads a locally built extest into Flatpak Steam; not verified end to end.
 
 Ideas for more, each a candidate for its own recipe:
 

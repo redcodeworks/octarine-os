@@ -1,8 +1,10 @@
 ---
 name: Build container image
 # Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
-# through a pull request from `testing`, whose merge publishes `latest`. Every push builds (no path
-# filter) so the required "Build and push image" check always exists for the commit being promoted.
+# through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
+# path filter) so the required "Build and push image" check always exists for the commit being promoted:
+# the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
+# aggregate job named "Build and push image" then passes without it.
 on:
   pull_request:
     branches:
@@ -23,8 +25,34 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: Plan build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the image needs building
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          echo "Build image: ${build}"
+
   build_push:
-    name: Build and push image
+    name: Build image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-26.04
 
     outputs:
@@ -246,6 +274,29 @@ jobs:
           digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
 
           echo "digests=${digests}" >> $GITHUB_OUTPUT
+
+  # The required check. It always runs and passes when the build passed or was skipped as docs-only,
+  # and fails when the plan or the build failed or was cancelled.
+  build_result:
+    name: Build and push image
+    needs: [plan, build_push]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the build result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD_WANTED: ${{ needs.plan.outputs.build }}
+          BUILD: ${{ needs.build_push.result }}
+        run: |
+          echo "plan=${PLAN} build wanted=${BUILD_WANTED} build=${BUILD}"
+          [[ "${PLAN}" == success ]] || { echo "::error::The plan job did not succeed"; exit 1; }
+          if [[ "${BUILD_WANTED}" == true ]]; then
+            [[ "${BUILD}" == success ]] || { echo "::error::The image build did not succeed (${BUILD})"; exit 1; }
+          else
+            [[ "${BUILD}" == skipped ]] || { echo "::error::Unexpected build result ${BUILD}"; exit 1; }
+            echo "Docs-only change: heavy build skipped"
+          fi
 
   # Signing runs in its own job so the private key is only reachable through the `signing`
   # environment, which is limited to the main and testing branches. Pull request builds
