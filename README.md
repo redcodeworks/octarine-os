@@ -37,7 +37,7 @@ rejects an unsigned or wrongly signed image.
 | `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, Flatpak preinstall list, `ujust` recipes) |
 | `image-template.env` | Image name, owner, description and default tag |
 | `disk_config/` | Installer settings for ISO and disk images |
-| `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images |
+| `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images (manual run, or after a push to `main` published the image; never on pull requests) |
 
 ## Branches and releases
 
