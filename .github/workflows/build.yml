@@ -290,6 +290,13 @@ jobs:
       #      ${IMAGE_NAME} \
       #      ${DEFAULT_TAG}
 
+      # A promoted image keeps its build's version, so no version may name a channel
+      - name: Check the version is channel-neutral
+        run: |
+          podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
+            | .github/scripts/check-version-neutral.sh
+
       - name: Generate Build Tags
         id: gen-build-tags
         run: |

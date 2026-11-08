@@ -81,8 +81,8 @@ sudoif command *args:
 #   $target_image - The tag you want to apply to the image (default: $image_name).
 #   $tag - The tag for the image (default: $default_tag).
 #
-# The script constructs the version string using the tag and the current date.
-# If the git working directory is clean, it also includes the short SHA of the current HEAD.
+# The version label is `<YYYYMMDD>-<short sha>` (.github/scripts/image-version.sh), the same for testing and
+# main builds, and only set when the git working directory is clean.
 #
 # just build $target_image $tag
 #
@@ -107,7 +107,7 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
-        LABELS+=("--label" "org.opencontainers.image.version=${tag}.$(date +%Y%m%d)-${GIT_SHA}")
+        LABELS+=("--label" "org.opencontainers.image.version=$(.github/scripts/image-version.sh)")
     fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images

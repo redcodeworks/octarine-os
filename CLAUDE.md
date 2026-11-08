@@ -60,6 +60,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
@@ -90,6 +91,12 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
   from the rootfs, so `ostree-rechunk` re-passes every label except `containers.bootc` and `ostree.*`
   with `--label`; without that the pushed image lost them.
+- **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
+  shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
+  (tests: `tests/image-version.sh`). A promoted image keeps the version it was built with, which is why it must
+  be channel-neutral: the retag cannot change it. After the rechunk the build checks, with
+  `check-version-neutral.sh`, that the version label (and any other `*version*` label) is present and contains
+  neither `testing` nor `latest`. Image tags are unchanged.
 - **Signing.** A separate `sign` job in the `signing` environment (limited to `main` and `testing`) signs
   every distinct pushed digest with cosign (old bundle format, `--use-signing-config=false`) and verifies
   each tag against `cosign.pub`. Pull request builds never reach it. `build.sh` generates the container
