@@ -1,4 +1,4 @@
-# ublue-os
+# octarine-os
 
 A personal [bootc](https://github.com/bootc-dev/bootc) image built on Universal Blue's
 `silverblue-main` (Fedora Silverblue plus codecs and a few conveniences). It adds the niri
@@ -15,14 +15,14 @@ This is one person's configuration, with no promises. Read what it changes befor
 ## Use it
 
 ```
-sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest
+sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 ```
 
 Reboot, then run `ujust add-user-groups` to join the `gamemode`, `input` and `libvirt` groups.
 Images are signed with [cosign](https://github.com/sigstore/cosign). To check one yourself:
 
 ```
-cosign verify --key cosign.pub ghcr.io/redcodeworks/ublue-os:latest
+cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest
 ```
 
 The image also installs a container signature policy for its own registry path, so `bootc upgrade`
@@ -34,10 +34,10 @@ rejects an unsigned or wrongly signed image.
 |---|---|
 | `Containerfile` | The base image and the single build step |
 | `build_files/build.sh` | Package installs, service enablement and the signature policy |
-| `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, themes, Flatpak preinstall list, `ujust` recipes) |
+| `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, Flatpak preinstall list, `ujust` recipes) |
 | `image-template.env` | Image name, owner, description and default tag |
 | `disk_config/` | Installer settings for ISO and disk images |
-| `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images |
+| `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images (manual run, or after a push to `main` published the image; never on pull requests) |
 
 ## Branches and releases
 
@@ -55,16 +55,31 @@ scheduled build on `main` refreshes `latest` too. Merge with a merge commit, not
 so `testing` stays in line with `main`. Dependabot proposes changes to `testing`.
 
 Every build runs a smoke test before anything is pushed, signs every tag it pushes, and verifies each
-tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/ublue-os:testing`.
+tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing`.
 To pin or roll back, use a dated or per-commit tag, for example
-`sudo bootc switch ghcr.io/redcodeworks/ublue-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
+`sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
 the previous deployment.
+
+### Pruning old testing images
+
+GHCR has no retention policy, so `prune-testing.yml` runs weekly (from `main`) and deletes `testing`
+builds beyond the newest 10, together with their cosign signatures and any untagged versions older
+than a week. It never touches a version carrying a `latest*` tag. Scheduled runs only delete after
+you set the repository variable `PRUNE_ENABLED` to `true`; until then they are dry runs. To see
+the plan first, run the workflow from the Actions tab with `dry_run` on.
 
 ## Recipes
 
 The image ships `ujust` recipes in `system_files/usr/share/ublue-os/just/60-custom.just`, covering
 group membership, Flatpak overrides (themes, game directories, controllers, VS Code with Podman)
-and Flatpak Steam with gamescope and extest. Run `ujust --list` to see them, and
+and Flatpak Steam with gamescope and extest. The image carries no compilers or build tools:
+`ujust dev-toolbox` builds the `fedora-toolbox` distrobox from a definition the image ships
+(`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, which pulls `ghcr.io/redcodeworks/fedora-toolbox:latest`,
+built weekly in its own repo with the packages baked in; `DEV_TOOLBOX_IMAGE` picks another tag), exports the
+build chain to `~/.local/bin`, runs `rustup-init` in your home and sets up SDKMAN and nvm in it. `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
+are vendor installer scripts, so none of them is baked into the image (Homebrew's prefix has to belong
+to the user who runs it): each installer is downloaded, hashed, shown to you and run only after you
+confirm, with sudo blocked. Run `ujust --list` to see them, and
 [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md) for what each one does.
 
 ## Build it yourself
@@ -84,11 +99,15 @@ just --list                # everything else
 ## Fork it
 
 1. Edit `image-template.env`: `IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`.
-2. Create your own signing key and store the private half as a repository secret. Commit the
-   public half as `cosign.pub`, replacing mine:
+2. Create your own signing key and store the private half as a secret in a protected environment
+   named `signing`, limited to `main` and `testing`, so no other branch's workflow can read it. Commit
+   the public half as `cosign.pub`, replacing mine:
    ```
    COSIGN_PASSWORD="" cosign generate-key-pair
-   gh secret set SIGNING_SECRET < cosign.key
+   gh api -X PUT repos/<owner>/<repo>/environments/signing --input - <<< '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
+   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=main -f type=branch
+   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=testing -f type=branch
+   gh secret set SIGNING_SECRET --env signing < cosign.key
    ```
    Never commit `cosign.key`. It is in `.gitignore`.
 3. Point `disk_config/iso.toml` at your image (`ghcr.io/<owner>/<image>:latest`).
@@ -113,7 +132,7 @@ These ship to everyone who uses the image as-is:
   big (roughly 11 GB on disk).
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled. `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.
-- **Flatpaks and themes:** a preinstall list of apps, and Gruvbox themes under `/usr/share/themes`.
+- **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image: `ujust gnome-themes <recipe>` fetches them from their own repos.
 
 ## License
 

@@ -100,7 +100,7 @@ build $target_image=image_name $tag=default_tag:
 
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "IMAGE_ORG={{ repo_organization }}")
-    BUILD_ARGS+=("--build-arg" "IMAGE_NAME={{ image_name }}")
+    BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
@@ -108,7 +108,7 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}/blob/${GIT_SHA}/Containerfile")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
-        LABELS+=("--label" "org.opencontainers.image.version={{ default_tag }}.$(date +%Y%m%d)-${GIT_SHA}")
+        LABELS+=("--label" "org.opencontainers.image.version=${tag}.$(date +%Y%m%d)-${GIT_SHA}")
     fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
@@ -120,7 +120,7 @@ build $target_image=image_name $tag=default_tag:
     LABELS+=("--label" "io.artifacthub.package.prerelease=false")
     LABELS+=("--label" "org.opencontainers.image.created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)")
     LABELS+=("--label" "org.opencontainers.image.description={{ image_desc }}")
-    LABELS+=("--label" "org.opencontainers.image.title={{ image_name }}")
+    LABELS+=("--label" "org.opencontainers.image.title=${target_image}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 
     # This actually builds the image!
@@ -465,31 +465,56 @@ format:
     # Run shfmt on all Bash scripts
     find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
 
-# Build the local repo into a qcow2 and create a libvirt VM from it for testing (system libvirt, default network, UEFI)
+# Create a libvirt test VM from the local repo, built under a registry channel (default testing, so updates inside the VM follow it). An existing test VM is kept and started, because updating it is the normal way to test; pass recreate=true to rebuild it from scratch
 [group('Test')]
-test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
+test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $channel="testing" $recreate="false":
     #!/usr/bin/env bash
     set -euo pipefail
     export LIBVIRT_DEFAULT_URI=qemu:///system
     marker="created by just test-vm"
     [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "VM name may only contain letters, digits, dot, dash and underscore"; exit 1; }
     [[ "$ram" =~ ^[0-9]+$ && "$cpus" =~ ^[0-9]+$ ]] || { echo "ram (MiB) and cpus must be numbers"; exit 1; }
+    [[ "$channel" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "channel must be an image tag such as testing or latest"; exit 1; }
+    [[ "$recreate" == "true" || "$recreate" == "false" ]] || { echo "recreate must be true or false"; exit 1; }
 
-    # Replace a previous test VM, but never a VM this recipe did not create
+    # Keep an existing test VM (updating it is the point), unless asked to rebuild it
     if virsh dominfo "$name" >/dev/null 2>&1; then
-        if virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
-            virsh destroy "$name" >/dev/null 2>&1 || true
-            virsh undefine "$name" --nvram --remove-all-storage
-        else
+        if ! virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
             echo "A VM named '$name' already exists and was not created by this recipe. Pick another name."
             exit 1
         fi
+        if [[ "$recreate" != "true" ]]; then
+            virsh start "$name" >/dev/null 2>&1 || true
+            echo "VM '$name' already exists and was kept. To test a new build, update it from inside the VM:"
+            echo "  sudo bootc upgrade && sudo systemctl reboot"
+            echo "To rebuild it from scratch: just test-vm $name $ram $cpus $pool $channel true"
+            exit 0
+        fi
     fi
 
-    pool=$(virsh pool-dumpxml default 2>/dev/null | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
-    dest="${pool:-/var/lib/libvirt/images}/$name.qcow2"
-    sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
-    sudo restorecon "$dest" 2>/dev/null || true
+    # Build the local repo under the registry name of the channel (ghcr.io/<owner>/<image>:<channel>).
+    # bootc-image-builder records the name it is given as the installed system's update source, so
+    # `bootc upgrade` inside the VM follows that channel instead of a local image that does not exist there.
+    image="ghcr.io/${repo_organization,,}/${image_name,,}"
+    "{{ just_executable() }}" rebuild-qcow2 "$image" "$channel"
+
+    # Only a VM this recipe created reaches this point; recreate=true replaces it
+    if virsh dominfo "$name" >/dev/null 2>&1; then
+        virsh destroy "$name" >/dev/null 2>&1 || true
+        virsh undefine "$name" --nvram --remove-all-storage
+    fi
+
+    virsh pool-info "$pool" >/dev/null 2>&1 || { echo "No libvirt storage pool named '$pool'. Pools: $(virsh pool-list --all --name | xargs)"; exit 1; }
+    virsh pool-start "$pool" >/dev/null 2>&1 || true
+    dir=$(virsh pool-dumpxml "$pool" | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
+    [[ -n "$dir" ]] || { echo "Could not read the path of storage pool '$pool'"; exit 1; }
+    dest="$dir/$name.qcow2"
+    if [[ -w "$dir" ]]; then
+        cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
+    else
+        sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
+    fi
+    virsh pool-refresh "$pool" >/dev/null
 
     virt-install \
         --name "$name" \
@@ -508,6 +533,8 @@ test-vm $name="ublue-test" $ram="8192" $cpus="4": rebuild-qcow2
 
     echo
     echo "VM '$name' is running. The first boot opens GNOME Initial Setup to create a user."
+    echo "  Updates inside it follow $image:$channel. To make bootc verify signatures, run once in the VM:"
+    echo "    sudo bootc switch --enforce-container-sigpolicy $image:$channel"
     echo "  View it:    virt-viewer --connect qemu:///system $name   (or open it in Cockpit or virt-manager)"
     echo "  Delete it:  just test-vm-delete $name"
 
@@ -525,3 +552,40 @@ test-vm-delete $name="ublue-test":
     fi
     virsh destroy "$name" >/dev/null 2>&1 || true
     virsh undefine "$name" --nvram --remove-all-storage
+
+# Open the release pull request from testing into main. Pass true to also wait for the required checks and merge it
+[group('Release')]
+release $merge="false":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git fetch -q origin
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    [[ "$branch" == "testing" ]] || { echo "Switch to the testing branch first (you are on '$branch')"; exit 1; }
+    [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "Commit or stash your changes first"; exit 1; }
+    [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/testing)" ]] || { echo "testing is not in sync with origin/testing: push (or pull) first"; exit 1; }
+    [[ "$(git rev-list --count origin/main..origin/testing)" -gt 0 ]] || { echo "testing has nothing that main does not already have"; exit 0; }
+
+    url=$(gh pr list --base main --head testing --state open --json url --jq '.[0].url // empty')
+    if [[ -z "$url" ]]; then
+        url=$(gh pr create --base main --head testing \
+            --title "Release $(date +%Y-%m-%d)" \
+            --body "$(git log --format='- %s' origin/main..origin/testing)")
+    fi
+    echo "$url"
+
+    if [[ "$merge" == "true" ]]; then
+        echo "Waiting for the required checks (the testing build can take about 20 minutes)..."
+        gh pr checks "$url" --watch --required
+        gh pr merge "$url" --merge
+        echo "Merged. The latest build is running: gh run list --branch main --limit 1"
+    else
+        echo "When the checks pass, merge it with: just release true   (or: gh pr merge --merge)"
+    fi
+
+# Use this repository's git hooks (a gitleaks scan of what you push)
+[group('Security')]
+install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git config core.hooksPath githooks
+    echo "Git hooks enabled from githooks/. The pre-push scan needs gitleaks: brew install gitleaks"

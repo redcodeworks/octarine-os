@@ -27,6 +27,12 @@ jobs:
     name: Build and push image
     runs-on: ubuntu-26.04
 
+    outputs:
+      publish: ${{ steps.channel.outputs.publish }}
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push-image.outputs.digests }}
+      alias_tags: ${{ steps.gen-build-tags.outputs.alias_tags }}
+
     permissions:
       contents: read
       packages: write
@@ -81,10 +87,24 @@ jobs:
           echo "DEFAULT_TAG=${TAG}" >> $GITHUB_ENV
 
       - name: Prepare environment
+        id: names
         run: |
           # Lowercase the image uri https://github.com/macbre/push-to-ghcr/issues/12
           echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
+          echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
+
+      # Fail early and clearly if the base image tag in the Containerfile cannot be pulled
+      - name: Check the base image can be pulled
+        run: |
+          base=$(sed -n 's/^FROM \(ghcr.io\/ublue-os\/[^ ]*\).*/\1/p' Containerfile | tail -n1)
+          [[ -n "${base}" ]] || { echo "::error::No ghcr.io/ublue-os base image found in the Containerfile"; exit 1; }
+          echo "BASE_IMAGE=${base}" >> "${GITHUB_ENV}"
+          if ! podman pull "${base}" >/dev/null; then
+            echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${base%%:*})"
+            exit 1
+          fi
+          podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
 
       # This actually builds the container image
       - name: Build Image
@@ -94,13 +114,27 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
+      # Catch accidental bloat (for example a disk image copied into the build) before anything is pushed
+      - name: Check image size
+        env:
+          MAX_IMAGE_GIB: 15
+        run: |
+          size=$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"
+          if (( size > MAX_IMAGE_GIB * 1024 * 1024 * 1024 )); then
+            echo "::error::The image is larger than ${MAX_IMAGE_GIB} GiB; check what was added"
+            exit 1
+          fi
+
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_IMAGE##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
             fail=0
             check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
+            echo "== os-release (the Fedora release the base tag resolved to)"
+            cat /etc/os-release
             echo "== enabled system units"
             systemctl list-unit-files --state=enabled --no-legend --no-pager || true
             echo "== enabled user units (global)"
@@ -112,25 +146,33 @@ jobs:
             done
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
-            for p in niri noctalia libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
+            for p in niri noctalia fish libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
                      gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
-                     nautilus-gsconnect gnome-shell-extension-gsconnect \
+                     nautilus-gsconnect gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
                      podman-compose kind podman-docker podman-tui \
                      borgbackup restic rclone socat wtype btrfs-assistant \
-                     gcc-c++ cmake ninja-build meson uv; do
+                     guestfs-tools libguestfs libguestfs-xfs virt-v2v; do
               check "package $p" "rpm -q $p"
             done
+            check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
+            check "sudo PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/sudo"
+            check "polkit PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/polkit-1"
+            check "pam_u2f module present" "test -e /usr/lib64/security/pam_u2f.so"
             check "firefox removed" "! rpm -q firefox"
             check "toolbox removed" "! rpm -q toolbox"
             check "distrobox present" "rpm -q distrobox"
+            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"OctarineOS\\\"\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
+            check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
+            check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
             check "sudoers valid" "visudo -c"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
-            check "themes installed" "test -f /usr/share/themes/Gruvbox-Dark/gtk-3.0/gtk.css -a -f /usr/share/themes/Gruvbox-Material-Shell-Dark/gnome-shell/gnome-shell.css"
+            check "dev toolbox definition" "grep -q \"^\\[fedora-toolbox\\]\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
+            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
@@ -204,40 +246,60 @@ jobs:
 
           echo "digests=${digests}" >> $GITHUB_OUTPUT
 
-      # This section is optional and only needs to be enabled if you plan on distributing
-      # your project for others to consume. You will need to create a public and private key
-      # using Cosign and save the private key as a repository secret in Github for this workflow
-      # to consume. For more details, review the image signing section of the README.
+  # Signing runs in its own job so the private key is only reachable through the `signing`
+  # environment, which is limited to the main and testing branches. Pull request builds
+  # never publish, so they never reach this job or the key.
+  sign:
+    name: Sign and verify images
+    needs: build_push
+    if: needs.build_push.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        if: steps.channel.outputs.publish == 'true'
         with:
           # be careful when upgrading major versions
           cosign-release: 'v3.1.4'
 
-      - name: Sign container image
-        id: sign-image
-        if: steps.channel.outputs.publish == 'true'
+      - name: Sign every pushed digest
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          DIGESTS: ${{ steps.push-image.outputs.digests }}
+          IMAGE: ${{ needs.build_push.outputs.image }}
+          DIGESTS: ${{ needs.build_push.outputs.digests }}
         run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
           # https://github.com/containers/container-libs/issues/388
           # https://github.com/coreos/rpm-ostree/issues/5509
           # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
           for digest in ${DIGESTS}; do
-            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY ${IMAGE_REGISTRY}/${IMAGE_NAME}@${digest}
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
           done
 
       - name: Verify every pushed tag is signed
-        if: steps.channel.outputs.publish == 'true'
         env:
-          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
+          IMAGE: ${{ needs.build_push.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build_push.outputs.alias_tags }}
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}" > /dev/null
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
-

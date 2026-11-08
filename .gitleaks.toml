@@ -1,0 +1,12 @@
+title = "octarine-os gitleaks config"
+
+[extend]
+useDefault = true
+
+# A pam_u2f (pamu2fcfg) security key registration: user:keyhandle,publickey,algorithm,+options.
+# Not a private key, but it identifies a person's hardware key and must not be published.
+[[rules]]
+id = "pam-u2f-registration"
+description = "A pam_u2f security key registration line"
+regex = '''[A-Za-z0-9._-]+:[A-Za-z0-9_\-+/=]{20,},[A-Za-z0-9_\-+/=]{20,},(es256|eddsa|rs256)(,|\s|$)'''
+keywords = ["es256", "eddsa", "rs256"]

@@ -2,6 +2,25 @@
 
 set -ouex pipefail
 
+# Which Fedora release is the base image? The log must say what this build started from.
+echo "== base image os-release"
+cat /usr/lib/os-release
+
+# --- Guard: refuse to build if secrets or personal key material ended up in system_files ---
+# A security key registration (pam_u2f's u2f_keys) or a private key copied here would be baked into a
+# public image. Check names first, then content (this also catches a renamed copy).
+forbidden=$(find /ctx/system_files \( -name 'u2f_keys' -o -name 'u2f_mappings' -o -name 'Yubico' \
+    -o -name '*.key' -o -name '*.p12' -o -name '*.pfx' -o -name 'id_rsa*' -o -name 'id_ed25519*' \
+    -o -name 'id_ecdsa*' -o -name 'authorized_keys' -o -name '.env' \) -print)
+forbidden+=$'\n'$(grep -rIlE -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+    -e ',(es256|eddsa|rs256),\+?(presence|verification|pin)?' /ctx/system_files || true)
+forbidden=$(echo "$forbidden" | sed '/^$/d')
+if [[ -n "$forbidden" ]]; then
+    echo "Refusing to build: sensitive files found in system_files:" >&2
+    echo "$forbidden" >&2
+    exit 1
+fi
+
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
@@ -42,6 +61,14 @@ fi
 # --- end signature policy ---
 
 ### Install packages
+#
+# Release-specific parts of this script (the base tag in the Containerfile decides the Fedora release):
+# the package names below, since a package can be renamed, retired or not yet built for a release
+# (niri, noctalia, btrfs-assistant, the rocm-*/hipcc set, the cockpit-* modules, usbip, nautilus-python
+# and the gnome-shell-extension-* names are the likeliest); the negativo17 gstreamer replacement of the
+# -free variants; and the removal list further down. dnf5 stops with an error on a name it cannot find
+# (no --skip-unavailable here) and the smoke test checks the results, so a release difference should
+# fail the build instead of shipping an image without something.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images
@@ -55,7 +82,7 @@ fi
 # no negativo17 equivalent of mesa-va-drivers-freeworld.
 dnf5 install -y \
     gstreamer1-plugins-bad gstreamer1-plugins-ugly \
-    niri noctalia \
+    niri noctalia fish \
     libvirt qemu-kvm \
     fuse-libs pam-u2f snapper btrfs-assistant steam-devices tailscale \
     cockpit cockpit-machines cockpit-podman cockpit-storaged \
@@ -63,13 +90,16 @@ dnf5 install -y \
     cockpit-packagekit cockpit-sosreport cockpit-kdump \
     pcp python3-pcp \
     powertop iotop-c lm_sensors usbip \
-    gnome-shell-extension-gsconnect nautilus-gsconnect nautilus-python \
+    gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
+    nautilus-gsconnect nautilus-python \
     podman-compose kind podman-docker podman-tui \
     borgbackup restic rclone socat wtype \
     rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
-    gcc-c++ cmake ninja-build meson uv
+    guestfs-tools libguestfs libguestfs-xfs virt-v2v
 
-dnf5 group install -y development-tools
+# No compilers or build tools (gcc, make, cmake, ninja, meson, the development-tools group):
+# builds happen in the fedora-toolbox distrobox, created by `ujust dev-toolbox` from
+# /usr/share/ublue-os/distrobox/fedora-toolbox.ini. Nothing here compiles from source.
 
 # Remove RPMs the base ships that this image replaces, only if they are still present:
 # Firefox (use the Flatpak) and toolbox (distrobox covers it)
@@ -78,6 +108,16 @@ for pkg in firefox firefox-langpacks toolbox; do
         dnf5 remove -y "$pkg"
     fi
 done
+
+# Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
+# VERSION_ID stay as they are, because update tooling and third-party software read them.
+sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release
+grep -qx 'PRETTY_NAME="OctarineOS"' /usr/lib/os-release
+echo "== resulting os-release"
+cat /usr/lib/os-release
+
+### Themes and icons are NOT part of the image: install them per user from their own repos with
+# `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
 
 # Use a COPR Example:
 #
