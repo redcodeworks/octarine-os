@@ -156,6 +156,9 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
 - Packages come from the base's repos (distrobox, ffmpeg and pam-u2f already ship in `silverblue-main`; its
   multimedia stack is negativo17, so `gstreamer1-plugins-bad/-ugly` replace the `-free` variants and there is no
   `mesa-va-drivers-freeworld`). Package names are release-specific; `dnf5 install` stops on an unknown name.
+- `scx_rusty` (sched_ext scheduler, Fedora 45 package 0.5.4) is installed but never enabled: no unit or loader,
+  started by hand as root (`sudo scx_rusty`, Ctrl-C returns to EEVDF). The version is old, so it may not load on a
+  newer kernel. Do not add a service or other scx packages without being asked.
 - No compilers or build tools in the image: builds happen in a toolbox. Nothing compiles from source.
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
