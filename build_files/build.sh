@@ -66,9 +66,26 @@ fi
 # the package names below, since a package can be renamed, retired or not yet built for a release
 # (niri, noctalia, btrfs-assistant, the rocm-*/hipcc set, the cockpit-* modules, usbip, nautilus-python
 # and the gnome-shell-extension-* names are the likeliest); the negativo17 gstreamer replacement of the
-# -free variants; and the removal list further down. dnf5 stops with an error on a name it cannot find
-# (no --skip-unavailable here) and the smoke test checks the results, so a release difference should
-# fail the build instead of shipping an image without something.
+# -free variants; and the removal list further down.
+#
+# Two tiers. CRITICAL packages go in one dnf5 transaction without --skip-unavailable: dnf5 stops with an
+# error on a name it cannot find, so a release difference fails the build instead of shipping an image
+# without something that must be there (the smoke test checks them again). OPTIONAL packages are installed
+# afterwards, one transaction per group; dnf5 transactions are atomic, so a failed group changes nothing
+# (and a dependency that would conflict with a critical package fails the group instead of replacing it).
+# When a group fails its packages are retried one by one, and whatever still cannot be installed is
+# listed in /usr/share/octarine-os/optional-packages-missing (one name per line, the file exists in every
+# image, possibly empty), printed as "OPTIONAL PACKAGE MISSING: <name>", and the smoke test turns each
+# entry into a CI warning. A missing optional package never fails the build.
+#
+# Standing policy: a package from outside Fedora's own repositories (negativo17, RPM Fusion, COPR, vendor
+# repos) may only be installed in an optional group, never in the critical transaction. The smoke test
+# enforces it: every critical package must have the RPM vendor "Fedora Project", else the build fails
+# naming the package. Optional packages are exempt.
+#
+# fish is optional: nothing in the image depends on it and it is never a login shell (bash stays the login
+# shell; new users get zsh). A user who configures their own terminal to start fish needs it installed,
+# which is their own setting.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images
@@ -77,25 +94,52 @@ fi
 
 # distrobox, ffmpeg and pam-u2f already ship in silverblue-main (dnf5 skips them).
 # Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
-# packages from the host are not used: gstreamer1-plugins-bad/-ugly below are
-# the negativo17 equivalents (they replace the -free variants), and there is
-# no negativo17 equivalent of mesa-va-drivers-freeworld.
+# packages from the host are not used: gstreamer1-plugins-bad/-ugly (group `codecs`, optional because they
+# come from negativo17) are the negativo17 equivalents and replace the base's -free variants. They are
+# optional, so a failed transaction leaves the -free GStreamer packages in place (dnf5 is atomic). There
+# is no negativo17 equivalent of mesa-va-drivers-freeworld.
+#
+# CRITICAL (keep in step with the smoke test in .github/workflows/build.yml):
 dnf5 install -y \
-    gstreamer1-plugins-bad gstreamer1-plugins-ugly \
-    niri noctalia fish \
-    libvirt qemu-kvm \
-    fuse-libs pam-u2f snapper btrfs-assistant steam-devices tailscale \
-    cockpit cockpit-machines cockpit-podman cockpit-storaged \
-    cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files \
-    cockpit-packagekit cockpit-sosreport cockpit-kdump \
-    pcp python3-pcp \
-    powertop iotop-c lm_sensors usbip \
-    gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
-    nautilus-gsconnect nautilus-python \
-    podman-compose kind podman-docker podman-tui \
-    borgbackup restic rclone socat wtype \
-    rocm-hip rocm-opencl rocm-smi rocminfo hipcc \
-    guestfs-tools libguestfs libguestfs-xfs virt-v2v
+    pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale \
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh
+
+# Default login shell for NEW users is zsh (existing accounts and root keep theirs). Patch the packaged
+# /etc/default/useradd instead of shipping a copy, so its other defaults follow the shadow-utils package;
+# /etc of an ostree image is merged three-way on upgrade, so an unmodified-on-the-machine file follows the image.
+sed -i 's|^SHELL=.*|SHELL=/usr/bin/zsh|' /etc/default/useradd
+grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd
+grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
+
+# OPTIONAL: one group per transaction. Format: "<group name>:<space separated packages>".
+mkdir -p /usr/share/octarine-os
+missing_file=/usr/share/octarine-os/optional-packages-missing
+: > "${missing_file}"
+optional_groups=(
+    "misc:fish niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
+    "cockpit:cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
+    "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
+    "pcp:pcp python3-pcp"
+    "containers:podman-compose kind podman-docker podman-tui"
+    "rocm:rocm-hip rocm-opencl rocm-smi rocminfo hipcc"
+    "libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v"
+)
+for entry in "${optional_groups[@]}"; do
+    group="${entry%%:*}"
+    read -r -a pkgs <<< "${entry#*:}"
+    if dnf5 install -y "${pkgs[@]}"; then
+        continue
+    fi
+    echo "WARNING: optional group ${group} failed as a whole, retrying its packages one by one"
+    for pkg in "${pkgs[@]}"; do
+        if ! dnf5 install -y "${pkg}"; then
+            echo "${pkg}" >> "${missing_file}"
+            echo "OPTIONAL PACKAGE MISSING: ${pkg}"
+        fi
+    done
+done
+echo "== optional packages missing:"
+cat "${missing_file}"
 
 # No compilers or build tools (gcc, make, cmake, ninja, meson, the development-tools group):
 # builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
@@ -134,6 +178,38 @@ grep -qx 'PRETTY_NAME="Octarine_OS"' /usr/lib/os-release
 echo "== resulting os-release"
 cat /usr/lib/os-release
 
+# --- Branding: Tux on the GDM login screen and the Plymouth boot screen ---
+# GDM: system_files ships zz-octarine-login-screen.gschema.override; compile the schemas so it takes effect.
+# glib-compile-schemas exits non-zero on a bad override (set -e fails the build).
+glib-compile-schemas /usr/share/glib-2.0/schemas
+test "$(GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo)" \
+    = "'/usr/share/octarine-os/logo/octarine-logo.png'"
+
+# Plymouth: own theme "octarine" = bgrt (firmware logo plus spinner) with our watermark. The spinner assets are
+# copied from the installed spinner theme (not vendored); the fedora-logos package file stays untouched.
+theme=/usr/share/plymouth/themes/octarine
+rm -rf "${theme}"
+mkdir -p "${theme}"
+cp -a /usr/share/plymouth/themes/spinner/. "${theme}/"
+rm -f "${theme}/spinner.plymouth"
+install -m644 /usr/share/octarine-os/logo/octarine-logo.png "${theme}/watermark.png"
+sed -e '/^Name\[/d' -e 's/^Name=.*/Name=Octarine/' \
+    -e "s#^ImageDir=.*#ImageDir=${theme}#" \
+    /usr/share/plymouth/themes/bgrt/bgrt.plymouth >"${theme}/octarine.plymouth"
+grep -qx "ImageDir=${theme}" "${theme}/octarine.plymouth"
+grep -qx 'ModuleName=two-step' "${theme}/octarine.plymouth"
+grep -qx 'Theme=octarine' /etc/plymouth/plymouthd.conf
+
+# The initramfs carries the Plymouth theme (boot and LUKS passphrase screens), so regenerate it for the image's
+# kernel, the way Universal Blue images do (dracut with the ostree module). Riskiest step: CI cannot boot it.
+test "$(ls /usr/lib/modules | wc -l)" = 1
+kver=$(ls /usr/lib/modules)
+DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add ostree \
+    -f "/usr/lib/modules/${kver}/initramfs.img"
+chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
+lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
+# --- end branding ---
+
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
 
@@ -151,9 +227,11 @@ cat /usr/lib/os-release
 #   sudo systemctl enable --now tailscaled
 # libvirt relies on its packaged presets and socket activation, and the base image
 # already enables automatic update staging (rpm-ostreed-automatic.timer).
-systemctl enable \
-    pmcd.service pmlogger.service \
-    flatpak-preinstall.service
+systemctl enable flatpak-preinstall.service
+# pcp is an optional package: enable its units only when it was installed
+if rpm -q pcp &>/dev/null; then
+    systemctl enable pmcd.service pmlogger.service
+fi
 
 # Homebrew (files from the pinned ublue-os/brew image, copied in by the Containerfile). The first-boot
 # extraction (brew-setup, skipped when a prefix exists) and the 6-hourly `brew update` are on; the 8-hourly

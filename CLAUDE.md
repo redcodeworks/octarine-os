@@ -125,6 +125,15 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   units, packages, PAM fallbacks, the signature policy, os-release (`ID=fedora`, and `VERSION_ID` against
   a numeric base tag), sudoers, firewalld, the toolbox definition `dev-toolbox.ini`/`dev-toolbox.conf` and the preinstall
   list. Add new packages and units to it.
+- **Package tiers.** `build.sh` has a CRITICAL `dnf5 install` (one transaction; a missing name fails the build) and
+  OPTIONAL groups (own transaction each, per-package retry, failures written to
+  `/usr/share/octarine-os/optional-packages-missing`, warning annotations and a step summary from the build job).
+  Policy: packages from outside Fedora's repositories (negativo17, RPM Fusion, COPR, vendors) are optional only;
+  the smoke test requires vendor `Fedora Project` for every critical package. `fish` is optional: nothing in the image depends on it and it is never a login shell (the image ships no terminal configuration). New users default to zsh (`/etc/default/useradd` patched in `build.sh`,
+  `system_files/etc/skel/.zshrc`; distrobox copies the host login shell). Add a package to the right tier and to the
+  smoke test's critical or informational list.
+- **Cancelling.** `build.yml` concurrency cancels the older run for any ref but `main` and any scheduled run. A cancelled run
+  never turns `Build and push image` green; it can leave the `testing` tag unsigned until the next build.
 - **Labels.** `just build` sets the OCI labels (source `https://github.com/<owner>/<image>`, licenses,
   title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
   from the rootfs, so `ostree-rechunk` re-passes every label except `containers.bootc` and `ostree.*`

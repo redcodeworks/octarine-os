@@ -28,7 +28,9 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer push to any branch but main cancels the older build; main (publishes or promotes the tested
+  # image) and the scheduled refresh of latest are never cancelled mid-way.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
 
 jobs:
   plan:
@@ -261,9 +263,9 @@ jobs:
             systemctl --global list-unit-files --state=enabled --no-legend --no-pager || true
             echo "== checks"
 
-            for u in pmcd.service pmlogger.service flatpak-preinstall.service; do
-              check "enabled $u" "systemctl is-enabled $u"
-            done
+            check "enabled flatpak-preinstall.service" "systemctl is-enabled flatpak-preinstall.service"
+            # pcp is an optional package: its units are enabled only when it is installed
+            check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
             check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
             check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
             check "brew-upgrade.timer stays disabled" "! systemctl is-enabled brew-upgrade.timer"
@@ -272,14 +274,27 @@ jobs:
             check "our brew preset present" "grep -qx \"disable brew-upgrade.timer\" /usr/lib/systemd/system-preset/00-octarine-brew.preset"
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
-            for p in niri noctalia fish libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \
-                     gstreamer1-plugins-bad gstreamer1-plugins-ugly powertop iotop-c lm_sensors \
-                     nautilus-gsconnect gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
-                     podman-compose kind podman-docker podman-tui \
-                     borgbackup restic rclone socat wtype btrfs-assistant \
-                     guestfs-tools libguestfs libguestfs-xfs virt-v2v; do
+            # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
+            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh"
+            for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
+              # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
+              check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
             done
+            # OPTIONAL packages: informational only, never fail (the missing list is reported below)
+            for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect \
+                     nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
+                     cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
+                     pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
+                     restic rclone rocm-hip rocm-opencl rocm-smi rocminfo hipcc guestfs-tools libguestfs \
+                     libguestfs-xfs virt-v2v; do
+              if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
+            done
+            check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
+            check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
+            check "new users default to zsh" "grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
+            check "zsh login files source /etc/profile (brew.sh relies on it)" "grep -q /etc/profile /etc/zprofile"
+            check "skel zshrc" "test -s /etc/skel/.zshrc"
             check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
             check "sudo PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/sudo"
             check "polkit PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/polkit-1"
@@ -305,9 +320,35 @@ jobs:
             check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
             check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
             check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
-            check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            check "Tux logo files" "test -s /usr/share/octarine-os/logo/octarine-logo.png && test -s /usr/share/octarine-os/logo/octarine-logo-master-512.png"
+            check "GDM logo override file" "grep -qF octarine-logo.png /usr/share/glib-2.0/schemas/zz-octarine-login-screen.gschema.override"
+            check "GDM logo override compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo | grep -qF octarine-logo.png"
+            check "plymouth theme file" "grep -qx ModuleName=two-step /usr/share/plymouth/themes/octarine/octarine.plymouth"
+            check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/watermark.png /usr/share/octarine-os/logo/octarine-logo.png"
+            check "plymouth theme selected" "grep -qx Theme=octarine /etc/plymouth/plymouthd.conf"
+            check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
+            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
+
+      # Optional packages that could not be installed (build.sh writes the list): a warning each, never a failure
+      - name: Report missing optional packages
+        run: |
+          missing=$(podman run --rm "${IMAGE_NAME}:${DEFAULT_TAG}" cat /usr/share/octarine-os/optional-packages-missing)
+          {
+            echo "### Optional packages"
+            if [[ -z "${missing}" ]]; then
+              echo "All optional packages are installed."
+            else
+              echo "These optional packages could not be installed (the build went on without them):"
+              echo
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+          while IFS= read -r name; do
+            [[ -n "${name}" ]] || continue
+            echo "::warning title=Optional package missing::${name}"
+            echo "- \`${name}\`" >> "${GITHUB_STEP_SUMMARY}"
+          done <<< "${missing}"
 
       # This is optional, this provides smaller delta updates
       - name: Rechunk with rpm-ostree
