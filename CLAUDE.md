@@ -248,7 +248,9 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref). `ujust brew` needs the prefix to exist and be
   the user's (otherwise it prints the `sudo mkdir`/`chown`), prints the shellenv lines and edits no rc files.
   `add-user-groups` copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group`
-  first. The extest recipes build a pinned upstream commit and preload the 64-bit build into Flatpak Steam.
+  first. The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
+  contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
+  shipped) and preload the 64-bit build into Flatpak Steam.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
   idempotent, and each override-changing one has a matching reset. `steam-flatpak-devices` widens the sandbox.
   Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-themes` needs network, git and just, and

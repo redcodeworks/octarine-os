@@ -68,6 +68,8 @@ steam-gamescope-reset:
         echo "No gamescope PATH override found in $file; nothing to do"
     fi
 
+# extest: https://github.com/Supreeeme/extest by Supreeeme and contributors, MIT licence. This repo only
+# builds a pinned upstream commit on the user's machine and ships none of its source.
 # EXPERIMENTAL: build extest (X11 XTEST to uinput shim for Steam Input on Wayland)
 extest-build $src=`echo "$HOME/Repos/extest"` $dest=`echo "$HOME/.local/lib/extest"` $commit="cb77cd4f80f83393a24bae17dd975e14fa6eb1b2":
     #!/usr/bin/env bash
@@ -89,6 +91,7 @@ extest-build $src=`echo "$HOME/Repos/extest"` $dest=`echo "$HOME/.local/lib/exte
     cargo build --release --locked --target x86_64-unknown-linux-gnu
     install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"
     echo "Installed $dest/lib64/libextest.so"
+    echo "extest by Supreeeme and contributors, MIT licence: https://github.com/Supreeeme/extest"
     echo "Next: ujust extest-steam-setup"
 
 # EXPERIMENTAL: preload the built extest library into Flatpak Steam

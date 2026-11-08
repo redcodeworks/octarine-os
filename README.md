@@ -75,3 +75,8 @@ promotes it, and CI is the test. Maintainer notes (design, CI, forking) are in `
 
 Apache-2.0, inherited from the [Universal Blue image template](https://github.com/ublue-os/image-template).
 See `LICENSE`.
+
+## Credits
+
+The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
+and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.
