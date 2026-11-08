@@ -19,6 +19,12 @@ on:
 
 env:
   IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
+  # The base image is ${BASE_IMAGE}:${FEDORA_VERSION}. A repository variable of the same name overrides the default
+  # (set with `gh variable set FEDORA_VERSION --body 46`, undo with `gh variable delete FEDORA_VERSION`); the
+  # defaults repeat the Containerfile ARG defaults, keep them in sync. The build logs the resolved base and its
+  # digest and records them as OCI labels.
+  BASE_IMAGE: ${{ vars.BASE_IMAGE || 'ghcr.io/ublue-os/silverblue-main' }}
+  FEDORA_VERSION: ${{ vars.FEDORA_VERSION || '45' }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -204,17 +210,21 @@ jobs:
           echo "Brew image ${image} resolved to ${pinned}; signature valid"
           echo "BREW_IMAGE=${pinned}" >> "${GITHUB_ENV}"
 
-      # Fail early and clearly if the base image tag in the Containerfile cannot be pulled
+      # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
         run: |
-          base=$(sed -n 's/^FROM \(ghcr.io\/ublue-os\/[^ ]*\).*/\1/p' Containerfile | tail -n1)
-          [[ -n "${base}" ]] || { echo "::error::No ghcr.io/ublue-os base image found in the Containerfile"; exit 1; }
-          echo "BASE_IMAGE=${base}" >> "${GITHUB_ENV}"
+          [[ -n "${BASE_IMAGE}" && "${FEDORA_VERSION}" =~ ^[0-9]+$ ]] || { echo "::error::BASE_IMAGE or FEDORA_VERSION missing or invalid (repository variable or workflow default)"; exit 1; }
+          base="${BASE_IMAGE}:${FEDORA_VERSION}"
+          echo "BASE_REF=${base}" >> "${GITHUB_ENV}"
           if ! podman pull "${base}" >/dev/null; then
-            echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${base%%:*})"
+            echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
           podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
+          digest=$(podman image inspect "${base}" --format '{{.Digest}}')
+          [[ "${digest}" == sha256:* ]] || { echo "::error::Cannot determine the digest of ${base}"; exit 1; }
+          echo "Base image ${base} resolved to ${BASE_IMAGE}@${digest}"
+          echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
 
       # This actually builds the container image
       - name: Build Image
@@ -239,7 +249,7 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_IMAGE##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
             fail=0
             check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 

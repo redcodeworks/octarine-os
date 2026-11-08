@@ -32,6 +32,27 @@ sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing               # unrel
 sudo bootc rollback                                                      # boot the previous deployment
 ```
 
+## Base image
+
+The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in
+the workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile`
+(keep them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults.
+CI and `just build` pass both values as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
+Fedora major upgrade:
+
+1. Set the variable: `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo: `gh variable delete
+   FEDORA_VERSION`), or edit the default in the workflow `env:` block and the `Containerfile` ARG on a commit.
+2. Changing a variable does not start a build: run the `Build container image` workflow on `testing` (a push to
+   `testing` or manual dispatch). The "Check the base image can be pulled" step fails early and names the tag if
+   it does not exist (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test
+   checks that `VERSION_ID` matches. The log and the OCI labels `org.opencontainers.image.base.name` and
+   `base.digest` record the resolved base.
+3. Test the `testing` build: `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+4. Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`).
+   Then merge the pull request: promotion only retags an already tested `testing` digest, so a variable changed
+   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does
+   read the variable, so set it only when you intend the next scheduled build to use it.
+
 ## Recipes
 
 `ujust --list` shows them all.

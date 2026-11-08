@@ -197,6 +197,24 @@ Some of these are tradeoffs you may not want.
 - Gotcha: in Vorta, pick **Add Existing Repository**. **Initialize** wiped a repo once.
 - The restore procedure was written down and has **not been tested end to end on a clean install**.
 
+## Changing the base image
+
+The base is `${BASE_IMAGE}:${FEDORA_VERSION}`: defaults in the workflow `env:` block (and the `Containerfile`
+ARGs), overridable with the repository variables of the same names. A Fedora major upgrade:
+
+1. Set the variable: `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo: `gh variable delete
+   FEDORA_VERSION`), or edit the default in the workflow `env:` block and the `Containerfile` ARG on a commit.
+2. Changing a variable does not start a build: run the `Build container image` workflow on `testing` (a push to
+   `testing` or manual dispatch). The "Check the base image can be pulled" step fails early and names the tag if
+   it does not exist (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test
+   checks that `VERSION_ID` matches. The log and the OCI labels `org.opencontainers.image.base.name` and
+   `base.digest` record the resolved base.
+3. Test the `testing` build: `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+4. Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`).
+   Then merge the pull request: promotion only retags an already tested `testing` digest, so a variable changed
+   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does
+   read the variable, so set it only when you intend the next scheduled build to use it.
+
 ## Clean install walkthrough
 
 1. **Before wiping:** push the dotfiles, run the capture scripts, run the data backup, confirm sync
