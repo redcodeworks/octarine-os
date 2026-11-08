@@ -220,6 +220,8 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
   (`--help` shows the options). Run `ujust toolbox dev --recreate` after `ujust brew` so the box gets the
   read-only brew mount.
+  It then asks which container `distrobox enter` should open by default: Enter takes the toolbox's own name,
+  another name sets that, `-` leaves the current value.
 - **`toolbox gaming`:** a second Steam client in its own container with its own home. The Flatpak Steam on the
   host stays the primary client; the container never shares its library folders (the isolated home guarantees
   it), so do not point both at the same library. It exports a `gaming-steam` launcher to the host.
