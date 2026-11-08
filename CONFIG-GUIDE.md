@@ -136,8 +136,8 @@ timers are installed but not enabled. Turn on what you use.
   one.
 - **No build tools on the host.** The image carries no gcc, make, cmake, ninja, meson or the
   development-tools group, because builds belong in the Fedora toolbox and a compiler on the host
-  invites installs that bypass it. `ujust dev-toolbox` creates that box from
-  `/usr/share/ublue-os/distrobox/fedora-toolbox.ini` and runs `distrobox-export` so that `cc`, `gcc`,
+  invites installs that bypass it. `ujust toolbox dev` creates that box from
+  `/usr/share/ublue-os/distrobox/dev.ini` and runs `distrobox-export` so that `cc`, `gcc`,
   `make`, `cmake`, `uv`, the rustup proxies (`~/.cargo/bin`, created by `rustup-init`), `sdk` and a few CLI tools appear in `~/.local/bin`, and
   the host feels like it has a compiler. Add a stdin guard to the wrappers, or they hang tools that
   talk over stdio. See the recipe notes below for `--recreate`, `--remove`, `--upgrade`, `--update`
@@ -204,10 +204,10 @@ Some of these are tradeoffs you may not want.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
    from the manifest. Restore app data before first launch where it matters (browser profiles).
-7. **Dev toolbox, then Homebrew:** `ujust dev-toolbox` (builds the box, installs nothing on the host),
+7. **Dev toolbox, then Homebrew:** `ujust toolbox dev` (builds the box, installs nothing on the host),
    then run the one-time `sudo mkdir` and `chown` for brew's prefix that `ujust brew` prints, run
    `ujust brew`, then `brew bundle` from the Brewfile. If brew came after the box, run
-   `ujust dev-toolbox --recreate` so the box gets the read-only brew mount.
+   `ujust toolbox dev --recreate` so the box gets the read-only brew mount.
 8. **Containers:** recreate the distroboxes from their config, enable lingering, restore Quadlets.
 9. **Opt in to services:** `tailscaled`, `sshd`, `cockpit.socket`, the snapper timers.
 10. **Restore data from borg,** then check `systemctl --failed`, the firewall zone,
@@ -231,7 +231,7 @@ shows the result.
 | `podman-desktop-deny-docker-socket` | Stops Podman Desktop reaching a Docker socket. |
 | `chrome-flatpak-webapps` | Lets Flatpak Chrome write web app launchers and icons. |
 | `gearlever-applications` | Lets Gear Lever manage AppImages in `~/Applications`. |
-| `dev-toolbox [--list] [--recreate] [--remove [--dry-run]] [--upgrade [--check]] [--update] [--ide ...] [tool ...]` | Builds the `fedora-toolbox` distrobox from the image's definition, makes it the default for `distrobox enter`, sets up uv, rustup, SDKMAN and nvm in it, and exports the build chain and CLI tools to `~/.local/bin`. Details in the notes below. |
+| `toolbox [<name> [--list] [--recreate] [--remove [--dry-run]] [--upgrade [--check]] [--update] [--set-default] [--ide ...] [tool ...]]` | With no name, lists the toolboxes the image defines. With a name (today `dev`), builds that distrobox from `/usr/share/ublue-os/distrobox/<name>.ini`, offers to make it the default for `distrobox enter`, and sets up the tools, exported commands and IDE launchers its `<name>.conf` lists (for `dev`: uv, rustup, SDKMAN and nvm, and the build chain and CLI tools exported to `~/.local/bin`). Every option acts only on the named toolbox. Details in the notes below. |
 | `brew` | Installs Homebrew on the host. The prefix `/home/linuxbrew/.linuxbrew` (`/home` is `/var/home` here) must exist and be yours first; if not, the recipe prints the one-time `sudo mkdir` and `chown` for you to run and stops. The installer is downloaded to a temp file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first on `PATH` and `no_new_privs` set. It prints the `brew shellenv` lines for bash and fish and edits no rc files. |
 | `extest-build`, `extest-steam-setup` / `extest-steam-reset` | **Experimental.** Builds extest (an X11 XTEST to uinput shim that lets Steam Input work on Wayland without the "Allow Remote Interaction" prompt) and preloads it into Flatpak Steam. See the notes below. |
 
@@ -241,16 +241,37 @@ the upstream commit the setup was tested with and preload the 64-bit build, sinc
 is 64-bit. Working inside the Flatpak client has not been verified end to end, and this may only be
 a short-term workaround.
 
-Notes on `dev-toolbox`:
+Notes on `toolbox` (it replaces the earlier `dev-toolbox` recipe, which is gone, with no alias):
+
+- **Toolboxes, definitions and sidecars.** `<name>` selects `/usr/share/ublue-os/distrobox/<name>.ini`
+  (the section `[<name>]` is the container name, so the container is named like the toolbox; set
+  `TOOLBOX_DEFINITIONS=<dir>` to read another directory). An optional `<name>.conf` next to it is plain
+  `KEY=value` data that the recipe parses and never runs: `TOOLS` (checklist, from `uv rustup sdkman nvm`),
+  `EXPORT_BINS` (commands exported with `distrobox-export` when they exist in the box) and `IDES` (which
+  launchers `--ide` offers). Values may contain only letters, digits, space and `. _ + -`; anything else
+  is ignored with a warning. Without a sidecar a toolbox gets no tools, no exports and no IDE launchers.
+  `dev.conf` ships `TOOLS="uv rustup sdkman nvm"`, the build chain and CLI tools in `EXPORT_BINS`, and every
+  IDE in `IDES`. To add a toolbox: a definition `<name>.ini`, an optional `<name>.conf`, and an image built
+  in the `fedora-toolbox` repo. `ujust toolbox` with no name lists the definitions with the box state
+  (missing, stopped, running), whether it is the `container_name_default`, and the image.
+- **State per toolbox.** Everything the recipe records (exports, launchers, the default-name key, whether
+  `~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm` existed before) lives in
+  `$XDG_STATE_HOME/ublue-os/toolbox/<name>`. `--remove` of one toolbox never touches another's records. A
+  shared home directory is recorded as created by the first toolbox that made it; if another toolbox's
+  state also lists it, removing the creator keeps it and hands ownership over, so the last toolbox
+  removed takes it with it.
+- **The default container.** `container_name_default` is only changed to the toolbox's name when the key
+  is unset or you answer `y` (the prompt shows the current value). `--set-default` changes it later without
+  recreating anything.
 
 - **What it does, in order.** It creates the box with `distrobox assemble create` from the definition
-  (`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, pointing at `ghcr.io/redcodeworks/fedora-toolbox:latest`:
+  (`/usr/share/ublue-os/distrobox/dev.ini`, pointing at `ghcr.io/redcodeworks/fedora-toolbox:latest`:
   our own toolbox image, built weekly from the `fedora-toolbox` repo on top of Universal Blue's toolbox,
   with the compilers, `-devel` libraries, uv, `rustup-init` and CLI tools already installed; it asks
-  first and prints which image it uses), sets `container_name_default="fedora-toolbox"` in
+  first and prints which image it uses), may set `container_name_default="dev"` in
   `~/.config/distrobox/distrobox.conf` (creating the file, or changing only that key and asking before
   replacing another value), shows a checklist for uv, rustup, SDKMAN and nvm (SPACE toggles, ENTER
-  confirms, q skips; or name them: `ujust dev-toolbox sdkman nvm`), and exports to `~/.local/bin` (or
+  confirms, q skips; or name them: `ujust toolbox dev sdkman nvm`), and exports to `~/.local/bin` (or
   `$UPM_EXPORT_DIR`) with `distrobox-export --bin`: the build chain (`cc gcc g++ c++ make cmake ninja
   meson ld as ar nm objdump strip ranlib pkg-config`, whichever exist in the box), `lsscsi nicstat
   waypipe evtest guestfish virt-v2v flatpak-builder`, `uv`/`uvx`, the rustup proxies from `~/.cargo/bin` (not `rustup-init`), and an
@@ -273,21 +294,21 @@ Notes on `dev-toolbox`:
 - **Brew mount.** The definition mounts `/home/linuxbrew` read-only so Python source builds can see
   brew's Python. The directory must exist when the box is created and the recipe cannot create it
   (that needs root), so while it is missing the recipe drops the `volume=` line from a temporary copy
-  of the definition and says so. After `ujust brew`, run `ujust dev-toolbox --recreate`.
+  of the definition and says so. After `ujust brew`, run `ujust toolbox dev --recreate`.
 - **Trying it before the image ships it.** Run it straight from a checkout, without `ujust`:
-  `DEV_TOOLBOX_DEFINITION=system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini just --justfile
-  system_files/usr/share/ublue-os/just/60-custom.just dev-toolbox` (the justfile has no imports, so
-  this works as is; `DEV_TOOLBOX_DEFINITION` defaults to the installed path). To try another tag of
-  the toolbox image, such as `testing` before `latest` exists, set `DEV_TOOLBOX_IMAGE` (for example
-  `DEV_TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-toolbox:testing ujust dev-toolbox`); it replaces the
+  `TOOLBOX_DEFINITIONS=system_files/usr/share/ublue-os/distrobox just --justfile
+  system_files/usr/share/ublue-os/just/60-custom.just toolbox dev` (the justfile has no imports, so
+  this works as is; `TOOLBOX_DEFINITIONS` defaults to `/usr/share/ublue-os/distrobox`). To try another tag of
+  the toolbox image, such as `testing` before `latest` exists, set `TOOLBOX_IMAGE` (for example
+  `TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-toolbox:testing ujust toolbox dev`); it replaces the
   definition's `image=` line, and the recipe prints the image it uses.
 - **`--recreate` (replace the box).** Asks, then removes the old container, removes the export files
   the state file lists (never a file it did not create), and creates the box again from the
-  definition. Wipe by hand with `distrobox rm --force fedora-toolbox`. What survives: your whole
+  definition. Wipe by hand with `distrobox rm --force dev`. What survives: your whole
   shared home (`~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches). What does not: packages you
   installed inside the box and everything else in the container's own filesystem.
 - **`--remove` (clean up everything it made).** Differs from `--recreate`: nothing is rebuilt. It
-  records in `$XDG_STATE_HOME/ublue-os/dev-toolbox` (default `~/.local/state/ublue-os/dev-toolbox`)
+  records in `$XDG_STATE_HOME/ublue-os/toolbox/dev` (default `~/.local/state/ublue-os/toolbox/dev`)
   what it created, including whether `~/.sdkman`, `~/.nvm`, `~/.rustup` and `~/.cargo` existed before
   its install steps. It deletes only what the state file says it created and skips, with the reason,
   any directory that already existed. It lists everything with sizes (exports, launchers, the
@@ -299,16 +320,16 @@ Notes on `dev-toolbox`:
   touches `/usr` or `/etc`, never removes `~/.local/bin` itself and uses no sudo.
 - **`--upgrade` (newer toolbox image) and `--update` (package updates).** A container never changes
   its image after creation. `--upgrade` pulls the toolbox image (the definition's, or
-  `DEV_TOOLBOX_IMAGE`), compares its image id with the one the box was created from, and says
+  `TOOLBOX_IMAGE`), compares its image id with the one the box was created from, and says
   `already on the latest image` if they match. `--upgrade --check` only reports both digests and the
   Fedora release of each and changes nothing. If the image is newer it warns when the Fedora major
   changes, asks for `yes` and replaces the box the way `--recreate` does. There is no package
   resolution test here: the fedora-toolbox repo's CI proves the package list installs when it builds
-  the image. `--update` is separate and only runs `distrobox upgrade fedora-toolbox` (package updates
+  the image. `--update` is separate and only runs `distrobox upgrade dev` (package updates
   inside the existing container).
 - **`--ide` (launchers that start an IDE inside the box).** Writes
-  `~/.local/share/applications/fedora-toolbox-<id>.desktop` with
-  `Exec=distrobox enter -n fedora-toolbox -- <launcher> %F`, so the IDE is a process of the container:
+  `~/.local/share/applications/<name>-<id>.desktop` (for example `dev-pycharm.desktop`) with
+  `Exec=distrobox enter -n <name> -- <launcher> %F`, so the IDE is a process of the container:
   its terminals, run configurations and language servers use the box's compilers, libraries and
   package managers, without relying on exports. It only detects, never installs, and the box must
   already exist (it offers to start a stopped box, and never creates one). JetBrains IDEs (`pycharm
@@ -318,7 +339,7 @@ Notes on `dev-toolbox`:
   script launches, so no versioned path is hardcoded. VS Code (`vscode`) uses a `code` found inside the
   box or a tarball under `~/.local/opt`, `~/opt` or `~/Applications`; it does not add Microsoft's
   repo, and a Flatpak cannot be used from the box. `--ide-custom NAME COMMAND [ICON]` covers any other
-  executable under your home. Pick from a checklist (`ujust dev-toolbox --ide`) or name them (`--ide
+  executable under your home. Pick from a checklist (`ujust toolbox dev --ide`) or name them (`--ide
   pycharm datagrip`); `--ide --list` shows detection and state; `--ide --remove` deletes only the
   launchers the state file lists. It never overwrites a file it did not create (JetBrains Toolbox's own
   entries are untouched). Downloads made inside the IDE (JDKs, plugins) land in the shared home, and a

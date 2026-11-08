@@ -171,8 +171,9 @@ jobs:
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
-            check "dev toolbox definition" "grep -q \"^\\[fedora-toolbox\\]\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
-            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
+            check "dev toolbox definition" "grep -q \"^\\[dev\\]\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "dev toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev.conf"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '

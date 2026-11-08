@@ -98,8 +98,8 @@ dnf5 install -y \
     guestfs-tools libguestfs libguestfs-xfs virt-v2v
 
 # No compilers or build tools (gcc, make, cmake, ninja, meson, the development-tools group):
-# builds happen in the fedora-toolbox distrobox, created by `ujust dev-toolbox` from
-# /usr/share/ublue-os/distrobox/fedora-toolbox.ini. Nothing here compiles from source.
+# builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev` from
+# /usr/share/ublue-os/distrobox/dev.ini. Nothing here compiles from source.
 
 # Remove RPMs the base ships that this image replaces, only if they are still present:
 # Firefox (use the Flatpak) and toolbox (distrobox covers it)

@@ -73,10 +73,16 @@ the plan first, run the workflow from the Actions tab with `dry_run` on.
 The image ships `ujust` recipes in `system_files/usr/share/ublue-os/just/60-custom.just`, covering
 group membership, Flatpak overrides (themes, game directories, controllers, VS Code with Podman)
 and Flatpak Steam with gamescope and extest. The image carries no compilers or build tools:
-`ujust dev-toolbox` builds the `fedora-toolbox` distrobox from a definition the image ships
-(`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, which pulls `ghcr.io/redcodeworks/fedora-toolbox:latest`,
-built weekly in its own repo with the packages baked in; `DEV_TOOLBOX_IMAGE` picks another tag), exports the
-build chain to `~/.local/bin`, runs `rustup-init` in your home and sets up SDKMAN and nvm in it. `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
+`ujust toolbox` lists the toolboxes the image defines and `ujust toolbox <name>` builds one as a distrobox
+named `<name>` (today only `dev`: `ujust toolbox dev`). A toolbox is a definition
+`/usr/share/ublue-os/distrobox/<name>.ini` that pulls an image from the `fedora-toolbox` repo
+(`dev` uses `ghcr.io/redcodeworks/fedora-toolbox:latest`, built weekly with the packages baked in;
+`TOOLBOX_IMAGE` picks another tag), plus an optional `<name>.conf` that says which tools, exported
+commands and IDE launchers it gets (`dev.conf`: the build chain exported to `~/.local/bin`, `rustup-init` run
+in your home, SDKMAN and nvm, and the JetBrains and VS Code launchers). A toolbox without a `.conf` is
+just the box. To add one: ship `<name>.ini` (section `[<name>]`) and optionally `<name>.conf` in
+`system_files/usr/share/ublue-os/distrobox/`, with an image built in the fedora-toolbox repo. The old
+`ujust dev-toolbox` recipe no longer exists (no alias). `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
 are vendor installer scripts, so none of them is baked into the image (Homebrew's prefix has to belong
 to the user who runs it): each installer is downloaded, hashed, shown to you and run only after you
 confirm, with sudo blocked. Run `ujust --list` to see them, and
