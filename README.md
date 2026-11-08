@@ -1,3 +1,5 @@
+<p align="center"><img src="system_files/usr/share/octarine-os/logo/octarine-logo-master-512.png" alt="octarineOS logo" width="560"></p>
+
 # octarine-os
 
 A personal [bootc](https://github.com/bootc-dev/bootc) image: Fedora Silverblue on top of Universal Blue's
@@ -42,7 +44,7 @@ Added by this image:
 - Optional IDE launchers and exported build tools
 
 **Branding** (`build.sh`, `system_files`)
-- `PRETTY_NAME` is `Octarine_OS`; ID, NAME and VERSION_ID are unchanged
+- `PRETTY_NAME` is `octarineOS`; ID, NAME and VERSION_ID are unchanged
 - Tux wordmark logo on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt)
 
 **Hardening and defaults** (`system_files`)
@@ -174,6 +176,9 @@ part is derived from
 [Linux_mascot_tux.png](https://commons.wikimedia.org/wiki/File:Linux_mascot_tux.png) on Wikimedia Commons,
 [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors from Pixabay, based on Tux
 by Larry Ewing and The GIMP (credit is a courtesy, not required).
+
+The full-size file (`octarine-logo-full.png`, 7000x1280) is the source for every smaller size: resize it with Lanczos and
+keep the alpha channel. The original uncompressed artwork is not stored in the repo or the image because it is about 30 MB.
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.
