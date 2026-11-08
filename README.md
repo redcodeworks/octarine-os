@@ -1,16 +1,11 @@
 # octarine-os
 
-A personal [bootc](https://github.com/bootc-dev/bootc) image built on Universal Blue's
-`silverblue-main` (Fedora Silverblue plus codecs and a few conveniences). It adds the niri
-compositor with the Noctalia shell, libvirt, Cockpit, backup tools and a set
-of hardening and tuning defaults, and it is meant to make one desktop reproducible. It is shared
-publicly in case parts of it are useful to you.
-
-It started from the [Universal Blue image template](https://github.com/ublue-os/image-template),
-and that project's documentation is still the best reference for how the build pipeline works.
-For the wider desktop setup behind it, see [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
-
-This is one person's configuration, with no promises. Read what it changes before you run it.
+A personal [bootc](https://github.com/bootc-dev/bootc) image: Fedora Silverblue on top of Universal Blue's
+`silverblue-main`, with the niri compositor and Noctalia shell, libvirt, Cockpit, backup tools and a set of
+hardening and tuning defaults. It is built daily and signed with [cosign](https://github.com/sigstore/cosign).
+It makes one desktop reproducible and is shared in case parts of it are useful to you. It is one person's
+configuration with no promises: read what it changes (below) before you run it. The wider desktop setup is in
+[`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 
 ## Use it
 
@@ -19,121 +14,64 @@ sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 ```
 
 Reboot, then run `ujust add-user-groups` to join the `gamemode`, `input` and `libvirt` groups.
-Images are signed with [cosign](https://github.com/sigstore/cosign). To check one yourself:
+
+To verify the signature yourself:
 
 ```
 cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest
 ```
 
-The image also installs a container signature policy for its own registry path, so `bootc upgrade`
-rejects an unsigned or wrongly signed image.
+The image also installs a container signature policy for its registry path, so `bootc upgrade` rejects an
+unsigned or wrongly signed image.
 
-## What is in the repo
+Pin a dated build, try the unreleased one, or roll back:
 
-| Path | Purpose |
-|---|---|
-| `Containerfile` | The base image and the single build step |
-| `build_files/build.sh` | Package installs, service enablement and the signature policy |
-| `system_files/` | Files copied onto `/` (PAM, sysctl, firewalld, Flatpak preinstall list, `ujust` recipes) |
-| `image-template.env` | Image name, owner, description and default tag |
-| `disk_config/` | Installer settings for ISO and disk images |
-| `.github/workflows/` | `build.yml` builds, tests, pushes and signs; `build-disk.yml` makes ISO and disk images (manual run, or after a push to `main` published the image; never on pull requests) |
-
-## Branches and releases
-
-Two branches, two images:
-
-| Branch | Image tags | How it changes |
-|---|---|---|
-| `testing` | `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>` | Push to it directly |
-| `main` | `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>` | Only by pull request from `testing` |
-
-`main` is protected. To release, open a pull request from `testing` into `main`. It can merge only
-when the `Build and push image` check passed on the tip of `testing` and the `require-testing-branch`
-check passes (it rejects any other source branch). The merge builds and publishes `latest`. A daily
-scheduled build on `main` refreshes `latest` too. Merge with a merge commit, not a squash or rebase,
-so `testing` stays in line with `main`. Dependabot proposes changes to `testing`.
-
-Every build runs a smoke test before anything is pushed, signs every tag it pushes, and verifies each
-tag against `cosign.pub`. To try an unreleased build, `sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing`.
-To pin or roll back, use a dated or per-commit tag, for example
-`sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>`, or `sudo bootc rollback` to boot
-the previous deployment.
-
-### Pruning old testing images
-
-GHCR has no retention policy, so `prune-testing.yml` runs weekly (from `main`) and deletes `testing`
-builds beyond the newest 10, together with their cosign signatures and any untagged versions older
-than a week. It never touches a version carrying a `latest*` tag. Scheduled runs only delete after
-you set the repository variable `PRUNE_ENABLED` to `true`; until then they are dry runs. To see
-the plan first, run the workflow from the Actions tab with `dry_run` on.
+```
+sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>   # pin (tags are on the package page)
+sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing               # unreleased build
+sudo bootc rollback                                                      # boot the previous deployment
+```
 
 ## Recipes
 
-The image ships `ujust` recipes in `system_files/usr/share/ublue-os/just/60-custom.just`, covering
-group membership, Flatpak overrides (themes, game directories, controllers, VS Code with Podman)
-and Flatpak Steam with gamescope and extest. The image carries no compilers or build tools:
-`ujust dev-toolbox` builds the `fedora-toolbox` distrobox from a definition the image ships
-(`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, which pulls `ghcr.io/redcodeworks/fedora-toolbox:latest`,
-built weekly in its own repo with the packages baked in; `DEV_TOOLBOX_IMAGE` picks another tag), exports the
-build chain to `~/.local/bin`, runs `rustup-init` in your home and sets up SDKMAN and nvm in it. `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
-are vendor installer scripts, so none of them is baked into the image (Homebrew's prefix has to belong
-to the user who runs it): each installer is downloaded, hashed, shown to you and run only after you
-confirm, with sudo blocked. Run `ujust --list` to see them, and
-[`CONFIG-GUIDE.md`](CONFIG-GUIDE.md) for what each one does.
+`ujust --list` shows them all.
 
-## Build it yourself
-
-You need `podman` and [`just`](https://github.com/casey/just). Disk and ISO images also need root.
-
-```
-just build                 # build the container image
-just build-qcow2           # build a VM disk image
-just run-vm-qcow2          # boot it
-just build-iso             # build an installer ISO
-just --list                # everything else
-```
-
-`cosign.pub` has to exist in the repo root, because the build copies it into the image.
-
-## Fork it
-
-1. Edit `image-template.env`: `IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`.
-2. Create your own signing key and store the private half as a secret in a protected environment
-   named `signing`, limited to `main` and `testing`, so no other branch's workflow can read it. Commit
-   the public half as `cosign.pub`, replacing mine:
-   ```
-   COSIGN_PASSWORD="" cosign generate-key-pair
-   gh api -X PUT repos/<owner>/<repo>/environments/signing --input - <<< '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}'
-   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=main -f type=branch
-   gh api -X POST repos/<owner>/<repo>/environments/signing/deployment-branch-policies -f name=testing -f type=branch
-   gh secret set SIGNING_SECRET --env signing < cosign.key
-   ```
-   Never commit `cosign.key`. It is in `.gitignore`.
-3. Point `disk_config/iso.toml` at your image (`ghcr.io/<owner>/<image>:latest`).
-4. Review `build_files/build.sh` and `system_files/` and remove what you don't want (below).
-5. Enable GitHub Actions, run the build, and make the GHCR package public.
-
-The signature policy, its registry entry and the key path are generated at build time from
-`REPO_ORGANIZATION`, `IMAGE_NAME` and `cosign.pub`, so nothing else needs renaming for signing.
+| Recipe | What it does |
+|---|---|
+| `ujust add-user-groups` | Add a user to the `gamemode`, `input` and `libvirt` groups |
+| `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev`); `ujust toolbox <name> --help` shows the options |
+| `ujust brew` | Install Homebrew on the host (its prefix belongs to your user, so it is not in the image) |
+| `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
+| `ujust flatpak-games-access` | Give the Flatpak game launchers access to a games directory |
+| `ujust steam-flatpak-devices` | Let Flatpak Steam see USB and input devices |
+| `ujust steam-gamescope-setup` / `-reset` | Make Flatpak Steam and the gamescope layer work together, or undo it |
+| `ujust extest-build`, `extest-steam-setup`, `extest-steam-reset` | Experimental: extest for Steam Input on Wayland |
+| `ujust vscode-flatpak-podman` | Let Flatpak VS Code use Wayland and the rootless Podman socket |
+| `ujust podman-desktop-deny-docker-socket` | Keep Podman Desktop away from a Docker socket |
+| `ujust chrome-flatpak-webapps` | Let Flatpak Chrome install web apps as launchers |
+| `ujust gearlever-applications` | Let Gear Lever manage AppImages in `~/Applications` |
 
 ## Personal choices worth reviewing
 
 These ship to everyone who uses the image as-is:
 
-- **PAM:** `pam_u2f sufficient` for sudo and polkit. Once a security key is enrolled, a touch alone
-  gives root, and without a key the password still works. That is weaker than stock Fedora.
+- **PAM:** `pam_u2f sufficient` for sudo and polkit. With a security key enrolled, a touch alone gives root;
+  without a key the password still works. That is weaker than stock Fedora.
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming,
   GSConnect and Tailscale's UDP port.
-- **sysctl:** `vm.overcommit_memory=1` (for Valkey), `kptr_restrict`, `ptrace_scope`, a very high
-  `vm.max_map_count`, and SysRq enabled.
+- **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** `iommu=pt`.
-- **Packages:** ROCm and the development-tools group make the image
-  big (roughly 11 GB on disk).
-- **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled. `sshd`, `tailscaled`,
+- **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
+- **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.
-- **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image: `ujust gnome-themes <recipe>` fetches them from their own repos.
+- **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image.
+
+## Contributing
+
+This is a personal image; see `AGENTS.md`. `main` is protected: work happens on `testing`, a pull request
+promotes it, and CI is the test. Maintainer notes (design, CI, forking) are in `CLAUDE.md`.
 
 ## License
 
-Apache-2.0, inherited from the template. See `LICENSE`.
+Apache-2.0, inherited from the [Universal Blue image template](https://github.com/ublue-os/image-template).
+See `LICENSE`.

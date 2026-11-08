@@ -1,8 +1,10 @@
 ---
 name: Build container image
 # Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
-# through a pull request from `testing`, whose merge publishes `latest`. Every push builds (no path
-# filter) so the required "Build and push image" check always exists for the commit being promoted.
+# through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
+# path filter) so the required "Build and push image" check always exists for the commit being promoted:
+# the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
+# aggregate job named "Build and push image" then passes without it.
 on:
   pull_request:
     branches:
@@ -23,8 +25,97 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: Plan build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.final.outputs.build }}
+      promote: ${{ steps.final.outputs.promote }}
+      source_tag: ${{ steps.promote.outputs.source_tag }}
+      source_digest: ${{ steps.promote.outputs.source_digest }}
+      image: ${{ steps.names.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the image needs building
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          echo "Build image: ${build}"
+
+      - name: Image name
+        id: names
+        run: |
+          IMAGE_NAME=$(sed -n 's/^IMAGE_NAME=//p' image-template.env | head -n1 | tr -d '"')
+          [[ -n "${IMAGE_NAME}" ]] || { echo "::error::IMAGE_NAME not found in image-template.env"; exit 1; }
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          echo "image=${registry,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
+
+      # Build once, promote: a merge into main whose content equals an already published and signed
+      # `testing` image retags that digest to `latest` instead of rebuilding (see CLAUDE.md "Promotion")
+      - name: Look for a tested testing image to promote
+        id: promote
+        if: steps.plan.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          PROMOTE_ENABLED: ${{ vars.PROMOTE_ENABLED }}
+          IMAGE: ${{ steps.names.outputs.image }}
+          REGISTRY_LOOKUP: ${{ github.workspace }}/.github/scripts/registry-digest.sh
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          AFTER: ${{ github.sha }}
+        run: |
+          .github/scripts/plan-promote.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Install Cosign
+        if: steps.promote.outputs.promote == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      # The signature belongs to the digest and exists from the testing publish; without a valid one the
+      # normal build and sign runs instead
+      - name: Verify the signature of the image to promote
+        id: verify
+        if: steps.promote.outputs.promote == 'true'
+        continue-on-error: true
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          DIGEST: ${{ steps.promote.outputs.source_digest }}
+        run: |
+          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          echo "signature of ${DIGEST} is valid"
+
+      - name: Final decision
+        id: final
+        env:
+          BUILD_PLAN: ${{ steps.plan.outputs.build }}
+          CANDIDATE: ${{ steps.promote.outputs.promote }}
+          VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          if [[ "${CANDIDATE}" == true && "${VERIFY}" == success ]]; then
+            build=false; promote=true
+          else
+            build="${BUILD_PLAN}"; promote=false
+            [[ "${CANDIDATE}" != true ]] || echo "::warning::Signature verification of the testing image failed: building instead of promoting"
+          fi
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          echo "promote=${promote}" >> "${GITHUB_OUTPUT}"
+          echo "build=${build} promote=${promote}"
+
   build_push:
-    name: Build and push image
+    name: Build image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-26.04
 
     outputs:
@@ -161,6 +252,9 @@ jobs:
             check "firefox removed" "! rpm -q firefox"
             check "toolbox removed" "! rpm -q toolbox"
             check "distrobox present" "rpm -q distrobox"
+            check "gnome-software removed" "! rpm -q gnome-software"
+            for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
+            check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
             check "pretty name" "grep -qx \"PRETTY_NAME=\\\"OctarineOS\\\"\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
@@ -171,8 +265,9 @@ jobs:
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
-            check "dev toolbox definition" "grep -q \"^\\[fedora-toolbox\\]\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
-            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/fedora-toolbox.ini"
+            check "dev toolbox definition" "grep -q \"^\\[dev\\]\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "dev toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev.conf"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
@@ -246,13 +341,89 @@ jobs:
 
           echo "digests=${digests}" >> $GITHUB_OUTPUT
 
-  # Signing runs in its own job so the private key is only reachable through the `signing`
-  # environment, which is limited to the main and testing branches. Pull request builds
-  # never publish, so they never reach this job or the key.
+  # Build once, promote: retag the tested and signed `testing` digest as latest and its dated aliases, no
+  # rebuild. The digest is compared before and after every copy.
+  promote:
+    name: Promote tested image
+    needs: plan
+    if: needs.plan.outputs.promote == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ needs.plan.outputs.image }}
+      digests: ${{ needs.plan.outputs.source_digest }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate the tags a main build would publish
+        id: tags
+        run: |
+          alias_tags="$(just generate-build-tags x latest)"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retag the tested digest
+        env:
+          IMAGE: ${{ needs.plan.outputs.image }}
+          SOURCE_TAG: ${{ needs.plan.outputs.source_tag }}
+          SOURCE_DIGEST: ${{ needs.plan.outputs.source_digest }}
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          lookup=.github/scripts/registry-digest.sh
+          now=$("${lookup}" "${SOURCE_TAG}")
+          [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
+          for tag in ${ALIAS_TAGS}; do
+            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            after=$("${lookup}" "${tag}")
+            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
+            echo "promoted ${tag} -> ${after}"
+          done
+
+  # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
+  # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
+  # or was cancelled.
+  build_result:
+    name: Build and push image
+    needs: [plan, build_push, promote, sign]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the build result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD_WANTED: ${{ needs.plan.outputs.build }}
+          PROMOTE_WANTED: ${{ needs.plan.outputs.promote }}
+          PUBLISH: ${{ needs.build_push.outputs.publish }}
+          BUILD: ${{ needs.build_push.result }}
+          PROMOTE: ${{ needs.promote.result }}
+          SIGN: ${{ needs.sign.result }}
+        run: .github/scripts/aggregate-result.sh
+
   sign:
     name: Sign and verify images
-    needs: build_push
-    if: needs.build_push.outputs.publish == 'true'
+    needs: [build_push, promote]
+    if: >-
+      always() && (
+      (needs.build_push.result == 'success' && needs.build_push.outputs.publish == 'true') ||
+      needs.promote.result == 'success')
     runs-on: ubuntu-latest
     environment: signing
 
@@ -277,7 +448,22 @@ jobs:
           # be careful when upgrading major versions
           cosign-release: 'v3.1.4'
 
+      # Promote path: the digest was signed when `testing` was published; check it before and after
+      # the retag (the promote job copies the tags in between) and never sign anything here
+      - name: Verify the digest that was promoted is signed
+        if: needs.promote.result == 'success'
+        env:
+          IMAGE: ${{ needs.promote.outputs.image }}
+          DIGESTS: ${{ needs.promote.outputs.digests }}
+        run: |
+          set -euo pipefail
+          for digest in ${DIGESTS}; do
+            cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            echo "signed: ${digest}"
+          done
+
       - name: Sign every pushed digest
+        if: needs.build_push.result == 'success'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -295,8 +481,8 @@ jobs:
 
       - name: Verify every pushed tag is signed
         env:
-          IMAGE: ${{ needs.build_push.outputs.image }}
-          ALIAS_TAGS: ${{ needs.build_push.outputs.alias_tags }}
+          IMAGE: ${{ needs.build_push.outputs.image || needs.promote.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build_push.outputs.alias_tags || needs.promote.outputs.alias_tags }}
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do

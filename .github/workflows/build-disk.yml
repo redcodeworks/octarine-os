@@ -1,5 +1,6 @@
 ---
 name: Build disk images
+# Manual only (Run workflow in the Actions tab); no required check depends on it.
 
 on:
   workflow_dispatch:
@@ -15,12 +16,6 @@ on:
         options:
           - amd64
           - arm64
-  # After a push to main has built and published the image (not after the daily schedule, and never on
-  # pull requests: the image they would build from is only published by a main build)
-  workflow_run:
-    workflows: ["Build container image"]
-    types: [completed]
-    branches: [main]
 
 env:
   IMAGE_NAME: ${{ github.event.repository.name }} # output of build.yml, keep in sync
@@ -35,8 +30,6 @@ concurrency:
 jobs:
   build:
     name: Build disk images
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
-    # workflow_run has no inputs, so only an explicit arm64 choice uses the arm runner
     runs-on: ${{ inputs.platform == 'arm64' && 'ubuntu-26.04-arm' || 'ubuntu-26.04' }}
     strategy:
       fail-fast: false
@@ -87,6 +80,7 @@ jobs:
           image: ${{ env.IMAGE_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.DEFAULT_TAG }}
           chown: ${{ env.USER_UID }}:${{ env.USER_GID }}
           types: ${{ matrix.disk-type }}
+          rootfs: btrfs
           additional-args: --use-librepo=True
 
       - name: Upload disk images and Checksum to Job Artifacts
