@@ -5,6 +5,9 @@
 # (keys/ublue-os-brew-cosign.pub), logs it and passes `ref@digest` as BREW_IMAGE; the logged digest is the record.
 ARG BREW_TAG=20261108
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}
+# Base image selection (see the base image comment below); declared here, before the first FROM
+ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
+ARG FEDORA_VERSION=45
 FROM ${BREW_IMAGE} AS brew
 
 # Allow build scripts to be referenced without being copied into the final image
@@ -13,8 +16,10 @@ COPY build_files /
 COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
-# Base Image
-FROM ghcr.io/ublue-os/silverblue-main:45
+# Base image: `just build` and CI pass BASE_IMAGE and FEDORA_VERSION from image-template.env (the one place to edit,
+# for example for a Fedora major upgrade). Like the brew ARGs above, these must stay before the first FROM to be
+# usable in a FROM line; the defaults repeat the env file for a bare `podman build` and CI checks they agree.
+FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 
 # Passed in by `just build` from image-template.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
@@ -27,7 +32,7 @@ ARG IMAGE_NAME
 # 
 # ... and so on, here are more base images
 # Universal Blue Images: https://github.com/orgs/ublue-os/packages
-# Fedora base image: quay.io/fedora/fedora-bootc:44
+# Fedora base image: quay.io/fedora/fedora-bootc:<release>
 # CentOS base images: quay.io/centos-bootc/centos-bootc:stream10
 
 ### [IM]MUTABLE /opt

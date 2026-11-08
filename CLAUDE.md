@@ -7,12 +7,21 @@ secrets, hostnames or personal data in it.
 ## What this is
 
 A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) built on
-`ghcr.io/ublue-os/silverblue-main:45`. It exists to make one desktop reproducible. See `README.md`
+`${BASE_IMAGE}:${FEDORA_VERSION}` (now `ghcr.io/ublue-os/silverblue-main:45`; see the Containerfile bullet). It exists to make one desktop reproducible. See `README.md`
 for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setup.
 
 ## Layout
 
-- `Containerfile`: base image plus the single build step.
+- `Containerfile`: base image plus the single build step. The base is `FROM ${BASE_IMAGE}:${FEDORA_VERSION}`; the
+  ARGs sit before the first FROM (ARGs after a FROM belong to that stage). Where the base is set: the workflow
+  `env:` block in `build.yml` (`BASE_IMAGE: ${{ vars.BASE_IMAGE || ... }}`, `FEDORA_VERSION` likewise), where a
+  repository variable of the same name overrides the default; the Containerfile ARG defaults repeat it for a bare
+  `podman build` (keep both in sync). CI and `just build` pass them as `--build-arg` (an exported
+  `FEDORA_VERSION=46 just build` works locally). Because a variable is not versioned with the commit, the build logs
+  the resolved base and digest and sets the labels `org.opencontainers.image.base.name`/`base.digest`.
+  Fedora major upgrade: set the variable (the owner runs `gh variable set FEDORA_VERSION --body 46`; undo
+  `gh variable delete`), run the build workflow on `testing` (changing a variable starts no build), `bootc switch`
+  to the `testing` image, soak about a week, keep a deployment pinned, then merge; promotion only retags a tested digest.
 - `build_files/build.sh`: guard against secrets in `system_files`, copy `system_files`, generate the
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
@@ -110,8 +119,8 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `require-testing-branch` passes (it rejects any other source branch). Use a merge commit so `testing`
   stays in line with `main`. Pin or roll back by switching to a dated tag; `bootc rollback` boots the previous
   deployment.
-- **Build job.** Choose channel, `just check`, a base-pull step (pulls the `ghcr.io/ublue-os/...` base named in
-  the Containerfile and fails naming the tag if it does not exist), `just build`, an image-size guard
+- **Build job.** Choose channel, `just check`, a base-pull step (pulls the base named by
+  the workflow env, where repository variables override, logs its digest and fails naming the tag if it does not exist), `just build`, an image-size guard
   (15 GiB), the smoke test, `just ostree-rechunk`, tags, push. The smoke test runs the image and checks
   units, packages, PAM fallbacks, the signature policy, os-release (`ID=fedora`, and `VERSION_ID` against
   a numeric base tag), sudoers, firewalld, the toolbox definition `dev-toolbox.ini`/`dev-toolbox.conf` and the preinstall

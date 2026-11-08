@@ -103,7 +103,14 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
     # CI sets BREW_IMAGE to the digest it verified; without it the Containerfile default (the dated BREW_TAG) is used
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
+    # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
+    # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
+    if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
+    if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
     LABELS=()
+    # Trace the image to its base (CI exports BASE_DIGEST after pulling the base)
+    if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
+    if [[ -n "${BASE_DIGEST:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.digest=${BASE_DIGEST}"); fi
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
         LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
