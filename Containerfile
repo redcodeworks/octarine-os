@@ -4,6 +4,14 @@ COPY build_files /
 COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
+# Homebrew, as files only: Universal Blue's `ghcr.io/ublue-os/brew` is a FROM scratch image that holds
+# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). It floats on
+# `latest` (upstream rebuilds weekly; dated YYYYMMDD tags exist for pinning). CI resolves `latest` to a
+# digest once, verifies that digest with cosign (keys/ublue-os-brew-cosign.pub), logs it and passes
+# `ref@digest` as BREW_IMAGE, so what was verified is what is built.
+ARG BREW_IMAGE=ghcr.io/ublue-os/brew:latest
+FROM ${BREW_IMAGE} AS brew
+
 # Base Image
 FROM ghcr.io/ublue-os/silverblue-main:45
 
@@ -35,6 +43,9 @@ ARG IMAGE_NAME
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
+
+# Brew's files go in first; build.sh then copies system_files over them, so our presets and files win
+COPY --from=brew /system_files /
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

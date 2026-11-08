@@ -185,6 +185,24 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
           echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
+      # The Homebrew files image floats on latest; resolve it to a digest, check its signature against the
+      # vendored ublue-os/brew public key before anything is built from it
+      - name: Install Cosign (brew image check)
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Resolve and verify the brew image
+        run: |
+          image=$(sed -n 's/^ARG BREW_IMAGE=//p' Containerfile)
+          [[ "${image}" == ghcr.io/ublue-os/brew:* ]] || { echo "::error::BREW_IMAGE missing or unexpected in the Containerfile"; exit 1; }
+          digest=$(skopeo inspect --raw "docker://${image}" | sha256sum | sed 's/ .*//')
+          [[ -n "${digest}" ]] || { echo "::error::Cannot resolve ${image}"; exit 1; }
+          pinned="${image%:*}@sha256:${digest}"
+          cosign verify --key keys/ublue-os-brew-cosign.pub "${pinned}" > /dev/null
+          echo "Brew image ${image} resolved to ${pinned}; signature valid"
+          echo "BREW_IMAGE=${pinned}" >> "${GITHUB_ENV}"
+
       # Fail early and clearly if the base image tag in the Containerfile cannot be pulled
       - name: Check the base image can be pulled
         run: |
@@ -235,6 +253,12 @@ jobs:
             for u in pmcd.service pmlogger.service flatpak-preinstall.service; do
               check "enabled $u" "systemctl is-enabled $u"
             done
+            check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
+            check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
+            check "brew-upgrade.timer stays disabled" "! systemctl is-enabled brew-upgrade.timer"
+            check "brew tarball present" "test -s /usr/share/homebrew.tar.zst"
+            check "brew profile script present" "test -f /etc/profile.d/brew.sh"
+            check "our brew preset present" "grep -qx \"disable brew-upgrade.timer\" /usr/lib/systemd/system-preset/00-octarine-brew.preset"
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             for p in niri noctalia fish libvirt qemu-kvm tailscale cockpit cockpit-machines pcp python3-pcp \

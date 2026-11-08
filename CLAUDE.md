@@ -22,6 +22,30 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
 
+## Homebrew (files image)
+
+- The Containerfile has a stage `brew` from `ghcr.io/ublue-os/brew:latest` (Universal Blue, `FROM scratch`,
+  holds `/system_files`: `/usr/share/homebrew.tar.zst` built upstream by running Homebrew's `install.sh`, the
+  `brew-setup`/`brew-update`/`brew-upgrade` units, `/etc/profile.d/brew.sh` which appends brew to the END of
+  `PATH`, a fish snippet and a nofile limit). `COPY --from=brew /system_files /` runs before `build.sh`, which
+  copies `system_files/` over it and runs `systemctl preset brew-setup.service brew-update.timer
+  brew-upgrade.timer`.
+- It floats on `latest` (upstream builds weekly; `YYYYMMDD` tags exist for pinning later), so the brew tarball
+  is not bit-for-bit reproducible. The `plan`-adjacent build job resolves `latest` to a digest once, verifies
+  that digest with cosign against `keys/ublue-os-brew-cosign.pub` (vendored from the upstream repo, see
+  `keys/README.md`), logs it ("Brew image ... resolved to ...") and passes `ref@digest` as `BREW_IMAGE` to
+  `just build`, so verify and use cannot diverge. The log line is how to see what a given build used.
+- Presets: `system_files/usr/lib/systemd/system-preset/00-octarine-brew.preset` disables `brew-upgrade.timer`
+  (upgrades stay under the owner's soak policy). systemd takes the first matching line in file-name order, so
+  the `00-` name beats upstream's `01-homebrew.preset`, which enables it. Enabled: `brew-setup.service`
+  (first boot, root, oneshot; skipped when `/etc/.linuxbrew` or `/home/linuxbrew/.linuxbrew` exists; chown to
+  UID 1000, hard-coded) and `brew-update.timer` (every 6 h, runs as UID 1000). The smoke test checks these
+  states and the files.
+- Formulae are not pinned by the image; `brew bundle` from a Brewfile (kept outside this repo) is their
+  reproducibility. The first-boot path cannot be tested in CI (the smoke test only checks units and files).
+- Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
+  the CI steps and the smoke assertions; existing prefixes stay untouched.
+
 ## Branches and releases
 
 `testing` builds the `testing` image; `main` is protected, changes only by pull request from `testing`

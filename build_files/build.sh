@@ -155,6 +155,13 @@ systemctl enable \
     pmcd.service pmlogger.service \
     flatpak-preinstall.service
 
+# Homebrew (files from the pinned ublue-os/brew image, copied in by the Containerfile). The first-boot
+# extraction (brew-setup, skipped when a prefix exists) and the 6-hourly `brew update` are on; the 8-hourly
+# `brew upgrade` timer is off, because upgrades stay under the owner's soak policy. The presets come from
+# 01-homebrew.preset (enable all three) and our 00-octarine-brew.preset (disable the upgrade timer; the
+# lowest file name wins in systemd presets).
+systemctl preset brew-setup.service brew-update.timer brew-upgrade.timer
+
 # Rootless Podman API socket for every user (socket-activated, so it costs nothing until used)
 systemctl --global enable podman.socket
 
