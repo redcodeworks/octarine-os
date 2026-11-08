@@ -394,38 +394,29 @@ jobs:
             echo "promoted ${tag} -> ${after}"
           done
 
-  # The required check. It always runs and passes when the build passed (or the tested image was
+  # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
   # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
   # or was cancelled.
   build_result:
     name: Build and push image
-    needs: [plan, build_push, promote]
+    needs: [plan, build_push, promote, sign]
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Check the build result
         env:
           PLAN: ${{ needs.plan.result }}
           BUILD_WANTED: ${{ needs.plan.outputs.build }}
           PROMOTE_WANTED: ${{ needs.plan.outputs.promote }}
+          PUBLISH: ${{ needs.build_push.outputs.publish }}
           BUILD: ${{ needs.build_push.result }}
           PROMOTE: ${{ needs.promote.result }}
-        run: |
-          echo "plan=${PLAN} build wanted=${BUILD_WANTED} build=${BUILD} promote wanted=${PROMOTE_WANTED} promote=${PROMOTE}"
-          [[ "${PLAN}" == success ]] || { echo "::error::The plan job did not succeed"; exit 1; }
-          if [[ "${BUILD_WANTED}" == true ]]; then
-            [[ "${BUILD}" == success && "${PROMOTE}" == skipped ]] || { echo "::error::The image build did not succeed (${BUILD}, promote ${PROMOTE})"; exit 1; }
-          elif [[ "${PROMOTE_WANTED}" == true ]]; then
-            [[ "${PROMOTE}" == success && "${BUILD}" == skipped ]] || { echo "::error::The promotion did not succeed (${PROMOTE}, build ${BUILD})"; exit 1; }
-            echo "Promoted a tested image: no rebuild"
-          else
-            [[ "${BUILD}" == skipped && "${PROMOTE}" == skipped ]] || { echo "::error::Unexpected results (build ${BUILD}, promote ${PROMOTE})"; exit 1; }
-            echo "Docs-only change: heavy build skipped"
-          fi
+          SIGN: ${{ needs.sign.result }}
+        run: .github/scripts/aggregate-result.sh
 
-  # Signing runs in its own job so the private key is only reachable through the `signing`
-  # environment, which is limited to the main and testing branches. Pull request builds
-  # never publish, so they never reach this job or the key.
   sign:
     name: Sign and verify images
     needs: [build_push, promote]

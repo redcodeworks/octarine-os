@@ -60,6 +60,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
@@ -125,7 +126,10 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   the content, `created` label and base-image snapshot are those of the testing build, and the daily schedule
   still rebuilds `latest` from the current base. Always build: schedule, `workflow_dispatch`, non-merge pushes
   to `main`, differing trees, no matching image, failed verification, `PROMOTE_ENABLED` not `true`. The
-  aggregate `Build and push image` counts a successful promote as the build. Pruning stays safe: a version
+  aggregate `Build and push image` counts a successful promote as the build.
+  The job graph is linear: `plan` -> `build_push` or `promote` (exclusive) -> `sign` -> `build_result`, so the
+  aggregate means built, signed and published. `aggregate-result.sh` (tested by `tests/aggregate-result.sh`)
+  accepts a skipped `sign` only when nothing was published and fails when sign was expected and did not succeed. Pruning stays safe: a version
   carrying `latest*` next to `testing*` tags is never a candidate (`tests/prune-testing.sh`).
 - **Disk images.** `build-disk.yml` runs only on `workflow_dispatch` (Run workflow in the Actions tab, or
   `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
