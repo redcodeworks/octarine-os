@@ -1,2 +1,2 @@
-# Keep the sudo password for 30 minutes
-Defaults timestamp_timeout=1800
+# Keep the sudo password for 30 minutes (timestamp_timeout is in MINUTES, see sudoers(5); 1800 would be 30 hours)
+Defaults timestamp_timeout=30
