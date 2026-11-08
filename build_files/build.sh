@@ -129,8 +129,8 @@ fi
 
 # Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
-sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Octarine OS"/' /usr/lib/os-release
-grep -qx 'PRETTY_NAME="Octarine OS"' /usr/lib/os-release
+sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Octarine_OS"/' /usr/lib/os-release
+grep -qx 'PRETTY_NAME="Octarine_OS"' /usr/lib/os-release
 echo "== resulting os-release"
 cat /usr/lib/os-release
 
