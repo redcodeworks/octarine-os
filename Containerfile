@@ -5,11 +5,12 @@ COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
 # Homebrew, as files only: Universal Blue's `ghcr.io/ublue-os/brew` is a FROM scratch image that holds
-# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). It floats on
-# `latest` (upstream rebuilds weekly; dated YYYYMMDD tags exist for pinning). CI resolves `latest` to a
-# digest once, verifies that digest with cosign (keys/ublue-os-brew-cosign.pub), logs it and passes
-# `ref@digest` as BREW_IMAGE, so what was verified is what is built.
-ARG BREW_IMAGE=ghcr.io/ublue-os/brew:latest
+# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). Pinned to a dated
+# tag (YYYYMMDD, upstream rebuilds weekly); bump it here, in one place (`just brew-tags` lists the newest).
+# A dated tag can in principle be re-pushed, so CI resolves it to a digest, verifies that digest with cosign
+# (keys/ublue-os-brew-cosign.pub), logs it and passes `ref@digest` as BREW_IMAGE; the logged digest is the record.
+ARG BREW_TAG=20261108
+ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}
 FROM ${BREW_IMAGE} AS brew
 
 # Base Image

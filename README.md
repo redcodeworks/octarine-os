@@ -63,10 +63,10 @@ These ship to everyone who uses the image as-is:
 - **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.
-- **Homebrew:** the files of Universal Blue's `ghcr.io/ublue-os/brew` image (floating on `latest`, signature
-  checked in CI, so the brew tarball is not bit-for-bit reproducible). On first boot `brew-setup.service`
+- **Homebrew:** the files of Universal Blue's `ghcr.io/ublue-os/brew` image (pinned to a dated tag, signature
+  checked in CI). On first boot `brew-setup.service`
   extracts the prefix for UID 1000, unless a prefix already exists; `brew-update.timer` is enabled and
-  `brew-upgrade.timer` is kept off. Formulae are not pinned (use `brew bundle`). Details in `CONFIG-GUIDE.md`.
+  `brew-upgrade.timer` is kept off (upgrades are manual). Formulae are not pinned (use `brew bundle`). Details in `CONFIG-GUIDE.md`.
 - **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image.
 
 ## Contributing

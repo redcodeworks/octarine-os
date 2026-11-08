@@ -101,7 +101,7 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "IMAGE_ORG={{ repo_organization }}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
-    # CI sets BREW_IMAGE to the digest it verified; without it the Containerfile default (latest) is used
+    # CI sets BREW_IMAGE to the digest it verified; without it the Containerfile default (the dated BREW_TAG) is used
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
     LABELS=()
     if [[ -z "$(git status -s)" ]]; then
@@ -593,6 +593,14 @@ release $merge="false":
     else
         echo "When the checks pass, merge it with: just release true   (or: gh pr merge --merge)"
     fi
+
+# List the newest dated tags of the Homebrew files image; to bump, set ARG BREW_TAG in the Containerfile to one of them
+[group('Image')]
+brew-tags:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    skopeo list-tags docker://ghcr.io/ublue-os/brew | python3 -c 'import json,re,sys; print("\n".join(sorted(t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"\d{8}", t))[-8:]))'
+    echo "Current: $(sed -n 's/^ARG BREW_TAG=//p' Containerfile)"
 
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]

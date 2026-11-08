@@ -185,7 +185,7 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
           echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
-      # The Homebrew files image floats on latest; resolve it to a digest, check its signature against the
+      # The Homebrew files image is pinned to a dated tag; resolve it to a digest, check its signature against the
       # vendored ublue-os/brew public key before anything is built from it
       - name: Install Cosign (brew image check)
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
@@ -194,8 +194,9 @@ jobs:
 
       - name: Resolve and verify the brew image
         run: |
-          image=$(sed -n 's/^ARG BREW_IMAGE=//p' Containerfile)
-          [[ "${image}" == ghcr.io/ublue-os/brew:* ]] || { echo "::error::BREW_IMAGE missing or unexpected in the Containerfile"; exit 1; }
+          tag=$(sed -n 's/^ARG BREW_TAG=//p' Containerfile)
+          [[ "${tag}" =~ ^[0-9]{8}$ ]] || { echo "::error::BREW_TAG missing or not a YYYYMMDD tag in the Containerfile"; exit 1; }
+          image="ghcr.io/ublue-os/brew:${tag}"
           digest=$(skopeo inspect --raw "docker://${image}" | sha256sum | sed 's/ .*//')
           [[ -n "${digest}" ]] || { echo "::error::Cannot resolve ${image}"; exit 1; }
           pinned="${image%:*}@sha256:${digest}"

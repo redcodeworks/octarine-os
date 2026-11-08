@@ -119,11 +119,13 @@ timers are installed but not enabled. Turn on what you use.
   `/home/linuxbrew/.linuxbrew` and hands it to UID 1000 (hard-coded, so the first user must be 1000); it is
   skipped when that prefix or `/etc/.linuxbrew` already exists, so an existing machine keeps its own brew.
   Only `brew-update.timer` (every 6 hours) is enabled; `brew-upgrade.timer` is kept off by this image's own
-  preset, so upgrades stay under your soak policy. brew goes at the end of `PATH` (system binaries win).
+  preset: upgrades are manual (`brew upgrade`, or opt in per machine with
+  `sudo systemctl enable --now brew-upgrade.timer`, undone with `disable --now`), so they stay under your soak
+  policy, and only `brew update` (metadata, every 6 hours per the upstream unit) runs by itself. brew goes at the end of `PATH` (system binaries win).
   The image does not pin formulae: `brew bundle` from a Brewfile (kept outside the image) is what makes them
-  reproducible. The brew image floats on `latest` (rebuilt weekly upstream, dated `YYYYMMDD` tags exist for
-  pinning), so the brew tarball is not bit-for-bit reproducible; CI verifies its signature, resolves it to a
-  digest and logs that digest, which shows what a given build used. Upstream builds the tarball by running
+  reproducible. The brew tarball is pinned to a dated tag (`ARG BREW_TAG` in the Containerfile; bump it there,
+  `just brew-tags` lists the newest); CI resolves the tag to a digest, verifies its signature, builds from that
+  digest and logs it, which is the record of what a build used. Upstream builds the tarball by running
   Homebrew's own `install.sh`. To undo: remove the `brew` stage, the `COPY --from=brew` line, the
   `systemctl preset` line and the preset file; existing prefixes are untouched. If the prefix is missing,
   repair by hand (unverified): `sudo mkdir -p /var/home/linuxbrew/.linuxbrew`, chown it to your user, and

@@ -24,19 +24,20 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
 
 ## Homebrew (files image)
 
-- The Containerfile has a stage `brew` from `ghcr.io/ublue-os/brew:latest` (Universal Blue, `FROM scratch`,
+- The Containerfile has a stage `brew` from `ghcr.io/ublue-os/brew` (Universal Blue, `FROM scratch`,
   holds `/system_files`: `/usr/share/homebrew.tar.zst` built upstream by running Homebrew's `install.sh`, the
   `brew-setup`/`brew-update`/`brew-upgrade` units, `/etc/profile.d/brew.sh` which appends brew to the END of
   `PATH`, a fish snippet and a nofile limit). `COPY --from=brew /system_files /` runs before `build.sh`, which
   copies `system_files/` over it and runs `systemctl preset brew-setup.service brew-update.timer
   brew-upgrade.timer`.
-- It floats on `latest` (upstream builds weekly; `YYYYMMDD` tags exist for pinning later), so the brew tarball
-  is not bit-for-bit reproducible. The build job (before the base pull) resolves `latest` to a digest once, verifies
-  that digest with cosign against `keys/ublue-os-brew-cosign.pub` (vendored from the upstream repo, see
-  `keys/README.md`), logs it ("Brew image ... resolved to ...") and passes `ref@digest` as `BREW_IMAGE` to
-  `just build`, so verify and use cannot diverge. The log line is how to see what a given build used.
+- Pinned to a dated tag: `ARG BREW_TAG=20261108` in the Containerfile (upstream builds weekly; the tag is
+  `YYYYMMDD`). Bump by changing that one value; `just brew-tags` lists the newest tags (needs skopeo). A dated
+  tag can in principle be re-pushed, so the build job (before the base pull) resolves it to a digest, verifies
+  that digest with cosign against `keys/ublue-os-brew-cosign.pub` (vendored, see `keys/README.md`), logs it
+  ("Brew image ... resolved to ...") and passes `ref@digest` as `BREW_IMAGE` to `just build`, so verify and use
+  cannot diverge; the logged digest is the record of what a build used.
 - Presets: `system_files/usr/lib/systemd/system-preset/00-octarine-brew.preset` disables `brew-upgrade.timer`
-  (upgrades stay under the owner's soak policy). systemd takes the first matching line in file-name order, so
+  (upgrades are manual and stay under the owner's soak policy; opt in per machine with `sudo systemctl enable --now brew-upgrade.timer`, undone with `disable --now`). systemd takes the first matching line in file-name order, so
   the `00-` name beats upstream's `01-homebrew.preset`, which enables it. Enabled: `brew-setup.service`
   (first boot, root, oneshot; skipped when `/etc/.linuxbrew` or `/home/linuxbrew/.linuxbrew` exists; chown to
   UID 1000, hard-coded) and `brew-update.timer` (every 6 h, runs as UID 1000). The smoke test checks these
