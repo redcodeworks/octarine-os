@@ -18,13 +18,13 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
 - `.github/workflows/`: `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
-  environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
+  environment), `build-testing.yml` (hourly dispatcher), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
 
 ## Branches and releases
 
-`testing` builds the `testing` image; `main` is protected, changes only by pull request from `testing`
+`testing` builds the `testing` image, but not on push: see "Testing builds" under "CI and signing flow". `main` is protected, changes only by pull request from `testing`
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
 The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
@@ -62,6 +62,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `.github/scripts/plan-build.sh`.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
+- `tests/testing-due.sh` tests the hourly decision (`.github/scripts/testing-due.sh`).
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
@@ -73,10 +74,20 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 
 ## CI and signing flow
 
-- **Tags.** `testing` pushes publish `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>`.
+- **Testing builds.** `testing` is not built on push or for pull requests. `build-testing.yml` (`Build testing
+  hourly`, cron `7 * * * *`, runs from `main`, so it works only once it is merged) runs `.github/scripts/testing-due.sh`:
+  it dispatches `build.yml` on `testing` when testing differs from `main` and no non-cancelled `build.yml` run exists
+  for its head sha, so each commit is built once and several pushes in one window share one build and one pull
+  request. A `workflow_dispatch` of `build.yml` on ref `testing` builds, signs and publishes the testing tags (on
+  `main` it publishes `latest`); build now with `gh workflow run build.yml --ref testing`. Checks attach to the
+  commit a run executes on, so the pull request's required checks appear on its head commit only after the next
+  hourly build or a manual dispatch. Merging to `main` still promotes the tested `testing` image immediately, and
+  falls back to a build if no tested image exists for the tip. A dispatch always builds (the docs-only skip applies
+  to pushes to `main`).
+- **Tags.** `testing` builds publish `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>`.
   `main` publishes (build, or promote of the tested `testing` digest) `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>`
   (`just generate-build-tags`). A daily schedule on `main` (10:05 UTC) refreshes `latest`. Pull requests
-  into `testing` build without publishing. Dependabot proposes changes to `testing`.
+  into `testing` do not build. Dependabot proposes changes to `testing`.
 - **Promotion.** `main` merges only when `Build and push image` passed on the tip of `testing` and
   `require-testing-branch` passes (it rejects any other source branch). Use a merge commit so `testing`
   stays in line with `main`. Pin or roll back by switching to a dated tag; `bootc rollback` boots the previous

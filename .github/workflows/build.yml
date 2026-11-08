@@ -1,20 +1,18 @@
 ---
 name: Build container image
-# Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
-# through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
-# path filter) so the required "Build and push image" check always exists for the commit being promoted:
-# the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
-# aggregate job named "Build and push image" then passes without it.
+# Branch model: `main` is protected and only changes through a pull request from `testing`, whose merge
+# publishes `latest` (a push to main). `testing` is NOT built on push or for pull requests: build-testing.yml
+# dispatches this workflow on `testing` once an hour when it has a new commit, and a dispatch on ref `testing`
+# builds, signs and publishes the `testing` tags (`gh workflow run build.yml --ref testing` builds now).
+# The run executes on the head commit of `testing`, so its "Build and push image" check is the one the open
+# pull request needs. The plan job skips the heavy build for docs-only pushes (list in
+# .github/scripts/plan-build.sh); the aggregate job named "Build and push image" then passes without it.
 on:
-  pull_request:
-    branches:
-      - testing
   schedule:
     - cron: '05 10 * * *'  # 10:05am UTC everyday (runs on the default branch, so it refreshes latest)
   push:
     branches:
       - main
-      - testing
   workflow_dispatch:
 
 env:
@@ -22,7 +20,7 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 jobs:
   plan:
@@ -46,8 +44,8 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
@@ -133,7 +131,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # main publishes `latest`, testing publishes `testing`; pull request builds publish nothing
+      # main publishes `latest`, testing (a dispatch on that ref) publishes `testing`; any other ref publishes nothing
       - name: Choose channel
         id: channel
         env:
@@ -142,12 +140,10 @@ jobs:
         run: |
           publish=false
           tag=testing
-          if [[ "${EVENT}" != "pull_request" ]]; then
-            case "${REF}" in
-              refs/heads/main) publish=true; tag=latest ;;
-              refs/heads/testing) publish=true ;;
-            esac
-          fi
+          case "${REF}" in
+            refs/heads/main) publish=true; tag=latest ;;
+            refs/heads/testing) publish=true ;;
+          esac
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "Channel: tag=${tag} publish=${publish}"
