@@ -109,6 +109,24 @@ for pkg in firefox firefox-langpacks toolbox; do
     fi
 done
 
+# gnome-software: Bazaar (a preinstalled Flatpak) is the software centre; fwupd and PackageKit stay, so
+# firmware updates remain available through `fwupdmgr`. Preview the transaction first and fail the build if it
+# would take anything from the protected list with it (the single place that list lives).
+PROTECTED_PKGS="gnome-shell nautilus fwupd flatpak PackageKit gdm gnome-control-center gnome-session-wayland-session ostree rpm-ostree bootc podman systemd"
+if rpm -q gnome-software &>/dev/null; then
+    plan=$(dnf5 remove --assumeno gnome-software 2>&1 || true)
+    echo "== gnome-software removal transaction"
+    echo "${plan}"
+    grep -Eq '^[[:space:]]*gnome-software[[:space:]]' <<< "${plan}" || { echo "ERROR: the removal preview does not list gnome-software"; exit 1; }
+    for pkg in ${PROTECTED_PKGS}; do
+        if grep -Eq "^[[:space:]]*${pkg}[[:space:]]" <<< "${plan}"; then
+            echo "ERROR: removing gnome-software would also remove protected package ${pkg}"
+            exit 1
+        fi
+    done
+    dnf5 remove -y gnome-software
+fi
+
 # Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release

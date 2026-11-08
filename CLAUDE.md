@@ -149,6 +149,12 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
 - Firefox and toolbox are removed when present (Flatpak Firefox, distrobox).
+- gnome-software is removed (Bazaar, `io.github.kolunmi.Bazaar` in `tools.preinstall`, is the software centre;
+  fwupd and PackageKit stay and firmware updates remain available through `fwupdmgr`). `build.sh` previews
+  `dnf5 remove --assumeno gnome-software` and fails the build if the transaction lists a package of
+  `PROTECTED_PKGS` (gnome-shell, nautilus, fwupd, flatpak and a few more; the one place for that list).
+  The smoke test checks `! rpm -q gnome-software` and that fwupd, flatpak and gnome-shell remain.
+  Bazaar's manifest reads host config from `/run/host/etc/bazaar/` (none shipped).
 
 ## The toolbox recipe (`ujust toolbox <name>`)
 

@@ -41,7 +41,8 @@ Everything system-level that used to be hand-layered now lives in this repo:
   firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
   signature policy for the image itself.
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
-  Flatseal and Extension Manager.
+  Flatseal, Extension Manager and Bazaar (the software centre; gnome-software is removed, firmware
+  updates stay available through `fwupdmgr`).
 - **Build checks:** every build runs a smoke test before it is pushed and signed.
 
 What the image deliberately leaves to you: `sshd`, `tailscaled`, `cockpit.socket` and the snapper
