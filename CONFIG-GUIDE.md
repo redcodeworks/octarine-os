@@ -103,6 +103,20 @@ timers are installed but not enabled. Turn on what you use.
   the stock Fedora logos return. The vendor logo that `bgrt` shows comes from the UEFI firmware, not the OS.
 - **Not tested by CI:** how either screen renders; that needs a boot.
 
+## Package tiers, login shell and build cancelling
+
+- `build_files/build.sh` installs CRITICAL packages in one transaction (missing one fails the build; the smoke test
+  also requires the RPM vendor `Fedora Project`) and OPTIONAL packages in groups (`misc`, `codecs`, `cockpit`, `pcp`,
+  `containers`, `rocm`, `libguestfs`). Failed optional packages are listed in
+  `/usr/share/octarine-os/optional-packages-missing` (read it on a machine to see what an image lacks) and appear as
+  CI warnings. Outside-Fedora packages (negativo17 `gstreamer1-plugins-bad`/`-ugly`) are optional only.
+- `fish` is optional, yet the terminal configs launch `/usr/bin/fish` explicitly: without it they do not start.
+- New users get `zsh` (`/etc/default/useradd`, `/etc/skel/.zshrc`); existing users are unchanged. Rolling back to an
+  image without zsh breaks only accounts created meanwhile; distrobox copies the host login shell, so toolbox
+  images need zsh too (`gaming` unchecked).
+- CI: a newer push to `testing` (or a PR) cancels the older build; `main` and the scheduled run never are. A cancelled
+  build can leave the `testing` tag unsigned until the next build finishes.
+
 ## Snapshots
 
 - Snapper takes timeline snapshots of `/home` only (hourly, daily, monthly), with space-pressure
