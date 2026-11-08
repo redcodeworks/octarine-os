@@ -312,6 +312,8 @@ jobs:
             check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
             check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
             check "sudoers valid" "visudo -c"
+            check "sudo timestamp_timeout is 30 (minutes, not seconds)" "grep -qx \"Defaults timestamp_timeout=30\" /etc/sudoers.d/10-timestamp-timeout"
+            check "sudoers fragment valid" "visudo -c -f /etc/sudoers.d/10-timestamp-timeout"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
             check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
