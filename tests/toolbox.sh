@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for `ujust toolbox <name>` and `ujust brew` (system_files/usr/share/ublue-os/just/60-custom.just).
+# Tests for `ujust toolbox <name>` (system_files/usr/share/ublue-os/just/60-custom.just).
 # No network and nothing real is installed or created: curl, distrobox and distrobox-export are fakes,
 # keystrokes come from a file through UPM_TTY, and everything runs in a temp dir with its own HOME.
 # Needs: bash, just, setpriv (util-linux). Run: tests/toolbox.sh
@@ -63,7 +63,6 @@ case "$url" in
     *) exit 1 ;;
 esac
 case "$url" in
-    *Homebrew*) id=brew ;;
     *sdkman*) id=sdkman ;;
     *nvm*) id=nvm ;;
     *) exit 1 ;;
@@ -75,7 +74,6 @@ echo "installer $id args=\$* nonint=\${NONINTERACTIVE:-} path0=\${PATH%%:*}" >>"
 if [ -n "\${FAKE_SUDO:-}" ]; then sudo true || exit 1; fi
 mk() { mkdir -p "\$(dirname "\$1")"; echo x >"\$1"; chmod +x "\$1"; }
 case "$id" in
-    brew) mk "\$UPM_BREW_PREFIX/bin/brew" ;;
     sdkman) mk "\$HOME/.sdkman/bin/sdkman-init.sh" ;;
     nvm) mk "\$HOME/.nvm/nvm.sh" ;;
 esac
@@ -260,11 +258,6 @@ run() { # keys, args...
     UPM_TTY="$root/keys" just --justfile "$justfile" toolbox "$name" "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }
-runbrew() { # keys
-    printf '%s' "$1" >"$root/keys"
-    UPM_TTY="$root/keys" just --justfile "$justfile" brew >"$root/out" 2>&1 </dev/null
-    rc=$?
-}
 
 # ---- the shipped definition ---------------------------------------------------
 check "definition has the dev-toolbox section" grep -qx '\[dev-toolbox\]' "$shipped_def"
@@ -303,6 +296,7 @@ check "assembled copy has no brew volume while the dir is missing" bash -c "! gr
 check "assembled copy keeps the image line" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$FAKE_STATE/assembled.ini"
 check "the recipe prints the image it uses" has "Image: ghcr.io/redcodeworks/fedora-toolbox:latest"
 check "missing brew dir is explained" has "does not exist yet"
+check "missing-brew note names no removed recipe" hasnt "ujust brew"
 check "recreate hint printed" has "ujust toolbox dev-toolbox --recreate"
 check "box recorded" instate "box dev-toolbox"
 check "no-brew-mount recorded" instate "box-no-brew-mount"
@@ -605,7 +599,7 @@ run "y" rustup
 check "rustup-init blocked from sudo too" has "wanted sudo"
 check "no toolchain after the sudo attempt" test ! -d "$HOME/.rustup/toolchains/stable-x86_64"
 unset FAKE_SUDO
-check "no executable sudo in either recipe" bash -c "! sed -n '/^brew:/,\$p' '$justfile' | grep -w sudo | grep -vE '^\s*(echo|printf|#)|grep -qiE|sudo-called|bin/sudo|no-sudo guard'"
+check "no executable sudo in either recipe" bash -c "! sed -n '/^toolbox \*args:/,\$p' '$justfile' | grep -w sudo | grep -vE '^\s*(echo|printf|#)|grep -qiE|sudo-called|bin/sudo|no-sudo guard'"
 
 # ---- failed download, declining, view --------------------------------------------------------------------
 newenv
@@ -851,44 +845,6 @@ run "yes
 " --remove
 check "main remove deletes the launcher" test ! -e "$apps/dev-toolbox-pycharm.desktop"
 check "main remove still finishes" test ! -e "$state"
-
-# ---- brew recipe --------------------------------------------------------------------------------------------------
-newenv
-mkdir -p "$UPM_BREW_PREFIX"
-runbrew "y"
-check "brew exits 0" test "$rc" -eq 0
-check "brew installed" test -x "$UPM_BREW_PREFIX/bin/brew"
-check "brew ran non-interactively" logged "installer brew args= nonint=1"
-check "brew installer got the sudo stub first" logged "path0=$E/tmp/brew."
-check "brew hash printed" has "sha256 "
-check "brew shellenv instructions printed" has "brew shellenv"
-check "brew undo notes printed" has "To undo"
-check "brew mentions the toolbox mount" has "ujust toolbox dev-toolbox --recreate"
-check "brew leaves rc files alone" test ! -e "$HOME/.bashrc"
-check "brew leaves no temp files" bash -c "! ls '$E/tmp'/brew.* >/dev/null 2>&1"
-: >"$LOG"
-runbrew ""
-check "brew rerun is a no-op" has "already installed"
-check "brew rerun downloads nothing" notlogged "curl url="
-
-newenv
-runbrew "y"
-check "brew without prefix exits non-zero" test "$rc" -ne 0
-check "brew without prefix downloads nothing" notlogged "curl url="
-check "brew prints the one-time commands" has "sudo mkdir -p"
-check "brew prints the chown" has "chown -R"
-
-newenv
-mkdir -p "$UPM_BREW_PREFIX"
-export FAKE_SUDO=1
-runbrew "y"
-check "brew sudo attempt fails" test "$rc" -ne 0
-check "brew sudo stub message" has "sudo is not allowed here"
-check "brew sudo explanation" has "wanted sudo"
-unset FAKE_SUDO
-runbrew "n"
-check "brew declining cancels" has "Cancelled"
-check "brew declined installs nothing" test ! -e "$UPM_BREW_PREFIX/bin/brew"
 
 # ---- the toolbox scope: list, unknown names, a toolbox without a sidecar --------------------------
 rawrun() { # args (no name, no keys)

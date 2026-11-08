@@ -31,7 +31,7 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
   copies `system_files/` over it and runs `systemctl preset brew-setup.service brew-update.timer
   brew-upgrade.timer`.
 - It floats on `latest` (upstream builds weekly; `YYYYMMDD` tags exist for pinning later), so the brew tarball
-  is not bit-for-bit reproducible. The `plan`-adjacent build job resolves `latest` to a digest once, verifies
+  is not bit-for-bit reproducible. The build job (before the base pull) resolves `latest` to a digest once, verifies
   that digest with cosign against `keys/ublue-os-brew-cosign.pub` (vendored from the upstream repo, see
   `keys/README.md`), logs it ("Brew image ... resolved to ...") and passes `ref@digest` as `BREW_IMAGE` to
   `just build`, so verify and use cannot diverge. The log line is how to see what a given build used.
@@ -43,6 +43,10 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
   states and the files.
 - Formulae are not pinned by the image; `brew bundle` from a Brewfile (kept outside this repo) is their
   reproducibility. The first-boot path cannot be tested in CI (the smoke test only checks units and files).
+- There is no `ujust brew` any more (removed 2026-11-08). Repair for a missing prefix is manual and unverified:
+  `sudo mkdir -p /var/home/linuxbrew/.linuxbrew`, chown it to the user, and run
+  `sudo systemctl start brew-setup.service` only if `/etc/.linuxbrew` is absent (the unit also skips while the
+  prefix exists).
 - Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
   the CI steps and the smoke assertions; existing prefixes stay untouched.
 
@@ -87,7 +91,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
-- `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
+- `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
 - The image carries no compilers or build tools; they live in the toolbox the definition describes, which
@@ -251,7 +255,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   changes and the command `ujust toolbox <name> --set-default` is printed. `--set-default` asks the same
   question later. Records (`conf ...`, plus `conf-value <name>` for a typed name) let `--remove` restore the
   old value while the file still holds what the recipe wrote.
-- **No sudo, no rc edits.** Installer scripts (SDKMAN, nvm; Homebrew in `ujust brew`) are https-only, downloaded
+- **No sudo, no rc edits.** Installer scripts (SDKMAN, nvm) are https-only, downloaded
   to a file, hashed, shown on request and run only after `y`, with a `sudo` stub first on `PATH` and
   `no_new_privs` through `setpriv` (refused if `setpriv` is missing). Nothing edits shell rc files or runs as root.
 - **rustup.** Fedora's `rustup` package ships only `/usr/bin/rustup-init`; `~/.cargo/bin/rustup` and the proxies
@@ -260,7 +264,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   --default-toolchain stable`, then exports the executables in `~/.cargo/bin` (not `rustup-init`).
 - **Brew mount.** The definition mounts `/home/linuxbrew` read-only; the source must exist at creation and the
   recipe cannot create it, so while it is missing the `volume=` line is dropped from a temporary copy and
-  `box-no-brew-mount` is recorded; `--recreate` after `ujust brew` adds it.
+  `box-no-brew-mount` is recorded; `--recreate` once the prefix exists (the image's first-boot `brew-setup.service` creates it) adds it.
 - **Exports.** `distrobox-export --bin` into `~/.local/bin` (never overwrites; recorded per toolbox); `sdk` is a
   wrapper script because it is a shell function. Host `node`/`npm` stay brew's, so nvm exports nothing.
 - **IDE launchers.** `~/.local/share/applications/<name>-<id>.desktop` with `Exec=distrobox enter -n <name> --
@@ -271,11 +275,10 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - **Adding a toolbox.** Ship `<name>.ini` (section `[<name>]`) and optionally `<name>.conf` in
   `system_files/usr/share/ublue-os/distrobox/`, with an image from the fedora-toolbox repo; extend `tests/toolbox.sh`.
 - **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
-- **Installer scripts.** SDKMAN and nvm (in the toolbox) and Homebrew (`ujust brew`) are the only installer
+- **Installer scripts.** SDKMAN and nvm (in the toolbox) are the only installer
   scripts; nothing here needs sudo.
 - **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
-  `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref). `ujust brew` needs the prefix to exist and be
-  the user's (otherwise it prints the `sudo mkdir`/`chown`), prints the shellenv lines and edits no rc files.
+  `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
   `add-user-groups` copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group`
   first. The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
   contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
