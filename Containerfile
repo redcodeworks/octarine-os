@@ -1,3 +1,12 @@
+# Homebrew, as files only: Universal Blue's `ghcr.io/ublue-os/brew` is a FROM scratch image that holds
+# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). Pinned to a dated
+# tag (YYYYMMDD, upstream rebuilds weekly); bump it here, in one place (`just brew-tags` lists the newest).
+# A dated tag can in principle be re-pushed, so CI resolves it to a digest, verifies that digest with cosign
+# (keys/ublue-os-brew-cosign.pub), logs it and passes `ref@digest` as BREW_IMAGE; the logged digest is the record.
+ARG BREW_TAG=20261108
+ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}
+FROM ${BREW_IMAGE} AS brew
+
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
@@ -35,6 +44,9 @@ ARG IMAGE_NAME
 ### MODIFICATIONS
 ## make modifications desired in your image and install packages by modifying the build.sh script
 ## the following RUN directive does all the things required to run "build.sh" as recommended.
+
+# Brew's files go in first; build.sh then copies system_files over them, so our presets and files win
+COPY --from=brew /system_files /
 
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

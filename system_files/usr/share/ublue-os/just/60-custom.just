@@ -201,108 +201,6 @@ gnome-themes *args:
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Install Homebrew on the host (never baked into the image: its prefix must belong to the user who runs it). The prefix /home/linuxbrew/.linuxbrew has to exist and be yours first; if not, the one-time sudo commands are printed for you to run. The installer is downloaded to a file, hashed, shown on request and run only after you answer y, with sudo blocked. Nothing here edits your shell rc files
-brew:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    brew_prefix="${UPM_BREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
-    tty_in="${UPM_TTY:-/dev/tty}"
-    url="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
-
-    shellenv_note() {
-        echo "Put brew on PATH yourself (this recipe does not edit rc files):"
-        echo "  bash: add to ~/.bashrc:  eval \"\$($brew_prefix/bin/brew shellenv)\""
-        echo "  fish: add to ~/.config/fish/config.fish:  eval ($brew_prefix/bin/brew shellenv)"
-        echo "shellenv puts brew first on PATH; append it instead if system binaries must win."
-    }
-
-    if [ "$(id -u)" -eq 0 ]; then
-        echo "Do not run this as root: Homebrew belongs to your user." >&2
-        exit 1
-    fi
-    if [ -x "$brew_prefix/bin/brew" ]; then
-        echo "Homebrew is already installed in $brew_prefix."
-        shellenv_note
-        exit 0
-    fi
-    if ! { [ -d "$brew_prefix" ] && [ -w "$brew_prefix" ] && [ -O "$brew_prefix" ]; }; then
-        home_real=$(readlink -f /home)
-        echo "Homebrew's prefix ($brew_prefix) must exist and belong to you, because this recipe never uses sudo."
-        echo "Run this once yourself, then run this recipe again:"
-        echo "  sudo mkdir -p $home_real/linuxbrew/.linuxbrew && sudo chown -R $(id -un): $home_real/linuxbrew"
-        if [ "$home_real" != /home ]; then
-            echo "(/home is a symlink to $home_real here, so the path above is the real one.)"
-        fi
-        exit 1
-    fi
-    if ! (: <"$tty_in") 2>/dev/null; then
-        echo "No terminal to read answers from; run this in an interactive shell." >&2
-        exit 1
-    fi
-    exec 3<"$tty_in"
-
-    work=$(mktemp -d "${TMPDIR:-/tmp}/brew.XXXXXX")
-    chmod 700 "$work"
-    trap 'rm -rf -- "$work"' EXIT
-    trap 'exit 130' INT TERM
-
-    file="$work/install.sh"
-    echo "Downloading $url"
-    curl -fsSL --proto '=https' --tlsv1.2 -o "$file" "$url" || { echo "Download failed."; exit 1; }
-    echo "sha256 $(sha256sum "$file" | cut -d' ' -f1)"
-    echo "size   $(stat -c %s "$file") bytes"
-    echo "This is vendor code, not ours: running it means you trust $url."
-    while :; do
-        printf '[v] view it, [y] run it, anything else cancels: '
-        IFS= read -rsn1 -u 3 ans || ans=n
-        printf '%s\n' "$ans"
-        case "$ans" in
-            v | V)
-                read -ra pg <<<"${PAGER:-less}"
-                command -v "${pg[0]}" >/dev/null 2>&1 || pg=(cat)
-                "${pg[@]}" "$file" || true
-                ;;
-            y | Y) break ;;
-            *)
-                echo "Cancelled."
-                exit 0
-                ;;
-        esac
-    done
-
-    # sudo stub first on PATH, and no_new_privs so even /usr/bin/sudo (which Homebrew's
-    # installer calls by absolute path) cannot gain privileges
-    command -v setpriv >/dev/null 2>&1 || { echo "setpriv is missing, refusing to run an installer without the no-sudo guard." >&2; exit 1; }
-    mkdir -p "$work/bin"
-    {
-        printf '#!/bin/sh\n'
-        printf 'echo "sudo is not allowed here" >&2\n'
-        printf ': > %q\n' "$work/sudo-called"
-        printf 'exit 1\n'
-    } >"$work/bin/sudo"
-    chmod 700 "$work/bin/sudo"
-    rc=0
-    PATH="$work/bin:$PATH" NONINTERACTIVE=1 setpriv --no-new-privs bash "$file" </dev/null 2>&1 | tee "$work/log" || rc=${PIPESTATUS[0]}
-    if [ "$rc" -ne 0 ]; then
-        if [ -e "$work/sudo-called" ] || grep -qiE 'sudo|no new privileges|no_new_privs' "$work/log"; then
-            echo "Homebrew failed because the installer wanted sudo, which this recipe blocks on purpose."
-            echo "Do the root-only step yourself (see the message above), then run this again."
-        else
-            echo "Homebrew failed (exit $rc)."
-        fi
-        exit 1
-    fi
-    if [ ! -x "$brew_prefix/bin/brew" ]; then
-        echo "The installer finished but $brew_prefix/bin/brew is missing; check its output above."
-        exit 1
-    fi
-    echo "Installed Homebrew in $brew_prefix."
-    shellenv_note
-    echo "If you use the dev-toolbox toolbox, run: ujust toolbox dev-toolbox --recreate (adds the read-only brew mount)."
-    echo "To undo: run Homebrew's uninstall script (https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh),"
-    echo "delete the shellenv lines you added to your rc files, and remove the prefix directory if you want it gone."
-
 # Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
 [positional-arguments]
 toolbox *args:
@@ -672,7 +570,7 @@ toolbox *args:
             echo "Default name:  $cv (not $box)"
         fi
         if grep -qx 'box-no-brew-mount' "$state_file" 2>/dev/null; then
-            echo "Brew mount:    missing (box made before brew existed; run --recreate after ujust brew)"
+            echo "Brew mount:    missing (box made before the brew prefix existed; run --recreate)"
         fi
         if [ "$isolated" = 1 ]; then
             hs=missing
@@ -1156,7 +1054,7 @@ toolbox *args:
             grep -v '^volume=.*linuxbrew' "$work/def.ini" >"$tmpdef" || true
             nobrew=1
             echo "   $brew_dir does not exist yet, so the box is created without the read-only brew mount."
-            echo "   After 'ujust brew', run 'ujust toolbox $box --recreate' to add it."
+            echo "   Once the prefix exists (the first-boot brew-setup.service creates it), run 'ujust toolbox $box --recreate' to add it."
         fi
         if [ "$isolated" = 1 ]; then
             ensure_home || {

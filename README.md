@@ -40,7 +40,6 @@ sudo bootc rollback                                                      # boot 
 |---|---|
 | `ujust add-user-groups` | Add a user to the `gamemode`, `input` and `libvirt` groups |
 | `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options |
-| `ujust brew` | Install Homebrew on the host (its prefix belongs to your user, so it is not in the image) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
 | `ujust flatpak-games-access` | Give the Flatpak game launchers access to a games directory |
 | `ujust steam-flatpak-devices` | Let Flatpak Steam see USB and input devices |
@@ -64,6 +63,10 @@ These ship to everyone who uses the image as-is:
 - **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`,
   `cockpit.socket` and the snapper timers are installed and left off.
+- **Homebrew:** the files of Universal Blue's `ghcr.io/ublue-os/brew` image (pinned to a dated tag, signature
+  checked in CI). On first boot `brew-setup.service`
+  extracts the prefix for UID 1000, unless a prefix already exists; `brew-update.timer` is enabled and
+  `brew-upgrade.timer` is kept off (upgrades are manual). Formulae are not pinned (use `brew bundle`). Details in `CONFIG-GUIDE.md`.
 - **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image.
 
 ## Contributing
