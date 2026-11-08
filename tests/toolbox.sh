@@ -748,6 +748,52 @@ check "rerun says already created" has "Already created"
 run "" --ide --list
 check "ide list shows created" grep -qE '^pycharm +yes +created' "$root/out"
 
+# icon detection: script name differs from the app directory, no .sh suffix (the real Toolbox layout)
+newenv
+mkbox
+mkdir -p "$E/jb/apps/intellij-idea/bin"
+printf '#!/bin/bash\n\n"%s/jb/apps/intellij-idea/bin/idea" "$@"' "$E" >"$E/jb/scripts/idea"
+chmod +x "$E/jb/scripts/idea"
+printf '<svg/>' >"$E/jb/apps/intellij-idea/bin/idea.svg"
+printf 'png' >"$E/jb/apps/intellij-idea/bin/idea.png"
+run "" --ide idea
+check "idea: icon from the app directory (intellij-idea), svg first" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.svg" "$apps/dev-toolbox-idea.desktop"
+rm "$E/jb/apps/intellij-idea/bin/idea.svg"
+rm "$apps/dev-toolbox-idea.desktop"
+sed -i '/^launcher /d' "$state"
+run "" --ide idea
+check "idea: png when there is no svg" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.png" "$apps/dev-toolbox-idea.desktop"
+# a script that does not name the app directory: found through <apps>/*/bin/<name>
+printf '#!/bin/bash\nexec /nonexistent/launcher\n' >"$E/jb/scripts/idea"
+rm "$apps/dev-toolbox-idea.desktop"
+sed -i '/^launcher /d' "$state"
+run "" --ide idea
+check "idea: fallback search of the apps directory" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.png" "$apps/dev-toolbox-idea.desktop"
+
+# the Toolbox-registered icon name wins, and a rerun refreshes launchers the recipe created
+newenv
+mkbox
+run "" --ide pycharm
+pc="$apps/dev-toolbox-pycharm.desktop"
+check "before: icon is a file path" grep -qx "Icon=$E/jb/apps/PyCharm/ch-0/9.9/bin/pycharm.svg" "$pc"
+ic="$HOME/.local/share/icons/hicolor/scalable/apps"
+mkdir -p "$ic"
+printf '<svg/>' >"$ic/jetbrains-pycharm-1111.svg"
+printf '<svg/>' >"$ic/jetbrains-pycharm-2222.svg"
+touch -d '1 hour ago' "$ic/jetbrains-pycharm-1111.svg"
+run "" --ide pycharm
+check "rerun refreshes to the registered icon name (newest)" grep -qx 'Icon=jetbrains-pycharm-2222' "$pc"
+check "refresh is announced" has "Refreshed the icon"
+check "refresh keeps the rest of the launcher" grep -qx 'StartupWMClass=jetbrains-pycharm' "$pc"
+run "" --ide pycharm
+check "a second rerun changes nothing and says nothing" bash -c "! grep -q 'Refreshed the icon' '$root/out'"
+# a launcher the recipe did not create is not touched
+mkdir -p "$apps"
+printf '[Desktop Entry]\nIcon=mine\n' >"$apps/dev-toolbox-datagrip.desktop"
+printf '<svg/>' >"$ic/jetbrains-datagrip-3333.svg"
+run "" --ide datagrip
+check "foreign launcher keeps its icon" grep -qx 'Icon=mine' "$apps/dev-toolbox-datagrip.desktop"
+
 newenv
 mkbox
 mkdir -p "$apps"

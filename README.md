@@ -60,7 +60,7 @@ Fedora major upgrade:
 | Recipe | What it does |
 |---|---|
 | `ujust add-user-groups` | Add a user to the `gamemode`, `input` and `libvirt` groups |
-| `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options |
+| `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options; `--ide` makes IDE launchers (JetBrains icon: the one Toolbox registered, else the file in the app's `bin/`; rerunning refreshes the icon of launchers it created) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
 | `ujust flatpak-games-access` | Give the Flatpak game launchers access to a games directory |
 | `ujust steam-flatpak-devices` | Let Flatpak Steam see USB and input devices |

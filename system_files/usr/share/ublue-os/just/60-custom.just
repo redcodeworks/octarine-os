@@ -201,7 +201,7 @@ gnome-themes *args:
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
+# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box (the JetBrains icon is the one Toolbox registered, else the file in the app's bin/ directory; running `--ide` again refreshes the Icon= line of launchers this recipe created), `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
 [positional-arguments]
 toolbox *args:
     #!/usr/bin/env bash
@@ -616,10 +616,12 @@ toolbox *args:
     # IDE launchers (--ide): .desktop files that start an IDE inside the box. Detection only, nothing is installed.
     # One row per IDE, fields separated by ^ : id ^ name ^ kind (jetbrains or vscode) ^ launcher name ^ StartupWMClass ^ categories
     # jetbrains: the stable shell script JetBrains Toolbox generates (needs "Generate shell scripts" in the Toolbox settings,
-    # default folder below); the icon is taken from the IDE directory that script launches, so no versioned path is hardcoded.
+    # default folder below); the icon is the name Toolbox registered in the user icon theme (jetbrains-<tool>-<uuid>), else the file in the bin/
+    # directory of the app that script launches, so no versioned path or uuid is hardcoded.
     # vscode: a code found inside the box, or a tarball install under the home. The window classes are from memory, unverified.
     app_dir="${UPM_APPS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}"
     jb_scripts="${UPM_JB_SCRIPTS:-$HOME/.local/share/JetBrains/Toolbox/scripts}"
+    jb_icons="${UPM_JB_ICONS:-${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps}"
     ide_rows=(
         'pycharm^PyCharm^jetbrains^pycharm^jetbrains-pycharm^Development;IDE;'
         'idea^IntelliJ IDEA^jetbrains^idea^jetbrains-idea^Development;IDE;'
@@ -653,6 +655,7 @@ toolbox *args:
     idmsg=""
     ide_detect() { # sets idcmd, idicon, idmsg
         local s l d c f
+        l=""
         idcmd=""
         idicon=""
         idmsg=""
@@ -665,14 +668,25 @@ toolbox *args:
                     return 1
                 fi
                 idcmd=$s
-                l=$(grep -oE '/[^" ]+/bin/[^" /]+\.sh' "$s" 2>/dev/null | head -1 || true)
+                # 1. the icon name Toolbox registered (jetbrains-<tool>-<uuid>.svg in the user hicolor theme): it follows
+                #    Toolbox's own updates; the uuid is per install, so only the glob is written here. Newest file wins.
+                for f in "$jb_icons"/jetbrains-"$icmd"-*.svg; do
+                    if [ -f "$f" ] && { [ -z "$l" ] || [ "$f" -nt "$l" ]; }; then l=$f; fi
+                done
                 if [ -n "$l" ]; then
-                    d=$(dirname -- "$l")
-                    for f in "$d"/*.svg "$d"/*.png; do
-                        if [ -f "$f" ]; then
-                            idicon=$f
-                            break
-                        fi
+                    f=$(basename -- "$l")
+                    idicon=${f%.svg}
+                else
+                    # 2. the file in the app's own bin/ directory: the script execs <apps>/<dir>/bin/<name> (the dir name can
+                    #    differ from the script name, intellij-idea vs idea); else look in every <apps>/*/bin for <name>.svg
+                    l=$(grep -oE '/[^" ]+/bin/[^" /]+' "$s" 2>/dev/null | head -1 || true)
+                    for d in ${l:+"$(dirname -- "$l")"} "$(dirname -- "$jb_scripts")"/apps/*/bin; do
+                        for f in "$d/$icmd.svg" "$d/$icmd.png"; do
+                            if [ -f "$f" ]; then
+                                idicon=$f
+                                break 2
+                            fi
+                        done
                     done
                 fi
                 ;;
@@ -1909,12 +1923,24 @@ toolbox *args:
         echo "   It runs: distrobox enter -n $box -- $3 %F"
     }
 
+    # Re-detect the icon of a launcher this recipe created and rewrite its Icon= line when it differs. Never touches others.
+    refresh_icon() { # file, ide id
+        local f=$1 cur
+        grep -qxF -- "launcher $f" "$state_file" 2>/dev/null || return 0
+        if ! ide_detect "$2" || [ -z "$idicon" ]; then return 0; fi
+        cur=$(sed -n 's/^Icon=//p' "$f" | head -1)
+        if [ "$cur" = "$idicon" ]; then return 0; fi
+        sed -i "s|^Icon=.*|Icon=${idicon//|/\\|}|" "$f"
+        echo "   Refreshed the icon: ${cur:-none} -> $idicon"
+    }
+
     install_ide() {
         local t=$1
         ide_load "$t"
         echo "== $iname"
         if [ -e "$(ide_file "$t")" ]; then
             make_launcher "$(ide_file "$t")" "$iname" "" "" "" ""
+            refresh_icon "$(ide_file "$t")" "$t"
             return 0
         fi
         if ! ide_detect "$t"; then
