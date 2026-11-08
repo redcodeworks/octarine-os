@@ -48,10 +48,6 @@ Everything system-level that used to be hand-layered now lives in this repo:
 What the image deliberately leaves to you: `sshd`, `tailscaled`, `cockpit.socket` and the snapper
 timers are installed but not enabled. Turn on what you use.
 
-`scx_rusty` (a sched_ext CPU scheduler) is installed too, with no service. Start it by hand as root with
-`sudo scx_rusty` and stop it with Ctrl-C, which returns to the default scheduler. The packaged version is
-old, so it may fail to load on a new kernel.
-
 ## The dotfiles repo, ideas worth borrowing
 
 - **Allow-list `.gitignore`.** `~/.config` is the repo and ignores everything by default; each
