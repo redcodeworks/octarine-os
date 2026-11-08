@@ -134,6 +134,38 @@ grep -qx 'PRETTY_NAME="Octarine_OS"' /usr/lib/os-release
 echo "== resulting os-release"
 cat /usr/lib/os-release
 
+# --- Branding: Tux on the GDM login screen and the Plymouth boot screen ---
+# GDM: system_files ships zz-octarine-login-screen.gschema.override; compile the schemas so it takes effect.
+# glib-compile-schemas exits non-zero on a bad override (set -e fails the build).
+glib-compile-schemas /usr/share/glib-2.0/schemas
+test "$(GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo)" \
+    = "'/usr/share/octarine-os/logo/octarine-logo.png'"
+
+# Plymouth: own theme "octarine" = bgrt (firmware logo plus spinner) with our watermark. The spinner assets are
+# copied from the installed spinner theme (not vendored); the fedora-logos package file stays untouched.
+theme=/usr/share/plymouth/themes/octarine
+rm -rf "${theme}"
+mkdir -p "${theme}"
+cp -a /usr/share/plymouth/themes/spinner/. "${theme}/"
+rm -f "${theme}/spinner.plymouth"
+install -m644 /usr/share/octarine-os/logo/octarine-logo.png "${theme}/watermark.png"
+sed -e '/^Name\[/d' -e 's/^Name=.*/Name=Octarine/' \
+    -e "s#^ImageDir=.*#ImageDir=${theme}#" \
+    /usr/share/plymouth/themes/bgrt/bgrt.plymouth >"${theme}/octarine.plymouth"
+grep -qx "ImageDir=${theme}" "${theme}/octarine.plymouth"
+grep -qx 'ModuleName=two-step' "${theme}/octarine.plymouth"
+grep -qx 'Theme=octarine' /etc/plymouth/plymouthd.conf
+
+# The initramfs carries the Plymouth theme (boot and LUKS passphrase screens), so regenerate it for the image's
+# kernel, the way Universal Blue images do (dracut with the ostree module). Riskiest step: CI cannot boot it.
+test "$(ls /usr/lib/modules | wc -l)" = 1
+kver=$(ls /usr/lib/modules)
+DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add ostree \
+    -f "/usr/lib/modules/${kver}/initramfs.img"
+chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
+lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
+# --- end branding ---
+
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
 

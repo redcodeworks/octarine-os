@@ -1,0 +1,4 @@
+# GDM login screen logo: Tux instead of the Fedora logo. Sorts after gdm's own override
+# (org.gnome.login-screen.gschema.override), so it wins. Use logo='' to hide the logo.
+[org.gnome.login-screen]
+logo='/usr/share/octarine-os/logo/octarine-logo.png'
