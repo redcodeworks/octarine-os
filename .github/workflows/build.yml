@@ -322,7 +322,7 @@ jobs:
             check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
             check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
             check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
-            check "Tux logo files" "test -s /usr/share/octarine-os/logo/octarine-logo.png && test -s /usr/share/octarine-os/logo/octarine-logo-master-512.png"
+            check "Tux logo files" "test -s /usr/share/octarine-os/logo/octarine-logo.png && test -s /usr/share/octarine-os/logo/octarine-logo-neutral-512.png"
             check "GDM logo override file" "grep -qF octarine-logo.png /usr/share/glib-2.0/schemas/zz-octarine-login-screen.gschema.override"
             check "GDM logo override compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo | grep -qF octarine-logo.png"
             check "plymouth theme file" "grep -qx ModuleName=two-step /usr/share/plymouth/themes/octarine/octarine.plymouth"

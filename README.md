@@ -1,4 +1,4 @@
-<p align="center"><img src="system_files/usr/share/octarine-os/logo/octarine-logo-master-512.png" alt="octarineOS logo" width="560"></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="system_files/usr/share/octarine-os/logo/octarine-logo-dark-512.png"><source media="(prefers-color-scheme: light)" srcset="system_files/usr/share/octarine-os/logo/octarine-logo-light-512.png"><img src="system_files/usr/share/octarine-os/logo/octarine-logo-neutral-512.png" alt="octarineOS logo" width="560"></picture></p>
 
 # octarine-os
 
@@ -177,8 +177,11 @@ part is derived from
 [CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors from Pixabay, based on Tux
 by Larry Ewing and The GIMP (credit is a courtesy, not required).
 
-The full-size file (`octarine-logo-full.png`, 7000x1280) is the source for every smaller size: resize it with Lanczos and
-keep the alpha channel. The original uncompressed artwork is not stored in the repo or the image because it is about 30 MB.
+The three full-size files (`octarine-logo-{neutral,dark,light}-full.png`, 7000x1280) are the sources for every smaller size:
+resize them with Lanczos and keep the alpha channel. The uncompressed originals (about 36 MB each) are not stored in the repo
+or the image. Variants: `dark` has cream letters for dark backgrounds (`octarine-logo.png`, 525x96, is the dark one, used by the GDM
+login screen and the Plymouth boot screen), `light` has dark-brown letters for light backgrounds, and `neutral` has grey letters
+that work on any background.
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.
