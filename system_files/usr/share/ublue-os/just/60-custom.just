@@ -303,7 +303,7 @@ brew:
     echo "To undo: run Homebrew's uninstall script (https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh),"
     echo "delete the shellenv lines you added to your rc files, and remove the prefix directory if you want it gone."
 
-# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev`) from /usr/share/ublue-os/distrobox/<name>.ini, optionally makes it the default for distrobox enter, and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` makes it the distrobox default, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
+# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
 [positional-arguments]
 toolbox *args:
     #!/usr/bin/env bash
@@ -562,7 +562,7 @@ toolbox *args:
     # A new conf record replaces this toolbox's older one
     drop_conf_records() {
         [ -f "$state_file" ] || return 0
-        sed -i '/^conf /d' "$state_file"
+        sed -i -e '/^conf /d' -e '/^conf-value /d' "$state_file"
     }
 
     record() {
@@ -1168,39 +1168,69 @@ toolbox *args:
         echo "   Created $box."
     }
 
-    # Step 2: make it the default for distrobox enter. Nothing is changed without asking when the key already
-    # holds another value (with several toolboxes only one can be the default). An unset key is filled in.
+    # Step 2: offer to set the default container for `distrobox enter` (the container_name_default line of
+    # distrobox.conf). Enter sets the toolbox's own name, another valid name sets that, a single dash leaves
+    # the current value. Only that one line changes. Without answers to read (no terminal) nothing is changed
+    # and the command to run later is printed.
+    container_exists() {
+        command -v distrobox >/dev/null 2>&1 &&
+            distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); print $2 }' | grep -qx -- "$1"
+    }
     step_default() {
-        local cur tmp
+        local cur shown new line tmp
         cur=$(conf_value)
         if [ "$cur" = "$box" ]; then
-            echo "== container_name_default is already $box"
+            echo "== container_name_default is already $box (already set), nothing written"
             return 0
         fi
-        echo "== Setting container_name_default=$box in $conf_file"
+        shown=${cur:-none}
+        if [ -n "$cur" ] && ! container_exists "$cur"; then shown="$cur, no such container"; fi
+        echo "== Default container for 'distrobox enter' ($conf_file)"
+        while :; do
+            printf "Default container for 'distrobox enter' (current: %s) [%s]: " "$shown" "$box"
+            if ! IFS= read -r -u 3 line; then
+                echo
+                echo "   No terminal to read an answer from; the default is unchanged. To set it, run:"
+                echo "   ujust toolbox $box --set-default"
+                return 0
+            fi
+            case "$line" in
+                "") new=$box ;;
+                -)
+                    echo "   Left as it was."
+                    return 0
+                    ;;
+                *[!A-Za-z0-9_.-]*)
+                    echo "   A container name may only use letters, digits, _, - and . ; try again."
+                    continue
+                    ;;
+                *) new=$line ;;
+            esac
+            break
+        done
+        if [ "$new" = "$cur" ]; then
+            echo "   $new is already set; nothing written."
+            return 0
+        fi
         mkdir -p -- "$(dirname -- "$conf_file")"
         if [ ! -f "$conf_file" ]; then
-            printf 'container_name_default="%s"\n' "$box" >"$conf_file"
+            printf 'container_name_default="%s"\n' "$new" >"$conf_file"
             drop_conf_records
             record "conf created"
         elif ! grep -qE '^[[:space:]]*container_name_default=' "$conf_file"; then
             if [ -s "$conf_file" ] && [ -n "$(tail -c1 "$conf_file")" ]; then printf '\n' >>"$conf_file"; fi
-            printf 'container_name_default="%s"\n' "$box" >>"$conf_file"
+            printf 'container_name_default="%s"\n' "$new" >>"$conf_file"
             drop_conf_records
             record "conf appended"
         else
-            echo "   It is currently set to '$cur'."
-            if ! ask "   [y] change it to $box, anything else leaves it: "; then
-                echo "   Left as it was."
-                return 0
-            fi
             tmp="$work/distrobox.conf"
-            awk -v v="container_name_default=\"$box\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
+            awk -v v="container_name_default=\"$new\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
             cat "$tmp" >"$conf_file"
             drop_conf_records
             record "conf changed $cur"
         fi
-        echo "   distrobox enter now opens $box."
+        if [ "$new" != "$box" ]; then record "conf-value $new"; fi
+        echo "   distrobox enter now opens $new."
     }
 
     # Run a command in the box with a sudo stub first on PATH and no_new_privs, so even an
@@ -1611,7 +1641,7 @@ toolbox *args:
     }
 
     do_remove() {
-        local p kind rest cur conf_line have_box=0 line other hline hp home_p="" home_kind="" purge_ok=0
+        local p kind rest cur wrote conf_line have_box=0 line other hline hp home_p="" home_kind="" purge_ok=0
         local exps=() dirs=() skipped=() lnch=() apps_l=() handover=()
         if [ ! -f "$state_file" ]; then
             echo "No state file ($state_file): this recipe has nothing recorded, so there is nothing to remove."
@@ -1675,7 +1705,8 @@ toolbox *args:
         for p in "${apps_l[@]}"; do echo "  app       $p  ($(size_of "$p"))"; done
         if [ -n "$conf_line" ]; then
             cur=$(conf_value)
-            if [ "$cur" = "$box" ]; then
+            wrote=$(grep '^conf-value ' "$state_file" | tail -1 | sed 's/^conf-value //' || true)
+            if [ "$cur" = "${wrote:-$box}" ]; then
                 echo "  setting   container_name_default in $conf_file (${conf_line#conf })"
             else
                 skipped+=("container_name_default in $conf_file (now '$cur', not what this recipe wrote)")

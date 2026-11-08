@@ -223,8 +223,13 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   major changes, confirm, replace via recreate; no package resolution test, the fedora-toolbox CI covers it),
   `--update` (`distrobox upgrade`), `--set-default`, `--ide [names]`, `--ide-custom NAME COMMAND [ICON]`,
   `--ide --list`, `--ide --remove [--dry-run]`. Options exclusive of each other are rejected with exit 2.
-- **Default container.** `container_name_default` is set when the key is unset; if it holds another value the
-  recipe shows it and asks. `--set-default` changes it later. Records let `--remove` restore the old value.
+- **Default container.** The recipe asks one line: `Default container for 'distrobox enter' (current: <value or
+  none>[, no such container]) [<toolbox name>]: `. Enter sets the toolbox's own name, another valid name
+  (letters, digits, `_ - .`; invalid asks again) sets that, `-` leaves it; an equal value says `already set` and
+  writes nothing. Only the `container_name_default` line changes. With no answer to read (no terminal) nothing
+  changes and the command `ujust toolbox <name> --set-default` is printed. `--set-default` asks the same
+  question later. Records (`conf ...`, plus `conf-value <name>` for a typed name) let `--remove` restore the
+  old value while the file still holds what the recipe wrote.
 - **No sudo, no rc edits.** Installer scripts (SDKMAN, nvm; Homebrew in `ujust brew`) are https-only, downloaded
   to a file, hashed, shown on request and run only after `y`, with a `sudo` stub first on `PATH` and
   `no_new_privs` through `setpriv` (refused if `setpriv` is missing). Nothing edits shell rc files or runs as root.

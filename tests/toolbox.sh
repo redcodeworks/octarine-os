@@ -241,9 +241,22 @@ newenv() { # fresh HOME, temp dir, fake box tools and log
 }
 mkbox() { echo dev >"$FAKE_STATE/boxes"; }
 rc=0
+# The default-container question reads a whole line. Most tests are not about it, so run() answers it with
+# a blank line (the toolbox's own name) at the right place in their keys: after the box step's answer (the
+# create or recreate confirmation) or first when the box needs no answer. DEFKEY="" runs without that line and
+# DEFKEY=text puts text there instead. Runs that never reach the question (--list, --remove, ...) get nothing.
 run() { # keys, args...
-    printf '%s' "$1" >"$root/keys"
+    local keys=$1 dk="${DEFKEY-$'\n'}" a inject=1 asks=1
     shift
+    for a in "$@"; do
+        case "$a" in --list | --remove | --update | --upgrade | --check | --dry-run | --set-default | --ide | --ide-custom) inject=0 ;; esac
+    done
+    if grep -qx "container_name_default=\"$name\"" "$conf" 2>/dev/null; then inject=0; fi
+    if grep -qx "$name" "$FAKE_STATE/boxes" 2>/dev/null && ! printf '%s\n' "$@" | grep -qx -e --recreate; then asks=0; fi
+    if [ "$inject" = 1 ] && [ -n "$dk" ]; then
+        if [ "$asks" = 1 ]; then keys="${keys:0:1}$dk${keys:1}"; else keys="$dk$keys"; fi
+    fi
+    printf '%s' "$keys" >"$root/keys"
     UPM_TTY="$root/keys" just --justfile "$justfile" toolbox "$name" "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }
@@ -418,17 +431,80 @@ run "y"
 check "failed assemble exits non-zero" test "$rc" -ne 0
 check "failed assemble is reported" has "assemble failed"
 
-# ---- default name: other value asks, appended keeps the rest ----------------------------------
+# ---- default container question: blank, a name, a dash, a bad name, stale and same values, no terminal -----
 newenv
 mkbox
 mkdir -p "$(dirname "$conf")"
 printf 'container_manager="podman"\ncontainer_name_default="other"\n' >"$conf"
-run "n"
-check "other value is shown" has "currently set to 'other'"
-check "declining leaves the other value" grep -qx 'container_name_default="other"' "$conf"
-run "y"
-check "accepting changes only that key" bash -c "grep -qx 'container_name_default=\"dev\"' '$conf' && grep -qx 'container_manager=\"podman\"' '$conf'"
+DEFKEY="-
+" run ""
+check "prompt wording with a stale current value" has "Default container for 'distrobox enter' (current: other, no such container) [dev]: "
+check "prompt says nothing about y" hasnt "anything else leaves it"
+check "a dash leaves the value alone" grep -qx 'container_name_default="other"' "$conf"
+check "a dash records nothing" bash -c "! grep -q '^conf' '$state' 2>/dev/null"
+DEFKEY="
+" run ""
+check "blank sets the toolbox name, only that key" bash -c "grep -qx 'container_name_default=\"dev\"' '$conf' && grep -qx 'container_manager=\"podman\"' '$conf'"
 check "change recorded with the old value" instate "conf changed other"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="other"\n' >"$conf"
+echo other >>"$FAKE_STATE/boxes"
+DEFKEY="
+" run ""
+check "an existing current container has no stale note" has "(current: other) [dev]: "
+newenv
+mkbox
+DEFKEY="
+" run ""
+check "no file: prompt says current none" has "(current: none) [dev]: "
+check "no file: blank creates it" grep -qx 'container_name_default="dev"' "$conf"
+newenv
+mkbox
+DEFKEY="mine
+" run ""
+check "a typed name is set" grep -qx 'container_name_default="mine"' "$conf"
+check "a typed name is recorded for the undo" instate "conf-value mine"
+check "a typed name is reported" has "distrobox enter now opens mine"
+run "yes
+" --remove
+check "remove restores (deletes) a typed name" bash -c "[ ! -f '$conf' ] || ! grep -q container_name_default '$conf'"
+newenv
+mkbox
+DEFKEY="bad name
+x/y
+good.name_1-a
+" run ""
+check "an invalid name is refused with a message" has "A container name may only use letters, digits"
+check "after refusal the valid name is set" grep -qx 'container_name_default="good.name_1-a"' "$conf"
+check "the prompt came back after the refusal" bash -c "[ \$(grep -c \"Default container for 'distrobox enter'\" '$root/out') -ge 4 ]"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="same"\n' >"$conf"
+DEFKEY="same
+" run ""
+check "the same typed value says already set" has "already set"
+check "the same typed value writes nothing" bash -c "grep -qx 'container_name_default=\"same\"' '$conf' && ! grep -q '^conf' '$state' 2>/dev/null"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="dev"\n' >"$conf"
+DEFKEY="" run ""
+check "default already the toolbox name: no prompt" hasnt "Default container for 'distrobox enter' ("
+check "default already the toolbox name: says already set" has "already set"
+DEFKEY="" run "" --recreate
+check "--recreate does not re-prompt" hasnt "Default container for 'distrobox enter' ("
+newenv
+mkbox
+: >"$root/keys"
+UPM_TTY="$root/keys" just --justfile "$justfile" toolbox dev >"$root/out" 2>&1 </dev/null
+rc=$?
+check "no answer to read: exits 0" test "$rc" -eq 0
+check "no answer to read: prints the command to run" has "ujust toolbox dev --set-default"
+check "no answer to read: no config written" test ! -e "$conf"
+
 newenv
 mkbox
 mkdir -p "$(dirname "$conf")"
@@ -892,8 +968,9 @@ newenv
 run "yyy" sdkman nvm
 check "dev state is dev's own file" test -f "$HOME/.local/state/ublue-os/toolbox/dev"
 name=plain
-run "yn"
-check "another default value asks first" has "currently set to 'dev'"
+DEFKEY="-
+" run "y"
+check "another default value is offered" has "(current: dev)"
 check "declining keeps the other default" grep -qx 'container_name_default="dev"' "$conf"
 check "plain state exists next to dev's" test -f "$HOME/.local/state/ublue-os/toolbox/plain"
 check "plain state records no dev exports" bash -c "! grep -q '^export ' '$HOME/.local/state/ublue-os/toolbox/plain'"
@@ -953,18 +1030,21 @@ check "removing the creator then deletes it" test ! -e "$HOME/.sdkman"
 # ---- --set-default ------------------------------------------------------------------------------------
 newenv
 mkbox
-run "" --set-default
+run "
+" --set-default
 check "--set-default with no key sets it" grep -qx 'container_name_default="dev"' "$conf"
 check "--set-default records the creation" instate "conf created"
 run "" --set-default
 check "--set-default when already set says so" has "already dev"
 printf 'container_name_default="other"\n' >"$conf"
 rm -f "$state"
-run "n" --set-default
-check "--set-default shows the current value" has "currently set to 'other'"
-check "--set-default declined changes nothing" grep -qx 'container_name_default="other"' "$conf"
-run "y" --set-default
-check "--set-default changes it after y" grep -qx 'container_name_default="dev"' "$conf"
+run "-
+" --set-default
+check "--set-default shows the current value" has "(current: other, no such container) [dev]: "
+check "--set-default with a dash changes nothing" grep -qx 'container_name_default="other"' "$conf"
+run "
+" --set-default
+check "--set-default with blank changes it" grep -qx 'container_name_default="dev"' "$conf"
 check "--set-default records the old value" instate "conf changed other"
 check "--set-default needs no recreate" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
 run "" --set-default --remove
