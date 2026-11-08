@@ -242,7 +242,7 @@ jobs:
                      nautilus-gsconnect gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
                      podman-compose kind podman-docker podman-tui \
                      borgbackup restic rclone socat wtype btrfs-assistant \
-                     guestfs-tools libguestfs libguestfs-xfs virt-v2v; do
+                     guestfs-tools libguestfs libguestfs-xfs virt-v2v scx_rusty; do
               check "package $p" "rpm -q $p"
             done
             check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
@@ -255,7 +255,7 @@ jobs:
             check "gnome-software removed" "! rpm -q gnome-software"
             for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
             check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
-            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"OctarineOS\\\"\" /etc/os-release"
+            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"Octarine_OS\\\"\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
@@ -267,6 +267,8 @@ jobs:
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
             check "dev toolbox definition" "grep -q \"^\\[dev\\]\" /usr/share/ublue-os/distrobox/dev.ini"
             check "dev toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev.ini"
+            check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
+            check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
             check "dev toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev.conf"
             check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
@@ -289,6 +291,13 @@ jobs:
       #    just rechunk \
       #      ${IMAGE_NAME} \
       #      ${DEFAULT_TAG}
+
+      # A promoted image keeps its build's version, so no version may name a channel
+      - name: Check the version is channel-neutral
+        run: |
+          podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
+            | .github/scripts/check-version-neutral.sh
 
       - name: Generate Build Tags
         id: gen-build-tags

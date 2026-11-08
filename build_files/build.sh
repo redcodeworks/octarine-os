@@ -80,6 +80,8 @@ fi
 # packages from the host are not used: gstreamer1-plugins-bad/-ugly below are
 # the negativo17 equivalents (they replace the -free variants), and there is
 # no negativo17 equivalent of mesa-va-drivers-freeworld.
+# scx_rusty: sched_ext scheduler (BPF/user-space hybrid). Not enabled: no unit or loader is shipped; it is
+# started by hand as root (`sudo scx_rusty`, Ctrl-C returns to the default EEVDF scheduler).
 dnf5 install -y \
     gstreamer1-plugins-bad gstreamer1-plugins-ugly \
     niri noctalia fish \
@@ -89,7 +91,7 @@ dnf5 install -y \
     cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files \
     cockpit-packagekit cockpit-sosreport cockpit-kdump \
     pcp python3-pcp \
-    powertop iotop-c lm_sensors usbip \
+    powertop iotop-c lm_sensors usbip scx_rusty \
     gnome-shell-extension-gsconnect gnome-shell-extension-user-theme \
     nautilus-gsconnect nautilus-python \
     podman-compose kind podman-docker podman-tui \
@@ -129,8 +131,8 @@ fi
 
 # Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
-sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="OctarineOS"/' /usr/lib/os-release
-grep -qx 'PRETTY_NAME="OctarineOS"' /usr/lib/os-release
+sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Octarine_OS"/' /usr/lib/os-release
+grep -qx 'PRETTY_NAME="Octarine_OS"' /usr/lib/os-release
 echo "== resulting os-release"
 cat /usr/lib/os-release
 

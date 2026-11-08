@@ -60,6 +60,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
 - `tests/toolbox.sh` tests the `toolbox <name>` and `brew` recipes with fake curl, distrobox and podman (no
@@ -90,6 +91,12 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
   from the rootfs, so `ostree-rechunk` re-passes every label except `containers.bootc` and `ostree.*`
   with `--label`; without that the pushed image lost them.
+- **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
+  shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
+  (tests: `tests/image-version.sh`). A promoted image keeps the version it was built with, which is why it must
+  be channel-neutral: the retag cannot change it. After the rechunk the build checks, with
+  `check-version-neutral.sh`, that the version label (and any other `*version*` label) is present and contains
+  neither `testing` nor `latest`. Image tags are unchanged.
 - **Signing.** A separate `sign` job in the `signing` environment (limited to `main` and `testing`) signs
   every distinct pushed digest with cosign (old bundle format, `--use-signing-config=false`) and verifies
   each tag against `cosign.pub`. Pull request builds never reach it. `build.sh` generates the container
@@ -149,6 +156,9 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
 - Packages come from the base's repos (distrobox, ffmpeg and pam-u2f already ship in `silverblue-main`; its
   multimedia stack is negativo17, so `gstreamer1-plugins-bad/-ugly` replace the `-free` variants and there is no
   `mesa-va-drivers-freeworld`). Package names are release-specific; `dnf5 install` stops on an unknown name.
+- `scx_rusty` (sched_ext scheduler, Fedora 45 package 0.5.4) is installed but never enabled: no unit or loader,
+  started by hand as root (`sudo scx_rusty`, Ctrl-C returns to EEVDF). The version is old, so it may not load on a
+  newer kernel. Do not add a service or other scx packages without being asked.
 - No compilers or build tools in the image: builds happen in a toolbox. Nothing compiles from source.
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
@@ -175,6 +185,33 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   recipe's catalogue (uv, rustup, sdkman, nvm), `EXPORT_BINS` the commands exported with `distrobox-export`,
   `IDES` the launchers `--ide` offers. No sidecar means no tools, exports or launchers. The catalogue and notes
   stay in the recipe's `rows` table.
+- **Sidecar keys for isolated toolboxes.** `ISOLATED_HOME=true` gives the container its own HOME: the recipe adds
+  `home=<dir>` to the temporary copy of the definition, `<dir>` being `$TOOLBOX_HOMES_DIR/<name>` (default
+  `~/.local/share/toolbox-homes/<name>`; a personal location is set in the user's own environment, never in shipped
+  files or tests). It creates the directory itself (`mkdir -p`, no sudo), records `home <path> created|existed`,
+  prints the path, and refuses to continue when the path is relative, holds odd characters or `..`, exists but is not
+  a directory, or is not writable. `EXPORT_APPS="steam"` exports each app's launcher with `distrobox-export --app`
+  run in the box (the launcher lands in the host's `~/.local/share/applications/<name>-<app>.desktop` because
+  distrobox knows the host home); a file the recipe did not create is never overwritten, each created launcher is
+  recorded as `app <path>`, `--list` shows state per app (`exported`, `not exported`, `foreign file`), `--remove`
+  deletes only recorded launchers, `--recreate` removes them first and exports again. The exported icon files stay.
+  The overview (`ujust toolbox`) adds one line per such toolbox: home path and state, apps and state.
+- **`TOOLBOX_VOLUMES`.** Space-separated `src:dst[:opts]` entries add `volume=` lines to the temporary definition of
+  any toolbox, applied when the box is created (use `--recreate` after changing it). Each entry needs absolute
+  paths, an existing source directory, no `..` and only letters, digits and `/ _ . + - @`; invalid entries are
+  skipped and reported.
+- **Removing an isolated home.** `--remove` never deletes the home (Steam library, Proton prefixes, saves) and
+  prints its path; the state file then keeps just the `home` record. `--remove --purge-home` (also with
+  `--dry-run`) lists the home with its size, warns, asks for `yes` and deletes only the directory recorded as
+  `created` whose basename is the box name, never a symlink, `/` or the user's home. A home that `existed`
+  before the recipe is adopted but never purged (delete it by hand).
+- **The `gaming` toolbox.** `gaming.ini` and `gaming.conf` describe `ghcr.io/redcodeworks/fedora-gaming`
+  (built in the fedora-toolbox repo: RPM Fusion Steam, gamescope, mangohud, gamemode, protontricks and more; no
+  Terra). `init=false`, `nvidia=false`, distrobox's default privileged host-network container (`unshare_netns=true`
+  is only a documented fallback for `bwrap ... resolv.conf` errors after suspend), isolated home, `steam` launcher
+  exported, no tools, bins or IDEs. It replaces nothing: the host Flatpak Steam stays the primary client, and the
+  isolated home guarantees the two never share library folders. Try from a checkout:
+  `TOOLBOX_DEFINITIONS=system_files/usr/share/ublue-os/distrobox TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-gaming:testing just --justfile system_files/usr/share/ublue-os/just/60-custom.just toolbox gaming`.
 - **State per toolbox** in `$XDG_STATE_HOME/ublue-os/toolbox/<name>`: `box`, `export`, `launcher`, `conf` and
   `dir ... created|existed` lines. `--remove` acts only on that file. A shared home directory (`~/.cargo`,
   `~/.rustup`, `~/.sdkman`, `~/.nvm`) is recorded as created by the first toolbox; a toolbox that finds a tool
@@ -214,7 +251,9 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref). `ujust brew` needs the prefix to exist and be
   the user's (otherwise it prints the `sudo mkdir`/`chown`), prints the shellenv lines and edits no rc files.
   `add-user-groups` copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group`
-  first. The extest recipes build a pinned upstream commit and preload the 64-bit build into Flatpak Steam.
+  first. The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
+  contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
+  shipped) and preload the 64-bit build into Flatpak Steam.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
   idempotent, and each override-changing one has a matching reset. `steam-flatpak-devices` widens the sandbox.
   Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-themes` needs network, git and just, and

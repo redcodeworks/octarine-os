@@ -68,6 +68,8 @@ steam-gamescope-reset:
         echo "No gamescope PATH override found in $file; nothing to do"
     fi
 
+# extest: https://github.com/Supreeeme/extest by Supreeeme and contributors, MIT licence. This repo only
+# builds a pinned upstream commit on the user's machine and ships none of its source.
 # EXPERIMENTAL: build extest (X11 XTEST to uinput shim for Steam Input on Wayland)
 extest-build $src=`echo "$HOME/Repos/extest"` $dest=`echo "$HOME/.local/lib/extest"` $commit="cb77cd4f80f83393a24bae17dd975e14fa6eb1b2":
     #!/usr/bin/env bash
@@ -89,6 +91,7 @@ extest-build $src=`echo "$HOME/Repos/extest"` $dest=`echo "$HOME/.local/lib/exte
     cargo build --release --locked --target x86_64-unknown-linux-gnu
     install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"
     echo "Installed $dest/lib64/libextest.so"
+    echo "extest by Supreeeme and contributors, MIT licence: https://github.com/Supreeeme/extest"
     echo "Next: ujust extest-steam-setup"
 
 # EXPERIMENTAL: preload the built extest library into Flatpak Steam
@@ -313,6 +316,26 @@ toolbox *args:
     tty_in="${UPM_TTY:-/dev/tty}"
     export_dir="${UPM_EXPORT_DIR:-$HOME/.local/bin}"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ublue-os/toolbox"
+    # Homes of toolboxes with ISOLATED_HOME=true live in <homes_dir>/<name>
+    homes_dir="${TOOLBOX_HOMES_DIR:-$HOME/.local/share/toolbox-homes}"
+    app_dir="${UPM_APPS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}"
+
+    # Value of KEY in a sidecar file, read as data and never sourced. Values may only hold letters, digits,
+    # space and . _ + - (a line with anything else is ignored with a warning).
+    side_read() { # file, key
+        local line v
+        [ -r "$1" ] || return 0
+        line=$({ grep -E "^[[:space:]]*$2=" "$1" || true; } | tail -n1)
+        v=${line#*=}
+        v=$(printf '%s' "$v" | tr -d "\"'")
+        case "$v" in
+            *[!A-Za-z0-9\ ._+-]*)
+                echo "Ignoring $2 in $1: it holds characters other than letters, digits, space and . _ + -" >&2
+                return 0
+                ;;
+        esac
+        printf '%s\n' "$v"
+    }
 
     conf_value() {
         [ -f "$conf_file" ] || return 0
@@ -365,6 +388,31 @@ toolbox *args:
             img=$(ini_image "$defs_dir/$n.ini")
             printf '%-12s %-9s %-8s %s\n' "$n" "$st" "$def" "${img:-?}"
         done < <(known_toolboxes)
+        local sf iso apps a ln hs st f
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            sf="$defs_dir/$n.conf"
+            iso=$(side_read "$sf" ISOLATED_HOME 2>/dev/null || true)
+            apps=$(side_read "$sf" EXPORT_APPS 2>/dev/null || true)
+            if [ "$iso" != true ] && [ -z "$apps" ]; then continue; fi
+            if [ -z "${shown:-}" ]; then
+                echo
+                shown=1
+            fi
+            ln="  $n:"
+            if [ "$iso" = true ]; then
+                hs=missing
+                if [ -d "$homes_dir/$n" ]; then hs=exists; fi
+                ln+=" isolated home $homes_dir/$n ($hs);"
+            fi
+            for a in $apps; do
+                f="$app_dir/$n-$a.desktop"
+                st="not exported"
+                if [ -e "$f" ] && grep -qxF -- "app $f" "$state_dir/$n" 2>/dev/null; then st=exported; fi
+                ln+=" app $a ($st)"
+            done
+            echo "$ln"
+        done < <(known_toolboxes)
         echo
         echo "Run: ujust toolbox <name>          create it and set it up"
         echo "     ujust toolbox <name> --list   tools, exports and state of one toolbox"
@@ -374,7 +422,8 @@ toolbox *args:
     usage() {
         echo "Usage: ujust toolbox                       (list the toolboxes)"
         echo "       ujust toolbox <name> [--list] [--recreate] [--force] [tool ...]"
-        echo "       ujust toolbox <name> --remove [--dry-run]   (destroys the box and what this recipe recorded for it)"
+        echo "       ujust toolbox <name> --remove [--dry-run] [--purge-home]   (destroys the box and what this recipe recorded for it;"
+        echo "                                                    an isolated home is kept unless --purge-home is given)"
         echo "       ujust toolbox <name> --upgrade [--check]    (pull the latest toolbox image and replace the box if it is newer)"
         echo "       ujust toolbox <name> --update               (package updates inside the existing box: distrobox upgrade)"
         echo "       ujust toolbox <name> --set-default          (make it the container_name_default of distrobox)"
@@ -411,25 +460,23 @@ toolbox *args:
     side_file="$defs_dir/$name.conf"
     state_file="$state_dir/$name"
 
-    # The optional sidecar <name>.conf: plain KEY=value lines, read as data and never sourced. Values may
-    # only hold letters, digits, space and . _ + - (a line with anything else is ignored with a warning).
-    side_get() {
-        local line v
-        [ -r "$side_file" ] || return 0
-        line=$({ grep -E "^[[:space:]]*$1=" "$side_file" || true; } | tail -n1)
-        v=${line#*=}
-        v=$(printf '%s' "$v" | tr -d "\"'")
-        case "$v" in
-            *[!A-Za-z0-9\ ._+-]*)
-                echo "Ignoring $1 in $side_file: it holds characters other than letters, digits, space and . _ + -" >&2
-                return 0
-                ;;
-        esac
-        printf '%s\n' "$v"
-    }
+    # The optional sidecar <name>.conf: plain KEY=value lines (see side_read)
+    side_get() { side_read "$side_file" "$1"; }
     conf_tools=$(side_get TOOLS)
     conf_bins=$(side_get EXPORT_BINS)
     conf_ides=$(side_get IDES)
+    # ISOLATED_HOME=true gives the container its own HOME; EXPORT_APPS lists apps whose launchers are exported
+    conf_isohome=$(side_get ISOLATED_HOME)
+    conf_apps=$(side_get EXPORT_APPS)
+    isolated=0
+    if [ "$conf_isohome" = true ]; then isolated=1; fi
+    box_home="$homes_dir/$box"
+    for t in $conf_apps; do
+        if ! [[ "$t" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]]; then
+            echo "Invalid app name '$t' in EXPORT_APPS of $side_file" >&2
+            exit 2
+        fi
+    done
 
     # One row per tool or group, fields separated by ^ :
     #   id ^ label ^ source (image, installer or group) ^ tool name or installer URL ^ installed test
@@ -589,11 +636,16 @@ toolbox *args:
         echo "To undo: what this recipe created is listed in $state_file."
         echo "  - delete each 'export' path listed there (the files in $export_dir);"
         echo "  - 'conf' lines say how container_name_default in $conf_file was set (created, appended, or changed from an older value);"
-        echo "  - remove the box with: distrobox rm $box  (your home is shared, so your files stay)."
+        if [ "$isolated" = 1 ]; then
+            echo "  - 'app' lines are launchers in $app_dir; 'home' lines the isolated home ($box_home), which --remove keeps;"
+            echo "  - remove the box with: distrobox rm $box  (the isolated home stays)."
+        else
+            echo "  - remove the box with: distrobox rm $box  (your home is shared, so your files stay)."
+        fi
     }
 
     list_all() {
-        local t st ex cv bs=missing
+        local t st ex cv f hs bs=missing
         box_exists && bs=present
         resolve_all
         cv=$(conf_value)
@@ -609,8 +661,26 @@ toolbox *args:
         if grep -qx 'box-no-brew-mount' "$state_file" 2>/dev/null; then
             echo "Brew mount:    missing (box made before brew existed; run --recreate after ujust brew)"
         fi
-        echo
-        printf '%-10s %-10s %-18s %-9s %s\n' TOOL STATE SOURCE EXPORTED LABEL
+        if [ "$isolated" = 1 ]; then
+            hs=missing
+            if [ -d "$box_home" ]; then hs=exists; fi
+            echo "Home:          $box_home ($hs, isolated; --remove keeps it)"
+        fi
+        if [ -n "$conf_apps" ]; then
+            echo
+            printf '%-10s %-13s %s\n' APP LAUNCHER PATH
+            for t in $conf_apps; do
+                f="$app_dir/$box-$t.desktop"
+                if [ -e "$f" ]; then
+                    if grep -qxF -- "app $f" "$state_file" 2>/dev/null; then st=exported; else st="foreign file"; fi
+                else
+                    st="not exported"
+                fi
+                printf '%-10s %-13s %s\n' "$t" "$st" "$f"
+            done
+        fi
+        if [ "${#tool_ids[@]}" -gt 0 ] || [ "${#group_ids[@]}" -gt 0 ]; then echo; fi
+        if [ "${#tool_ids[@]}" -gt 0 ] || [ "${#group_ids[@]}" -gt 0 ]; then printf '%-10s %-10s %-18s %-9s %s\n' TOOL STATE SOURCE EXPORTED LABEL; fi
         for t in "${tool_ids[@]}" "${group_ids[@]}"; do
             load "$t"
             st=$(state "$t")
@@ -784,6 +854,7 @@ toolbox *args:
     ide=0
     list=0
     setdef=0
+    purge=0
     named=0
     custom=()
     want=()
@@ -811,6 +882,7 @@ toolbox *args:
             --upgrade) upgrade=1 ;;
             --check) check_only=1 ;;
             --set-default) setdef=1 ;;
+            --purge-home) purge=1 ;;
             --update) update=1 ;;
             -*)
                 echo "Unknown option $a" >&2
@@ -847,6 +919,10 @@ toolbox *args:
 
     if [ "$dry" = 1 ] && [ "$remove" = 0 ]; then
         echo "--dry-run only goes with --remove" >&2
+        exit 2
+    fi
+    if [ "$purge" = 1 ] && [ "$remove" = 0 ]; then
+        echo "--purge-home only goes with --remove" >&2
         exit 2
     fi
     if [ "$check_only" = 1 ] && [ "$upgrade" = 0 ]; then
@@ -920,6 +996,72 @@ toolbox *args:
         done
     }
 
+    # Isolated home: create the directory (no sudo) and say whether this recipe made it
+    ensure_home() {
+        local h=$box_home existed=0
+        case "$h" in
+            /*) ;;
+            *)
+                echo "   TOOLBOX_HOMES_DIR must be an absolute path (got $homes_dir)."
+                return 1
+                ;;
+        esac
+        case "$h" in
+            *..* | *[!A-Za-z0-9/_.+@-]*)
+                echo "   Refusing the home path $h: only letters, digits and / _ . + - @ are allowed, and no '..'."
+                return 1
+                ;;
+        esac
+        if [ -e "$h" ] || [ -L "$h" ]; then
+            if [ ! -d "$h" ]; then
+                echo "   $h exists but is not a directory; not continuing."
+                return 1
+            fi
+            existed=1
+        elif ! mkdir -p -- "$h" 2>/dev/null; then
+            echo "   Could not create $h; not continuing."
+            return 1
+        fi
+        if [ ! -w "$h" ]; then
+            echo "   $h is not writable; not continuing."
+            return 1
+        fi
+        if ! grep -q -- "^home $h " "$state_file" 2>/dev/null; then
+            if [ "$existed" = 1 ]; then record "home $h existed"; else record "home $h created"; fi
+        fi
+        if [ "$existed" = 1 ]; then
+            echo "   Isolated home: $h (already existed, kept as it is)"
+        else
+            echo "   Isolated home: $h (created)"
+        fi
+    }
+
+    append_line() { # file, line
+        if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >>"$1"; fi
+        printf '%s\n' "$2" >>"$1"
+    }
+
+    # TOOLBOX_VOLUMES: space-separated src:dst[:opts] entries added as volume= lines. Absolute paths, an existing
+    # source directory, no '..'; anything else is skipped and reported.
+    add_volumes() { # definition file
+        local v src dst opts extra
+        for v in ${TOOLBOX_VOLUMES:-}; do
+            IFS=: read -r src dst opts extra <<<"$v"
+            if [ -n "$extra" ] || [ -z "$dst" ]; then
+                echo "   Skipped volume '$v': use src:dst or src:dst:opts."
+            elif [[ "$src$dst" == *..* ]] || [[ "$src$dst" == *[!A-Za-z0-9/_.+@-]* ]] || [[ "$src" != /* ]] || [[ "$dst" != /* ]] || [ "$dst" = / ]; then
+                echo "   Skipped volume '$v': paths must be absolute, without '..' and only letters, digits and / _ . + - @."
+            elif [ -n "$opts" ] && ! [[ "$opts" =~ ^[a-zA-Z,]+$ ]]; then
+                echo "   Skipped volume '$v': invalid options '$opts'."
+            elif [ ! -d "$src" ]; then
+                echo "   Skipped volume '$v': $src is not an existing directory."
+            else
+                append_line "$1" "volume=\"$src:$dst${opts:+:$opts}\""
+                echo "   Extra volume: $src -> $dst${opts:+ ($opts)}"
+            fi
+        done
+    }
+
     # Step 1: the box
     step_box() {
         local tmpdef nobrew=0
@@ -933,8 +1075,13 @@ toolbox *args:
                 return 0
             fi
             echo "== Recreating $box"
-            echo "   Your home is shared, so your files, ~/.cargo and caches survive; only the container's own"
-            echo "   filesystem (packages installed inside it, anything outside your home) is replaced."
+            if [ "$isolated" = 1 ]; then
+                echo "   Its isolated home ($box_home) is kept; only the container's own filesystem"
+                echo "   (packages installed inside it, anything outside that home) is replaced."
+            else
+                echo "   Your home is shared, so your files, ~/.cargo and caches survive; only the container's own"
+                echo "   filesystem (packages installed inside it, anything outside your home) is replaced."
+            fi
             if [ "$assume" = 0 ] && ! ask "   [y] remove and recreate the box, anything else keeps it: "; then
                 echo "   Kept the existing box."
                 return 0
@@ -953,6 +1100,17 @@ toolbox *args:
                     fi
                 done < <(sed -n 's/^export //p' "$state_file")
                 sed -i '/^export /d' "$state_file"
+                while IFS= read -r p; do
+                    case "$p" in
+                        "$app_dir/$box"-*.desktop)
+                            if [ -e "$p" ] || [ -L "$p" ]; then
+                                rm -f -- "$p"
+                                echo "   Removed old app launcher $p"
+                            fi
+                            ;;
+                    esac
+                done < <(sed -n 's/^app //p' "$state_file")
+                sed -i '/^app /d' "$state_file"
             fi
         else
             echo "== Box $box does not exist"
@@ -987,6 +1145,16 @@ toolbox *args:
             echo "   $brew_dir does not exist yet, so the box is created without the read-only brew mount."
             echo "   After 'ujust brew', run 'ujust toolbox $box --recreate' to add it."
         fi
+        if [ "$isolated" = 1 ]; then
+            ensure_home || {
+                failed=1
+                return 1
+            }
+            grep -v '^home=' "$tmpdef" >"$work/def.home" || true
+            cat "$work/def.home" >"$tmpdef"
+            append_line "$tmpdef" "home=$box_home"
+        fi
+        add_volumes "$tmpdef"
         if ! distrobox assemble create --file "$tmpdef" </dev/null; then
             echo "   distrobox assemble failed."
             failed=1
@@ -1125,6 +1293,35 @@ toolbox *args:
             echo "   Exported $dest"
         done < <(export_sources "$t")
         if [ "$already" -gt 0 ]; then echo "   $already already exported."; fi
+    }
+
+    # Export the launchers of EXPORT_APPS to the host (distrobox-export --app, run in the box). Never overwrites
+    # a file this recipe did not create; every launcher it creates is recorded.
+    do_apps() {
+        local a dest already=0
+        [ -n "$conf_apps" ] || return 0
+        echo "== App launchers in $app_dir"
+        mkdir -p -- "$app_dir"
+        for a in $conf_apps; do
+            dest="$app_dir/$box-$a.desktop"
+            if [ -e "$dest" ] || [ -L "$dest" ]; then
+                if grep -qxF -- "app $dest" "$state_file" 2>/dev/null; then
+                    already=$((already + 1))
+                else
+                    echo "   Skipped $dest: a file is already there (not overwritten)."
+                fi
+                continue
+            fi
+            if ! distrobox enter "$box" -- distrobox-export --app "$a" </dev/null >/dev/null 2>&1 || [ ! -e "$dest" ]; then
+                echo "   Could not export $a with distrobox-export (is it installed in the box?)."
+                failed=1
+                continue
+            fi
+            record "app $dest"
+            echo "   Exported $dest"
+        done
+        if [ "$already" -gt 0 ]; then echo "   $already already exported."; fi
+        refresh_apps
     }
 
     missing_package() {
@@ -1362,6 +1559,16 @@ toolbox *args:
         esac
         return 0
     }
+    home_safe() { # absolute, no .., not / or $HOME, a real directory (no symlink) named like the box
+        case "$1" in
+            /*) ;;
+            *) return 1 ;;
+        esac
+        case "$1" in
+            *..*) return 1 ;;
+        esac
+        [ "$1" != / ] && [ "$1" != "$HOME" ] && [ ! -L "$1" ] && [ -d "$1" ] && [ "$(basename -- "$1")" = "$box" ]
+    }
     conf_key_remove() { # kind, old value
         local tmp="$work/conf.new" kind=$1 old=$2
         case "$kind" in
@@ -1404,8 +1611,8 @@ toolbox *args:
     }
 
     do_remove() {
-        local p kind rest cur conf_line have_box=0 line other
-        local exps=() dirs=() skipped=() lnch=() handover=()
+        local p kind rest cur conf_line have_box=0 line other hline hp home_p="" home_kind="" purge_ok=0
+        local exps=() dirs=() skipped=() lnch=() apps_l=() handover=()
         if [ ! -f "$state_file" ]; then
             echo "No state file ($state_file): this recipe has nothing recorded, so there is nothing to remove."
             return 0
@@ -1426,6 +1633,21 @@ toolbox *args:
                 esac
             fi
         done < <(sed -n 's/^launcher //p' "$state_file")
+        while IFS= read -r p; do
+            if [ -e "$p" ] || [ -L "$p" ]; then
+                case "$p" in
+                    "$app_dir/$box"-*.desktop) apps_l+=("$p") ;;
+                    *) skipped+=("$p (not an app launcher path this recipe creates, left alone)") ;;
+                esac
+            fi
+        done < <(sed -n 's/^app //p' "$state_file")
+        hline=$(grep '^home ' "$state_file" | head -1 || true)
+        if [ -n "$hline" ]; then
+            hp=${hline#home }
+            home_kind=${hp##* }
+            hp=${hp% *}
+            if [ -d "$hp" ]; then home_p=$hp; fi
+        fi
         conf_line=$(grep -E '^conf (created|appended|changed)' "$state_file" | head -1 || true)
         if grep -qx "box $box" "$state_file" && box_exists; then have_box=1; fi
         while IFS= read -r line; do
@@ -1450,6 +1672,7 @@ toolbox *args:
         echo "This would remove, in this order:"
         for p in "${exps[@]}"; do echo "  export    $p  ($(size_of "$p"))"; done
         for p in "${lnch[@]}"; do echo "  launcher  $p  ($(size_of "$p"))"; done
+        for p in "${apps_l[@]}"; do echo "  app       $p  ($(size_of "$p"))"; done
         if [ -n "$conf_line" ]; then
             cur=$(conf_value)
             if [ "$cur" = "$box" ]; then
@@ -1461,6 +1684,17 @@ toolbox *args:
         fi
         if [ "$have_box" = 1 ]; then echo "  container $box  (distrobox rm --force; size not shown)"; fi
         for p in "${dirs[@]}"; do echo "  directory $p  ($(size_of "$p"))"; done
+        if [ -n "$home_p" ]; then
+            if [ "$purge" = 1 ] && [ "$home_kind" = created ] && home_safe "$home_p"; then
+                purge_ok=1
+                echo "  home      $home_p  ($(size_of "$home_p"); isolated home, DELETED because of --purge-home)"
+                echo "            It holds what the box keeps in its own home: the Steam library, Proton prefixes, saves, settings."
+            elif [ "$purge" = 1 ]; then
+                skipped+=("$home_p (the isolated home existed before this recipe or is not a safe path; delete it by hand if you want it gone)")
+            else
+                echo "  kept      $home_p  (isolated home; add --purge-home to delete it)"
+            fi
+        fi
         echo "  state     $state_file  (last)"
         if [ "${#skipped[@]}" -gt 0 ]; then
             echo "Left alone:"
@@ -1472,8 +1706,13 @@ toolbox *args:
             return 0
         fi
         echo
-        echo "Warning: ~/.cargo and ~/.sdkman can hold things you installed later (cargo install binaries,"
-        echo "JDKs, Spark, Hadoop). They are lost with the directory."
+        if [ "${#dirs[@]}" -gt 0 ]; then
+            echo "Warning: ~/.cargo and ~/.sdkman can hold things you installed later (cargo install binaries,"
+            echo "JDKs, Spark, Hadoop). They are lost with the directory."
+        fi
+        if [ "$purge_ok" = 1 ]; then
+            echo "Warning: the isolated home cannot be recovered once deleted."
+        fi
         printf "Type yes to remove all of the above: "
         IFS= read -r -u 3 line || line=""
         printf '%s\n' "$line"
@@ -1498,6 +1737,15 @@ toolbox *args:
             echo "Removed $p"
         done
         if [ "${#lnch[@]}" -gt 0 ]; then refresh_apps; fi
+        for p in "${apps_l[@]}"; do
+            rm -f -- "$p" || {
+                echo "Could not remove $p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "app $p"
+            echo "Removed $p"
+        done
+        if [ "${#apps_l[@]}" -gt 0 ]; then refresh_apps; fi
         if [ -n "$conf_line" ]; then
             kind=${conf_line#conf }
             rest=${kind#* }
@@ -1531,8 +1779,25 @@ toolbox *args:
             drop_state "dir $p created"
             echo "Removed $p"
         done
-        rm -f -- "$state_file"
-        echo "Removed $state_file. Done."
+        if [ "$purge_ok" = 1 ]; then
+            rm -rf -- "$home_p" || {
+                echo "Could not remove $home_p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "home $home_p $home_kind"
+            echo "Removed the isolated home $home_p"
+        fi
+        if [ -n "$home_p" ] && [ "$purge_ok" = 0 ] && [ "$home_kind" = created ]; then
+            echo "The isolated home was kept: $home_p"
+            echo "Delete it later with: ujust toolbox $box --remove --purge-home"
+            grep '^home ' "$state_file" >"$work/state.home" || true
+            cat "$work/state.home" >"$state_file"
+            echo "Removed everything else; $state_file keeps only the home record. Done."
+        else
+            if [ -n "$home_p" ] && [ "$purge_ok" = 0 ]; then echo "The isolated home was kept: $home_p"; fi
+            rm -f -- "$state_file"
+            echo "Removed $state_file. Done."
+        fi
     }
 
     # --ide: launchers that start an IDE inside the box
@@ -1887,5 +2152,6 @@ toolbox *args:
     for t in "${tool_ids[@]}" "${group_ids[@]}"; do
         if [ "$(state "$t")" = installed ]; then do_exports "$t"; fi
     done
+    do_apps
     undo_note
     exit "$failed"
