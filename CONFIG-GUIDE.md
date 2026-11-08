@@ -110,7 +110,7 @@ timers are installed but not enabled. Turn on what you use.
   `containers`, `rocm`, `libguestfs`). Failed optional packages are listed in
   `/usr/share/octarine-os/optional-packages-missing` (read it on a machine to see what an image lacks) and appear as
   CI warnings. Outside-Fedora packages (negativo17 `gstreamer1-plugins-bad`/`-ugly`) are optional only.
-- `fish` is optional, yet the terminal configs launch `/usr/bin/fish` explicitly: without it they do not start.
+- `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
 - New users get `zsh` (`/etc/default/useradd`, `/etc/skel/.zshrc`); existing users are unchanged. Rolling back to an
   image without zsh breaks only accounts created meanwhile; distrobox copies the host login shell, so toolbox
   images need zsh too (`gaming` unchecked).
@@ -149,8 +149,8 @@ timers are installed but not enabled. Turn on what you use.
 
 ## Shell and terminal
 
-- bash is the login shell and stays authoritative. fish is launched by the terminals, so a login
-  never depends on a Homebrew binary.
+- bash is the login shell and stays authoritative. a login never depends on a
+  Homebrew binary (a terminal set up to start fish is the user's own choice).
 - Put system binaries ahead of Homebrew's in `PATH`. A brew `glib` once shadowed the system `gdbus`.
 - The usual modern tools: Helix, starship, atuin, zoxide, fzf, bat, eza, yazi and Zellij.
 - Terminals: Ghostty, Ptyxis and kitty.

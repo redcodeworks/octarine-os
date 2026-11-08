@@ -129,8 +129,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   OPTIONAL groups (own transaction each, per-package retry, failures written to
   `/usr/share/octarine-os/optional-packages-missing`, warning annotations and a step summary from the build job).
   Policy: packages from outside Fedora's repositories (negativo17, RPM Fusion, COPR, vendors) are optional only;
-  the smoke test requires vendor `Fedora Project` for every critical package. `fish` is optional although the
-  terminals launch `/usr/bin/fish`. New users default to zsh (`/etc/default/useradd` patched in `build.sh`,
+  the smoke test requires vendor `Fedora Project` for every critical package. `fish` is optional: nothing in the image depends on it and it is never a login shell (the image ships no terminal configuration). New users default to zsh (`/etc/default/useradd` patched in `build.sh`,
   `system_files/etc/skel/.zshrc`; distrobox copies the host login shell). Add a package to the right tier and to the
   smoke test's critical or informational list.
 - **Cancelling.** `build.yml` concurrency cancels the older run for any ref but `main` and any scheduled run. A cancelled run

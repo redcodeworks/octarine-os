@@ -83,9 +83,9 @@ fi
 # enforces it: every critical package must have the RPM vendor "Fedora Project", else the build fails
 # naming the package. Optional packages are exempt.
 #
-# fish is OPTIONAL on purpose: it must never be anyone's login shell (that stays bash), so an image
-# without it must still boot and log in. Ghostty, Alacritty and the Ptyxis profile launch /usr/bin/fish
-# explicitly, so those terminals do not start their shell on an image where fish is missing.
+# fish is optional: nothing in the image depends on it and it is never a login shell (bash stays the login
+# shell; new users get zsh). A user who configures their own terminal to start fish needs it installed,
+# which is their own setting.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images

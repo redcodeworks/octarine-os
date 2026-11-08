@@ -92,9 +92,7 @@ These ship to everyone who uses the image as-is:
   one is missing, and CI checks that each has the RPM vendor `Fedora Project`) and everything else as OPTIONAL
   groups (a failed group is retried package by package; what still cannot be installed is listed in
   `/usr/share/octarine-os/optional-packages-missing` and shown as a CI warning, and the build goes on). Packages from
-  outside Fedora's own repositories (negativo17 codecs, RPM Fusion, COPR) may only be optional. `fish` is optional
-  on purpose (it is never a login shell), but Ghostty, Alacritty and the Ptyxis profile launch `/usr/bin/fish`
-  explicitly and would not start their shell without it.
+  outside Fedora's own repositories (negativo17 codecs, RPM Fusion, COPR) may only be optional. `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
 - **Login shell for new users:** `zsh` (`SHELL=/usr/bin/zsh` in `/etc/default/useradd`, plus `/etc/skel/.zshrc`).
   Existing accounts and root keep their shell. Risks: rolling back to an image without zsh breaks only accounts
   created while zsh was the default; distrobox copies the host login shell, so every toolbox image a zsh user
