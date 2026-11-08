@@ -74,8 +74,9 @@ The image ships `ujust` recipes in `system_files/usr/share/ublue-os/just/60-cust
 group membership, Flatpak overrides (themes, game directories, controllers, VS Code with Podman)
 and Flatpak Steam with gamescope and extest. The image carries no compilers or build tools:
 `ujust dev-toolbox` builds the `fedora-toolbox` distrobox from a definition the image ships
-(`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`), exports the build chain to `~/.local/bin` and sets up
-uv, rustup, SDKMAN and nvm in it. `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
+(`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, which pulls `ghcr.io/redcodeworks/fedora-toolbox:latest`,
+built weekly in its own repo with the packages baked in; `DEV_TOOLBOX_IMAGE` picks another tag), exports the
+build chain to `~/.local/bin`, runs `rustup-init` in your home and sets up SDKMAN and nvm in it. `ujust brew` installs Homebrew on the host. Homebrew, SDKMAN and nvm
 are vendor installer scripts, so none of them is baked into the image (Homebrew's prefix has to belong
 to the user who runs it): each installer is downloaded, hashed, shown to you and run only after you
 confirm, with sudo blocked. Run `ujust --list` to see them, and

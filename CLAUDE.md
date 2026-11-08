@@ -60,4 +60,5 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - `tests/dev-toolbox.sh` tests the `dev-toolbox` and `brew` recipes with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini`.
-- The image carries no compilers or build tools; they live in the toolbox the definition describes.
+- The image carries no compilers or build tools; they live in the toolbox the definition describes, which
+  is the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`DEV_TOOLBOX_IMAGE` overrides the tag).

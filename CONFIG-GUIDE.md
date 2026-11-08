@@ -117,8 +117,9 @@ timers are installed but not enabled. Turn on what you use.
   prefix has to be owned by the user who runs it). `ujust brew` installs it on the host. It downloads
   the installer to a file, prints its hash, lets you read it, runs it only after you confirm, and
   blocks sudo. Treat the installer as vendor code you are trusting.
-- **The rule for installing software:** in the toolbox, use dnf packages. An installer script is
-  only for something that has no package (SDKMAN and nvm), and nothing may need sudo. Homebrew stays
+- **The rule for installing software:** the toolbox's tools are baked into its image (packages are
+  added in the fedora-toolbox repo, not installed in the box). An installer script is
+  only for something that has no package (SDKMAN and nvm; rustup is Fedora's `rustup-init`, run once in your home), and nothing may need sudo. Homebrew stays
   a separate host recipe. The image itself has no compilers or build tools.
 
 ## Containers
@@ -137,7 +138,7 @@ timers are installed but not enabled. Turn on what you use.
   development-tools group, because builds belong in the Fedora toolbox and a compiler on the host
   invites installs that bypass it. `ujust dev-toolbox` creates that box from
   `/usr/share/ublue-os/distrobox/fedora-toolbox.ini` and runs `distrobox-export` so that `cc`, `gcc`,
-  `make`, `cmake`, `uv`, the rustup proxies, `sdk` and a few CLI tools appear in `~/.local/bin`, and
+  `make`, `cmake`, `uv`, the rustup proxies (`~/.cargo/bin`, created by `rustup-init`), `sdk` and a few CLI tools appear in `~/.local/bin`, and
   the host feels like it has a compiler. Add a stdin guard to the wrappers, or they hang tools that
   talk over stdio. See the recipe notes below for `--recreate`, `--remove`, `--upgrade`, `--update`
   and `--ide`.
@@ -243,24 +244,29 @@ a short-term workaround.
 Notes on `dev-toolbox`:
 
 - **What it does, in order.** It creates the box with `distrobox assemble create` from the definition
-  (`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, an Universal Blue toolbox image with the packages
-  of the old host setup; it asks first), sets `container_name_default="fedora-toolbox"` in
+  (`/usr/share/ublue-os/distrobox/fedora-toolbox.ini`, pointing at `ghcr.io/redcodeworks/fedora-toolbox:latest`:
+  our own toolbox image, built weekly from the `fedora-toolbox` repo on top of Universal Blue's toolbox,
+  with the compilers, `-devel` libraries, uv, `rustup-init` and CLI tools already installed; it asks
+  first and prints which image it uses), sets `container_name_default="fedora-toolbox"` in
   `~/.config/distrobox/distrobox.conf` (creating the file, or changing only that key and asking before
   replacing another value), shows a checklist for uv, rustup, SDKMAN and nvm (SPACE toggles, ENTER
   confirms, q skips; or name them: `ujust dev-toolbox sdkman nvm`), and exports to `~/.local/bin` (or
   `$UPM_EXPORT_DIR`) with `distrobox-export --bin`: the build chain (`cc gcc g++ c++ make cmake ninja
   meson ld as ar nm objdump strip ranlib pkg-config`, whichever exist in the box), `lsscsi nicstat
-  waypipe evtest guestfish virt-v2v flatpak-builder`, `uv`/`uvx`, `rustup` and the rustup proxies, and an
+  waypipe evtest guestfish virt-v2v flatpak-builder`, `uv`/`uvx`, the rustup proxies from `~/.cargo/bin` (not `rustup-init`), and an
   `sdk` wrapper script (sdk is a shell function). `--list` shows the box, the default name, each tool's
-  source (`dnf:<package>` or `installer`) and export state. It never overwrites an existing file or
+  source (`image:<tool>` or `installer`) and export state. It never overwrites an existing file or
   link, edits no rc files, uses no sudo and never runs as root.
-- **dnf packages first.** uv and rustup are dnf packages in the definition, so the recipe only
-  exports them, and for rustup runs `rustup default stable` (a normal download from
-  static.rust-lang.org, asked first) when no toolchain exists. If a package is missing from the box,
-  it says so and points at `--recreate`: it cannot install packages itself, because that would need
-  sudo. SDKMAN and nvm have no Fedora package, so they are the only vendor installer scripts: each is
+- **The image first.** uv and `rustup-init` come with the toolbox image, so the recipe only exports
+  uv. Fedora's `rustup` package ships only `/usr/bin/rustup-init`; `~/.cargo/bin/rustup` and the
+  proxies do not exist until it has run in your home, so the rustup row counts as installed when
+  `~/.cargo/bin/rustup` exists, and otherwise (after asking, behind the no-sudo guard) runs
+  `rustup-init -y --no-modify-path --default-toolchain stable` (a normal download from
+  static.rust-lang.org) and exports the proxies it finds in `~/.cargo/bin`. If a tool is missing from
+  the box, it says so and points at `--upgrade` (the image is rebuilt weekly): it cannot install
+  packages itself, because that would need sudo. SDKMAN and nvm have no Fedora package, so they are the only vendor installer scripts: each is
   downloaded to a file, hashed, shown on request (`v`) and run only after `y`, with a `sudo` stub first
-  on `PATH` and `no_new_privs` set. Installs of SDKMAN, nvm and the rustup toolchains live in the
+  on `PATH` and `no_new_privs` set. Installs of SDKMAN, nvm and rustup live in the
   shared home.
 - **Shared home.** The definition has no `home=` key on purpose, so the box's `$HOME` is yours:
   `~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches and dotfiles are shared.
@@ -271,12 +277,15 @@ Notes on `dev-toolbox`:
 - **Trying it before the image ships it.** Run it straight from a checkout, without `ujust`:
   `DEV_TOOLBOX_DEFINITION=system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini just --justfile
   system_files/usr/share/ublue-os/just/60-custom.just dev-toolbox` (the justfile has no imports, so
-  this works as is; `DEV_TOOLBOX_DEFINITION` defaults to the installed path).
+  this works as is; `DEV_TOOLBOX_DEFINITION` defaults to the installed path). To try another tag of
+  the toolbox image, such as `testing` before `latest` exists, set `DEV_TOOLBOX_IMAGE` (for example
+  `DEV_TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-toolbox:testing ujust dev-toolbox`); it replaces the
+  definition's `image=` line, and the recipe prints the image it uses.
 - **`--recreate` (replace the box).** Asks, then removes the old container, removes the export files
   the state file lists (never a file it did not create), and creates the box again from the
   definition. Wipe by hand with `distrobox rm --force fedora-toolbox`. What survives: your whole
-  shared home (`~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches). What does not: dnf-installed
-  packages and everything else in the container's own filesystem.
+  shared home (`~/.cargo`, `~/.rustup`, `~/.sdkman`, `~/.nvm`, caches). What does not: packages you
+  installed inside the box and everything else in the container's own filesystem.
 - **`--remove` (clean up everything it made).** Differs from `--recreate`: nothing is rebuilt. It
   records in `$XDG_STATE_HOME/ublue-os/dev-toolbox` (default `~/.local/state/ublue-os/dev-toolbox`)
   what it created, including whether `~/.sdkman`, `~/.nvm`, `~/.rustup` and `~/.cargo` existed before
@@ -288,16 +297,14 @@ Notes on `dev-toolbox`:
   exports and launchers, the default-name setting, the container, the directories, the state file
   last; a failed step stops and leaves the state file, so running it again finishes the job. It never
   touches `/usr` or `/etc`, never removes `~/.local/bin` itself and uses no sudo.
-- **`--upgrade` (newer base image) and `--update` (package updates).** A container never changes its
-  base after creation. `--upgrade` pulls the image named in the definition, compares its image id
-  with the one the box was created from, and says `already on the latest base` if they match.
-  `--upgrade --check` only reports both digests and the Fedora release of each and changes nothing.
-  If the base is newer it warns when the Fedora major changes (the definition has release-specific
-  names such as `libgit2-devel`; Fedora 45 calls it `libgit2_1.9-devel`), then checks that the
-  definition's packages resolve on the new image in a throwaway container (`podman run --rm <image>
-  dnf5 install --assumeno ...`), and aborts with the resolver's message, leaving the old box
-  untouched, if they do not. Otherwise it asks for `yes` and replaces the box the way `--recreate`
-  does. `--update` is separate and only runs `distrobox upgrade fedora-toolbox` (package updates
+- **`--upgrade` (newer toolbox image) and `--update` (package updates).** A container never changes
+  its image after creation. `--upgrade` pulls the toolbox image (the definition's, or
+  `DEV_TOOLBOX_IMAGE`), compares its image id with the one the box was created from, and says
+  `already on the latest image` if they match. `--upgrade --check` only reports both digests and the
+  Fedora release of each and changes nothing. If the image is newer it warns when the Fedora major
+  changes, asks for `yes` and replaces the box the way `--recreate` does. There is no package
+  resolution test here: the fedora-toolbox repo's CI proves the package list installs when it builds
+  the image. `--update` is separate and only runs `distrobox upgrade fedora-toolbox` (package updates
   inside the existing container).
 - **`--ide` (launchers that start an IDE inside the box).** Writes
   `~/.local/share/applications/fedora-toolbox-<id>.desktop` with

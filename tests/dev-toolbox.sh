@@ -142,14 +142,6 @@ case "$1" in
         shift
         if [ "$ep" = cat ]; then
             echo "VERSION_ID=$(cat "$FAKE_STATE/ver-$id")"
-        elif [ "$1" = dnf5 ]; then
-            echo "podman run dnf5 install --assumeno" >>"$LOG"
-            if [ -n "${FAKE_RESOLVE_FAIL:-}" ]; then
-                echo "No match for argument: libgit2-devel"
-                exit 1
-            fi
-            echo "Operation aborted by the user."
-            exit 1
         fi
         ;;
 esac
@@ -173,13 +165,16 @@ echo "export bin=$bin" >>"$LOG"
 printf '#!/bin/sh\n# exported %s\n' "$bin" >"$dir/$(basename "$bin")"
 chmod +x "$dir/$(basename "$bin")"
 EOF
-cat >"$tpl/rustup" <<'EOF'
+# Fedora's rustup package ships only rustup-init: the proxies in ~/.cargo/bin exist after it has run
+cat >"$tpl/rustup-init" <<'EOF'
 #!/bin/bash
-echo "rustup $*" >>"$LOG"
+echo "rustup-init $*" >>"$LOG"
 if [ -n "${FAKE_SUDO:-}" ]; then sudo true || exit 1; fi
-if [ "$1 $2" = "default stable" ]; then
+if [ "$*" = "-y --no-modify-path --default-toolchain stable" ]; then
     mkdir -p "$HOME/.rustup/toolchains/stable-x86_64" "$HOME/.cargo/bin"
     for t in rustup cargo rustc; do echo x >"$HOME/.cargo/bin/$t"; chmod +x "$HOME/.cargo/bin/$t"; done
+else
+    exit 2
 fi
 EOF
 for t in gcc make uv uvx lsscsi; do printf '#!/bin/sh\necho %s\n' "$t" >"$tpl/$t"; done
@@ -207,7 +202,7 @@ newenv() { # fresh HOME, temp dir, fake box tools and log
     export UPM_BREW_DIR="$E/linuxbrew" UPM_BREW_PREFIX="$E/linuxbrew/.linuxbrew"
     export LOG="$E/log" FAKE_STATE="$E/fake" FAKE_BOXBIN="$E/boxbin"
     : >"$LOG"
-    unset FAKE_SUDO FAKE_CURL_FAIL FAKE_ASSEMBLE_FAIL FAKE_RM_FAIL FAKE_RESOLVE_FAIL FAKE_BOX_STATUS XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
+    unset FAKE_SUDO FAKE_CURL_FAIL FAKE_ASSEMBLE_FAIL FAKE_RM_FAIL FAKE_BOX_STATUS DEV_TOOLBOX_IMAGE XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
     apps="$HOME/.local/share/applications"
     export UPM_JB_SCRIPTS="$E/jb/scripts"
     mkdir -p "$E/jb/scripts" "$E/jb/apps/PyCharm/ch-0/9.9/bin" "$E/jb/apps/DataGrip/ch-0/9.9/bin"
@@ -242,13 +237,14 @@ runbrew() { # keys
 
 # ---- the shipped definition ---------------------------------------------------
 check "definition has the fedora-toolbox section" grep -qx '\[fedora-toolbox\]' "$shipped_def"
-check "definition uses the ublue toolbox image" grep -qx 'image=ghcr.io/ublue-os/fedora-toolbox:latest' "$shipped_def"
+check "definition uses our toolbox image" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$shipped_def"
+check "definition pulls, does not replace, starts" bash -c "grep -qx 'pull=true' '$shipped_def' && grep -qx 'replace=false' '$shipped_def' && grep -qx 'start_now=true' '$shipped_def'"
+check "definition has no additional_packages key" bash -c "! grep -qE '^additional_packages' '$shipped_def'"
 check "definition has no home= key" bash -c "! grep -qE '^home=' '$shipped_def'"
 check "definition has no exported_bins keys" bash -c "! grep -qE '^exported_bins' '$shipped_def'"
 check "definition mounts brew read-only" grep -qx 'volume="/home/linuxbrew:/home/linuxbrew:ro"' "$shipped_def"
-check "definition lists uv and rustup as packages" bash -c "grep '^additional_packages=' '$shipped_def' | grep -qE ' uv ' && grep '^additional_packages=' '$shipped_def' | grep -q ' rustup\"'"
 check "definition has no pixi" bash -c "! grep -q pixi '$shipped_def'"
-check "definition notes libgit2 and ffmpeg" bash -c "grep -q 'libgit2_1.9-devel' '$shipped_def' && grep -q 'ffmpeg-free-devel' '$shipped_def'"
+check "definition says where the packages live" bash -c "grep -q 'packages/dev.txt' '$shipped_def' && grep -q 'rustup-init' '$shipped_def'"
 
 # ---- --list on an empty machine -----------------------------------------------
 newenv
@@ -257,7 +253,7 @@ check "--list exits 0" test "$rc" -eq 0
 check "--list shows the box missing" has "fedora-toolbox (missing)"
 check "--list shows the default name unset" has "not set in"
 check "--list shows every row" bash -c "for t in uv rustup sdkman nvm buildchain clitools; do grep -q \"^\$t \" '$root/out' || exit 1; done"
-check "--list shows each source" bash -c "grep -qE '^uv .*dnf:uv' '$root/out' && grep -qE '^rustup .*dnf:rustup' '$root/out' && grep -qE '^sdkman .*installer' '$root/out'"
+check "--list shows each source" bash -c "grep -qE '^uv .*image:uv' '$root/out' && grep -qE '^rustup .*image:rustup-init' '$root/out' && grep -qE '^sdkman .*installer' '$root/out'"
 run "" nosuchtool
 check "unknown tool exits 2" test "$rc" -eq 2
 run "" --bogus
@@ -273,7 +269,8 @@ run "yyy" sdkman nvm
 check "first run exits 0" test "$rc" -eq 0
 check "box was assembled" logged "assemble "
 check "assembled copy has no brew volume while the dir is missing" bash -c "! grep -q '^volume=' '$FAKE_STATE/assembled.ini'"
-check "assembled copy keeps the packages" grep -q '^additional_packages=' "$FAKE_STATE/assembled.ini"
+check "assembled copy keeps the image line" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$FAKE_STATE/assembled.ini"
+check "the recipe prints the image it uses" has "Image: ghcr.io/redcodeworks/fedora-toolbox:latest"
 check "missing brew dir is explained" has "does not exist yet"
 check "recreate hint printed" has "ujust dev-toolbox --recreate"
 check "box recorded" instate "box fedora-toolbox"
@@ -313,7 +310,7 @@ check "rerun leaves the default alone" has "already fedora-toolbox"
 run "" --list
 check "--list shows the box present" has "fedora-toolbox (present)"
 check "--list shows the default name" has "Default name:  fedora-toolbox"
-check "--list shows uv exported" grep -qE '^uv +installed +dnf:uv +yes' "$root/out"
+check "--list shows uv exported" grep -qE '^uv +installed +image:uv +yes' "$root/out"
 check "--list shows sdkman exported" grep -qE '^sdkman +installed +installer +yes' "$root/out"
 check "--list shows rustup missing" grep -qE '^rustup +missing' "$root/out"
 
@@ -338,10 +335,11 @@ newenv
 mkbox
 run "" --upgrade
 check "same base: exit 0" test "$rc" -eq 0
-check "same base: says so" has "already on the latest base"
+check "same base: says so" has "already on the latest image"
+check "same base: prints the image" has "Toolbox image: ghcr.io/redcodeworks/fedora-toolbox:latest"
 check "same base: pulled the image" logged "podman pull"
 check "same base: nothing replaced" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
-check "same base: no resolver run" notlogged "dnf5 install"
+check "same base: no package resolution test" notlogged "dnf5"
 
 echo new2 >"$FAKE_STATE/new_id"
 run "" --upgrade --check
@@ -350,25 +348,17 @@ check "check: shows current digest and release" bash -c "grep -q 'digest sha256:
 check "check: shows new digest and release" bash -c "grep -q 'digest sha256:digest-new2, Fedora 44' '$root/out'"
 check "check: says check only" has "Check only: nothing was changed"
 check "check: changes nothing" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
-check "check: no resolver run" notlogged "dnf5 install"
+check "check: no package resolution test" notlogged "dnf5"
 
 echo 45 >"$FAKE_STATE/ver-new2"
 run "no
 " --upgrade
 check "major change warns" has "Fedora release changes from 44 to 45"
-check "major change mentions release-specific names" has "libgit2-devel"
-check "resolver ran before asking" logged "dnf5 install --assumeno"
+check "major change says tools in home may need a rebuild" has "may need a rebuild"
+check "no package resolution test before asking" notlogged "dnf5"
 check "declining the upgrade changes nothing" has "Nothing was changed"
 check "declining leaves the box" bash -c "! grep -q '^rm ' '$LOG' && grep -qx fedora-toolbox '$FAKE_STATE/boxes'"
 
-export FAKE_RESOLVE_FAIL=1
-run "yes
-" --upgrade
-check "resolver failure exits non-zero" test "$rc" -ne 0
-check "resolver failure shows the resolver message" has "No match for argument"
-check "resolver failure says the old box is untouched" has "old box was left untouched"
-check "resolver failure leaves the old container" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG' && grep -qx fedora-toolbox '$FAKE_STATE/boxes'"
-unset FAKE_RESOLVE_FAIL
 
 newenv
 run "yyy" sdkman nvm
@@ -377,7 +367,6 @@ echo new2 >"$FAKE_STATE/new_id"
 run "yes
 " --upgrade
 check "newer base: exit 0" test "$rc" -eq 0
-check "newer base: resolver passed" has "The packages resolve"
 check "newer base: container replaced" bash -c "grep -q '^rm --force fedora-toolbox' '$LOG' && grep -q '^assemble' '$LOG'"
 check "newer base: no second confirmation" hasnt "remove and recreate the box"
 check "newer base: no tool checklist" hasnt "Tools in the box"
@@ -448,9 +437,14 @@ check "sdkman and nvm installed from the checklist" test -s "$HOME/.sdkman/bin/s
 newenv
 mkbox
 run "$(printf '\nyyy')"
-check "ENTER with defaults sets up rustup" logged "rustup default stable"
+check "ENTER with defaults runs rustup-init" logged "rustup-init -y --no-modify-path --default-toolchain stable"
+check "rustup-init asked first" has "[y] run 'rustup-init"
 check "toolchain exists" test -d "$HOME/.rustup/toolchains/stable-x86_64"
+check "rustup proxies created in ~/.cargo/bin" test -x "$HOME/.cargo/bin/rustup"
 check "rustup proxies exported" test -e "$HOME/.local/bin/cargo" -a -e "$HOME/.local/bin/rustc" -a -e "$HOME/.local/bin/rustup"
+check "rustup-init itself is not exported" bash -c "test ! -e '$HOME/.local/bin/rustup-init' && ! grep -q 'rustup-init\$' '$state'"
+check "no /usr/bin/rustup is assumed" notlogged "bin=/usr/bin/rustup"
+check "rc files untouched by rustup-init" test ! -e "$HOME/.bashrc"
 check "rustup exports recorded" instate "export $HOME/.local/bin/cargo"
 check "rustup toolchain download explained" has "static.rust-lang.org"
 check "rustup directories recorded" bash -c "grep -qxF 'dir $HOME/.rustup created' '$state' && grep -qxF 'dir $HOME/.cargo created' '$state'"
@@ -463,14 +457,45 @@ mkbox
 rm -f "$E/boxbin/uv" "$E/boxbin/uvx"
 run "" uv
 check "missing uv is reported" has "is not in the box"
-check "recreate hint for a missing package" has "ujust dev-toolbox --recreate"
+check "upgrade hint for a missing package" has "ujust dev-toolbox --upgrade"
 check "missing package fails" test "$rc" -ne 0
 newenv
 mkbox
-rm -f "$E/boxbin/rustup"
+rm -f "$E/boxbin/rustup-init"
 run "" rustup
-check "missing rustup is reported" has "is not in the box"
-check "missing rustup fails" test "$rc" -ne 0
+check "missing rustup-init is reported" has "is not in the box"
+check "missing rustup-init fails" test "$rc" -ne 0
+check "missing rustup-init points at --upgrade" has "ujust dev-toolbox --upgrade"
+
+# rustup already set up in the home (rustup-init gone from the box): nothing to do, proxies still export
+newenv
+mkbox
+mkdir -p "$HOME/.cargo/bin"
+for t in rustup cargo rustc; do echo x >"$HOME/.cargo/bin/$t"; chmod +x "$HOME/.cargo/bin/$t"; done
+rm -f "$E/boxbin/rustup-init"
+run "" rustup
+check "existing ~/.cargo/bin/rustup counts as installed" has "Already set up"
+check "existing rustup exits 0" test "$rc" -eq 0
+check "existing rustup runs no rustup-init" notlogged "rustup-init"
+check "existing rustup proxies are exported" test -e "$HOME/.local/bin/cargo" -a -e "$HOME/.local/bin/rustup"
+check "existing ~/.cargo is not recorded as created" bash -c "! grep -qxF 'dir $HOME/.cargo created' '$state'"
+run "" --list
+check "--list: rustup installed from ~/.cargo/bin/rustup alone" grep -qE '^rustup +installed' "$root/out"
+
+# DEV_TOOLBOX_IMAGE overrides the image= line
+newenv
+export DEV_TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-toolbox:testing
+run "y" sdkman
+check "override: assembled copy uses the override image" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:testing' "$FAKE_STATE/assembled.ini"
+check "override: the old image line is gone" bash -c "! grep -q 'toolbox:latest' '$FAKE_STATE/assembled.ini'"
+check "override: other keys kept" grep -qx 'pull=true' "$FAKE_STATE/assembled.ini"
+check "override: the recipe prints the image" has "Image: ghcr.io/redcodeworks/fedora-toolbox:testing"
+run "" --list
+check "override: --list shows the image" has "Image:         ghcr.io/redcodeworks/fedora-toolbox:testing"
+echo new2 >"$FAKE_STATE/new_id"
+run "" --upgrade --check
+check "override: --upgrade pulls the override image" logged "pull -q ghcr.io/redcodeworks/fedora-toolbox:testing"
+unset DEV_TOOLBOX_IMAGE
 
 # ---- sudo is blocked --------------------------------------------------------------------------------
 newenv
@@ -482,7 +507,7 @@ check "stub message shown" has "sudo is not allowed here"
 check "plain explanation shown" has "wanted sudo"
 check "nothing installed after the sudo attempt" test ! -e "$HOME/.nvm/nvm.sh"
 run "y" rustup
-check "rustup default blocked from sudo too" has "wanted sudo"
+check "rustup-init blocked from sudo too" has "wanted sudo"
 check "no toolchain after the sudo attempt" test ! -d "$HOME/.rustup/toolchains/stable-x86_64"
 unset FAKE_SUDO
 check "no executable sudo in either recipe" bash -c "! sed -n '/^brew:/,\$p' '$justfile' | grep -w sudo | grep -vE '^\s*(echo|printf|#)|grep -qiE|sudo-called|bin/sudo|no-sudo guard'"

@@ -300,7 +300,7 @@ brew:
     echo "To undo: run Homebrew's uninstall script (https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh),"
     echo "delete the shellenv lines you added to your rc files, and remove the prefix directory if you want it gone."
 
-# Build the development toolbox (fedora-toolbox distrobox) from the definition the image ships, make it the default for distrobox enter, set up uv, rustup, SDKMAN and nvm in it from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust dev-toolbox sdkman nvm`) and export the build chain and CLI tools to ~/.local/bin. `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest base image and replaces the box if the base is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start JetBrains IDEs or VS Code inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded as created, after you type yes. In the box, software comes from dnf packages; only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. To try it from a checkout before the image ships it, run `just --justfile system_files/usr/share/ublue-os/just/60-custom.just dev-toolbox` with DEV_TOOLBOX_DEFINITION pointing at system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini (default is the installed /usr/share/ublue-os/distrobox/fedora-toolbox.ini). To start clean, `distrobox rm --force fedora-toolbox` first (or use --recreate): the shared home survives, the container's own filesystem does not
+# Build the development toolbox (fedora-toolbox distrobox) from the definition the image ships, make it the default for distrobox enter, set up uv, rustup, SDKMAN and nvm in it from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust dev-toolbox sdkman nvm`) and export the build chain and CLI tools to ~/.local/bin. `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start JetBrains IDEs or VS Code inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded as created, after you type yes. The box is created from the image ghcr.io/redcodeworks/fedora-toolbox (its packages, including uv and rustup-init, are baked in and rebuilt weekly); rustup itself is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. DEV_TOOLBOX_IMAGE overrides the image reference (for example ghcr.io/redcodeworks/fedora-toolbox:testing); the recipe prints the image it uses. To try it from a checkout before the image ships it, run `just --justfile system_files/usr/share/ublue-os/just/60-custom.just dev-toolbox` with DEV_TOOLBOX_DEFINITION pointing at system_files/usr/share/ublue-os/distrobox/fedora-toolbox.ini (default is the installed /usr/share/ublue-os/distrobox/fedora-toolbox.ini). To start clean, `distrobox rm --force fedora-toolbox` first (or use --recreate): the shared home survives, the container's own filesystem does not
 [positional-arguments]
 dev-toolbox *args:
     #!/usr/bin/env bash
@@ -308,6 +308,7 @@ dev-toolbox *args:
 
     box="${UPM_BOX:-fedora-toolbox}"
     def_file="${DEV_TOOLBOX_DEFINITION:-/usr/share/ublue-os/distrobox/fedora-toolbox.ini}"
+    image_override="${DEV_TOOLBOX_IMAGE:-}"
     conf_file="${UPM_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/distrobox/distrobox.conf}"
     brew_dir="${UPM_BREW_DIR:-/home/linuxbrew}"
     tty_in="${UPM_TTY:-/dev/tty}"
@@ -315,17 +316,17 @@ dev-toolbox *args:
     state_file="${XDG_STATE_HOME:-$HOME/.local/state}/ublue-os/dev-toolbox"
 
     # One row per tool or group, fields separated by ^ :
-    #   id ^ label ^ source (dnf, installer or group) ^ package name or installer URL ^ installed test
+    #   id ^ label ^ source (image, installer or group) ^ tool name or installer URL ^ installed test
     #   ^ environment for the installer ^ installer arguments ^ preselected (1/0) ^ exports ^ note
-    # dnf rows come from the box definition (additional_packages); the recipe cannot install packages
-    # (that would need sudo), it only sets them up and exports them. Group rows are exported without a checklist.
+    # image rows are baked into the toolbox image (packages/dev.txt in the fedora-toolbox repo); the recipe
+    # cannot install packages (that would need sudo), it only sets them up and exports them. Group rows are exported without a checklist.
     # Exports, space separated: cmd:NAME exports the binary command -v finds in the box (skipped when absent),
     # dir:PATH every executable in a directory, wrapper:sdk writes the sdk wrapper script.
     # The installed test runs on the host (the box shares your home); where[NAME] holds what command -v found in the box.
     # __PREFIX__ in a note is the brew prefix.
     rows=(
-        'uv^uv (Python)^dnf^uv^[ -n "${where[uv]:-}" ]^^^1^cmd:uv cmd:uvx^uv is a dnf package in the box definition; uv and uvx are exported to the host.'
-        'rustup^rustup (Rust)^dnf^rustup^ls -d "$HOME"/.rustup/toolchains/*/^^^1^cmd:rustup dir:$HOME/.cargo/bin^rustup is a dnf package in the box definition. The recipe only sets up the first toolchain (rustup default stable) and exports rustup and its proxies.\nInside the box, add to its shell rc:  . "$HOME/.cargo/env"'
+        'uv^uv (Python)^image^uv^[ -n "${where[uv]:-}" ]^^^1^cmd:uv cmd:uvx^uv comes with the toolbox image; uv and uvx are exported to the host.'
+        'rustup^rustup (Rust)^image^rustup-init^[ -x "$HOME/.cargo/bin/rustup" ]^^^1^dir:$HOME/.cargo/bin^Fedora ships only rustup-init (in the toolbox image); /usr/bin/rustup does not exist. The recipe runs rustup-init in your home (stable toolchain, no shell rc edits) and exports the proxies in ~/.cargo/bin (rustup, cargo, rustc and so on; rustup-init itself is not exported).\nInside the box, add to its shell rc:  . "$HOME/.cargo/env"'
         'sdkman^SDKMAN^installer^https://get.sdkman.io?rcupdate=false^[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]^^^1^wrapper:sdk^No Fedora package exists, so this is a vendor installer script. sdk is a shell function, so the host gets a small wrapper script that runs it in the box.\nInside the box, add to its shell rc:  source "$HOME/.sdkman/bin/sdkman-init.sh"'
         'nvm^nvm^installer^https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh^[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]^PROFILE=/dev/null^^1^^No Fedora package exists, so this is a vendor installer script. Nothing is exported: host node and npm stay the ones from brew.\nInside the box, add to its shell rc:\n  export NVM_DIR="$HOME/.nvm"\n  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
         'buildchain^Build chain^group^^[ -n "${where[gcc]:-}${where[make]:-}${where[cc]:-}" ]^^^1^cmd:cc cmd:gcc cmd:g++ cmd:c++ cmd:make cmd:cmake cmd:ninja cmd:meson cmd:ld cmd:as cmd:ar cmd:nm cmd:objdump cmd:strip cmd:ranlib cmd:pkg-config^'
@@ -357,7 +358,7 @@ dev-toolbox *args:
 
     # One trip into the box to find every command the table cares about
     resolve_all() {
-        local t item n p names=(uv uvx rustup code)
+        local t item n p names=(uv uvx rustup-init code)
         where=()
         box_exists || return 0
         for t in "${tool_ids[@]}" "${group_ids[@]}"; do
@@ -434,6 +435,15 @@ dev-toolbox *args:
         fi
     }
 
+    # The image the box is made from: DEV_TOOLBOX_IMAGE, else the image= line of the definition
+    def_image() {
+        if [ -n "$image_override" ]; then
+            printf '%s\n' "$image_override"
+        else
+            sed -n 's/^image=//p' "$def_file" 2>/dev/null | head -1 | tr -d "\"'"
+        fi
+    }
+
     conf_value() {
         [ -f "$conf_file" ] || return 0
         { grep -E '^[[:space:]]*container_name_default=' "$conf_file" || true; } | tail -1 | sed -E 's/^[^=]*=//' | tr -d "\"'"
@@ -454,6 +464,7 @@ dev-toolbox *args:
         resolve_all
         cv=$(conf_value)
         echo "Box:           $box ($bs)"
+        echo "Image:         $(def_image)"
         if [ -z "$cv" ]; then
             echo "Default name:  not set in $conf_file"
         elif [ "$cv" = "$box" ]; then
@@ -465,17 +476,17 @@ dev-toolbox *args:
             echo "Brew mount:    missing (box made before brew existed; run --recreate after ujust brew)"
         fi
         echo
-        printf '%-10s %-10s %-10s %-9s %s\n' TOOL STATE SOURCE EXPORTED LABEL
+        printf '%-10s %-10s %-18s %-9s %s\n' TOOL STATE SOURCE EXPORTED LABEL
         for t in "${tool_ids[@]}" "${group_ids[@]}"; do
             load "$t"
             st=$(state "$t")
             if [ "$st" = installed ]; then ex=$(export_state "$t"); else ex=-; fi
             case "$src" in
-                dnf) sdesc="dnf:$ref" ;;
+                image) sdesc="image:$ref" ;;
                 installer) sdesc=installer ;;
-                *) sdesc=dnf ;;
+                *) sdesc=image ;;
             esac
-            printf '%-10s %-10s %-10s %-9s %s\n' "$id" "$st" "$sdesc" "$ex" "$label"
+            printf '%-10s %-10s %-18s %-9s %s\n' "$id" "$st" "$sdesc" "$ex" "$label"
         done
         undo_note
     }
@@ -483,8 +494,8 @@ dev-toolbox *args:
     usage() {
         echo "Usage: ujust dev-toolbox [--list] [--recreate] [--force] [tool ...]"
         echo "       ujust dev-toolbox --remove [--dry-run]   (destroys the box and what this recipe created)"
-        echo "       ujust dev-toolbox --upgrade [--check]    (pull the latest base image and replace the box if it is newer)"
-        echo "       ujust dev-toolbox --update               (dnf updates inside the existing box: distrobox upgrade)"
+        echo "       ujust dev-toolbox --upgrade [--check]    (pull the latest toolbox image and replace the box if it is newer)"
+        echo "       ujust dev-toolbox --update               (package updates inside the existing box: distrobox upgrade)"
         echo "       ujust dev-toolbox --ide [--list|--remove [--dry-run]] [ide ...]   (launchers that start an IDE inside the box)"
         echo "       ujust dev-toolbox --ide-custom NAME COMMAND [ICON]"
         echo "IDEs: ${ide_ids[*]}"
@@ -778,7 +789,7 @@ dev-toolbox *args:
             fi
             echo "== Recreating $box"
             echo "   Your home is shared, so your files, ~/.cargo and caches survive; only the container's own"
-            echo "   filesystem (packages installed with dnf, anything outside your home) is replaced."
+            echo "   filesystem (packages installed inside it, anything outside your home) is replaced."
             if [ "$assume" = 0 ] && ! ask "   [y] remove and recreate the box, anything else keeps it: "; then
                 echo "   Kept the existing box."
                 return 0
@@ -800,7 +811,7 @@ dev-toolbox *args:
             fi
         else
             echo "== Box $box does not exist"
-            if ! ask "   [y] create it from $def_file (pulls the image and installs the packages, takes a while), anything else stops: "; then
+            if ! ask "   [y] create it from $def_file (pulls the image, takes a while), anything else stops: "; then
                 echo "   Not created."
                 return 1
             fi
@@ -811,11 +822,17 @@ dev-toolbox *args:
             return 1
         fi
         tmpdef="$work/$box.ini"
+        echo "   Image: $(def_image)"
+        if [ -n "$image_override" ]; then
+            awk -v img="$image_override" '/^image=/ { print "image=" img; next } { print }' "$def_file" >"$work/def.ini"
+        else
+            cp -- "$def_file" "$work/def.ini"
+        fi
         if [ -d "$brew_dir" ]; then
-            cp -- "$def_file" "$tmpdef"
+            cp -- "$work/def.ini" "$tmpdef"
         else
             # The mount's source must exist or container creation fails; the recipe cannot create it (needs root)
-            grep -v '^volume=.*linuxbrew' "$def_file" >"$tmpdef" || true
+            grep -v '^volume=.*linuxbrew' "$work/def.ini" >"$tmpdef" || true
             nobrew=1
             echo "   $brew_dir does not exist yet, so the box is created without the read-only brew mount."
             echo "   After 'ujust brew', run 'ujust dev-toolbox --recreate' to add it."
@@ -957,8 +974,8 @@ dev-toolbox *args:
     }
 
     missing_package() {
-        echo "   $label is not in the box. It comes from the box definition (dnf package $ref)."
-        echo "   Recreate the box from the current definition: ujust dev-toolbox --recreate"
+        echo "   $label is not in the box. It comes with the toolbox image ($ref); the image is rebuilt weekly."
+        echo "   Get the latest image and replace the box: ujust dev-toolbox --upgrade"
         echo "   (This recipe does not install packages itself, because that would need sudo.)"
         failed=1
     }
@@ -983,30 +1000,33 @@ dev-toolbox *args:
 
     install_rustup() {
         local rc=0
-        if [ -z "${where[rustup]:-}" ]; then
+        if [ "$(state rustup)" = installed ]; then
+            echo "   Already set up (~/.cargo/bin/rustup exists)."
+            return 0
+        fi
+        if [ -z "${where[rustup-init]:-}" ]; then
             missing_package
             return 0
         fi
-        if [ "$(state rustup)" = missing ]; then
-            echo "   No Rust toolchain yet. 'rustup default stable' downloads one from static.rust-lang.org."
-            echo "   That is a normal download, not a piped script."
-            if ! ask "   [y] run 'rustup default stable', anything else skips: "; then
-                echo "   Skipped."
-                return 0
-            fi
-            note_dirs rustup
-            run_guarded rustup "" rustup default stable || rc=$?
-            if [ "$rc" -ne 0 ]; then
-                report_failure "rustup default stable" "$rc"
-                return 0
-            fi
-            if [ "$(state rustup)" = missing ]; then
-                echo "   rustup finished but no toolchain shows up under ~/.rustup/toolchains."
-                failed=1
-                return 0
-            fi
-            echo "   Installed a stable toolchain."
+        echo "   The box only has rustup-init (there is no /usr/bin/rustup until it has run in your home)."
+        echo "   It downloads the stable toolchain from static.rust-lang.org: a normal download, not a piped script,"
+        echo "   and it does not touch your shell rc files (--no-modify-path)."
+        if ! ask "   [y] run 'rustup-init -y --no-modify-path --default-toolchain stable', anything else skips: "; then
+            echo "   Skipped."
+            return 0
         fi
+        note_dirs rustup
+        run_guarded rustup "" rustup-init -y --no-modify-path --default-toolchain stable || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            report_failure "rustup-init" "$rc"
+            return 0
+        fi
+        if [ "$(state rustup)" = missing ]; then
+            echo "   rustup-init finished but ~/.cargo/bin/rustup does not exist; check its output above."
+            failed=1
+            return 0
+        fi
+        echo "   Installed rustup with a stable toolchain."
     }
 
     install_installer() {
@@ -1056,13 +1076,13 @@ dev-toolbox *args:
         st=$(state "$t")
         echo "== $label"
         case "$src" in
-            dnf)
+            image)
                 if [ "$t" = rustup ]; then
                     install_rustup
                 elif [ "$st" = missing ]; then
                     missing_package
                 else
-                    echo "   Already in the box (dnf package $ref)."
+                    echo "   Already in the box (from the toolbox image)."
                 fi
                 ;;
             installer)
@@ -1094,7 +1114,7 @@ dev-toolbox *args:
                 *) if [ "${sel[i]}" = 1 ]; then m='[x]'; else m='[ ]'; fi ;;
             esac
             if [ "$i" -eq "$cur" ]; then p='>'; else p=' '; fi
-            printf '\033[2K%s %s %-8s from %s%s\n' "$p" "$m" "$label" "$(if [ "$src" = dnf ]; then echo "dnf ($ref)"; else echo installer; fi)" "$s"
+            printf '\033[2K%s %s %-8s from %s%s\n' "$p" "$m" "$label" "$(if [ "$src" = image ]; then echo "image ($ref)"; else echo installer; fi)" "$s"
         done
         printf '\033[2K  SPACE toggles, ENTER sets up the ticked ones, q skips\n'
     }
@@ -1583,7 +1603,7 @@ dev-toolbox *args:
     }
 
     do_upgrade() {
-        local image cur_id new_id cur_dig new_dig cur_ver new_ver line out pk=()
+        local image cur_id new_id cur_dig new_dig cur_ver new_ver line
         local o='{' c='}'
         local f_id="$o$o.Id$c$c" f_dig="$o$o.Digest$c$c" f_img="$o$o.Image$c$c"
         if ! box_exists; then
@@ -1594,12 +1614,13 @@ dev-toolbox *args:
             echo "podman is not installed."
             return 1
         }
-        image=$(sed -n 's/^image=//p' "$def_file" | head -1 | tr -d "\"'")
+        image=$(def_image)
         if [ -z "$image" ]; then
-            echo "No image= line in $def_file."
+            echo "No image= line in $def_file (and DEV_TOOLBOX_IMAGE is not set)."
             return 1
         fi
-        echo "Pulling $image (a normal image pull) to see whether the base changed"
+        echo "Toolbox image: $image"
+        echo "Pulling it (a normal image pull) to see whether it changed"
         podman pull -q "$image" >/dev/null || {
             echo "Could not pull $image."
             return 1
@@ -1615,31 +1636,20 @@ dev-toolbox *args:
         echo "Latest $image:  $new_id"
         echo "  digest $new_dig, Fedora $new_ver"
         if [ "$cur_id" = "$new_id" ]; then
-            echo "The box is already on the latest base."
+            echo "The box is already on the latest image."
             return 0
         fi
         if [ "$check_only" = 1 ]; then
-            echo "A newer base is available. Check only: nothing was changed."
+            echo "A newer image is available. Check only: nothing was changed."
             return 0
         fi
         if [ "$cur_ver" != "$new_ver" ] && [ "$cur_ver" != unknown ] && [ "$new_ver" != unknown ]; then
-            echo "Warning: the Fedora release changes from $cur_ver to $new_ver. The definition has release-specific"
-            echo "package names (for example libgit2-devel) and may fail to resolve on the new release."
+            echo "Warning: the Fedora release changes from $cur_ver to $new_ver. Tools you built or installed in your"
+            echo "home (~/.cargo, SDKMAN, Python environments with compiled extensions) may need a rebuild."
         fi
-        # Fail-safe: check the packages resolve on the new image before the old box is touched
-        echo "Checking that the definition's packages resolve on the new image (a throwaway container, nothing is installed)"
-        read -ra pk <<<"$(sed -n 's/^additional_packages=//p' "$def_file" | tr -d '"')"
-        out=$(podman run --rm "$new_id" dnf5 install --assumeno "${pk[@]}" 2>&1 </dev/null || true)
-        if grep -qE 'No match for argument|Failed to resolve|Problem|nothing provides|conflicting requests|Error:' <<<"$out"; then
-            echo "The packages do not resolve on the new image. The resolver said:"
-            printf '%s\n' "$out" | tail -n 25 | sed 's/^/  /'
-            echo "The old box was left untouched. Fix the definition (or wait for the image), then try again."
-            return 1
-        fi
-        echo "The packages resolve."
         echo
         echo "Upgrading replaces the container: your home is shared, so your files, ~/.cargo, ~/.rustup,"
-        echo "~/.sdkman, ~/.nvm and caches survive; packages are reinstalled from the definition and the"
+        echo "~/.sdkman, ~/.nvm and caches survive; the box is recreated from the image and the"
         echo "container's own filesystem is lost. Exports listed in the state file are made again."
         printf "Type yes to replace the box: "
         IFS= read -r -u 3 line || line=""
