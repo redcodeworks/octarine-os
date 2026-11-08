@@ -39,7 +39,7 @@ sudo bootc rollback                                                      # boot 
 | Recipe | What it does |
 |---|---|
 | `ujust add-user-groups` | Add a user to the `gamemode`, `input` and `libvirt` groups |
-| `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options |
+| `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options |
 | `ujust brew` | Install Homebrew on the host (its prefix belongs to your user, so it is not in the image) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
 | `ujust flatpak-games-access` | Give the Flatpak game launchers access to a games directory |

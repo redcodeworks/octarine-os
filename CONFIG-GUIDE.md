@@ -48,10 +48,6 @@ Everything system-level that used to be hand-layered now lives in this repo:
 What the image deliberately leaves to you: `sshd`, `tailscaled`, `cockpit.socket` and the snapper
 timers are installed but not enabled. Turn on what you use.
 
-`scx_rusty` (a sched_ext CPU scheduler) is installed too, with no service. Start it by hand as root with
-`sudo scx_rusty` and stop it with Ctrl-C, which returns to the default scheduler. The packaged version is
-old, so it may fail to load on a new kernel.
-
 ## The dotfiles repo, ideas worth borrowing
 
 - **Allow-list `.gitignore`.** `~/.config` is the repo and ignores everything by default; each
@@ -134,7 +130,7 @@ old, so it may fail to load on a new kernel.
   data science, Arch for AUR and bleeding-edge tools, Debian as a stand-in on-prem server, an AI
   stack, and a Steam container. Only the Fedora one shares the real home; the others get an isolated
   one.
-- **No build tools on the host.** Builds belong in the dev toolbox (`ujust toolbox dev`): a distrobox
+- **No build tools on the host.** Builds belong in the dev-toolbox (`ujust toolbox dev-toolbox`): a distrobox
   with a shared home whose build chain, `uv`, the rustup proxies and a few CLI tools are exported to
   `~/.local/bin`, so the host feels like it has a compiler.
 - Containers on the host network share loopback, so containers see host services. They also share `/tmp`.
@@ -199,10 +195,10 @@ Some of these are tradeoffs you may not want.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
    from the manifest. Restore app data before first launch where it matters (browser profiles).
-7. **Dev toolbox, then Homebrew:** `ujust toolbox dev` (builds the box, installs nothing on the host),
+7. **dev-toolbox, then Homebrew:** `ujust toolbox dev-toolbox` (builds the box, installs nothing on the host),
    then run the one-time `sudo mkdir` and `chown` for brew's prefix that `ujust brew` prints, run
    `ujust brew`, then `brew bundle` from the Brewfile. If brew came after the box, run
-   `ujust toolbox dev --recreate` so the box gets the read-only brew mount.
+   `ujust toolbox dev-toolbox --recreate` so the box gets the read-only brew mount.
 8. **Containers:** recreate the distroboxes from their config, enable lingering, restore Quadlets.
 9. **Opt in to services:** `tailscaled`, `sshd`, `cockpit.socket`, the snapper timers.
 10. **Restore data from borg,** then check `systemctl --failed`, the firewall zone,
@@ -218,7 +214,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
 - **`gnome-themes <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
-  (`--help` shows the options). Run `ujust toolbox dev --recreate` after `ujust brew` so the box gets the
+  (`--help` shows the options). Run `ujust toolbox dev-toolbox --recreate` after `ujust brew` so the box gets the
   read-only brew mount.
   It then asks which container `distrobox enter` should open by default: Enter takes the toolbox's own name,
   another name sets that, `-` leaves the current value.

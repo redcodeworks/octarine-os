@@ -299,11 +299,11 @@ brew:
     fi
     echo "Installed Homebrew in $brew_prefix."
     shellenv_note
-    echo "If you use the dev toolbox, run: ujust toolbox dev --recreate (adds the read-only brew mount)."
+    echo "If you use the dev-toolbox toolbox, run: ujust toolbox dev-toolbox --recreate (adds the read-only brew mount)."
     echo "To undo: run Homebrew's uninstall script (https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh),"
     echo "delete the shellenv lines you added to your rc files, and remove the prefix directory if you want it gone."
 
-# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
+# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box, `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
 [positional-arguments]
 toolbox *args:
     #!/usr/bin/env bash
@@ -451,13 +451,26 @@ toolbox *args:
         exit 0
     fi
 
-    if ! [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || [ ! -r "$defs_dir/$name.ini" ]; then
+    # `dev` is the old name of dev-toolbox. If a state file of the old toolbox exists, `dev` still means that
+    # old box, for --remove only (legacy=1); otherwise it is an alias for dev-toolbox.
+    legacy=0
+    src=$name
+    if [ "$name" = dev ] && [ ! -r "$defs_dir/dev.ini" ]; then
+        src=dev-toolbox
+        if [ -f "$state_dir/dev" ]; then
+            legacy=1
+        else
+            echo "Note: the toolbox 'dev' is now called dev-toolbox; using dev-toolbox."
+            name=dev-toolbox
+        fi
+    fi
+    if ! [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || [ ! -r "$defs_dir/$src.ini" ]; then
         echo "Unknown toolbox '$name'. Known toolboxes: $(known_toolboxes | tr '\n' ' ')" >&2
         exit 2
     fi
     box=$name
-    def_file="$defs_dir/$name.ini"
-    side_file="$defs_dir/$name.conf"
+    def_file="$defs_dir/$src.ini"
+    side_file="$defs_dir/$src.conf"
     state_file="$state_dir/$name"
 
     # The optional sidecar <name>.conf: plain KEY=value lines (see side_read)
@@ -1176,11 +1189,27 @@ toolbox *args:
         command -v distrobox >/dev/null 2>&1 &&
             distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); print $2 }' | grep -qx -- "$1"
     }
+    # distrobox-enter reads container_name from distrobox.conf before container_name_default, so a
+    # container_name= line there overrides the default. Comment such lines out (marked, and recorded in the
+    # state file as 'conf-shadow <line>' so --remove can restore them).
+    shadow_tag="# disabled by ujust toolbox: "
+    disable_shadow() {
+        local line tmp="$work/distrobox.shadow"
+        [ -f "$conf_file" ] || return 0
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            awk -v t="$shadow_tag" '/^[[:space:]]*container_name=/ { print t $0; next } { print }' "$conf_file" >"$tmp"
+            cat "$tmp" >"$conf_file"
+            record "conf-shadow $line"
+            echo "   Commented out '$line' in $conf_file: distrobox reads it before container_name_default."
+        done < <(grep -E '^[[:space:]]*container_name=' "$conf_file" || true)
+    }
     step_default() {
         local cur shown new line tmp
         cur=$(conf_value)
         if [ "$cur" = "$box" ]; then
             echo "== container_name_default is already $box (already set), nothing written"
+            disable_shadow
             return 0
         fi
         shown=${cur:-none}
@@ -1210,6 +1239,7 @@ toolbox *args:
         done
         if [ "$new" = "$cur" ]; then
             echo "   $new is already set; nothing written."
+            disable_shadow
             return 0
         fi
         mkdir -p -- "$(dirname -- "$conf_file")"
@@ -1230,7 +1260,23 @@ toolbox *args:
             record "conf changed $cur"
         fi
         if [ "$new" != "$box" ]; then record "conf-value $new"; fi
+        disable_shadow
         echo "   distrobox enter now opens $new."
+    }
+
+    # dev-toolbox replaces the toolbox that used to be called dev: say how to remove the old container and state
+    old_dev_note() {
+        [ "$box" = dev-toolbox ] || return 0
+        if [ -f "$state_dir/dev" ] || container_exists dev; then
+            echo
+            echo "An older toolbox named 'dev' is still around (it was renamed to dev-toolbox). To remove it:"
+            if [ -f "$state_dir/dev" ]; then
+                echo "  ujust toolbox dev --remove     (removes the container and what it recorded in $state_dir/dev)"
+            else
+                echo "  distrobox rm --force dev"
+            fi
+            echo "  Run it after checking that the exports in $export_dir now point at dev-toolbox (rerun this recipe if not)."
+        fi
     }
 
     # Run a command in the box with a sudo stub first on PATH and no_new_privs, so even an
@@ -1612,6 +1658,21 @@ toolbox *args:
         fi
     }
 
+    restore_shadow() { # put back the container_name= lines this recipe commented out
+        local l orig tmp="$work/conf.shadow"
+        [ -f "$state_file" ] || return 0
+        while IFS= read -r l; do
+            [ -n "$l" ] || continue
+            orig=${l#conf-shadow }
+            if [ -f "$conf_file" ]; then
+                T="$shadow_tag" O="$orig" awk '$0 == ENVIRON["T"] ENVIRON["O"] { print ENVIRON["O"]; next } { print }' "$conf_file" >"$tmp"
+                cat "$tmp" >"$conf_file"
+            fi
+            drop_state "$l"
+            echo "Restored '$orig' in $conf_file"
+        done < <(grep '^conf-shadow ' "$state_file" || true)
+    }
+
     # Another toolbox whose state file lists this directory (a shared home directory such as ~/.cargo)
     other_owner() {
         local f
@@ -1713,6 +1774,9 @@ toolbox *args:
                 conf_line=""
             fi
         fi
+        if grep -q '^conf-shadow ' "$state_file"; then
+            echo "  restoring the container_name= line(s) in $conf_file that the recipe commented out"
+        fi
         if [ "$have_box" = 1 ]; then echo "  container $box  (distrobox rm --force; size not shown)"; fi
         for p in "${dirs[@]}"; do echo "  directory $p  ($(size_of "$p"))"; done
         if [ -n "$home_p" ]; then
@@ -1789,6 +1853,7 @@ toolbox *args:
             drop_state "$conf_line"
             echo "Removed the container_name_default setting"
         fi
+        restore_shadow
         if [ "$have_box" = 1 ]; then
             distrobox rm --force "$box" </dev/null || {
                 echo "Could not remove the container $box; stopped. Run again to finish."
@@ -2076,6 +2141,12 @@ toolbox *args:
         refresh_apps
     }
 
+    if [ "$legacy" = 1 ] && [ "$remove" != 1 ]; then
+        echo "The old toolbox 'dev' (state file $state_file) is now called dev-toolbox. Only" >&2
+        echo "'ujust toolbox dev --remove' works on the old one; create the new one with: ujust toolbox dev-toolbox" >&2
+        exit 2
+    fi
+
     if [ "$ide" = 1 ]; then
         if [ "$remove" = 1 ]; then ide_remove || failed=1; else do_ide || failed=1; fi
         exit "$failed"
@@ -2170,6 +2241,7 @@ toolbox *args:
     fi
     step_box || {
         undo_note
+        old_dev_note
         exit "$failed"
     }
     step_default
@@ -2185,4 +2257,5 @@ toolbox *args:
     done
     do_apps
     undo_note
+    old_dev_note
     exit "$failed"
