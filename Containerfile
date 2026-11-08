@@ -1,9 +1,3 @@
-# Allow build scripts to be referenced without being copied into the final image
-FROM scratch AS ctx
-COPY build_files /
-COPY system_files /system_files
-COPY cosign.pub /cosign.pub
-
 # Homebrew, as files only: Universal Blue's `ghcr.io/ublue-os/brew` is a FROM scratch image that holds
 # /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). Pinned to a dated
 # tag (YYYYMMDD, upstream rebuilds weekly); bump it here, in one place (`just brew-tags` lists the newest).
@@ -12,6 +6,12 @@ COPY cosign.pub /cosign.pub
 ARG BREW_TAG=20261108
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}
 FROM ${BREW_IMAGE} AS brew
+
+# Allow build scripts to be referenced without being copied into the final image
+FROM scratch AS ctx
+COPY build_files /
+COPY system_files /system_files
+COPY cosign.pub /cosign.pub
 
 # Base Image
 FROM ghcr.io/ublue-os/silverblue-main:45
