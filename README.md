@@ -61,7 +61,7 @@ Added by this image:
 - Maintainer details (channels, promotion, base image variables) are in `CLAUDE.md`
 
 **`ujust` recipes** (`system_files/usr/share/ublue-os/just/60-custom.just`)
-- `add-user-groups`, `toolbox`, `gnome-themes` (themes and icons live in their own repo), Flatpak helpers for games, Steam, VS Code, Podman Desktop, Chrome web apps and Gear Lever; the full list is under "Recipes"
+- `user-setup` (groups and Flatpak access steps, one y/n question each), `toolbox`, `gnome-themes` (themes and icons live in their own repo), Steam gamescope and extest helpers; the full list is under "Recipes"
 
 ## Use it
 
@@ -69,7 +69,7 @@ Added by this image:
 sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 ```
 
-Reboot, then run `ujust add-user-groups` to join the `gamemode`, `input` and `libvirt` groups.
+Reboot, then run `ujust user-setup`: it asks, step by step, whether to join the `gamemode`, `input` and `libvirt` groups and to apply the Flatpak access overrides (`--yes` takes the defaults, `--no` only prints the plan).
 
 To verify the signature yourself:
 
@@ -98,17 +98,11 @@ Built on Universal Blue's `silverblue-main` for the current Fedora release (`ghc
 
 | Recipe | What it does |
 |---|---|
-| `ujust add-user-groups` | Add a user to the `gamemode`, `input` and `libvirt` groups |
+| `ujust user-setup [user] [--yes\|--no]` | Interactive checklist: add the user to `gamemode`, `input` and `libvirt` (sudo), then Flatpak overrides for game launchers (a games directory you name), Steam USB/input devices (default no, widens the sandbox), VS Code and the Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers and Gear Lever's `~/Applications`; steps for apps that are not installed or already done are skipped, and the summary lists how to undo each applied step |
 | `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options; `--ide` makes IDE launchers (JetBrains icon: the one Toolbox registered, else the file in the app's `bin/`; rerunning refreshes the icon of launchers it created) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
-| `ujust flatpak-games-access` | Give the Flatpak game launchers access to a games directory |
-| `ujust steam-flatpak-devices` | Let Flatpak Steam see USB and input devices |
 | `ujust steam-gamescope-setup` / `-reset` | Make Flatpak Steam and the gamescope layer work together, or undo it |
 | `ujust extest-build`, `extest-steam-setup`, `extest-steam-reset` | Experimental: extest for Steam Input on Wayland |
-| `ujust vscode-flatpak-podman` | Let Flatpak VS Code use Wayland and the rootless Podman socket |
-| `ujust podman-desktop-deny-docker-socket` | Keep Podman Desktop away from a Docker socket |
-| `ujust chrome-flatpak-webapps` | Let Flatpak Chrome install web apps as launchers |
-| `ujust gearlever-applications` | Let Gear Lever manage AppImages in `~/Applications` |
 
 ## Contributing
 
