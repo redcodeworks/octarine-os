@@ -20,6 +20,7 @@ for c in bash sh env cat grep awk sed zcat gzip cut tr date cmp diff sha256sum m
 done
 export LOG="$root/log" INSTALLED="$root/installed" REMOTE="$root/remote" HOME="$root/home"
 export GAMING_SETUP_APPSTREAM_DIRS="$root/appstream" GAMING_SETUP_GAMEMODE_SRC="$shipped_ini"
+export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
 export EXTEST_SRC="$root/extest-src" EXTEST_DEST="$root/extest-dest"
 unset XDG_DATA_HOME XDG_STATE_HOME XDG_CONFIG_HOME
 mkdir -p "$HOME" "$root/appstream"
@@ -66,6 +67,27 @@ shift 3
 PATH="$BINDIR:$PATH" "$@"
 F
 export BINDIR="$bin"
+cat >"$bin/gum" <<'F'
+#!/usr/bin/env bash
+echo "gum $*" >>"$LOG"
+case "$1" in
+    choose)
+        n=$(( $(cat "$GUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$GUMQ.n"
+        [ -f "$GUMQ.$n" ] && cat "$GUMQ.$n"
+        exit 0
+        ;;
+    confirm) exit "${GUM_CONFIRM_RC:-0}" ;;
+    style) echo "${@: -1}" ;;
+esac
+exit 0
+F
+cat >"$bin/ugum" <<'F'
+#!/usr/bin/env bash
+echo "ugum $*" >>"$LOG"
+n=$(( $(cat "$UGUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$UGUMQ.n"
+[ -f "$UGUMQ.$n" ] && cat "$UGUMQ.$n"
+exit 0
+F
 chmod +x "$bin"/*
 
 appstream() { # verified ids...
@@ -81,12 +103,14 @@ appstream() { # verified ids...
     } | gzip >"$root/appstream/appstream.xml.gz"
 }
 reset() {
+    rm -f "$root"/gumq.* "$root"/ugumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC
     rm -rf "$HOME" "$root/extest-src" "$root/extest-dest"
     mkdir -p "$HOME"
     : >"$LOG"; : >"$INSTALLED"; : >"$REMOTE"
     appstream
     unset GAMING_SETUP_RES
 }
+gumq() { printf '%b' "$2" >"$root/gumq.$1"; }
 run() { # stdin text, args...
     local input=$1
     shift
@@ -240,6 +264,36 @@ run '' reset --yes
 check "reset: library kept under --yes" test -f "$EXTEST_DEST/lib64/libextest.so"
 run 'n\nn\ny\nn\n' reset
 check "reset: library removed when asked" test ! -f "$EXTEST_DEST/lib64/libextest.so"
+
+# ---- gum checklist (a terminal is faked with OCTARINE_MENU_FORCE_TTY)
+reset
+appstream net.lutris.Lutris
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'Lutris\n'
+run ''
+check "gum checklist: the chosen step runs" logged "flatpak install --user -y flathub net.lutris.Lutris"
+check "gum checklist: unchosen steps do not run" notlogged "flathub com.valvesoftware.Steam"
+check "gum checklist: defaults preselected, Lutris not" logged "--selected Steam,ProtonUp-Qt,"
+check "gum checklist: summary confirmed" logged "gum confirm Run these steps?"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run ''
+check "gum checklist: Esc (empty) changes nothing" notlogged "flatpak install"
+check "gum checklist: Esc is not a failure" test "$rc" = 0
+reset
+appstream net.lutris.Lutris
+export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
+gumq 1 'Lutris\n'
+run ''
+check "gum checklist: declining changes nothing" notlogged "flatpak install"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run '' --yes
+check "gum: --yes asks nothing" notlogged "gum choose"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run '' reset --yes
+check "gum: a named step (reset) opens no checklist" notlogged "gum choose"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

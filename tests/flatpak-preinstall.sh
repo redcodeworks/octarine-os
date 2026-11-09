@@ -17,6 +17,7 @@ for c in bash sh env cat grep mktemp rm tee id mkdir; do
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 printf '[Flatpak Preinstall org.example.One]\nBranch=stable\n\n[Flatpak Preinstall org.example.Two]\nBranch=stable\n' >"$root/lists/a.preinstall"
+export OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
 export LOG="$root/log" FLATPAK_PREINSTALL_DIR="$root/lists" FLATPAK_BIN="$bin/flatpak"
 export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent REMOTES="$root/remotes" FP_STATUS=0 FP_OUT="Nothing to do."
 
@@ -43,7 +44,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out"; }
 check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 has() { grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$LOG"; }
-reset() { : >"$LOG"; echo flathub >"$REMOTES"; unset NO_NET; export FP_STATUS=0 FP_OUT="Nothing to do."; export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent; }
+reset() { unset OCTARINE_MENU_FORCE_TTY; : >"$LOG"; echo flathub >"$REMOTES"; unset NO_NET; export FP_STATUS=0 FP_OUT="Nothing to do."; export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent; }
 
 reset
 run --dry-run
@@ -84,6 +85,21 @@ check "failure: autolaunch explained" has "fedora' OCI remote"
 reset
 run --bogus
 check "unknown option: exit 2" test "$rc" = 2
+
+# a terminal (faked) asks before installing
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+printf 'n\n' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" flatpak-preinstall >"$root/out" 2>&1; rc=$?
+check "confirm: no installs nothing" bash -c "! grep -q 'preinstall -y' '$LOG'"
+check "confirm: no is not a failure" test "$rc" = 0
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+printf '\n' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" flatpak-preinstall >"$root/out" 2>&1; rc=$?
+check "confirm: the default is yes" logged "flatpak preinstall -y"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run --dry-run
+check "confirm: --dry-run asks nothing" has "Dry run"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

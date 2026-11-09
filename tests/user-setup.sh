@@ -18,6 +18,7 @@ mkdir -p "$HOME"
 export BREW_CASKS="$root/casks" FC_FAMILIES="$root/families"
 export USER_SETUP_FONTS_BREWFILE="$here/../system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
 export EXT_PRESENT="$root/extpresent" EXT_FAIL="$root/extfail" EXT_ERR="$root/exterr" WAYLAND_DISPLAY=wayland-test
+export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
 export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
 export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"
@@ -165,9 +166,31 @@ for a in "$@"; do
 done
 exit 0
 F
+cat >"$bin/gum" <<'F'
+#!/usr/bin/env bash
+echo "gum $*" >>"$LOG"
+case "$1" in
+    choose)
+        n=$(( $(cat "$GUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$GUMQ.n"
+        [ -f "$GUMQ.$n" ] && cat "$GUMQ.$n"
+        exit 0
+        ;;
+    confirm) exit "${GUM_CONFIRM_RC:-0}" ;;
+    style) echo "${@: -1}" ;;
+esac
+exit 0
+F
+cat >"$bin/ugum" <<'F'
+#!/usr/bin/env bash
+echo "ugum $*" >>"$LOG"
+n=$(( $(cat "$UGUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$UGUMQ.n"
+[ -f "$UGUMQ.$n" ] && cat "$UGUMQ.$n"
+exit 0
+F
 chmod +x "$bin"/*
 
 reset() {
+    rm -f "$root"/gumq.* "$root"/ugumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC
     rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".* "$root_cnt"
     rm -rf "$HOME" "$XDG_CACHE_HOME" "$root"/sp1/* "$root"/sp2/*
     mkdir -p "$HOME"
@@ -177,6 +200,8 @@ reset() {
     unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS DESCRIBE_OUT DESCRIBE_RC COLUMNS
     : >"$BREW_CASKS"; : >"$FC_FAMILIES"; : >"$EXT_PRESENT"; : >"$EXT_FAIL"; : >"$EXT_ERR"
 }
+gumq() { printf '%b' "$2" >"$root/gumq.$1"; }
+ugumq() { printf '%b' "$2" >"$root/ugumq.$1"; }
 run() { # stdin text, args...
     local input=$1
     shift
@@ -587,6 +612,78 @@ check "search: custom sort-order kept, calculator moved first" grep -q "sort-ord
 : >"$LOG"
 run '' --yes --only search
 check "search: second run writes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
+
+# ---- gum menus (a terminal is faked with OCTARINE_MENU_FORCE_TTY; without it nothing above changes)
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'Login shell zsh (sudo)\n'
+run ''
+check "gum checklist: chosen step runs" logged "usermod -s"
+check "gum checklist: unchosen steps do not run" notlogged "usermod -aG"
+check "gum checklist: defaults are preselected" logged "--selected Add tester to gamemode; input and libvirt (sudo),Login shell zsh (sudo),Flatpak access overrides"
+check "gum checklist: headings are shown" logged "── Account ───"
+check "gum checklist: summary confirmed" logged "gum confirm Run these steps?"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run ''
+check "gum checklist: Esc (empty) changes nothing" notlogged "usermod"
+check "gum checklist: Esc is not a failure" test "$rc" = 0
+reset
+export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
+gumq 1 'Login shell zsh (sudo)\n'
+run ''
+check "gum checklist: declining the confirmation changes nothing" notlogged "usermod"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 '── Account ───\n'
+run ''
+check "gum checklist: a heading alone selects nothing" notlogged "usermod"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run '' --yes
+check "gum: --yes asks nothing" notlogged "gum choose"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run '' --no
+check "gum: --no asks nothing" notlogged "gum choose"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+run '' --only shell --yes
+check "gum: --only skips the checklist" notlogged "gum choose"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'Config files from dot-files; chosen per app\n'
+gumq 2 'niri - Scrollable-tiling Wayland compositor\nnoctalia - Shell bar\n'
+JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tScrollable-tiling Wayland compositor\nnoctalia\tShell bar\n' run ''
+check "gum dotfiles: per-app checklist shows name - description" logged "niri - Scrollable-tiling Wayland compositor"
+check "gum dotfiles: chosen apps are installed" logged "install preserve niri noctalia"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'Nerd Fonts from Homebrew casks\n'
+ugumq 1 'JetBrains Mono Nerd Font only\n'
+run ''
+check "gum fonts: single choice through ugum" logged "brew install --cask font-jetbrains-mono-nerd-font"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'Nerd Fonts from Homebrew casks\n'
+ugumq 1 'Pick from all Nerd Font casks\n'
+gumq 2 'font-aaa-nerd-font\n'
+run ''
+check "gum fonts: pick-from-all is a checklist" logged "brew install --cask font-aaa-nerd-font"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'GNOME settings and extensions\n'
+ugumq 1 'Show the plan only (dry run)\n'
+ugumq 2 ''
+run ''
+check "gum gnome: the plan option runs the dry run" logged "gnome-apply --dry-run"
+check "gum gnome: the plan alone applies nothing" test "$(grep -c 'gnome-apply' "$LOG")" = 1
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+gumq 1 'GNOME settings and extensions\n'
+ugumq 1 'Apply now\n'
+run ''
+check "gum gnome: apply runs gnome-apply" logged "gnome-apply"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

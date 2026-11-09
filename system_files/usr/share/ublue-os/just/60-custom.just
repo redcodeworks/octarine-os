@@ -1,10 +1,15 @@
 # vim: set ft=make :
 
-# One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin's 12-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes
+# Step-by-step setup for a new user: groups, zsh, Flatpak access, fonts, tools, fish, search, dot-files, GNOME (--help for usage)
+[group('Setup')]
 [positional-arguments]
 user-setup *args:
     #!/usr/bin/env bash
     set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     only_list=""
     user=""
@@ -14,6 +19,7 @@ user-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin'\''s 12-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -206,6 +212,33 @@ user-setup *args:
         fi
     }
 
+    # Terminal with gum: one checklist of steps up front, a summary and one confirmation; then the chosen steps run
+    # like `--yes --only <steps>` (each still prints what it does and how to undo it). Without gum, or with --yes,
+    # --no or --only, nothing here applies and the per-step questions are unchanged.
+    ui=0
+    if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
+        ui=1
+        menu_title "octarineOS user setup"
+        menu_multi "SPACE toggles, ENTER confirms, Esc skips everything" \
+            "^── Account ───^0" \
+            "groups^Add $user to gamemode, input and libvirt (sudo)^1" \
+            "shell^Login shell zsh (sudo)^1" \
+            "^── Apps ───^0" \
+            "flatpak^Flatpak access overrides^1" \
+            "fonts^Nerd Fonts from Homebrew casks^1" \
+            "brew^Homebrew CLI tools from dot-files^0" \
+            "^── Desktop ───^0" \
+            "fish-terminal^Fish terminal profile with the starship prompt^1" \
+            "search^GNOME search providers^1" \
+            "dotfiles^Config files from dot-files, chosen per app^0" \
+            "gnome^GNOME settings and extensions^0"
+        if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
+        echo "Selected steps: ${MENU_RESULT[*]}"
+        if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
+        only_list=$(IFS=,; echo "${MENU_RESULT[*]}")
+        mode=yes
+    fi
+
     if sel groups; then
     cur_step=groups
     # 1. groups. gamemode and input only exist in /usr/lib/group, so their lines are copied into /etc/group first
@@ -308,7 +341,7 @@ user-setup *args:
     if [ "${#games_apps[@]}" -eq 0 ]; then
         echo "Skipped: none of Steam, Bottles and Lutris (Flatpak) is installed."
         record "flatpak-games-access" "skipped (not installed)"
-    elif [ "$mode" != ask ]; then
+    elif [ "$mode" != ask ] && [ "$ui" != 1 ]; then
         echo "Needs a directory path: skipped without a prompt."
         record "flatpak-games-access" "skipped (needs a path)"
     else
@@ -401,7 +434,15 @@ user-setup *args:
     else
         fonts_brewfile=${USER_SETUP_FONTS_BREWFILE:-/usr/share/octarine-os/homebrew/fonts.Brewfile}
         fonts_choice=1
-        if [ "$mode" = ask ]; then
+        mrc=3
+        if [ "$ui" = 1 ]; then
+            menu_one "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts)" \
+                "1^Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque)" "2^JetBrains Mono Nerd Font only" \
+                "3^Pick from all Nerd Font casks" "4^Skip"
+            mrc=$?
+            case "$mrc" in 0) fonts_choice=$MENU_ONE ;; 1) fonts_choice=4 ;; esac
+        fi
+        if [ "$mrc" = 3 ] && { [ "$mode" = ask ] || [ "$ui" = 1 ]; }; then
             echo "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts):"
             echo "  1) Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque) [default]"
             echo "  2) JetBrains Mono Nerd Font only"
@@ -424,19 +465,29 @@ user-setup *args:
                 if [ "${#allcasks[@]}" -eq 0 ]; then
                     echo "No Nerd Font casks found (is Homebrew working?)."
                 else
-                    n=0
-                    for c in "${allcasks[@]}"; do n=$((n + 1)); echo "  $n) $c"; done
-                    printf 'Numbers or cask names separated by spaces, Enter = none: '
-                    read -r reply || reply=""
-                    for tok in $reply; do
-                        if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "${#allcasks[@]}" ]; then
-                            selected+=("${allcasks[$((tok - 1))]}")
-                        elif in_list "$tok" "${allcasks[@]}"; then
-                            selected+=("$tok")
-                        else
-                            echo "Ignoring '$tok': not in the list of Nerd Font casks."
-                        fi
-                    done
+                    mrc=3
+                    if [ "$ui" = 1 ]; then
+                        specs=()
+                        for c in "${allcasks[@]}"; do specs+=("$c^$c^0"); done
+                        menu_multi "Nerd Font casks: SPACE toggles, ENTER confirms" "${specs[@]}"
+                        mrc=$?
+                        if [ "$mrc" = 0 ]; then selected+=("${MENU_RESULT[@]}"); fi
+                    fi
+                    if [ "$mrc" = 3 ]; then
+                        n=0
+                        for c in "${allcasks[@]}"; do n=$((n + 1)); echo "  $n) $c"; done
+                        printf 'Numbers or cask names separated by spaces, Enter = none: '
+                        read -r reply || reply=""
+                        for tok in $reply; do
+                            if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "${#allcasks[@]}" ]; then
+                                selected+=("${allcasks[$((tok - 1))]}")
+                            elif in_list "$tok" "${allcasks[@]}"; then
+                                selected+=("$tok")
+                            else
+                                echo "Ignoring '$tok': not in the list of Nerd Font casks."
+                            fi
+                        done
+                    fi
                 fi
                 ;;
         esac
@@ -488,12 +539,25 @@ user-setup *args:
         # terminal font, only on an explicit choice
         if command -v ptyxis >/dev/null 2>&1 && command -v gsettings >/dev/null 2>&1 && command -v fc-list >/dev/null 2>&1; then
             mapfile -t fams < <(fc-list : family 2>/dev/null | grep -i 'nerd font' | sed 's/,.*//' | sort -u)
-            if [ "${#fams[@]}" -gt 0 ] && [ "$mode" = ask ]; then
-                echo "Ptyxis terminal font (installed Nerd Font families):"
-                n=0
-                for f in "${fams[@]}"; do n=$((n + 1)); echo "  $n) $f"; done
-                printf 'Number to use as the terminal font (Medium 10), Enter = no change: '
-                read -r reply || reply=""
+            if [ "${#fams[@]}" -gt 0 ] && { [ "$mode" = ask ] || [ "$ui" = 1 ]; }; then
+                reply=""
+                mrc=3
+                if [ "$ui" = 1 ]; then
+                    specs=()
+                    n=0
+                    for f in "${fams[@]}"; do n=$((n + 1)); specs+=("$n^$f"); done
+                    specs+=("0^No change")
+                    menu_one "Ptyxis terminal font (Medium 10)" "${specs[@]}"
+                    mrc=$?
+                    if [ "$mrc" = 0 ] && [ "$MENU_ONE" != 0 ]; then reply=$MENU_ONE; fi
+                fi
+                if [ "$mrc" = 3 ]; then
+                    echo "Ptyxis terminal font (installed Nerd Font families):"
+                    n=0
+                    for f in "${fams[@]}"; do n=$((n + 1)); echo "  $n) $f"; done
+                    printf 'Number to use as the terminal font (Medium 10), Enter = no change: '
+                    read -r reply || reply=""
+                fi
                 if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "${#fams[@]}" ]; then
                     fam=${fams[$((reply - 1))]}
                     if gsettings set org.gnome.Ptyxis font-name "$fam Medium 10" && gsettings set org.gnome.Ptyxis use-system-font false; then
@@ -815,21 +879,30 @@ user-setup *args:
                 [ -d "$d" ] && apps+=("$(basename "$d")")
             done
             chosen=()
-            if [ "$mode" = yes ]; then
+            # one line per app from `just describe` (read as data; missing recipe or a failure means no descriptions)
+            declare -A app_desc=()
+            if dot_has describe; then
+                desc_out=$(dot_just describe 2>/dev/null) || desc_out=""
+                while IFS=$'\t' read -r dname dtext; do
+                    dtext=${dtext//[[:cntrl:]]/}
+                    [ -n "$dname" ] && [ -n "$dtext" ] && app_desc[${dname//[[:cntrl:]]/}]=$dtext
+                done <<<"$desc_out"
+            fi
+            if [ "$ui" = 1 ]; then
+                specs=()
+                for a in "${apps[@]}"; do
+                    label=$a
+                    if [ -n "${app_desc[$a]:-}" ]; then label="$a - ${app_desc[$a]}"; fi
+                    specs+=("$a^$label^0")
+                done
+                menu_multi "Apps to copy config files for: SPACE toggles, ENTER confirms" "${specs[@]}"
+                chosen=("${MENU_RESULT[@]}")
+            elif [ "$mode" = yes ]; then
                 apps_env=${DOT_FILES_APPS:-}
                 for a in ${apps_env//,/ }; do
                     for b in "${apps[@]}"; do [ "$a" = "$b" ] && chosen+=("$a"); done
                 done
             else
-                # one line per app from `just describe` (read as data; missing recipe or a failure means no descriptions)
-                declare -A app_desc=()
-                if dot_has describe; then
-                    desc_out=$(dot_just describe 2>/dev/null) || desc_out=""
-                    while IFS=$'\t' read -r dname dtext; do
-                        dtext=${dtext//[[:cntrl:]]/}
-                        [ -n "$dname" ] && [ -n "$dtext" ] && app_desc[${dname//[[:cntrl:]]/}]=$dtext
-                    done <<<"$desc_out"
-                fi
                 cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
                 [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
                 cur_step=dotfiles-app
@@ -875,7 +948,21 @@ user-setup *args:
     else
         echo "Apply the dot-files GNOME settings and extensions (just gnome-apply). This changes many GNOME settings: app grid folders, interface, shell keybindings, dock, shell theme. It first offers to install the missing GNOME extensions through GNOME's own installer (you confirm each), backs up the current dconf values, enables only installed extensions and lists the missing ones. Code from that repository; needs the network."
         gchoice=n
-        case "$mode" in
+        if [ "$ui" = 1 ] && menu_ready_one; then
+            while :; do
+                menu_one "GNOME settings and extensions" "apply^Apply now" "plan^Show the plan only (dry run)" "skip^Skip"
+                case "$MENU_ONE" in
+                    apply) gchoice=y; break ;;
+                    plan)
+                        if dot_fetch && dot_has gnome-apply; then dot_just gnome-apply --dry-run; else echo "No plan available (fetch failed or recipe missing)."; fi
+                        ;;
+                    *) break ;;
+                esac
+            done
+            mode_gnome=ui
+        fi
+        case "${mode_gnome:-$mode}" in
+            ui) ;;
             no) ;;
             yes) consent && gchoice=y ;;
             ask)
@@ -932,15 +1019,21 @@ user-setup *args:
     fi
     exit "$failed"
 
-# Install the Flatpak apps this image lists (/usr/share/flatpak/preinstall.d). Run it from a desktop terminal as yourself, not with sudo: it needs your session bus, and the system installation asks for authorization through polkit if required. `ujust flatpak-preinstall` installs, `ujust flatpak-preinstall --dry-run` only shows the plan. Safe to repeat; "Nothing to do" is success
+# Install the Flatpak apps this image lists; run it from a desktop terminal (--help for usage)
+[group('Setup')]
 [positional-arguments]
 flatpak-preinstall *args:
     #!/usr/bin/env bash
     set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     dry=0
     for a in "$@"; do
         case "$a" in
             --dry-run) dry=1 ;;
+            help | --help | -h) echo 'ujust flatpak-preinstall [--dry-run]: install the Flatpak apps listed in /usr/share/flatpak/preinstall.d. Run it as yourself from a desktop terminal, not with sudo (it needs your session bus; polkit may ask to authorize). --dry-run only shows the plan. Safe to repeat.'; exit 0 ;;
             *) echo "Unknown option: $a" >&2; echo "Usage: ujust flatpak-preinstall [--dry-run]" >&2; exit 2 ;;
         esac
     done
@@ -975,6 +1068,7 @@ flatpak-preinstall *args:
         echo "No network: dl.flathub.org does not resolve. Connect and run this again." >&2
         exit 1
     fi
+    if menu_tty && ! menu_confirm "Install these apps now?" y; then echo "Nothing installed."; exit 0; fi
     echo "Installing. If a polkit prompt appears, authorize it."
     out=$(mktemp)
     "$flatpak_bin" preinstall -y 2>&1 | tee "$out"
@@ -990,11 +1084,16 @@ flatpak-preinstall *args:
     rm -f -- "${out:?}"
     exit "$status"
 
-# Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam's runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display's resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)
+# Step-by-step gaming setup: Steam, ProtonUp-Qt, Lutris, gamescope, extest, launchers, GameMode (--help for usage)
+[group('Gaming')]
 [positional-arguments]
 gaming-setup *args:
     #!/usr/bin/env bash
     set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     steps=""
     valid=" steam protonup lutris extensions extest desktop gamemode reset "
@@ -1003,6 +1102,7 @@ gaming-setup *args:
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -1100,6 +1200,25 @@ gaming-setup *args:
         flatpak info "org.freedesktop.Platform.VulkanLayer.MangoHud//$1" >/dev/null 2>&1 && v="$v:/usr/lib/extensions/vulkan/MangoHud/bin"
         echo "$v"
     }
+
+    # Terminal with gum and no step named: a checklist of the steps (the chosen ones run as if named, so they count
+    # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
+    if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
+        menu_title "octarineOS gaming setup"
+        menu_multi "SPACE toggles, ENTER confirms, Esc skips everything" \
+            "^── Apps (Flathub, verified only) ───^0" \
+            "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+            "^── Steam extras ───^0" \
+            "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
+            "extest^extest build (experimental)^0" \
+            "desktop^Generated Steam launchers^1" \
+            "^── Tuning ───^0" \
+            "gamemode^GameMode tuning in ~/.config/gamemode.ini^1"
+        if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
+        echo "Selected steps: ${MENU_RESULT[*]}"
+        if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
+        steps=" ${MENU_RESULT[*]}"
+    fi
 
     if selected steam && ! explicit reset; then app_step steam "Steam" "$steam" y; fi
     if selected protonup && ! explicit reset; then app_step protonup "ProtonUp-Qt" net.davidotek.pupgui2 y; fi
@@ -1397,11 +1516,16 @@ gaming-setup *args:
     done
     exit "$failed"
 
-# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-candy install-theme` or `ujust gnome-candy switch-icon Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+# Themes and icons from the gnome-themes repo; no arguments opens a menu of its recipes (--help lists them)
+[group('Appearance')]
 [positional-arguments]
 gnome-candy *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     url="${GNOME_THEMES_URL:-https://github.com/redcodeworks/gnome-themes.git}"
     ref="${GNOME_THEMES_REF:-main}"
     dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes/repo"
@@ -1413,13 +1537,48 @@ gnome-candy *args:
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
+    # No arguments in a terminal: a menu of the checked-out repository's public recipes (name - comment), then run the
+    # choice; a recipe that takes parameters asks for them. Explicit arguments pass straight through.
+    if [ "$#" -eq 0 ] && menu_ready_one; then
+        mapfile -t listing < <(just --justfile "$dir/justfile" --working-directory "$dir" --list --unsorted --list-heading '' --list-prefix '' 2>/dev/null)
+        specs=()
+        for line in "${listing[@]}"; do
+            [ -n "${line// }" ] || continue
+            rname=${line%% *}
+            comment=""
+            case "$line" in *"# "*) comment=${line#*# } ;; esac
+            specs+=("$rname^$rname${comment:+ - $comment}")
+        done
+        if [ "${#specs[@]}" -gt 0 ]; then
+            if menu_one "gnome-candy: choose a recipe" "${specs[@]}"; then
+                reply=""
+                if printf '%s\n' "${listing[@]}" | grep -E "^$MENU_ONE( |$)" | sed 's/#.*//' | grep -q '[A-Za-z*+]'; then
+                    read -r -p "Arguments for $MENU_ONE (empty for none): " reply || reply=""
+                fi
+                # shellcheck disable=SC2086
+                exec just --justfile "$dir/justfile" --working-directory "$dir" "$MENU_ONE" $reply
+            fi
+            echo "Nothing chosen."
+            exit 0
+        fi
+    fi
+    if [ "${1:-}" = help ] || [ "${1:-}" = --help ]; then
+        echo "ujust gnome-candy [recipe [arguments]]: runs a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout. Recipes:"
+        just --justfile "$dir/justfile" --working-directory "$dir" --list --unsorted
+        exit 0
+    fi
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box (the JetBrains icon is the one Toolbox registered, else the file in the app's bin/ directory; running `--ide` again refreshes the Icon= line of launchers this recipe created), `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
+# Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
+[group('Toolbox')]
 [positional-arguments]
 toolbox *args:
     #!/usr/bin/env bash
     set -euo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
 
     defs_dir="${TOOLBOX_DEFINITIONS:-/usr/share/ublue-os/distrobox}"
     image_override="${TOOLBOX_IMAGE:-}"
@@ -1560,6 +1719,23 @@ toolbox *args:
             esac
         done
         list_toolboxes
+        if [ "$#" -eq 0 ] && menu_ready_one; then
+            specs=()
+            while IFS= read -r n; do [ -n "$n" ] && specs+=("$n^$n"); done < <(known_toolboxes)
+            if [ "${#specs[@]}" -gt 0 ] && menu_one "Choose a toolbox" "${specs[@]}"; then
+                pick=$MENU_ONE
+                if menu_one "What to do with $pick" "create^create or set up" "--list^show tools and state" "--recreate^recreate the box (home is kept)" \
+                    "--upgrade^upgrade to the latest image" "--update^update packages inside the box" "--set-default^make it the default container" \
+                    "--ide^create IDE launchers" "--remove^remove the box"; then
+                    action=$MENU_ONE
+                    if [ "$action" = create ]; then action=""; fi
+                    if [ "$action" = --remove ]; then
+                        menu_confirm "Remove $pick? (it asks you to type yes again)" n || exit 0
+                    fi
+                    exec ujust toolbox "$pick" $action
+                fi
+            fi
+        fi
         exit 0
     fi
 
@@ -2341,6 +2517,15 @@ toolbox *args:
         shown=${cur:-none}
         if [ -n "$cur" ] && ! container_exists "$cur"; then shown="$cur, no such container"; fi
         echo "== Default container for 'distrobox enter' ($conf_file)"
+        if menu_ready_one; then
+            local specs=("$box^$box (this toolbox)" "-^Leave it as it is (${shown})")
+            if menu_one "Default container for 'distrobox enter'" "${specs[@]}" && [ "$MENU_ONE" != "-" ]; then
+                new=$MENU_ONE
+            else
+                echo "   Left as it was."
+                return 0
+            fi
+        else
         while :; do
             printf "Default container for 'distrobox enter' (current: %s) [%s]: " "$shown" "$box"
             if ! IFS= read -r -u 3 line; then
@@ -2363,6 +2548,7 @@ toolbox *args:
             esac
             break
         done
+        fi
         if [ "$new" = "$cur" ]; then
             echo "   $new is already set; nothing written."
             disable_shadow
@@ -2704,6 +2890,19 @@ toolbox *args:
             return 0
         fi
         echo "Tools in the box"
+        if menu_ready; then
+            local specs=()
+            for i in "${!tool_ids[@]}"; do
+                if [ "${states[i]}" = missing ]; then
+                    load "${tool_ids[i]}"
+                    specs+=("${tool_ids[i]}^$label from $(if [ "$src" = image ]; then echo "image ($ref)"; else echo installer; fi)^${sel[i]}")
+                fi
+            done
+            menu_multi "SPACE toggles, ENTER sets up the ticked ones, Esc skips" "${specs[@]}"
+            want+=("${MENU_RESULT[@]}")
+            if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Skipped the tool list."; fi
+            return 0
+        fi
         if [ -t 1 ]; then
             printf '\033[?25l'
             draw
@@ -3081,6 +3280,19 @@ toolbox *args:
             return 0
         fi
         echo "IDE launchers (they start the IDE inside $box)"
+        if menu_ready; then
+            local specs=()
+            for i in "${!ide_ids[@]}"; do
+                if [ "${ist[i]}" = ready ]; then
+                    ide_load "${ide_ids[i]}"
+                    specs+=("${ide_ids[i]}^${iname}^${isel[i]}")
+                fi
+            done
+            menu_multi "SPACE toggles, ENTER creates the ticked launchers, Esc skips" "${specs[@]}"
+            want+=("${MENU_RESULT[@]}")
+            if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Skipped."; fi
+            return 0
+        fi
         if [ -t 1 ]; then
             printf '\033[?25l'
             ide_draw
