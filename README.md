@@ -11,7 +11,7 @@ configuration with no promises: read what it changes (the lists below) before yo
 
 ## Requirements
 
-- A PC that runs Fedora Silverblue (the current release), with UEFI boot and enough disk for the image (it is large; ROCm is included).
+- A PC that runs Fedora Silverblue (the current release), with UEFI boot and enough disk for the image.
 - An internet connection for the install and for updates.
 
 ## What it adds to Fedora Silverblue
@@ -29,7 +29,6 @@ Added by this image:
 - Cockpit and its host modules (off by default)
 - PCP metrics
 - Tailscale and `usbip` (off by default)
-- ROCm (HIP, OpenCL, `rocm-smi`), optional
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, virt-manager, Vorta, Flatseal, Bazaar

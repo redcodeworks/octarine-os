@@ -96,7 +96,7 @@ timers are installed but not enabled. Turn on what you use.
 
 - `build_files/build.sh` installs CRITICAL packages in one transaction (missing one fails the build; the smoke test
   also requires the RPM vendor `Fedora Project`) and OPTIONAL packages in groups (`misc`, `codecs`, `cockpit`, `pcp`,
-  `containers`, `rocm`, `libguestfs`). Failed optional packages are listed in
+  `containers`, `libguestfs`). Failed optional packages are listed in
   `/usr/share/octarine-os/optional-packages-missing` (read it on a machine to see what an image lacks) and appear as
   CI warnings. Outside-Fedora packages (negativo17 `gstreamer1-plugins-bad`/`-ugly`) are optional only.
 - `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
@@ -275,7 +275,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
   the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
   input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
-  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 11-font set from
+  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 12-font set from
   `/usr/share/octarine-os/homebrew/fonts.Brewfile` by default, JetBrains Mono only, a pick from all Nerd Font casks, or
   skip; then optionally the Ptyxis terminal font), `brew` (CLI tools: `just brew` of the dot-files repository, default
   no), `fish-terminal` (a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in

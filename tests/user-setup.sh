@@ -429,7 +429,8 @@ run '' --yes --only fonts
 check "fonts: --yes installs Kevin's set with brew bundle" logged "brew bundle --file"
 check "fonts: no fc-cache or curl" notlogged "curl"
 check "fonts: casks recorded" grep -q font-0xproto-nerd-font "$BREW_CASKS"
-check "fonts: eleven casks" test "$(wc -l <"$BREW_CASKS")" = 11
+check "fonts: twelve casks" test "$(wc -l <"$BREW_CASKS")" = 12
+check "fonts: Fantasque Nerd Font in the set" grep -qx font-fantasque-sans-mono-nerd-font "$BREW_CASKS"
 : >"$LOG"
 run '' --yes --only fonts
 check "fonts: second run is idempotent" notlogged "brew bundle"

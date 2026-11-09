@@ -19,7 +19,7 @@ elif [[ "${PROMOTE_WANTED-}" == true ]]; then
     echo "Promoted a tested image: no rebuild"
 else
     [[ "${BUILD}" == skipped && "${PROMOTE}" == skipped ]] || err "Unexpected results (build ${BUILD}, promote ${PROMOTE})"
-    echo "Docs-only change: heavy build skipped"
+    echo "Docs-only change or unchanged scheduled run: heavy build skipped"
 fi
 if [[ "${sign_expected}" == true ]]; then
     [[ "${SIGN}" == success ]] || err "Signing and verification did not succeed (${SIGN})"
