@@ -313,7 +313,7 @@ jobs:
             echo "== checks"
 
             check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
-            check "flatpak-preinstall recipe exists" "grep -q '^flatpak-preinstall ' /usr/share/ublue-os/just/60-custom.just"
+            check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
             check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
             check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"

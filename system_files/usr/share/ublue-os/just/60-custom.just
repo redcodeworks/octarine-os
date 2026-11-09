@@ -821,9 +821,28 @@ user-setup *args:
                     for b in "${apps[@]}"; do [ "$a" = "$b" ] && chosen+=("$a"); done
                 done
             else
+                # one line per app from `just describe` (read as data; missing recipe or a failure means no descriptions)
+                declare -A app_desc=()
+                if dot_has describe; then
+                    desc_out=$(dot_just describe 2>/dev/null) || desc_out=""
+                    while IFS=$'\t' read -r dname dtext; do
+                        dtext=${dtext//[[:cntrl:]]/}
+                        [ -n "$dname" ] && [ -n "$dtext" ] && app_desc[${dname//[[:cntrl:]]/}]=$dtext
+                    done <<<"$desc_out"
+                fi
+                cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
+                [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
                 cur_step=dotfiles-app
                 for a in "${apps[@]}"; do
-                    ask n "  $a?"
+                    label="  $a"
+                    if [ -n "${app_desc[$a]:-}" ]; then
+                        dtext=${app_desc[$a]}
+                        room=$((cols - ${#label} - 14))
+                        if [ "$room" -lt 8 ]; then room=8; fi
+                        if [ "${#dtext}" -gt "$room" ]; then dtext="${dtext:0:$((room - 3))}..."; fi
+                        label="$label - $dtext"
+                    fi
+                    ask n "$label?"
                     [ "$answer" = y ] && chosen+=("$a")
                 done
                 cur_step=dotfiles
