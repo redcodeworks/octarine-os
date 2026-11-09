@@ -387,6 +387,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   in the `signing` environment. A separate small workflow because `build.yml` is built around testing, promote and docs-only
   semantics; the tag, push and sign steps are the same. The default image, its daily skip logic and its promote flow do not know about it.
   The owner does not use it; it exists for others (opt-in, unsupported).
+- **Initramfs check (2026-11-09).** `nvidia-smoke.sh` runs under `pipefail`, so `lsinitrd | grep -q` failed whenever grep
+  quit at the first match and lsinitrd died of SIGPIPE; the listing now goes to a file first. On failure the script prints
+  `DIAG` lines (lsinitrd status and stderr, first lines, nvidia lines, `ls -l`), and `nvidia.sh` logs the initramfs size and
+  mtime around dracut, dracut's exit status (non-zero fails the build) and the nvidia entries of the new initramfs. The
+  `dracut-install ... /root` error in the build log has exit status 0 and is not the cause.
 - **How it is built.** `variants/nvidia/Containerfile` starts FROM `ghcr.io/redcodeworks/octarine-os@<digest of :latest at
   build time>` (verified with cosign first) and adds only the driver: an akmods stage `ghcr.io/ublue-os/akmods-nvidia-lts@<digest>`
   (proprietary driver, closed kernel modules, the 580 branch, which supports older cards; the `-open` modules need RTX 20 or
