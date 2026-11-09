@@ -101,6 +101,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
+- `tests/user-setup.sh` tests `ujust user-setup` with fake flatpak, sudo, id, getent and usermod; run it after changing that recipe.
 - `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
@@ -202,7 +203,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   dispatch). The "Check the base image can be pulled" step fails early and names the tag if it does not exist
   (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test checks that `VERSION_ID`
   matches; the log and the labels `org.opencontainers.image.base.name`/`base.digest` record the resolved base.
-  (3) Test the `testing` build with `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+  (3) Test the `testing` build with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<image>:testing` (or the testing VM).
   (4) Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`),
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
@@ -210,14 +211,14 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 
 ## Logo files
 
-- PNGs in `system_files/usr/share/octarine-os/logo/`: `octarine-logo.png` (620x96, the dark variant; GDM login screen
+- PNGs in `system_files/usr/share/octarine-os/logo/`: `octarine-logo.png` (465x72, the dark variant; GDM login screen
   and Plymouth watermark) and `octarine-logo-{neutral,dark,light}-{512,full}.png` (3306x512 and 7000x1084). The README
   shows the 512 files in a `<picture>` block. No mono variant.
 - The three `-full` files are the sources for every smaller size: resize with Lanczos and keep the alpha channel. The
   uncompressed originals (about 36 MB each) are not stored in the repo or the image.
 - Variants: `dark` has cream-grey "OS" letters for dark backgrounds (the one used on the login and boot screens),
   `light` dark-brown "OS" letters for light backgrounds, `neutral` grey "OS" letters that work on any background.
-- The artwork is Kevin's own; the repo ships no third-party image.
+- Origin: a recoloured version of the Fedora Silverblue logo, wordmark set in JetBrains Mono (credits in the README); no font file is shipped, only rendered text in the PNGs.
 
 ## Defaults that deviate from stock Fedora
 
@@ -347,12 +348,18 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   scripts; nothing here needs sudo.
 - **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
-  `add-user-groups` copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group`
-  first. The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
+  `user-setup [user] [--yes|--no]` replaced the seven single-purpose recipes `add-user-groups`, `flatpak-games-access`,
+  `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`, `chrome-flatpak-webapps` and
+  `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; the groups step copies the
+  `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first and is the only sudo use. Each
+  Flatpak step is skipped when the app is missing (`flatpak info`) or the override is present (`flatpak override
+  --user --show`); defaults are yes except the Steam devices (widens the sandbox) and the games directory (needs a
+  path); `--yes` takes defaults, `--no` prints the plan; a failed step is reported, the rest continue, exit status
+  non-zero. Tests: `tests/user-setup.sh` (fake flatpak, sudo, id, getent, usermod). The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
   contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
   shipped) and preload the 64-bit build into Flatpak Steam.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
-  idempotent, and each override-changing one has a matching reset. `steam-flatpak-devices` widens the sandbox.
+  idempotent, and each override-changing recipe has a matching reset (`user-setup` prints the undo per applied step).
   Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-themes` needs network, git and just, and
   without a name shows a checklist. The extest recipes need `cargo` and a C linker (the host has none; use the
   toolbox) and are not verified end to end.

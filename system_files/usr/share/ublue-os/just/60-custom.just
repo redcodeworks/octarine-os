@@ -1,29 +1,245 @@
 # vim: set ft=make :
 
-# Add a user (default: you) to the gamemode, input and libvirt groups
-add-user-groups $user=`id -un`:
+# One-time user setup, step by step: groups (gamemode, input, libvirt) and Flatpak access overrides. `ujust user-setup [user] [--yes|--no]`: asks y/n per step; --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Uses sudo only for the groups step
+[positional-arguments]
+user-setup *args:
     #!/usr/bin/env bash
-    set -euo pipefail
+    set -uo pipefail
+    mode=ask
+    user=""
+    for a in "$@"; do
+        case "$a" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            -*) echo "Unknown option: $a (use --yes or --no)" >&2; exit 2 ;;
+            *)
+                if [ -n "$user" ]; then echo "Only one user name is accepted" >&2; exit 2; fi
+                user=$a
+                ;;
+        esac
+    done
+    user=${user:-$(id -un)}
     if ! [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || ! id "$user" >/dev/null 2>&1; then
         echo "'$user' is not an existing user name"
         exit 1
     fi
-    # gamemode and input only exist in /usr/lib/group, so copy their lines into
-    # /etc/group first or usermod -aG would not see them.
+
+    names=()
+    results=()
+    undos=()
+    failed=0
+
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # ask <default y|n> <question>: sets $answer to y or n
+    ask() {
+        local def=$1 q=$2 reply hint="[Y/n]"
+        [ "$def" = n ] && hint="[y/N]"
+        case "$mode" in
+            yes) answer=$def; return ;;
+            no) answer=n; return ;;
+        esac
+        printf '%s %s ' "$q" "$hint"
+        read -r reply || reply=""
+        case "$reply" in
+            [Yy]*) answer=y ;;
+            [Nn]*) answer=n ;;
+            *) answer=$def ;;
+        esac
+    }
+
+    installed() { flatpak info "$1" >/dev/null 2>&1; }
+
+    # has_val <app> <key> <value...>: the user override of <app> lists <value> under <key> (any of the spellings)
+    has_val() {
+        local app=$1 key=$2 shown v
+        shift 2
+        shown=$(flatpak override --user --show "$app" 2>/dev/null) || return 1
+        for v in "$@"; do
+            printf '%s\n' "$shown" | awk -F= -v k="$key" -v v="$v" '
+                $1 == k { n = split($2, a, ";"); for (i = 1; i <= n; i++) if (a[i] == v) f = 1 }
+                END { exit !f }' && return 0
+        done
+        return 1
+    }
+
+    # flatpak_step <name> <default> <app> <sentence> <undo> <done-check-command> <apply-command>
+    # Commands are run with eval so they can carry the old recipes' flags verbatim.
+    flatpak_step() {
+        local name=$1 def=$2 app=$3 sentence=$4 undo=$5 donecheck=$6 apply=$7
+        echo
+        echo "== $name"
+        if ! installed "$app"; then
+            echo "Skipped: $app is not installed."
+            record "$name" "skipped (not installed)"
+            return
+        fi
+        if eval "$donecheck"; then
+            echo "Already in place."
+            record "$name" "already done"
+            return
+        fi
+        echo "$sentence"
+        ask "$def" "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "$name" "planned (would ask)"; else record "$name" "skipped (not applied)"; fi
+            return
+        fi
+        if eval "$apply"; then
+            record "$name" "applied" "$undo"
+        else
+            echo "Failed: $name" >&2
+            failed=1
+            record "$name" "FAILED"
+        fi
+    }
+
+    # 1. groups. gamemode and input only exist in /usr/lib/group, so their lines are copied into /etc/group first
+    # or usermod -aG would not see them.
+    groups_todo=()
+    groups_missing=0
     for g in gamemode input libvirt; do
         if ! getent group "$g" >/dev/null; then
             echo "Skipping $g: no such group on this system"
             continue
         fi
-        sudo sh -c "grep -q '^$g:' /etc/group || grep '^$g:' /usr/lib/group >> /etc/group"
-        if id -nG "$user" | tr ' ' '\n' | grep -qx "$g"; then
-            echo "$user is already in $g"
+        id -nG "$user" | tr ' ' '\n' | grep -qx "$g" || groups_todo+=("$g")
+    done
+    echo "== groups"
+    if [ "${#groups_todo[@]}" -eq 0 ]; then
+        echo "$user is already in every available group (gamemode, input, libvirt)."
+        record "groups" "already done"
+    else
+        echo "Will add $user to: ${groups_todo[*]} (uses sudo; takes effect at next login)."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "groups" "planned (would ask)"; else record "groups" "skipped (not applied)"; fi
         else
-            sudo usermod -aG "$g" "$user"
-            echo "Added $user to $g"
+            gfail=0
+            undo=""
+            for g in "${groups_todo[@]}"; do
+                if sudo sh -c "grep -q '^$g:' /etc/group || grep '^$g:' /usr/lib/group >> /etc/group" && sudo usermod -aG "$g" "$user"; then
+                    echo "Added $user to $g"
+                    undo="$undo sudo gpasswd -d $user $g;"
+                else
+                    echo "Failed to add $user to $g" >&2
+                    gfail=1
+                fi
+            done
+            if [ "$gfail" = 1 ]; then failed=1; record "groups" "FAILED" "$undo"; else
+                echo "Log out and back in for the new groups to apply."
+                record "groups" "applied" "$undo"
+            fi
+        fi
+    fi
+
+    # 2. Flatpak access steps (same overrides as the former single recipes)
+    # games directory: needs a value, default no
+    echo
+    echo "== flatpak-games-access"
+    games_apps=()
+    for app in com.valvesoftware.Steam com.usebottles.bottles net.lutris.Lutris; do
+        installed "$app" && games_apps+=("$app")
+    done
+    if [ "${#games_apps[@]}" -eq 0 ]; then
+        echo "Skipped: none of Steam, Bottles and Lutris (Flatpak) is installed."
+        record "flatpak-games-access" "skipped (not installed)"
+    elif [ "$mode" != ask ]; then
+        echo "Needs a directory path: skipped without a prompt."
+        record "flatpak-games-access" "skipped (needs a path)"
+    else
+        echo "Gives the installed Flatpak game launchers (${games_apps[*]}) access to one games directory."
+        printf 'Games directory (empty to skip): '
+        read -r path || path=""
+        if [ -z "$path" ]; then
+            record "flatpak-games-access" "skipped (no path)"
+        else
+            path=${path/#\~/$HOME}
+            resolved=$(realpath -m -- "$path")
+            home=$(realpath -m -- "$HOME")
+            case "$resolved" in
+                / | "$home" | /home | /var | /var/home | /usr | /etc | /boot | /root | /mnt | /media | /run | /tmp)
+                    echo "Refusing to expose $resolved to every game launcher. Pick a dedicated games directory."
+                    record "flatpak-games-access" "skipped (refused path)"
+                    resolved=""
+                    ;;
+            esac
+            if [ -n "$resolved" ]; then
+                alldone=1
+                for app in "${games_apps[@]}"; do has_val "$app" filesystems "$resolved" || alldone=0; done
+                if [ "$alldone" = 1 ]; then
+                    echo "Already in place."
+                    record "flatpak-games-access" "already done"
+                else
+                    gfail=0
+                    undo=""
+                    mkdir -p -- "$resolved" || gfail=1
+                    for app in "${games_apps[@]}"; do
+                        if flatpak override --user --filesystem="$resolved" "$app"; then
+                            undo="$undo flatpak override --user --nofilesystem=$resolved $app;"
+                        else
+                            gfail=1
+                        fi
+                    done
+                    if [ "$gfail" = 1 ]; then failed=1; echo "Failed: flatpak-games-access" >&2; record "flatpak-games-access" "FAILED" "$undo"; else
+                        echo "${games_apps[*]} can now use $resolved"
+                        record "flatpak-games-access" "applied" "$undo"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # These widen the sandbox: default no. Skip it if you do not need controller support beyond what Steam Input does
+    flatpak_step "steam-flatpak-devices" n com.valvesoftware.Steam \
+        "Lets Flatpak Steam access USB and input devices (controllers). This widens the sandbox." \
+        "flatpak override --user --nodevice=usb --nodevice=input com.valvesoftware.Steam" \
+        'has_val com.valvesoftware.Steam devices usb && has_val com.valvesoftware.Steam devices input' \
+        'flatpak override --user --device=usb --device=input com.valvesoftware.Steam && echo "Flatpak Steam can now access USB and input devices"'
+
+    flatpak_step "vscode-flatpak-podman" y com.visualstudio.code \
+        "Lets Flatpak VS Code use Wayland and the rootless Podman socket (for dev containers)." \
+        "flatpak override --user --nosocket=wayland --nofilesystem=xdg-run/podman com.visualstudio.code" \
+        'has_val com.visualstudio.code sockets wayland && has_val com.visualstudio.code filesystems xdg-run/podman' \
+        'flatpak override --user --socket=wayland --filesystem=xdg-run/podman com.visualstudio.code && echo "VS Code can reach \$XDG_RUNTIME_DIR/podman. Enable it with: systemctl --user enable --now podman.socket"'
+
+    flatpak_step "podman-desktop-deny-docker-socket" y io.podman_desktop.PodmanDesktop \
+        "Stops Podman Desktop from reaching a Docker socket (it should only talk to Podman); this removes access." \
+        "remove the '!/run/docker.sock' line from ~/.local/share/flatpak/overrides/io.podman_desktop.PodmanDesktop (Flatseal does the same)" \
+        'has_val io.podman_desktop.PodmanDesktop filesystems "!/run/docker.sock"' \
+        'flatpak override --user --nofilesystem=/run/docker.sock io.podman_desktop.PodmanDesktop && echo "Podman Desktop can no longer access /run/docker.sock"'
+
+    flatpak_step "chrome-flatpak-webapps" y com.google.Chrome \
+        "Lets Flatpak Chrome install web apps as launchers (writes desktop entries and icons under ~/.local/share)." \
+        "flatpak override --user --nofilesystem=~/.local/share/applications --nofilesystem=~/.local/share/icons com.google.Chrome" \
+        'has_val com.google.Chrome filesystems "~/.local/share/applications" "$HOME/.local/share/applications" && has_val com.google.Chrome filesystems "~/.local/share/icons" "$HOME/.local/share/icons"' \
+        'flatpak override --user --filesystem=~/.local/share/applications --filesystem=~/.local/share/icons com.google.Chrome && echo "Chrome can now write web app launchers to ~/.local/share/applications"'
+
+    flatpak_step "gearlever-applications" y it.mijorus.gearlever \
+        "Lets Gear Lever manage AppImages in ~/Applications (creates the directory)." \
+        "flatpak override --user --nofilesystem=~/Applications it.mijorus.gearlever" \
+        'has_val it.mijorus.gearlever filesystems "~/Applications" "$HOME/Applications"' \
+        'mkdir -p "$HOME/Applications" && flatpak override --user --filesystem=~/Applications it.mijorus.gearlever && echo "Gear Lever can now use ~/Applications"'
+
+    echo
+    echo "== Summary (user: $user, mode: $mode)"
+    printf '%-36s %s\n' "STEP" "RESULT"
+    for i in "${!names[@]}"; do
+        printf '%-36s %s\n' "${names[$i]}" "${results[$i]}"
+    done
+    any=0
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ] || [ "${results[$i]}" = FAILED ]; then
+            if [ "${undos[$i]}" != "-" ] && [ -n "${undos[$i]}" ]; then
+                [ "$any" = 0 ] && { echo; echo "To undo (per step):"; any=1; }
+                echo "  ${names[$i]}: ${undos[$i]}"
+            fi
         fi
     done
-    echo "Log out and back in for the new groups to apply."
+    if [ "$any" = 1 ]; then
+        echo "A --nofilesystem undo records a denial for that path. 'flatpak override --user --reset <app>' removes the app's other user overrides too."
+    fi
+    exit "$failed"
 
 # Make Flatpak Steam and the Flatpak gamescope layer work together
 steam-gamescope-setup:
@@ -124,64 +340,6 @@ extest-steam-reset $lib=`echo "$HOME/.local/lib/extest"`:
     printf '%s\n' "$content" > "$tmp"
     mv -- "$tmp" "$file"
     echo "Removed the extest entries from $file"
-
-# Give the Flatpak game launchers (Steam, Bottles, Lutris) access to a games directory
-flatpak-games-access $path=`echo "$HOME/Games"`:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    resolved=$(realpath -m -- "$path")
-    home=$(realpath -m -- "$HOME")
-    case "$resolved" in
-        / | "$home" | /home | /var | /var/home | /usr | /etc | /boot | /root | /mnt | /media | /run | /tmp)
-            echo "Refusing to expose $resolved to every game launcher. Pick a dedicated games directory."
-            exit 1
-            ;;
-    esac
-    mkdir -p -- "$resolved"
-    for app in com.valvesoftware.Steam com.usebottles.bottles net.lutris.Lutris; do
-        flatpak override --user --filesystem="$resolved" "$app"
-    done
-    echo "Steam, Bottles and Lutris can now use $resolved"
-
-# Let Flatpak Steam see USB and input devices (controllers)
-steam-flatpak-devices:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # These widen the sandbox. Skip it if you do not need controller support beyond what Steam Input does
-    flatpak override --user --device=usb --device=input com.valvesoftware.Steam
-    echo "Flatpak Steam can now access USB and input devices"
-
-# Let Flatpak VS Code use Wayland and the rootless Podman socket (for dev containers)
-vscode-flatpak-podman:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    flatpak override --user --socket=wayland --filesystem=xdg-run/podman com.visualstudio.code
-    echo "VS Code can reach \$XDG_RUNTIME_DIR/podman. Enable it with: systemctl --user enable --now podman.socket"
-
-# Stop Podman Desktop from reaching a Docker socket (it should only talk to Podman)
-podman-desktop-deny-docker-socket:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    flatpak override --user --nofilesystem=/run/docker.sock io.podman_desktop.PodmanDesktop
-    echo "Podman Desktop can no longer access /run/docker.sock"
-
-# Let Flatpak Chrome install web apps as launchers (writes desktop entries and icons)
-chrome-flatpak-webapps:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    flatpak override --user \
-        --filesystem=~/.local/share/applications \
-        --filesystem=~/.local/share/icons \
-        com.google.Chrome
-    echo "Chrome can now write web app launchers to ~/.local/share/applications"
-
-# Let Gear Lever manage AppImages in ~/Applications
-gearlever-applications:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    mkdir -p "$HOME/Applications"
-    flatpak override --user --filesystem=~/Applications it.mijorus.gearlever
-    echo "Gear Lever can now use ~/Applications"
 
 # Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-themes install-themes` or `ujust gnome-themes switch-icons Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
 [positional-arguments]

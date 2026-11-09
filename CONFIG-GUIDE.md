@@ -85,7 +85,7 @@ timers are installed but not enabled. Turn on what you use.
   `bgrt` plus the spinner assets with our `watermark.png`, selected by `system_files/etc/plymouth/plymouthd.conf`.
   The initramfs is regenerated in the build (dracut, ostree module), because the boot and LUKS passphrase
   screens run from it.
-- **Size:** `octarine-logo.png` is 620x96, about 32% of a 1920 px screen and about 12% of 5120 px as the Plymouth
+- **Size:** `octarine-logo.png` is 465x72, about 24% of a 1920 px screen and about 9% of 5120 px as the Plymouth
   watermark; how GDM handles that width is unverified.
 - **Change it:** replace the PNG, push, let CI rebuild. **Hide the GDM logo:** `logo=''` in the override.
 - **Undo:** delete the override file and `plymouthd.conf` (and the theme block and dracut step in `build.sh`);
@@ -203,9 +203,9 @@ timers are installed but not enabled. Turn on what you use.
 
 Some of these are tradeoffs you may not want.
 
-- **YubiKey for sudo and polkit** with `pam_u2f sufficient` and `nouserok`: a touch alone gives
-  root, and a missing key falls back to the password. That is weaker than stock Fedora, and was
-  accepted knowingly.
+- **YubiKey for sudo and polkit** with `pam_u2f sufficient` and `nouserok`: a security-key touch
+  is accepted instead of the password, no PIN is required, and without an enrolled key the password
+  still works (see "Security key" in the README).
 - **sshd:** the image disables root login and X11 and TCP forwarding, and leaves sshd off. Key-only
   login (`PasswordAuthentication no`) is a separate drop-in that is not shipped, so set it yourself
   once your `authorized_keys` works.
@@ -238,7 +238,7 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
    it does not exist (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test
    checks that `VERSION_ID` matches. The log and the OCI labels `org.opencontainers.image.base.name` and
    `base.digest` record the resolved base.
-3. Test the `testing` build: `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+3. Test the `testing` build: `sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<image>:testing` (or the testing VM).
 4. Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`).
    Then merge the pull request: promotion only retags an already tested `testing` digest, so a variable changed
    without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does
@@ -249,9 +249,10 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
 1. **Before wiping:** push the dotfiles, run the capture scripts, run the data backup, confirm sync
    clients are up to date and passphrases are stored elsewhere.
 2. **Install Fedora Silverblue** to the OS drive only. UID 1000, same subuid/subgid range.
-3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest`, then reboot.
+3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest`, reboot, then repeat it with
+   `--enforce-container-sigpolicy` and reboot again (the first switch runs under stock Fedora's accept-anything policy).
    Remove old layered packages first, since local layers get in the way of `bootc upgrade`.
-4. **Fix identity:** run `ujust add-user-groups` for `gamemode`, `input` and `libvirt`, restore the
+4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and `libvirt`, plus the Flatpak access steps), restore the
    `crypttab` and `fstab` lines for the data drives, and re-enroll TPM unlock.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
@@ -266,11 +267,16 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
 
 ## Recipes (`ujust`)
 
-Recipes run through `ujust`; arguments are positional, for example `ujust flatpak-games-access /mnt/games`.
+Recipes run through `ujust`; arguments are positional, for example `ujust toolbox dev-toolbox`.
 They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
 and safeguards are in `CLAUDE.md`. What you need to use them:
 
-- **`add-user-groups [user]`:** joins `gamemode`, `input` and `libvirt`.
+- **`user-setup [user] [--yes|--no]`:** an interactive checklist. Step 1 joins `gamemode`, `input` and `libvirt`; the
+  Flatpak steps follow (games directory for Steam, Bottles and Lutris, Steam USB and input devices, VS Code and the
+  rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers, Gear Lever's
+  `~/Applications`). Each step is skipped when the app is not installed or the change is already in place; Enter
+  takes the default (yes, except the Steam devices and the games directory, which default to no). `--yes` takes the
+  defaults without asking, `--no` changes nothing and prints the plan. The summary lists how to undo each applied step.
 - **`gnome-themes <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
@@ -286,8 +292,8 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   `TOOLBOX_VOLUMES` (extra binds `src:dst[:opts]`, space-separated, for example your games disk, applied when the
   box is created; use `--recreate` after changing it). `--remove` keeps the home; `--remove --purge-home` deletes
   it after a typed `yes`.
-- **Steam and Flatpak recipes** (`steam-gamescope-setup`, `steam-flatpak-devices`, `flatpak-games-access`
-  and others): most have a matching reset. `steam-flatpak-devices` widens the sandbox.
+- **Steam gamescope recipes** (`steam-gamescope-setup`/`-reset`): the setup has a matching reset. In `user-setup`,
+  the Steam devices step widens the sandbox.
 - **extest (experimental):** preloads a locally built extest into Flatpak Steam; not verified end to end.
 
 Ideas for more, each a candidate for its own recipe:
