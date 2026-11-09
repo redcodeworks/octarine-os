@@ -91,9 +91,16 @@ integration branch (GitLab's "main"); `main` is the production branch.
   into `main`. Fixes go upstream first (into `testing`, then promoted).
 - **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch alone builds nothing;
   only the pull request event does.
-- **Rebase and merge everywhere** (once the owner switches the repository setting): `main` never holds commits
-  `testing` lacks, so there is no back-merge. Until then the repo allows only merge commits and `origin/main` is
-  merged (or fast-forwarded) into `testing` after each promotion.
+- **Merge methods (enforced by rulesets).** A feature pull request into `testing` is squashed: one commit per feature
+  (only squash is allowed there). `testing` into `main` is a merge commit (only merge commits are allowed there).
+  Why: promotion must keep `testing`'s commits as ancestors of `main`; a rebase or squash of `testing` into `main`
+  would rewrite them and the next promotion would replay commits that are already applied. No back-merge of `main`
+  into `testing` is needed: `main` only gains the promotion merge commits that `testing` lacks, which is harmless.
+- **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks: into
+  `testing`, `Build and push image`; into `main`, `Build and push image`, `require-testing-branch` and
+  `Sign and verify images`. Agents may merge their own feature pull request into `testing` once the required checks
+  are green (Kevin, 2026-11-09; GitHub does not let an author approve their own pull request, so this means
+  merging). Merging into `main` is the owner's only.
 - **Promotion.** Pull request `testing` -> `main` (`require-testing-branch.yml` runs on pull requests into `main`
   only, never on those into `testing`); the push to `main` retags the tested `testing` image by tree hash and signs.
 - **Hotfix rule.** Fix on a `hotfix/<topic>` branch into `testing`, then promote. If `testing` is red and prod needs
