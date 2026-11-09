@@ -87,6 +87,17 @@ sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os
 sudo bootc rollback                                                                                    # boot the previous deployment
 ```
 
+## Beta channel
+
+A weekly build on top of Universal Blue's beta base is published as `ghcr.io/redcodeworks/octarine-os:beta`. It shows early whether a coming Fedora
+release would break the image; until Universal Blue starts a new beta it is the same Fedora release as `latest`. It has not been tested for daily use.
+Try it, and go back:
+
+```
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest   # undo
+```
+
 ## NVIDIA graphics
 
 A variant with the proprietary NVIDIA driver is built weekly as `ghcr.io/redcodeworks/octarine-os-nvidia`. Run the steps above first, then

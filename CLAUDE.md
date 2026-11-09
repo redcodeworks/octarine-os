@@ -110,6 +110,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
@@ -331,6 +332,17 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
+
+## Beta channel (`octarine-os:beta`)
+
+- `.github/workflows/build-beta.yml`: weekly (Wednesday 13:41 UTC, clear of the daily 10:05, Sunday 04:17 prune and Sunday 11:23
+  NVIDIA runs) and on dispatch from any ref, never on pushes or pull requests, not a required check. It builds the normal
+  image FROM `ghcr.io/ublue-os/silverblue-main:beta` (workflow env `BASE_IMAGE`, `FEDORA_VERSION=beta`; the repository variables
+  are ignored), smoke tests (a copy of build.yml's block, `tests/beta-channel.sh` fails on drift), rechunks, pushes `beta` and
+  `beta-<date>-<sha>` only, signs with the same key (`signing` environment) and verifies both tags. Failure = a red scheduled run, no
+  notification. The `beta` tag only exists upstream while ublue-os/main builds a beta (their `BUILD_BETA` variable); until then it
+  equals stable. Policy: the existing rule for the `octarine-os` path covers every tag. Prune: `PRUNE_KIND=beta KEEP=3` in
+  `prune-testing.yml` keeps the newest three `beta-*` builds and any version holding `beta`. Test: `tests/beta-channel.sh`.
 
 ## NVIDIA variant (`octarine-os-nvidia`)
 
