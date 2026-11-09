@@ -226,7 +226,8 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 #   sudo systemctl enable --now tailscaled
 # libvirt relies on its packaged presets and socket activation, and the base image
 # already enables automatic update staging (rpm-ostreed-automatic.timer).
-systemctl enable flatpak-preinstall.service
+# The Flatpak preinstall list is installed by `ujust flatpak-preinstall` from a desktop session, not by a boot unit:
+# a root service has no session bus, and on a stock-installed machine the fedora OCI remote needs one.
 # pcp is an optional package: enable its units only when it was installed
 if rpm -q pcp &>/dev/null; then
     systemctl enable pmcd.service pmlogger.service

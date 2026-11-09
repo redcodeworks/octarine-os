@@ -161,6 +161,7 @@ cat >"$bin/just" <<'F'
 echo "just $*" >>"$LOG"
 for a in "$@"; do
     if [ "$a" = --summary ]; then echo "${JUST_SUMMARY-install hint brew gnome-apply}"; fi
+    if [ "$a" = describe ]; then printf '%b' "${DESCRIBE_OUT-}"; exit "${DESCRIBE_RC:-0}"; fi
 done
 exit 0
 F
@@ -173,7 +174,7 @@ reset() {
     : >"$LOG"; : >"$INSTALLED"; : >"$GS"
     echo /bin/bash >"$SHELLF"
     echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
-    unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS
+    unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS DESCRIBE_OUT DESCRIBE_RC COLUMNS
     : >"$BREW_CASKS"; : >"$FC_FAMILIES"; : >"$EXT_PRESENT"; : >"$EXT_FAIL"; : >"$EXT_ERR"
 }
 run() { # stdin text, args...
@@ -395,6 +396,30 @@ check "dotfiles: clone failure reported" has "FAILED"
 reset
 run '' --no --only dotfiles
 check "dotfiles: --no changes nothing" notlogged "git clone"
+
+# ---- dot-files: descriptions next to the apps
+reset
+JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tScrollable-tiling Wayland compositor\nnoctalia\tShell bar and launcher\n' run 'y\nn\ny\ny\n' --only dotfiles
+check "describe: description shown next to the app" has "niri - Scrollable-tiling Wayland compositor?"
+check "describe: app without a description line stays plain" has "  kitty? [y/N]"
+check "describe: answers still build the argument list" logged "install preserve niri noctalia"
+reset
+run 'y\nn\ny\ny\n' --only dotfiles
+check "describe missing: plain list" has "  niri? [y/N]"
+check "describe missing: no error" test "$rc" = 0
+reset
+JUST_SUMMARY="install hint describe" DESCRIBE_RC=1 DESCRIBE_OUT='niri\tpartial\n' run 'y\nn\nn\nn\n' --only dotfiles
+check "describe failing: plain list, no error" has "  niri? [y/N]"
+reset
+JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tWith $(touch /tmp/x) `id` \033[31mred\033[0m end\n' run 'y\nn\nn\nn\n' --only dotfiles
+check "describe odd characters: shown literally" has 'niri - With $(touch /tmp/x) `id` [31mred[0m end?'
+check "describe odd characters: nothing executed" test ! -e /tmp/x
+reset
+long=$(printf 'word%.0s ' $(seq 1 60))
+JUST_SUMMARY="install hint describe" COLUMNS=60 DESCRIBE_OUT="niri\t${long}ENDMARK\n" run 'y\nn\nn\nn\n' --only dotfiles
+check "describe long: truncated with dots" has "..."
+check "describe long: end of the text cut off" bash -c "! grep -q ENDMARK '$root/out'"
+check "describe long: line fits the width" bash -c "! grep -E '^.{70,}niri' '$root/out'"
 
 # ---- gnome settings
 reset
