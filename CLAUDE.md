@@ -69,7 +69,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 ## Rules
 
 - Home- or user-level configuration (themes, icons, dotfiles) never goes in the image. It lives in its own
-  repo and is pulled in by a `ujust` recipe, such as `ujust gnome-themes <recipe>`. System-level files
+  repo and is pulled in by a `ujust` recipe, such as `ujust gnome-candy <recipe>`. System-level files
   (PAM, sysctl, firewalld, `/etc` defaults) are fine in `system_files/`.
 - Podman only; no Docker daemon.
 - `sshd`, `tailscaled`, `cockpit.socket`, the snapper timers and `mcelog` stay off by default.
@@ -216,10 +216,10 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   shows the 512 files in a `<picture>` block. No mono variant.
 - The three `-full` files are the sources for every smaller size: resize with Lanczos and keep the alpha channel. The
   uncompressed originals (about 36 MB each) are not stored in the repo or the image.
-- Variants: `dark` has cream-grey "OS" letters for dark backgrounds (the one used on the login and boot screens),
-  `light` dark-brown "OS" letters for light backgrounds, `neutral` grey "OS" letters that work on any background.
+- Variants: `dark` has cream-gray "OS" letters for dark backgrounds (the one used on the login and boot screens),
+  `light` dark-brown "OS" letters for light backgrounds, `neutral` gray "OS" letters that work on any background.
 - Branding: `PRETTY_NAME` is `octarineOS` (ID, NAME and VERSION_ID unchanged); the logo is on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt by `build.sh`).
-- Origin: a recoloured version of the Fedora Silverblue logo, wordmark set in JetBrains Mono (credits in the README); no font file is shipped, only rendered text in the PNGs.
+- Origin: a recolored version of the Fedora Silverblue logo, wordmark set in JetBrains Mono (credits in the README); no font file is shipped, only rendered text in the PNGs.
 
 ## Defaults that deviate from stock Fedora
 
@@ -234,6 +234,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
+- **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
+  image, so it is unverified (users can check first with `cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest`).
+  The image installs its own policy (default `reject` plus a `sigstoreSigned` rule for `ghcr.io/redcodeworks/octarine-os`
+  in `/etc/containers/policy.json`), so the second switch with `--enforce-container-sigpolicy` makes bootc pull again with
+  verification enforced; after that `bootc upgrade` verifies signatures. Running the enforced form on a stock Silverblue
+  before step 2 fails with `containers-policy.json specifies a default of insecureAcceptAnything; refusing usage`, which
+  is expected because the policy exists only once the image is running.
+- **Security key mechanics:** `system_files/etc/pam.d/sudo` and `polkit-1` carry `pam_u2f.so cue nouserok
+  origin=pam://sudo appid=pam://sudo` as a `sufficient` rule before the password stack. The sudo file first skips
+  `pam_u2f` with two `pam_exec` guards: no `PAM_TTY` (scripts, non-interactive sudo), or a terminal that `who` shows with a
+  remote host (ssh). The prompt text is "Please touch the FIDO authenticator" (`cue`); `nouserok` lets users without a
+  mapping use the password. The mapping `~/.config/Yubico/u2f_keys` has one line per user and must be made with the same
+  origin and appid; a second key goes on the same line (`pamu2fcfg ... -n` prints the key part only).
 - **Homebrew:** see the Homebrew section above; formulae are not pinned (use `brew bundle`).
 - **Login shell for new users:** `zsh` (`SHELL=/usr/bin/zsh` in `/etc/default/useradd`, plus `/etc/skel/.zshrc`).
   Existing accounts and root keep their shell. Rolling back to an image without zsh breaks only accounts created while
@@ -258,7 +271,7 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
 - Firefox and toolbox are removed when present (Flatpak Firefox, distrobox).
-- gnome-software is removed (Bazaar, `io.github.kolunmi.Bazaar` in `tools.preinstall`, is the software centre;
+- gnome-software is removed (Bazaar, `io.github.kolunmi.Bazaar` in `tools.preinstall`, is the software center;
   fwupd and PackageKit stay and firmware updates remain available through `fwupdmgr`). `build.sh` previews
   `dnf5 remove --assumeno gnome-software` and fails the build if the transaction lists a package of
   `PROTECTED_PKGS` (gnome-shell, nautilus, fwupd, flatpak and a few more; the one place for that list).
@@ -277,8 +290,8 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   unknown name fails with the known ones. `dev` is the old name of `dev-toolbox` (renamed 2026-11): with a `dev` state file it still means the old box, for `--remove` only; otherwise it is an alias.
 - **Sidecar `<name>.conf`.** Plain `KEY=value`, parsed as data and never sourced; values may hold only letters,
   digits, space and `. _ + -` (anything else is ignored with a warning). `TOOLS` selects checklist rows from the
-  recipe's catalogue (uv, rustup, sdkman, nvm), `EXPORT_BINS` the commands exported with `distrobox-export`,
-  `IDES` the launchers `--ide` offers. No sidecar means no tools, exports or launchers. The catalogue and notes
+  recipe's catalog (uv, rustup, sdkman, nvm), `EXPORT_BINS` the commands exported with `distrobox-export`,
+  `IDES` the launchers `--ide` offers. No sidecar means no tools, exports or launchers. The catalog and notes
   stay in the recipe's `rows` table.
 - **Sidecar keys for isolated toolboxes.** `ISOLATED_HOME=true` gives the container its own HOME: the recipe adds
   `home=<dir>` to the temporary copy of the definition, `<dir>` being `$TOOLBOX_HOMES_DIR/<name>` (default
@@ -347,7 +360,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
 - **Installer scripts.** SDKMAN and nvm (in the toolbox) are the only installer
   scripts; nothing here needs sudo.
-- **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
+- **Other recipes.** `ujust gnome-candy` runs a recipe of the gnome-themes repo from a fresh checkout in
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
   `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
   `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
@@ -366,19 +379,33 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   when nothing changes), `dotfiles` (default no; per-app y/n over `config/*/` of the checkout, then `just install preserve
   <apps>` and `just hint <apps>`) and `gnome` (`just gnome-apply`, `p` runs `--dry-run`; default no). The dot-files
   checkout is a shallow clone in `~/.cache/dot-files/repo` (`DOT_FILES_REF`, default `main`, same pattern as the
-  `gnome-themes` recipe), shared by the three steps; each recipe is checked with `just --summary` first and the step is
+  `gnome-candy` recipe), shared by the three steps; each recipe is checked with `just --summary` first and the step is
   skipped when it is missing. `--yes` takes defaults; a default-no step runs under `--yes` only when named in `--only`
   (`DOT_FILES_APPS` lists the apps then); `--no` prints the plan; a failed step is reported, the rest continue, exit status
   non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
   flatpak, sudo, id, getent, usermod, gsettings, brew, git, just, fc-list).
- The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
-  contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
-  shipped) and preload the 64-bit build into Flatpak Steam.
+ `gaming-setup [step...] [--yes|--no]` replaced `steam-gamescope-setup`, `steam-gamescope-reset`, `extest-build`,
+  `extest-steam-setup` and `extest-steam-reset` (removed, no aliases). Steps: `steam`, `protonup`, `lutris` (Flatpaks:
+  `com.valvesoftware.Steam`, `net.davidotek.pupgui2`, `net.lutris.Lutris`; installed in the user installation only when
+  Flathub's appstream catalog marks them verified, `flathub::verification::verified`, failing closed; the catalog key
+  and the ProtonUp-Qt id are unverified here), `extensions` (gamescope and MangoHud Vulkan layers on Steam's runtime
+  branch, Proton-GE `com.valvesoftware.Steam.CompatibilityTool.Proton-GE//stable`, each ref checked with `flatpak
+  remote-info` first; the PATH override adds `/usr/lib/extensions/vulkan/gamescope/bin` and `.../MangoHud/bin` when
+  installed; the MangoHud directory name is unverified), `extest` (pinned commit `cb77cd4f...`, env `EXTEST_SRC`,
+  `EXTEST_DEST`, `EXTEST_COMMIT`; builds with host cargo or inside dev-toolbox), `desktop` (launchers
+  `octarine-gaming-steam*.desktop` carrying `X-Octarine-Generated=ujust gaming-setup`; only marked files are
+  overwritten; the extest hook is the old mechanism, `--filesystem=<lib>:ro --env=LD_PRELOAD=<lib>/lib64/libextest.so`,
+  but passed to `flatpak run` per launcher instead of a global override; gamescope launcher: `flatpak run
+  --command=gamescope ... -f -W -H -r --adaptive-sync -- steam -gamepadui`, the `steam -gamepadui` part is an
+  unverified choice; resolution from Mutter DisplayConfig, else `niri msg --json outputs` with jq, else `GAMING_SETUP_RES`
+  or a prompt; never silent), `gamemode` and `reset` (also removes the old global extest override entries). Tests:
+  `tests/gaming-setup.sh`. Extest is by Supreeeme and contributors, MIT license; credited in the README, no source
+  shipped.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
   idempotent, and each override-changing recipe has a matching reset (`user-setup` prints the undo per applied step).
-  Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-themes` needs network, git and just, and
-  without a name shows a checklist. The extest recipes need `cargo` and a C linker (the host has none; use the
-  toolbox) and are not verified end to end.
+  Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-candy` needs network, git and just, and
+  without a name shows a checklist. The extest step needs `cargo` and a C linker (the host has none; the recipe uses the
+  toolbox) and is not verified end to end.
 
 ## Image hygiene notes
 

@@ -41,7 +41,7 @@ Everything system-level that used to be hand-layered now lives in this repo:
   firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
   signature policy for the image itself.
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
-  Flatseal, Extension Manager and Bazaar (the software centre; gnome-software is removed, firmware
+  Flatseal, Extension Manager and Bazaar (the software center; gnome-software is removed, firmware
   updates stay available through `fwupdmgr`).
 - **Build checks:** every build runs a smoke test before it is pushed and signed.
 
@@ -123,8 +123,8 @@ timers are installed but not enabled. Turn on what you use.
   GNOME and GTK portals.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
-  `ujust gnome-themes install-themes` fetches them from github.com/redcodeworks/gnome-themes and
-  `ujust gnome-themes install-icons` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
+  `ujust gnome-candy install-themes` fetches them from github.com/redcodeworks/gnome-themes and
+  `ujust gnome-candy install-icons` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
   Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
@@ -183,7 +183,7 @@ timers are installed but not enabled. Turn on what you use.
 ## Gaming and streaming
 
 - **Steam is the Flatpak.** gamescope comes from the Flatpak extension and is wired into Steam with
-  `ujust steam-gamescope-setup` (see Recipes). Set per-game launch options like
+  `ujust gaming-setup` (see Recipes). Set per-game launch options like
   `gamescope -f -W <w> -H <h> -r <hz> --adaptive-sync -- %command%`.
   - The Flatpak gamescope has no `cap_sys_nice` and no DRM backend.
   - If a game won't start, check that a Proton is selected for it. Without one, Steam tries to run
@@ -288,7 +288,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   place; Enter takes the default. `--yes` takes the defaults without asking (default-no steps run under `--yes` only
   when named with `--only`; `DOT_FILES_APPS=niri,noctalia` names the apps then), `--no` changes nothing and prints the
   plan. The summary lists how to undo each applied step.
-- **`gnome-themes <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
+- **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
   (`--help` shows the options). A box created before the brew prefix existed lacks the read-only brew mount; run
@@ -303,9 +303,15 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   `TOOLBOX_VOLUMES` (extra binds `src:dst[:opts]`, space-separated, for example your games disk, applied when the
   box is created; use `--recreate` after changing it). `--remove` keeps the home; `--remove --purge-home` deletes
   it after a typed `yes`.
-- **Steam gamescope recipes** (`steam-gamescope-setup`/`-reset`): the setup has a matching reset. In `user-setup`,
-  the Steam devices step widens the sandbox.
-- **extest (experimental):** preloads a locally built extest into Flatpak Steam; not verified end to end.
+- **`gaming-setup [step...] [--yes|--no]`:** a checklist, or name steps to run exactly those: `steam`, `protonup`
+  (ProtonUp-Qt), `lutris` (Flatpaks from Flathub, installed only when Flathub lists them as verified),
+  `extensions` (gamescope and MangoHud Vulkan layers for Steam's runtime branch, Proton-GE, and a PATH override so
+  they resolve inside the sandbox), `extest` (experimental; builds a pinned upstream commit, in the dev-toolbox when the
+  host has no cargo), `desktop` (generated Steam launchers in `~/.local/share/applications`, marked with an
+  `X-Octarine-Generated` key; extest is hooked in when built; a gamescope launcher uses your current resolution and
+  refresh rate), `gamemode` (installs the tuning from `/usr/share/octarine-os/gamemode.ini` as
+  `~/.config/gamemode.ini`, never silently over a different file) and `reset` (removes the generated launchers and
+  the PATH line, optionally the extest library, and undoes the gamemode file when unchanged). Installed Flatpaks stay.
 
 Ideas for more, each a candidate for its own recipe:
 
