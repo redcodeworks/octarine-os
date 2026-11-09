@@ -87,6 +87,12 @@ sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os
 sudo bootc rollback                                                                                    # boot the previous deployment
 ```
 
+## NVIDIA graphics
+
+A variant with the proprietary NVIDIA driver is built weekly as `ghcr.io/redcodeworks/octarine-os-nvidia`. Run the steps above first, then
+`sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-nvidia:latest` and reboot. With Secure Boot on, enroll the key with
+`ujust enroll-secure-boot-key`. It is for NVIDIA GPUs only and is not supported by the owner, who does not use it.
+
 ## Security key (YubiKey) for sudo and polkit
 
 With a security key enrolled, sudo and polkit password prompts accept a touch of the key instead of the password, in interactive sessions. Without an enrolled key the password works as usual.

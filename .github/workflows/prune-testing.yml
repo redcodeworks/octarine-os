@@ -61,3 +61,12 @@ jobs:
           echo "Package ${API_BASE}, keep ${KEEP}, dry run: ${DRY_RUN}"
 
           gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-testing.py
+
+          # The NVIDIA variant has no testing tags: prune its old released tags with the same keep-newest rule
+          export API_BASE="${scope}/packages/container/${image}-nvidia"
+          if gh api "${API_BASE}" > /dev/null 2>&1; then
+            echo "Package ${API_BASE}, keep ${KEEP}, dry run: ${DRY_RUN}"
+            gh api --paginate "${API_BASE}/versions?per_page=100" | PRUNE_KIND=released python3 .github/scripts/prune-testing.py
+          else
+            echo "No ${image}-nvidia package yet; nothing to prune there"
+          fi

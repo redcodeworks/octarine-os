@@ -1,0 +1,218 @@
+---
+name: Build NVIDIA variant
+# The NVIDIA variant (ghcr.io/<owner>/octarine-os-nvidia): the published default image plus the proprietary NVIDIA
+# driver, built weekly. It has no testing or promote channel and never runs on pushes or pull requests: only the
+# weekly schedule (Sunday 11:23 UTC, after the daily 10:05 run of build.yml so both come from a fresh base) and a
+# manual dispatch, and only on `main`, which publishes `latest` and the dated tags and signs them with the same key in
+# the `signing` environment. A separate small workflow instead of build.yml because that one is built around the
+# testing/promote/docs-only semantics; the tag, push and sign steps are the same as there. Design in CLAUDE.md.
+on:
+  schedule:
+    - cron: '23 11 * * 0'
+  workflow_dispatch:
+
+env:
+  AKMODS_IMAGE: ghcr.io/ublue-os/akmods-nvidia-lts
+  FEDORA_VERSION: ${{ vars.FEDORA_VERSION || '45' }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build NVIDIA image
+    # `main` only: a dispatch from another branch does nothing (the variant has no testing channel)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push.outputs.digests }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Image names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "DEFAULT_IMAGE=ghcr.io/${owner}/octarine-os" >> "${GITHUB_ENV}"
+          echo "VARIANT_IMAGE=ghcr.io/${owner}/octarine-os-nvidia" >> "${GITHUB_ENV}"
+          echo "image=ghcr.io/${owner}/octarine-os-nvidia" >> "${GITHUB_OUTPUT}"
+
+      # The base is what `latest` of the default image is now, by digest, and it must be signed
+      - name: Resolve and verify the base image
+        run: |
+          set -euo pipefail
+          raw=$(skopeo inspect --raw "docker://${DEFAULT_IMAGE}:latest")
+          [[ -n "${raw}" ]] || { echo "::error::Cannot read ${DEFAULT_IMAGE}:latest"; exit 1; }
+          digest="sha256:$(printf '%s' "${raw}" | sha256sum | sed 's/ .*//')"
+          cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
+          echo "Base image ${DEFAULT_IMAGE}:latest = ${digest} (signature valid)"
+          echo "BASE_REF=${DEFAULT_IMAGE}@${digest}" >> "${GITHUB_ENV}"
+          echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
+
+      # The kernel of the base decides which akmods image can be used
+      - name: Read the kernel of the base image
+        run: |
+          set -euo pipefail
+          podman pull "${BASE_REF}" > /dev/null
+          kernel=$(podman run --rm "${BASE_REF}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
+          echo "Kernel of the base image: ${kernel}"
+          echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
+
+      - name: Default image has no NVIDIA driver
+        run: |
+          podman run --rm -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" "${BASE_REF}" bash /smoke.sh absent
+
+      # Fails (and nothing is published) when no akmods image exists for exactly this kernel; never falls back to a moving tag
+      - name: Resolve the akmods image for this kernel
+        run: |
+          set -euo pipefail
+          out=$(.github/scripts/nvidia-akmods-ref.sh "${BASE_KERNEL}" "${FEDORA_VERSION}")
+          echo "${out}"
+          echo "AKMODS_REF=$(sed -n 's/^ref=//p' <<<"${out}")" >> "${GITHUB_ENV}"
+          echo "AKMODS_TAG=$(sed -n 's/^tag=//p' <<<"${out}")" >> "${GITHUB_ENV}"
+
+      # Universal Blue's key from the image template's README example; that it signs this image is unverified, so a
+      # failure is a visible warning (and a line in the job summary), not a skipped step
+      - name: Verify the akmods image signature
+        id: akmods-sig
+        continue-on-error: true
+        run: |
+          cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
+          echo "Signature of ${AKMODS_REF} is valid"
+
+      - name: Report the akmods signature result
+        if: steps.akmods-sig.outcome == 'failure'
+        run: |
+          echo "::warning::Could not verify the signature of ${AKMODS_REF} with keys/ublue-os-main-cosign.pub (that key signing the nvidia akmods image is unverified); the build goes on, pinned by digest"
+          echo "akmods signature NOT verified: ${AKMODS_REF}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          version=$(.github/scripts/image-version.sh)
+          podman build -f variants/nvidia/Containerfile \
+            --build-arg "BASE_REF=${BASE_REF}" \
+            --build-arg "AKMODS_REF=${AKMODS_REF}" \
+            --label "org.opencontainers.image.title=octarine-os-nvidia" \
+            --label "org.opencontainers.image.description=octarineOS with the proprietary NVIDIA driver (variant for NVIDIA GPUs, built weekly from the default image)" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.base.name=${DEFAULT_IMAGE}:latest" \
+            --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
+            --label "io.github.redcodeworks.octarine-os.nvidia-akmods=${AKMODS_REF}" \
+            --tag octarine-os-nvidia:build .
+          echo "Built octarine-os-nvidia:build from ${BASE_REF} with ${AKMODS_REF}"
+
+      # Anything missing fails the build before anything is pushed
+      - name: Smoke test the variant
+        run: |
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" \
+            octarine-os-nvidia:build bash /smoke.sh present
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tags a main build of the default image publishes
+      - name: Tags
+        id: tags
+        run: |
+          date=$(date +%Y%m%d)
+          sha=$(git rev-parse --short HEAD)
+          alias_tags="latest-${sha} latest-${date}-${sha} ${date}-${sha} ${date} latest latest-${date}"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          : > /tmp/digests
+          for tag in ${ALIAS_TAGS}; do
+            podman push --digestfile=/tmp/digestfile octarine-os-nvidia:build "${VARIANT_IMAGE}:${tag}"
+            cat /tmp/digestfile >> /tmp/digests
+            echo >> /tmp/digests
+          done
+          # keep every distinct digest and sign each of them
+          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
+          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+
+  sign:
+    name: Sign and verify NVIDIA image
+    needs: build
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Sign every pushed digest
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGESTS: ${{ needs.build.outputs.digests }}
+        run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+          # old bundle format, as in build.yml (https://github.com/containers/container-libs/issues/388)
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+          done
+
+      - name: Verify every pushed tag is signed
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done

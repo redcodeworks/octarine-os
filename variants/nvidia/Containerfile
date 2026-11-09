@@ -1,0 +1,23 @@
+# The NVIDIA variant of octarineOS (published as octarine-os-nvidia, built weekly, see CLAUDE.md "NVIDIA variant").
+# It starts FROM the published default image and adds only the proprietary NVIDIA driver: the akmods image carries
+# prebuilt, Universal Blue signed kernel modules for ONE kernel, and nvidia-install.sh (inside it) installs them with
+# the userspace driver from negativo17. Both references are digests resolved by the workflow:
+#   BASE_REF   ghcr.io/redcodeworks/octarine-os@sha256:...   (what :latest was when the build started)
+#   AKMODS_REF ghcr.io/ublue-os/akmods-nvidia-lts@sha256:... (the tag pinned to the base image's exact kernel)
+ARG BASE_REF
+ARG AKMODS_REF
+
+FROM ${AKMODS_REF} AS nvidia-akmods
+
+FROM scratch AS ctx
+COPY variants/nvidia/nvidia.sh /nvidia.sh
+
+FROM ${BASE_REF}
+
+RUN --mount=type=bind,from=nvidia-akmods,src=/rpms,dst=/tmp/akmods-rpms \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    /ctx/nvidia.sh
+
+RUN bootc container lint
