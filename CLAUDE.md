@@ -261,7 +261,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** `iommu=pt`.
-- **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
+- **Size and compilers:** the image carries no compilers; those live in the toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
 - **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any

@@ -64,7 +64,7 @@ fi
 #
 # Release-specific parts of this script (the base tag in the Containerfile decides the Fedora release):
 # the package names below, since a package can be renamed, retired or not yet built for a release
-# (niri, noctalia, btrfs-assistant, the rocm-*/hipcc set, the cockpit-* modules, usbip, nautilus-python
+# (niri, noctalia, btrfs-assistant, the cockpit-* modules, usbip, nautilus-python
 # and the gnome-shell-extension-* names are the likeliest); the negativo17 gstreamer replacement of the
 # -free variants; and the removal list further down.
 #
@@ -121,7 +121,6 @@ optional_groups=(
     "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
     "pcp:pcp python3-pcp"
     "containers:podman-compose kind podman-docker podman-tui"
-    "rocm:rocm-hip rocm-opencl rocm-smi rocminfo hipcc"
     "libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v"
 )
 for entry in "${optional_groups[@]}"; do

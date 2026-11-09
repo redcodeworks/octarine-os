@@ -96,7 +96,7 @@ timers are installed but not enabled. Turn on what you use.
 
 - `build_files/build.sh` installs CRITICAL packages in one transaction (missing one fails the build; the smoke test
   also requires the RPM vendor `Fedora Project`) and OPTIONAL packages in groups (`misc`, `codecs`, `cockpit`, `pcp`,
-  `containers`, `rocm`, `libguestfs`). Failed optional packages are listed in
+  `containers`, `libguestfs`). Failed optional packages are listed in
   `/usr/share/octarine-os/optional-packages-missing` (read it on a machine to see what an image lacks) and appear as
   CI warnings. Outside-Fedora packages (negativo17 `gstreamer1-plugins-bad`/`-ugly`) are optional only.
 - `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
