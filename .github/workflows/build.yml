@@ -331,7 +331,8 @@ jobs:
               check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
             done
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
-            for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect \
+            for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
+                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock \
                      nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
