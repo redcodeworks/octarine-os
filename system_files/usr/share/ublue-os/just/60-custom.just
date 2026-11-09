@@ -1,0 +1,3322 @@
+# vim: set ft=make :
+
+# One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin's 12-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes
+[positional-arguments]
+user-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    mode=ask
+    only_list=""
+    user=""
+    valid_steps=" groups shell flatpak fonts brew fish-terminal search dotfiles gnome "
+    args=("$@")
+    i=0
+    while [ "$i" -lt "${#args[@]}" ]; do
+        a=${args[$i]}
+        case "$a" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --only)
+                i=$((i + 1))
+                only_list=${args[$i]:-}
+                [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
+                ;;
+            --only=*) only_list=${a#--only=} ;;
+            -*) echo "Unknown option: $a (use --yes, --no or --only STEP[,STEP...])" >&2; exit 2 ;;
+            *)
+                if [ -n "$user" ]; then echo "Only one user name is accepted" >&2; exit 2; fi
+                user=$a
+                ;;
+        esac
+        i=$((i + 1))
+    done
+    if [ -n "$only_list" ]; then
+        for s in ${only_list//,/ }; do
+            case "$valid_steps" in
+                *" $s "*) ;;
+                *) echo "Unknown step: $s (steps:${valid_steps% })" >&2; exit 2 ;;
+            esac
+        done
+    fi
+    user=${user:-$(id -un)}
+    if ! [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || ! id "$user" >/dev/null 2>&1; then
+        echo "'$user' is not an existing user name"
+        exit 1
+    fi
+
+    names=()
+    results=()
+    undos=()
+    failed=0
+    cur_step=""
+
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # sel <step>: the step is selected (every step when --only is not given)
+    sel() {
+        [ -z "$only_list" ] && return 0
+        case ",$only_list," in *",$1,"*) return 0 ;; esac
+        return 1
+    }
+    # consent: --yes plus an explicit --only naming a default-no step counts as the answer yes
+    consent() {
+        [ -n "$only_list" ] || return 1
+        case "$cur_step" in dotfiles | gnome | brew) ;; *) return 1 ;; esac
+        case ",$only_list," in *",$cur_step,"*) return 0 ;; esac
+        return 1
+    }
+
+    # ask <default y|n> <question>: sets $answer to y or n
+    ask() {
+        local def=$1 q=$2 reply hint="[Y/n]"
+        [ "$def" = n ] && hint="[y/N]"
+        case "$mode" in
+            yes)
+                if consent; then answer=y; else answer=$def; fi
+                return
+                ;;
+            no) answer=n; return ;;
+        esac
+        printf '%s %s ' "$q" "$hint"
+        read -r reply || reply=""
+        case "$reply" in
+            [Yy]*) answer=y ;;
+            [Nn]*) answer=n ;;
+            *) answer=$def ;;
+        esac
+    }
+
+    # dot-files checkout, shared by the dotfiles, gnome and brew steps (same pattern as the gnome-themes recipe)
+    dot_ready=""
+    ddir="${XDG_CACHE_HOME:-$HOME/.cache}/dot-files/repo"
+    dot_fetch() {
+        [ "$dot_ready" = 1 ] && return 0
+        [ "$dot_ready" = 0 ] && return 1
+        local durl="${DOT_FILES_URL:-https://github.com/redcodeworks/dot-files.git}" dref="${DOT_FILES_REF:-main}"
+        if (
+            if [ -d "$ddir/.git" ]; then
+                git -C "$ddir" remote set-url origin "$durl" || exit 1
+                git -C "$ddir" fetch --quiet --tags origin || exit 1
+            else
+                mkdir -p "$(dirname "$ddir")" || exit 1
+                git clone --quiet "$durl" "$ddir" || exit 1
+            fi
+            git -C "$ddir" checkout --quiet --detach "$(git -C "$ddir" rev-parse --verify --quiet "origin/$dref" || echo "$dref")" || exit 1
+        ); then
+            dot_ready=1
+            return 0
+        fi
+        dot_ready=0
+        echo "Could not fetch github.com/redcodeworks/dot-files (network?)." >&2
+        return 1
+    }
+    dot_has() { just --justfile "$ddir/justfile" --summary 2>/dev/null | tr ' ' '\n' | grep -qx "$1"; }
+    dot_just() { env -u DOT_DEST just --justfile "$ddir/justfile" --working-directory "$ddir" "$@"; }
+    need_gj() {
+        if ! command -v git >/dev/null 2>&1 || ! command -v just >/dev/null 2>&1; then
+            echo "Skipped: git and just are needed (both ship in the image; install them if you removed them)."
+            return 1
+        fi
+    }
+    missing_recipe() { echo "Skipped: the dot-files checkout has no $1 recipe yet (update dot-files)."; }
+    # install_extensions: the GNOME extensions of the dot-files setup that are not installed yet, through GNOME's own
+    # D-Bus method (it fetches the build for the running Shell from extensions.gnome.org and asks you to confirm each one)
+    gnome_extensions="arcmenu@arcmenu.com hotedge@jonathan.jdoda.ca CoverflowAltTab@palatis.blogspot.com clipboard-indicator@tudmotu.com tilingshell@ferrarodomenico.com dash-to-dock@micxgx.gmail.com blur-my-shell@aunetx caffeine@patapon.info appindicatorsupport@rgcjonas.gmail.com auto-move-windows@gnome-shell-extensions.gcampax.github.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io user-theme@gnome-shell-extensions.gcampax.github.com"
+    install_extensions() {
+        local u have missing=() done_list=() undo="" bad=0 res
+        if ! command -v gnome-extensions >/dev/null 2>&1 || ! command -v gdbus >/dev/null 2>&1; then
+            echo "Extensions: gnome-extensions or gdbus is missing; install them with the Extension Manager app instead."
+            record "gnome: extensions" "skipped (no gnome-extensions/gdbus)"
+            return
+        fi
+        have=$(gnome-extensions list 2>/dev/null)
+        for u in $gnome_extensions; do
+            if printf '%s\n' "$have" | grep -qxF "$u"; then echo "  present: $u"; else missing+=("$u"); fi
+        done
+        if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All extensions are already installed."
+            record "gnome: extensions" "already done"
+            return
+        fi
+        if [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+            echo "Extensions: no graphical session here. Run these inside your GNOME session, or use the Extension Manager app:"
+            for u in "${missing[@]}"; do
+                echo "  gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension '$u'"
+            done
+            record "gnome: extensions" "skipped (no graphical session)"
+            return
+        fi
+        echo "Installing ${#missing[@]} extension(s) from extensions.gnome.org; GNOME asks you to confirm each one."
+        for u in "${missing[@]}"; do
+            res=$(gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension "$u" 2>&1)
+            case "$res" in
+                *successful*) echo "  installed: $u"; undo="$undo gnome-extensions uninstall $u;" ;;
+                *cancelled*) echo "  not approved: $u" ;;
+                *) echo "  failed: $u ($res)"; bad=1 ;;
+            esac
+        done
+        if [ "$bad" = 1 ]; then failed=1; record "gnome: extensions" "FAILED" "$undo"
+        elif [ -n "$undo" ]; then record "gnome: extensions" "applied" "$undo"
+        else record "gnome: extensions" "skipped (not approved)"; fi
+    }
+    in_list() { local n=$1; shift; local i; for i in "$@"; do [ "$i" = "$n" ] && return 0; done; return 1; }
+    installed() { flatpak info "$1" >/dev/null 2>&1; }
+
+    # has_val <app> <key> <value...>: the user override of <app> lists <value> under <key> (any of the spellings)
+    has_val() {
+        local app=$1 key=$2 shown v
+        shift 2
+        shown=$(flatpak override --user --show "$app" 2>/dev/null) || return 1
+        for v in "$@"; do
+            printf '%s\n' "$shown" | awk -F= -v k="$key" -v v="$v" '
+                $1 == k { n = split($2, a, ";"); for (i = 1; i <= n; i++) if (a[i] == v) f = 1 }
+                END { exit !f }' && return 0
+        done
+        return 1
+    }
+
+    # flatpak_step <name> <default> <app> <sentence> <undo> <done-check-command> <apply-command>
+    # Commands are run with eval so they can carry the old recipes' flags verbatim.
+    flatpak_step() {
+        local name=$1 def=$2 app=$3 sentence=$4 undo=$5 donecheck=$6 apply=$7
+        echo
+        echo "== $name"
+        if ! installed "$app"; then
+            echo "Skipped: $app is not installed."
+            record "$name" "skipped (not installed)"
+            return
+        fi
+        if eval "$donecheck"; then
+            echo "Already in place."
+            record "$name" "already done"
+            return
+        fi
+        echo "$sentence"
+        ask "$def" "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "$name" "planned (would ask)"; else record "$name" "skipped (not applied)"; fi
+            return
+        fi
+        if eval "$apply"; then
+            record "$name" "applied" "$undo"
+        else
+            echo "Failed: $name" >&2
+            failed=1
+            record "$name" "FAILED"
+        fi
+    }
+
+    if sel groups; then
+    cur_step=groups
+    # 1. groups. gamemode and input only exist in /usr/lib/group, so their lines are copied into /etc/group first
+    # or usermod -aG would not see them.
+    groups_todo=()
+    groups_missing=0
+    for g in gamemode input libvirt; do
+        if ! getent group "$g" >/dev/null; then
+            echo "Skipping $g: no such group on this system"
+            continue
+        fi
+        id -nG "$user" | tr ' ' '\n' | grep -qx "$g" || groups_todo+=("$g")
+    done
+    echo "== groups"
+    if [ "${#groups_todo[@]}" -eq 0 ]; then
+        echo "$user is already in every available group (gamemode, input, libvirt)."
+        record "groups" "already done"
+    else
+        echo "Will add $user to: ${groups_todo[*]} (uses sudo; takes effect at next login)."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "groups" "planned (would ask)"; else record "groups" "skipped (not applied)"; fi
+        else
+            gfail=0
+            undo=""
+            for g in "${groups_todo[@]}"; do
+                if sudo sh -c "grep -q '^$g:' /etc/group || grep '^$g:' /usr/lib/group >> /etc/group" && sudo usermod -aG "$g" "$user"; then
+                    echo "Added $user to $g"
+                    undo="$undo sudo gpasswd -d $user $g;"
+                else
+                    echo "Failed to add $user to $g" >&2
+                    gfail=1
+                fi
+            done
+            if [ "$gfail" = 1 ]; then failed=1; record "groups" "FAILED" "$undo"; else
+                echo "Log out and back in for the new groups to apply."
+                record "groups" "applied" "$undo"
+            fi
+        fi
+    fi
+
+    fi
+
+    if sel shell; then
+    cur_step=shell
+    # 1b. login shell. New accounts get zsh from /etc/default/useradd; an account made before the rebase keeps its shell.
+    # chsh is not installed on this image, so usermod -s does the change.
+    echo
+    echo "== login-shell"
+    zsh=${USER_SETUP_ZSH:-/usr/bin/zsh}
+    shells_file=${USER_SETUP_SHELLS:-/etc/shells}
+    skel=${USER_SETUP_SKEL:-/etc/skel}
+    cur=$(getent passwd "$user" | cut -d: -f7)
+    if [ "$cur" = "$zsh" ]; then
+        echo "Already zsh."
+        record "login-shell" "already done"
+    elif [ ! -x "$zsh" ]; then
+        echo "Skipped: $zsh does not exist on this system."
+        record "login-shell" "skipped (no zsh)"
+    elif ! grep -qxF "$zsh" "$shells_file" 2>/dev/null; then
+        echo "Skipped: $zsh is not listed in $shells_file, so it is not an allowed login shell."
+        record "login-shell" "skipped (not in /etc/shells)"
+    else
+        echo "Switch $user's login shell from ${cur:-unknown} to zsh? Takes effect at the next login; bash stays installed as the fallback."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "login-shell" "planned (would ask)"; else record "login-shell" "skipped (not applied)"; fi
+        elif sudo usermod -s "$zsh" "$user"; then
+            echo "Login shell of $user is now $zsh (next login)."
+            if [ "$user" = "$(id -un)" ]; then
+                if [ ! -e "$HOME/.zshrc" ] && [ ! -e "$HOME/.zprofile" ] && [ ! -e "$HOME/.zshenv" ]; then
+                    for f in .zshrc .zprofile; do
+                        [ -f "$skel/$f" ] && cp -n "$skel/$f" "$HOME/$f"
+                    done
+                    echo "Copied the skeleton zsh startup files so zsh's first-run wizard does not appear."
+                fi
+            else
+                echo "For $user's home, run as that user: cp -n $skel/.zshrc ~/"
+            fi
+            record "login-shell" "applied" "sudo usermod -s ${cur:-/bin/bash} $user (effective at next login)"
+        else
+            echo "Failed: login-shell" >&2
+            failed=1
+            record "login-shell" "FAILED"
+        fi
+    fi
+
+    fi
+
+    if sel flatpak; then
+    cur_step=flatpak
+    # 2. Flatpak access steps (same overrides as the former single recipes)
+    # games directory: needs a value, default no
+    echo
+    echo "== flatpak-games-access"
+    games_apps=()
+    for app in com.valvesoftware.Steam com.usebottles.bottles net.lutris.Lutris; do
+        installed "$app" && games_apps+=("$app")
+    done
+    if [ "${#games_apps[@]}" -eq 0 ]; then
+        echo "Skipped: none of Steam, Bottles and Lutris (Flatpak) is installed."
+        record "flatpak-games-access" "skipped (not installed)"
+    elif [ "$mode" != ask ]; then
+        echo "Needs a directory path: skipped without a prompt."
+        record "flatpak-games-access" "skipped (needs a path)"
+    else
+        echo "Gives the installed Flatpak game launchers (${games_apps[*]}) access to one games directory."
+        printf 'Games directory (empty to skip): '
+        read -r path || path=""
+        if [ -z "$path" ]; then
+            record "flatpak-games-access" "skipped (no path)"
+        else
+            path=${path/#\~/$HOME}
+            resolved=$(realpath -m -- "$path")
+            home=$(realpath -m -- "$HOME")
+            case "$resolved" in
+                / | "$home" | /home | /var | /var/home | /usr | /etc | /boot | /root | /mnt | /media | /run | /tmp)
+                    echo "Refusing to expose $resolved to every game launcher. Pick a dedicated games directory."
+                    record "flatpak-games-access" "skipped (refused path)"
+                    resolved=""
+                    ;;
+            esac
+            if [ -n "$resolved" ]; then
+                alldone=1
+                for app in "${games_apps[@]}"; do has_val "$app" filesystems "$resolved" || alldone=0; done
+                if [ "$alldone" = 1 ]; then
+                    echo "Already in place."
+                    record "flatpak-games-access" "already done"
+                else
+                    gfail=0
+                    undo=""
+                    mkdir -p -- "$resolved" || gfail=1
+                    for app in "${games_apps[@]}"; do
+                        if flatpak override --user --filesystem="$resolved" "$app"; then
+                            undo="$undo flatpak override --user --nofilesystem=$resolved $app;"
+                        else
+                            gfail=1
+                        fi
+                    done
+                    if [ "$gfail" = 1 ]; then failed=1; echo "Failed: flatpak-games-access" >&2; record "flatpak-games-access" "FAILED" "$undo"; else
+                        echo "${games_apps[*]} can now use $resolved"
+                        record "flatpak-games-access" "applied" "$undo"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # These widen the sandbox: default no. Skip it if you do not need controller support beyond what Steam Input does
+    flatpak_step "steam-flatpak-devices" n com.valvesoftware.Steam \
+        "Lets Flatpak Steam access USB and input devices (controllers). This widens the sandbox." \
+        "flatpak override --user --nodevice=usb --nodevice=input com.valvesoftware.Steam" \
+        'has_val com.valvesoftware.Steam devices usb && has_val com.valvesoftware.Steam devices input' \
+        'flatpak override --user --device=usb --device=input com.valvesoftware.Steam && echo "Flatpak Steam can now access USB and input devices"'
+
+    flatpak_step "vscode-flatpak-podman" y com.visualstudio.code \
+        "Lets Flatpak VS Code use Wayland and the rootless Podman socket (for dev containers)." \
+        "flatpak override --user --nosocket=wayland --nofilesystem=xdg-run/podman com.visualstudio.code" \
+        'has_val com.visualstudio.code sockets wayland && has_val com.visualstudio.code filesystems xdg-run/podman' \
+        'flatpak override --user --socket=wayland --filesystem=xdg-run/podman com.visualstudio.code && echo "VS Code can reach \$XDG_RUNTIME_DIR/podman. Enable it with: systemctl --user enable --now podman.socket"'
+
+    flatpak_step "podman-desktop-deny-docker-socket" y io.podman_desktop.PodmanDesktop \
+        "Stops Podman Desktop from reaching a Docker socket (it should only talk to Podman); this removes access." \
+        "remove the '!/run/docker.sock' line from ~/.local/share/flatpak/overrides/io.podman_desktop.PodmanDesktop (Flatseal does the same)" \
+        'has_val io.podman_desktop.PodmanDesktop filesystems "!/run/docker.sock"' \
+        'flatpak override --user --nofilesystem=/run/docker.sock io.podman_desktop.PodmanDesktop && echo "Podman Desktop can no longer access /run/docker.sock"'
+
+    flatpak_step "chrome-flatpak-webapps" y com.google.Chrome \
+        "Lets Flatpak Chrome install web apps as launchers (writes desktop entries and icons under ~/.local/share)." \
+        "flatpak override --user --nofilesystem=~/.local/share/applications --nofilesystem=~/.local/share/icons com.google.Chrome" \
+        'has_val com.google.Chrome filesystems "~/.local/share/applications" "$HOME/.local/share/applications" && has_val com.google.Chrome filesystems "~/.local/share/icons" "$HOME/.local/share/icons"' \
+        'flatpak override --user --filesystem=~/.local/share/applications --filesystem=~/.local/share/icons com.google.Chrome && echo "Chrome can now write web app launchers to ~/.local/share/applications"'
+
+    flatpak_step "gearlever-applications" y it.mijorus.gearlever \
+        "Lets Gear Lever manage AppImages in ~/Applications (creates the directory)." \
+        "flatpak override --user --nofilesystem=~/Applications it.mijorus.gearlever" \
+        'has_val it.mijorus.gearlever filesystems "~/Applications" "$HOME/Applications"' \
+        'mkdir -p "$HOME/Applications" && flatpak override --user --filesystem=~/Applications it.mijorus.gearlever && echo "Gear Lever can now use ~/Applications"'
+
+    fi
+
+    # fonts: Nerd Fonts from Homebrew casks (Homebrew checks the cask checksums; nothing is downloaded here)
+    if sel fonts; then
+    cur_step=fonts
+    echo
+    echo "== fonts (Nerd Fonts)"
+    if ! command -v brew >/dev/null 2>&1; then
+        echo "Skipped: Homebrew is missing (the image installs it on first boot; rerun later)."
+        record "fonts" "skipped (no brew)"
+    elif [ "$mode" = no ]; then
+        echo "Plan: offer Kevin's 12-font Nerd Font set (default), JetBrains Mono Nerd Font only, a pick from all Nerd Font casks, or skip; install with Homebrew."
+        record "fonts" "planned (would ask)"
+    else
+        fonts_brewfile=${USER_SETUP_FONTS_BREWFILE:-/usr/share/octarine-os/homebrew/fonts.Brewfile}
+        fonts_choice=1
+        if [ "$mode" = ask ]; then
+            echo "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts):"
+            echo "  1) Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque) [default]"
+            echo "  2) JetBrains Mono Nerd Font only"
+            echo "  3) pick from all Nerd Font casks"
+            echo "  4) skip"
+            printf 'Choice [1]: '
+            read -r reply || reply=""
+            case "$reply" in
+                "" | 1) fonts_choice=1 ;;
+                2) fonts_choice=2 ;;
+                3) fonts_choice=3 ;;
+                *) fonts_choice=4 ;;
+            esac
+        fi
+        selected=()
+        case "$fonts_choice" in
+            2) selected=(font-jetbrains-mono-nerd-font) ;;
+            3)
+                mapfile -t allcasks < <(brew search --cask nerd-font 2>/dev/null | grep -E '^font-[a-z0-9-]+-nerd-font$' | sort -u)
+                if [ "${#allcasks[@]}" -eq 0 ]; then
+                    echo "No Nerd Font casks found (is Homebrew working?)."
+                else
+                    n=0
+                    for c in "${allcasks[@]}"; do n=$((n + 1)); echo "  $n) $c"; done
+                    printf 'Numbers or cask names separated by spaces, Enter = none: '
+                    read -r reply || reply=""
+                    for tok in $reply; do
+                        if [[ "$tok" =~ ^[0-9]+$ ]] && [ "$tok" -ge 1 ] && [ "$tok" -le "${#allcasks[@]}" ]; then
+                            selected+=("${allcasks[$((tok - 1))]}")
+                        elif in_list "$tok" "${allcasks[@]}"; then
+                            selected+=("$tok")
+                        else
+                            echo "Ignoring '$tok': not in the list of Nerd Font casks."
+                        fi
+                    done
+                fi
+                ;;
+        esac
+        if [ "$fonts_choice" = 4 ] || { [ "$fonts_choice" != 1 ] && [ "${#selected[@]}" -eq 0 ]; }; then
+            record "fonts" "skipped (not applied)"
+        elif [ "$fonts_choice" = 1 ]; then
+            if [ ! -f "$fonts_brewfile" ]; then
+                echo "Failed: $fonts_brewfile is missing." >&2
+                failed=1
+                record "fonts" "FAILED"
+            else
+                allin=1
+                casks=()
+                while read -r kind cname _; do
+                    [ "$kind" = cask ] || continue
+                    cname=${cname//\"/}
+                    casks+=("$cname")
+                    brew list --cask "$cname" >/dev/null 2>&1 || allin=0
+                done <"$fonts_brewfile"
+                if [ "$allin" = 1 ]; then
+                    echo "Kevin's font set is already installed."
+                    record "fonts" "already done"
+                elif brew bundle --file "$fonts_brewfile"; then
+                    echo "Installed Kevin's font set."
+                    record "fonts" "applied" "brew uninstall --cask ${casks[*]}"
+                else
+                    echo "Failed: fonts" >&2
+                    failed=1
+                    record "fonts" "FAILED"
+                fi
+            fi
+        else
+            toinstall=()
+            for c in "${selected[@]}"; do
+                brew list --cask "$c" >/dev/null 2>&1 || toinstall+=("$c")
+            done
+            if [ "${#toinstall[@]}" -eq 0 ]; then
+                echo "Already installed: ${selected[*]}"
+                record "fonts" "already done"
+            elif brew install --cask "${toinstall[@]}"; then
+                echo "Installed: ${toinstall[*]}"
+                record "fonts" "applied" "brew uninstall --cask ${toinstall[*]}"
+            else
+                echo "Failed: fonts" >&2
+                failed=1
+                record "fonts" "FAILED"
+            fi
+        fi
+        # terminal font, only on an explicit choice
+        if command -v ptyxis >/dev/null 2>&1 && command -v gsettings >/dev/null 2>&1 && command -v fc-list >/dev/null 2>&1; then
+            mapfile -t fams < <(fc-list : family 2>/dev/null | grep -i 'nerd font' | sed 's/,.*//' | sort -u)
+            if [ "${#fams[@]}" -gt 0 ] && [ "$mode" = ask ]; then
+                echo "Ptyxis terminal font (installed Nerd Font families):"
+                n=0
+                for f in "${fams[@]}"; do n=$((n + 1)); echo "  $n) $f"; done
+                printf 'Number to use as the terminal font (Medium 10), Enter = no change: '
+                read -r reply || reply=""
+                if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "${#fams[@]}" ]; then
+                    fam=${fams[$((reply - 1))]}
+                    if gsettings set org.gnome.Ptyxis font-name "$fam Medium 10" && gsettings set org.gnome.Ptyxis use-system-font false; then
+                        echo "Ptyxis uses $fam Medium 10 (new windows)."
+                        record "fonts: terminal font" "applied" "gsettings reset org.gnome.Ptyxis font-name; gsettings reset org.gnome.Ptyxis use-system-font"
+                    else
+                        failed=1
+                        record "fonts: terminal font" "FAILED"
+                    fi
+                else
+                    record "fonts: terminal font" "skipped (no change)"
+                fi
+            else
+                record "fonts: terminal font" "skipped (no change by default)"
+            fi
+        fi
+    fi
+    fi
+
+    # brew: the curated Homebrew CLI tools of dot-files (brew bundle of its Brewfile)
+    if sel brew; then
+    cur_step=brew
+    echo
+    echo "== brew (CLI tools)"
+    if ! need_gj; then
+        record "brew" "skipped (no git/just)"
+    elif ! command -v brew >/dev/null 2>&1; then
+        echo "Skipped: Homebrew is missing (the image installs it on first boot; rerun later)."
+        record "brew" "skipped (no brew)"
+    elif [ "$mode" = no ]; then
+        echo "Plan: fetch github.com/redcodeworks/dot-files, show 'just brew --dry-run' (the formula list) and ask before running 'just brew' (brew bundle of its Brewfile)."
+        record "brew" "planned (would ask)"
+    elif [ "$mode" = yes ] && ! consent; then
+        record "brew" "skipped (default no; use --only brew)"
+    elif ! dot_fetch; then
+        failed=1
+        record "brew" "FAILED"
+    elif ! dot_has brew; then
+        missing_recipe brew
+        record "brew" "skipped (recipe missing)"
+    else
+        echo "Install the Homebrew formulae of the dot-files Brewfile (code from that repository, same trust as the gnome-themes recipe). The list:"
+        dot_just brew --dry-run
+        ask n "Install these?"
+        if [ "$answer" != y ]; then
+            record "brew" "skipped (not applied)"
+        elif dot_just brew; then
+            record "brew" "applied" "brew uninstall <formula> for any you do not want (the list was shown above)"
+        else
+            echo "Failed: brew" >&2
+            failed=1
+            record "brew" "FAILED"
+        fi
+    fi
+    fi
+
+    if sel fish-terminal; then
+    cur_step=fish-terminal
+    # 1c. fish terminal profile in Ptyxis plus the starship prompt (Homebrew only, no installer script)
+    echo
+    echo "== fish-profile"
+    fish=${USER_SETUP_FISH:-/usr/bin/fish}
+    pschema=org.gnome.Ptyxis
+    prof_schema=org.gnome.Ptyxis.Profile
+    conf="$HOME/.config/fish/conf.d/starship.fish"
+    gs_list() { gsettings get "$pschema" profile-uuids 2>/dev/null | grep -oE "'[^']+'" | tr -d "'"; }
+    find_fish_profile() {
+        local u c v
+        for u in $(gs_list); do
+            c=$(gsettings get "$prof_schema:/org/gnome/Ptyxis/Profiles/$u/" custom-command 2>/dev/null)
+            v=$(gsettings get "$prof_schema:/org/gnome/Ptyxis/Profiles/$u/" use-custom-command 2>/dev/null)
+            if [ "$c" = "'$fish'" ] && [ "$v" = true ]; then echo "$u"; return 0; fi
+        done
+        return 1
+    }
+    cur_default() { gsettings get "$pschema" default-profile-uuid 2>/dev/null | tr -d "'"; }
+
+    if [ ! -x "$fish" ]; then
+        echo "Skipped: $fish is missing (fish is an optional package of the image; install it with the image's package set, then rerun)."
+        record "fish-profile: ptyxis" "skipped (no fish)"
+        record "fish-profile: starship" "skipped (no fish)"
+    else
+        a_state=todo
+        if ! command -v ptyxis >/dev/null 2>&1 || ! command -v gsettings >/dev/null 2>&1; then
+            a_state=none
+        else
+            existing=$(find_fish_profile || true)
+            if [ -n "$existing" ] && [ "$(cur_default)" = "$existing" ]; then a_state=done; fi
+        fi
+        b_state=todo
+        need_install=0
+        if command -v starship >/dev/null 2>&1; then
+            :
+        elif command -v brew >/dev/null 2>&1; then
+            need_install=1
+        else
+            b_state=nobrew
+        fi
+        if [ "$b_state" = todo ]; then
+            if [ -f "$conf" ] && grep -qF 'starship init fish' "$conf"; then
+                [ "$need_install" = 0 ] && b_state=done
+            elif [ -f "$conf" ]; then
+                b_state=otherfile
+            fi
+        fi
+        [ "$a_state" = none ] && echo "Part A skipped: Ptyxis or gsettings is not available."
+        [ "$b_state" = nobrew ] && echo "Part B skipped: starship is not installed and Homebrew is missing (the image installs Homebrew on first boot; rerun later)."
+        [ "$b_state" = otherfile ] && echo "Part B skipped: $conf exists with other content; left alone."
+        if [ "$a_state" = todo ] || [ "$b_state" = todo ]; then
+            echo "Sets up a Ptyxis profile that starts fish (made the default; open new Ptyxis windows to see it) and the starship prompt (brew install starship if needed, hooked into fish through $conf)."
+            ask y "Apply?"
+            run_it=$answer
+        else
+            run_it=n
+        fi
+        # part A
+        case "$a_state" in
+            none) record "fish-profile: ptyxis" "skipped (no ptyxis/gsettings)" ;;
+            done) echo "Ptyxis fish profile already the default."; record "fish-profile: ptyxis" "already done" ;;
+            todo)
+                if [ "$run_it" != y ]; then
+                    if [ "$mode" = no ]; then record "fish-profile: ptyxis" "planned (would ask)"; else record "fish-profile: ptyxis" "skipped (not applied)"; fi
+                else
+                    prev=$(cur_default)
+                    created=0
+                    ok=1
+                    uuid=$existing
+                    if [ -z "$uuid" ]; then
+                        uuid=$(uuidgen | tr -d - | tr 'A-F' 'a-f')
+                        created=1
+                        p="$prof_schema:/org/gnome/Ptyxis/Profiles/$uuid/"
+                        gsettings set "$p" label fish && gsettings set "$p" custom-command "$fish" && gsettings set "$p" use-custom-command true || ok=0
+                        if [ "$ok" = 1 ]; then
+                            newlist="["
+                            for u in $(gs_list) "$uuid"; do newlist="$newlist'$u', "; done
+                            newlist="${newlist%, }]"
+                            gsettings set "$pschema" profile-uuids "$newlist" || ok=0
+                        fi
+                    fi
+                    [ "$ok" = 1 ] && { gsettings set "$pschema" default-profile-uuid "$uuid" || ok=0; }
+                    if [ "$ok" = 1 ]; then
+                        echo "Ptyxis profile $uuid starts fish and is the default (new windows pick it up)."
+                        if [ -n "$prev" ]; then undo="gsettings set $pschema default-profile-uuid '$prev'"; else undo="gsettings reset $pschema default-profile-uuid"; fi
+                        if [ "$created" = 1 ]; then
+                            undo="$undo; dconf reset -f /org/gnome/Ptyxis/Profiles/$uuid/ and set profile-uuids again without '$uuid' (gsettings set $pschema profile-uuids \"[...]\")"
+                        fi
+                        record "fish-profile: ptyxis" "applied" "$undo"
+                    else
+                        echo "Failed: fish-profile (Ptyxis part)" >&2
+                        failed=1
+                        record "fish-profile: ptyxis" "FAILED"
+                    fi
+                fi
+                ;;
+        esac
+        # part B
+        case "$b_state" in
+            nobrew) record "fish-profile: starship" "skipped (no brew)" ;;
+            otherfile) record "fish-profile: starship" "skipped (starship.fish has other content)" ;;
+            done) echo "Starship already installed and hooked into fish."; record "fish-profile: starship" "already done" ;;
+            todo)
+                if [ "$run_it" != y ]; then
+                    if [ "$mode" = no ]; then record "fish-profile: starship" "planned (would ask)"; else record "fish-profile: starship" "skipped (not applied)"; fi
+                else
+                    ok=1
+                    if [ "$need_install" = 1 ]; then brew install starship || ok=0; fi
+                    if [ "$ok" = 1 ] && [ ! -f "$conf" ]; then
+                        mkdir -p "$(dirname "$conf")" && {
+                            echo "# Created by ujust user-setup"
+                            echo "if status is-interactive; and type -q starship; starship init fish | source; end"
+                        } >"$conf" || ok=0
+                    fi
+                    if [ "$ok" = 1 ]; then
+                        echo "Starship is installed and hooked into fish (hint: starship preset --list shows ready-made styles)."
+                        record "fish-profile: starship" "applied" "rm $conf; brew uninstall starship"
+                    else
+                        echo "Failed: fish-profile (starship part)" >&2
+                        failed=1
+                        record "fish-profile: starship" "FAILED"
+                    fi
+                fi
+                ;;
+        esac
+    fi
+
+    fi
+
+    # search: GNOME search providers. Calculator, Bazaar, Characters and Clocks are DefaultDisabled in their provider
+    # files, so they only show once their id is in `enabled`; a provider missing from sort-order sorts after the listed
+    # ones. The lists are merged with the value read right before writing: the user may have changed them in Settings.
+    if sel search; then
+    cur_step=search
+    echo
+    echo "== gnome-search"
+    sschema=org.gnome.desktop.search-providers
+    calc=org.gnome.Calculator.desktop
+    sdirs=${USER_SETUP_SEARCH_DIRS:-/usr/share/gnome-shell/search-providers:/var/lib/flatpak/exports/share/gnome-shell/search-providers:$HOME/.local/share/flatpak/exports/share/gnome-shell/search-providers}
+    provider_present() {
+        local d IFS=:
+        for d in $sdirs; do
+            grep -lxF "DesktopId=$1" "$d"/*.ini >/dev/null 2>&1 && return 0
+        done
+        return 1
+    }
+    sget() { gsettings get "$sschema" "$1" 2>/dev/null | grep -oE "'[^']+'" | tr -d "'"; }
+    # mklist <id...>: GVariant string array text
+    mklist() {
+        local out="[" i
+        for i in "$@"; do out="$out'$i', "; done
+        [ "$out" = "[" ] && { echo "@as []"; return; }
+        echo "${out%, }]"
+    }
+    if ! command -v gsettings >/dev/null 2>&1; then
+        echo "Skipped: gsettings is not available."
+        record "gnome-search: providers" "skipped (no gsettings)"
+        record "gnome-search: calculator first" "skipped (no gsettings)"
+    else
+        mapfile -t s_enabled < <(sget enabled)
+        mapfile -t s_disabled < <(sget disabled)
+        mapfile -t s_sort < <(sget sort-order)
+        present=()
+        to_enable=()
+        for id in org.gnome.Calculator.desktop io.github.kolunmi.Bazaar.desktop org.gnome.Characters.desktop org.gnome.clocks.desktop; do
+            if ! provider_present "$id"; then
+                echo "Skipped $id: its search provider is not installed."
+                continue
+            fi
+            present+=("$id")
+            if ! in_list "$id" "${s_enabled[@]}" || in_list "$id" "${s_disabled[@]}"; then to_enable+=("$id"); fi
+        done
+        sort_todo=0
+        if provider_present "$calc"; then
+            [ "${s_sort[0]:-}" = "$calc" ] || sort_todo=1
+        fi
+        if [ "${#to_enable[@]}" -eq 0 ] && [ "$sort_todo" = 0 ]; then
+            echo "Nothing to do (providers enabled, or not installed; Calculator already first)."
+            record "gnome-search: providers" "already done"
+            record "gnome-search: calculator first" "already done"
+        else
+            echo "Enables the GNOME search providers for ${to_enable[*]:-(none needed)} and puts the Calculator first in the search order. Entries you already have stay as they are."
+            ask y "Apply?"
+            if [ "$answer" != y ]; then
+                if [ "$mode" = no ]; then r="planned (would ask)"; else r="skipped (not applied)"; fi
+                record "gnome-search: providers" "$r"
+                record "gnome-search: calculator first" "$r"
+            else
+                if [ "${#to_enable[@]}" -eq 0 ]; then
+                    record "gnome-search: providers" "already done"
+                else
+                    # merge with the current values, read now
+                    mapfile -t cur_enabled < <(sget enabled)
+                    mapfile -t cur_disabled < <(sget disabled)
+                    new_enabled=("${cur_enabled[@]}")
+                    new_disabled=()
+                    for id in "${to_enable[@]}"; do in_list "$id" "${new_enabled[@]}" || new_enabled+=("$id"); done
+                    for id in "${cur_disabled[@]}"; do in_list "$id" "${to_enable[@]}" || new_disabled+=("$id"); done
+                    pok=1
+                    if [ "${#new_enabled[@]}" -ne "${#cur_enabled[@]}" ]; then
+                        gsettings set "$sschema" enabled "$(mklist "${new_enabled[@]}")" || pok=0
+                    fi
+                    if [ "${#new_disabled[@]}" -ne "${#cur_disabled[@]}" ]; then
+                        gsettings set "$sschema" disabled "$(mklist "${new_disabled[@]}")" || pok=0
+                    fi
+                    if [ "$pok" = 1 ]; then
+                        echo "Enabled: ${to_enable[*]}"
+                        record "gnome-search: providers" "applied" "gsettings set $sschema enabled \"$(mklist "${cur_enabled[@]}")\" (the value before this run; 'dconf reset /org/gnome/desktop/search-providers/enabled' resets the whole key to defaults and drops providers you enabled by hand)"
+                    else
+                        echo "Failed: gnome-search providers" >&2
+                        failed=1
+                        record "gnome-search: providers" "FAILED"
+                    fi
+                fi
+                if [ "$sort_todo" = 0 ]; then
+                    record "gnome-search: calculator first" "already done"
+                else
+                    mapfile -t cur_sort < <(sget sort-order)
+                    if [ "${cur_sort[0]:-}" = "$calc" ]; then
+                        record "gnome-search: calculator first" "already done"
+                    else
+                        new_sort=("$calc")
+                        for id in "${cur_sort[@]}"; do [ "$id" = "$calc" ] || new_sort+=("$id"); done
+                        if gsettings set "$sschema" sort-order "$(mklist "${new_sort[@]}")"; then
+                            echo "Calculator is first in the search order."
+                            record "gnome-search: calculator first" "applied" "gsettings set $sschema sort-order \"$(mklist "${cur_sort[@]}")\" (the value before this run; 'dconf reset /org/gnome/desktop/search-providers/sort-order' resets the whole key to defaults)"
+                        else
+                            echo "Failed: gnome-search sort order" >&2
+                            failed=1
+                            record "gnome-search: calculator first" "FAILED"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # dotfiles: config files of github.com/redcodeworks/dot-files, chosen per app, installed by that repository's own
+    # installer (preserve mode keeps files you changed)
+    if sel dotfiles; then
+    cur_step=dotfiles
+    echo
+    echo "== dot-files (config files)"
+    if ! need_gj; then
+        record "dot-files" "skipped (no git/just)"
+    else
+        echo "Fetch github.com/redcodeworks/dot-files and copy config files of the apps you choose into ~/.config; files you changed are kept. Runs that repository's installer as you (code from that repository, the same trust as the gnome-themes recipe); needs the network."
+        ask n "Copy config files from dot-files?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "dot-files" "planned (would ask)"
+            elif [ "$mode" = yes ]; then record "dot-files" "skipped (default no; use --only dotfiles)"
+            else record "dot-files" "skipped (not applied)"; fi
+        elif ! dot_fetch; then
+            echo "Failed: dot-files" >&2
+            failed=1
+            record "dot-files" "FAILED"
+        else
+            apps=()
+            for d in "$ddir"/config/*/; do
+                [ -d "$d" ] && apps+=("$(basename "$d")")
+            done
+            chosen=()
+            if [ "$mode" = yes ]; then
+                apps_env=${DOT_FILES_APPS:-}
+                for a in ${apps_env//,/ }; do
+                    for b in "${apps[@]}"; do [ "$a" = "$b" ] && chosen+=("$a"); done
+                done
+            else
+                cur_step=dotfiles-app
+                for a in "${apps[@]}"; do
+                    ask n "  $a?"
+                    [ "$answer" = y ] && chosen+=("$a")
+                done
+                cur_step=dotfiles
+            fi
+            if [ "${#chosen[@]}" -eq 0 ]; then
+                echo "No app chosen; nothing copied."
+                record "dot-files" "skipped (no app chosen)"
+            elif ! dot_has install; then
+                missing_recipe install
+                record "dot-files" "skipped (recipe missing)"
+            elif dot_just install preserve "${chosen[@]}"; then
+                if dot_has hint; then dot_just hint "${chosen[@]}"; else missing_recipe hint; fi
+                record "dot-files" "applied" "backups are in ~/.local/state/dot-files/backup/; delete the installed files by hand; remove ~/.cache/dot-files"
+            else
+                echo "Failed: dot-files (the repository's installer)" >&2
+                failed=1
+                record "dot-files" "FAILED"
+            fi
+        fi
+    fi
+    fi
+
+    # gnome: settings and extensions from dot-files (just gnome-apply)
+    if sel gnome; then
+    cur_step=gnome
+    echo
+    echo "== gnome (settings and extensions)"
+    if ! need_gj; then
+        record "gnome" "skipped (no git/just)"
+    else
+        echo "Apply the dot-files GNOME settings and extensions (just gnome-apply). This changes many GNOME settings: app grid folders, interface, shell keybindings, dock, shell theme. It first offers to install the missing GNOME extensions through GNOME's own installer (you confirm each), backs up the current dconf values, enables only installed extensions and lists the missing ones. Code from that repository; needs the network."
+        gchoice=n
+        case "$mode" in
+            no) ;;
+            yes) consent && gchoice=y ;;
+            ask)
+                while :; do
+                    printf 'Apply? [y/N/p = show the plan only] '
+                    read -r reply || reply=""
+                    case "$reply" in
+                        [Yy]*) gchoice=y; break ;;
+                        [Pp]*)
+                            if dot_fetch && dot_has gnome-apply; then dot_just gnome-apply --dry-run; else echo "No plan available (fetch failed or recipe missing)."; fi
+                            ;;
+                        *) break ;;
+                    esac
+                done
+                ;;
+        esac
+        if [ "$gchoice" != y ]; then
+            if [ "$mode" = no ]; then record "gnome" "planned (would ask)"
+            elif [ "$mode" = yes ]; then record "gnome" "skipped (default no; use --only gnome)"
+            else record "gnome" "skipped (not applied)"; fi
+        elif ! dot_fetch; then
+            failed=1
+            record "gnome" "FAILED"
+        elif ! dot_has gnome-apply; then
+            missing_recipe gnome-apply
+            record "gnome" "skipped (recipe missing)"
+        elif install_extensions; dot_just gnome-apply; then
+            record "gnome" "applied" "the recipe backed up the previous dconf values first (see its output for the backup path); load that backup with dconf load to undo"
+        else
+            echo "Failed: gnome" >&2
+            failed=1
+            record "gnome" "FAILED"
+        fi
+    fi
+    fi
+
+    echo
+    echo "== Summary (user: $user, mode: $mode)"
+    printf '%-36s %s\n' "STEP" "RESULT"
+    for i in "${!names[@]}"; do
+        printf '%-36s %s\n' "${names[$i]}" "${results[$i]}"
+    done
+    any=0
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ] || [ "${results[$i]}" = FAILED ]; then
+            if [ "${undos[$i]}" != "-" ] && [ -n "${undos[$i]}" ]; then
+                [ "$any" = 0 ] && { echo; echo "To undo (per step):"; any=1; }
+                echo "  ${names[$i]}: ${undos[$i]}"
+            fi
+        fi
+    done
+    if [ "$any" = 1 ]; then
+        echo "A --nofilesystem undo records a denial for that path. 'flatpak override --user --reset <app>' removes the app's other user overrides too."
+    fi
+    exit "$failed"
+
+# Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam's runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display's resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)
+[positional-arguments]
+gaming-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    mode=ask
+    steps=""
+    valid=" steam protonup lutris extensions extest desktop gamemode reset "
+    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|reset ...] [--yes|--no]"
+    for a in "$@"; do
+        case "$a" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
+            *)
+                case "$valid" in
+                    *" $a "*) steps="$steps $a" ;;
+                    *) echo "Unknown step: $a" >&2; echo "$usage" >&2; exit 1 ;;
+                esac
+                ;;
+        esac
+    done
+
+    steam=com.valvesoftware.Steam
+    apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    override_file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/$steam"
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gaming-setup"
+    ext_dest=$(readlink -f -- "${EXTEST_DEST:-$HOME/.local/lib/extest}")
+    ext_so="$ext_dest/lib64/libextest.so"
+    marker="X-Octarine-Generated=ujust gaming-setup"
+    names=()
+    results=()
+    undos=()
+    failed=0
+    cur=""
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # selected <step>: explicitly named, or no step named at all
+    selected() { [ -z "$steps" ] && return 0; case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
+    explicit() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
+    # ask <default y|n> <question>: an explicitly named step counts as yes
+    ask() {
+        local def=$1 q=$2 reply hint="[Y/n]"
+        [ "$def" = n ] && hint="[y/N]"
+        if [ "$mode" = no ]; then answer=n; return; fi
+        if [ "$cur" != reset ] && explicit "$cur"; then answer=y; return; fi
+        if [ "$mode" = yes ]; then answer=$def; return; fi
+        printf '%s %s ' "$q" "$hint"
+        read -r reply || reply=""
+        case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$def ;; esac
+    }
+    skipped_result() { if [ "$mode" = no ]; then echo "planned (would ask)"; else echo "skipped (not applied)"; fi; }
+
+    app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
+    installed() { flatpak info "$1" >/dev/null 2>&1; }
+
+    # verified <app-id>: Flathub's appstream data marks the app verified (fails closed when it cannot tell)
+    verified() {
+        local d f dirs=${GAMING_SETUP_APPSTREAM_DIRS:-$HOME/.local/share/flatpak/appstream/flathub/x86_64/active:/var/lib/flatpak/appstream/flathub/x86_64/active} IFS=:
+        for d in $dirs; do
+            f="$d/appstream.xml.gz"
+            [ -f "$f" ] || continue
+            zcat "$f" 2>/dev/null | awk -v id="$1" '
+                /<component/ { inb = 0; ok = 0 }
+                index($0, "<id>" id "</id>") { inb = 1 }
+                inb && /verification::verified">true</ { ok = 1 }
+                /<\/component>/ { if (inb && ok) f = 1; inb = 0 }
+                END { exit !f }' && return 0
+        done
+        return 1
+    }
+    # install_app <app-id>: install from Flathub in the user installation when verified; sets $inst_result
+    install_app() {
+        local id=$1
+        if ! verified "$id"; then
+            echo "Not installing $id: Flathub does not list it as verified (or the catalog is not available; run flatpak update --appstream and retry)."
+            inst_result="skipped (not verified)"
+            return 0
+        fi
+        flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
+        if flatpak install --user -y flathub "$id"; then inst_result=applied; return 0; fi
+        inst_result=FAILED
+        return 1
+    }
+    app_step() { # step label app-id default
+        cur=$1
+        echo
+        echo "== $1"
+        if installed "$3"; then
+            echo "$2 is already installed."
+            record "$1" "already done"
+            return
+        fi
+        echo "Installs $2 ($3) from Flathub, only if Flathub lists it as verified."
+        ask "$4" "Apply?"
+        if [ "$answer" != y ]; then record "$1" "$(skipped_result)"; return; fi
+        install_app "$3"
+        case "$inst_result" in
+            applied) record "$1" applied "flatpak uninstall --user $3" ;;
+            FAILED) failed=1; record "$1" FAILED ;;
+            *) record "$1" "$inst_result" ;;
+        esac
+    }
+    # path_value: the PATH override for Steam, with the extension bin directories that are installed
+    path_value() {
+        local v="PATH=/app/bin:/app/utils/bin:/usr/bin"
+        flatpak info "org.freedesktop.Platform.VulkanLayer.gamescope//$1" >/dev/null 2>&1 && v="$v:/usr/lib/extensions/vulkan/gamescope/bin"
+        flatpak info "org.freedesktop.Platform.VulkanLayer.MangoHud//$1" >/dev/null 2>&1 && v="$v:/usr/lib/extensions/vulkan/MangoHud/bin"
+        echo "$v"
+    }
+
+    if selected steam && ! explicit reset; then app_step steam "Steam" "$steam" y; fi
+    if selected protonup && ! explicit reset; then app_step protonup "ProtonUp-Qt" net.davidotek.pupgui2 y; fi
+    if selected lutris && ! explicit reset; then app_step lutris "Lutris" net.lutris.Lutris n; fi
+
+    # extensions: gamescope and MangoHud Vulkan layers (branch = Steam's runtime branch) and Proton-GE (branch stable)
+    if selected extensions && ! explicit reset; then
+    cur=extensions
+    echo
+    echo "== extensions"
+    inst=$(app_install_type "$steam")
+    if [ -z "$inst" ]; then
+        echo "Skipped: $steam is not installed (step steam)."
+        record "extensions" "skipped (no Steam)"
+    else
+        branch=$(flatpak info --show-runtime "$steam" | cut -d/ -f3)
+        refs=("org.freedesktop.Platform.VulkanLayer.gamescope//$branch" "org.freedesktop.Platform.VulkanLayer.MangoHud//$branch" "com.valvesoftware.Steam.CompatibilityTool.Proton-GE//stable")
+        todo=()
+        for ref in "${refs[@]}"; do
+            if flatpak info "$ref" >/dev/null 2>&1; then continue; fi
+            if flatpak remote-info flathub "$ref" >/dev/null 2>&1; then todo+=("$ref"); else echo "Not available on Flathub: $ref"; fi
+        done
+        path_done=0
+        [ -f "$override_file" ] && grep -qxF "$(path_value "$branch")" "$override_file" && path_done=1
+        if [ "${#todo[@]}" -eq 0 ] && [ "$path_done" = 1 ]; then
+            echo "Extensions installed and the PATH override is in place."
+            record "extensions" "already done"
+        else
+            echo "Installs (${inst}): ${todo[*]:-nothing new} and sets the Steam PATH override so gamescope and mangohud resolve inside the sandbox. Steam runtime branch: $branch."
+            ask y "Apply?"
+            if [ "$answer" != y ]; then
+                record "extensions" "$(skipped_result)"
+            else
+                ok=1
+                if [ "${#todo[@]}" -gt 0 ]; then flatpak install --"$inst" -y flathub "${todo[@]}" || ok=0; fi
+                flatpak override --user "--env=$(path_value "$branch")" "$steam" || ok=0
+                if [ "$ok" = 1 ]; then
+                    echo "In Steam, set a game's launch options to, for example: gamescope -f -W 2560 -H 1440 -r 144 --adaptive-sync -- %command%   or   mangohud %command%"
+                    record "extensions" applied "ujust gaming-setup reset removes the PATH line; flatpak uninstall ${todo[*]:-the extensions} removes them"
+                else
+                    failed=1
+                    record "extensions" FAILED
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # extest: build the pinned upstream commit (https://github.com/Supreeeme/extest by Supreeeme and contributors,
+    # MIT license; this repo ships none of its source)
+    if selected extest && ! explicit reset; then
+    cur=extest
+    echo
+    echo "== extest (experimental)"
+    src="${EXTEST_SRC:-$HOME/Repos/extest}"
+    commit="${EXTEST_COMMIT:-cb77cd4f80f83393a24bae17dd975e14fa6eb1b2}"
+    if [ -f "$ext_so" ]; then
+        echo "extest is already built: $ext_so"
+        record "extest" "already done"
+    elif ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "EXTEST_COMMIT must be a full 40-character SHA."
+        failed=1
+        record "extest" FAILED
+    else
+        echo "Builds extest (X11 XTEST to uinput shim for Steam Input on Wayland) from commit $commit into $ext_dest. Needs cargo and a C linker: the build runs in the dev-toolbox when the host has none. Not verified end to end inside the Flatpak client."
+        ask n "Apply?"
+        if [ "$answer" != y ]; then
+            record "extest" "$(skipped_result)"
+        else
+            build='set -euo pipefail
+    export PATH="$HOME/.cargo/bin:$PATH"
+    src=$1; dest=$2; commit=$3
+    command -v cargo >/dev/null || { echo "cargo not found. Install Rust first (for example with rustup)."; exit 1; }
+    if [ ! -d "$src/.git" ]; then git clone https://github.com/Supreeeme/extest "$src"; fi
+    cd "$src"
+    if [ "$(git rev-parse HEAD)" != "$commit" ]; then git fetch --quiet origin; git checkout --quiet --detach "$commit"; fi
+    cargo build --release --locked --target x86_64-unknown-linux-gnu
+    install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"'
+            if command -v cargo >/dev/null 2>&1; then
+                bash -c "$build" _ "$src" "$ext_dest" "$commit"
+            elif command -v distrobox >/dev/null 2>&1; then
+                echo "No cargo on the host: building inside dev-toolbox."
+                distrobox enter -n dev-toolbox -- bash -c "$build" _ "$src" "$ext_dest" "$commit"
+            else
+                echo "No cargo and no distrobox: cannot build."
+                false
+            fi
+            if [ $? -eq 0 ] && [ -f "$ext_so" ]; then
+                echo "Installed $ext_so (extest by Supreeeme and contributors, MIT license: https://github.com/Supreeeme/extest). Run the desktop step next."
+                record "extest" applied "ujust gaming-setup reset (offers to remove the library); the source checkout $src stays"
+            else
+                echo "Failed: extest build" >&2
+                failed=1
+                record "extest" FAILED
+            fi
+        fi
+    fi
+    fi
+
+    # desktop: generated launchers, recognizable by the X-Octarine-Generated key; only files carrying it are overwritten
+    if selected desktop && ! explicit reset; then
+    cur=desktop
+    echo
+    echo "== desktop (Steam launchers)"
+    if ! installed "$steam"; then
+        echo "Skipped: $steam is not installed (step steam)."
+        record "desktop" "skipped (no Steam)"
+    else
+        hook=""
+        label=""
+        if [ -f "$ext_so" ]; then hook=" --filesystem=$ext_dest:ro --env=LD_PRELOAD=$ext_so"; label="extest"; fi
+        res=${GAMING_SETUP_RES:-}
+        if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
+            st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
+            cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
+            if [ -n "$cur_mode" ]; then
+                res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
+            fi
+        fi
+        if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
+            [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
+        fi
+        if [ -z "$res" ] && [ "$mode" = ask ] && ! explicit desktop; then
+            printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip the gamescope launcher): '
+            read -r res || res=""
+        fi
+        if [ -n "$res" ] && ! [[ "$res" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]]; then
+            echo "Ignoring '$res': not WIDTHxHEIGHT@HZ."
+            res=""
+        fi
+        if [ -z "$res" ]; then
+            echo "No display mode found: the gamescope launcher will not be generated (set GAMING_SETUP_RES=WIDTHxHEIGHT@HZ to give it)."
+        else
+            gw=${res%%x*}; rest=${res#*x}; gh=${rest%%@*}; ghz=${rest#*@}; ghz=$(printf '%.0f' "$ghz")
+        fi
+        echo "Generates Steam launchers in $apps_dir${label:+ with extest hooked in}${res:+, and a gamescope launcher at ${gw}x${gh} ${ghz} Hz}; only files carrying the $marker line are ever overwritten."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            record "desktop" "$(skipped_result)"
+        else
+            mkdir -p "$apps_dir"
+            changed=0
+            dfail=0
+            gen() { # file name exec
+                local f="$apps_dir/$1" content
+                content=$(printf '%s\n' "[Desktop Entry]" \
+                    "# Generated by ujust gaming-setup; regenerate with: ujust gaming-setup desktop; remove with: ujust gaming-setup reset" \
+                    "$marker" "Type=Application" "Name=$2" "Exec=$3" "Icon=com.valvesoftware.Steam" "Terminal=false" "Categories=Game;")
+                if [ -f "$f" ] && ! grep -qxF "$marker" "$f"; then
+                    echo "Not overwriting $f: it has no generated-file marker."
+                    dfail=1
+                    return
+                fi
+                if [ -f "$f" ] && [ "$(cat "$f")" = "$content" ]; then return; fi
+                if printf '%s\n' "$content" >"$f"; then changed=1; else dfail=1; fi
+            }
+            gen octarine-gaming-steam.desktop "Steam${label:+ ($label)}" "flatpak run$hook $steam %U"
+            if [ -n "$res" ]; then
+                gen octarine-gaming-steam-gamescope.desktop "Steam (gamescope${label:+, $label})" "flatpak run --command=gamescope$hook $steam -f -W $gw -H $gh -r $ghz --adaptive-sync -- steam -gamepadui"
+            fi
+            command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps_dir" 2>/dev/null
+            if [ "$dfail" = 1 ]; then failed=1; record "desktop" FAILED
+            elif [ "$changed" = 0 ]; then echo "Launchers already up to date."; record "desktop" "already done"
+            else
+                echo "Launchers written to $apps_dir."
+                record "desktop" applied "ujust gaming-setup reset removes the generated launchers (files named octarine-gaming-*.desktop)"
+            fi
+        fi
+    fi
+    fi
+
+    # gamemode: the GameMode tuning as ~/.config/gamemode.ini (never overwritten silently)
+    if selected gamemode && ! explicit reset; then
+    cur=gamemode
+    echo
+    echo "== gamemode"
+    src_ini=${GAMING_SETUP_GAMEMODE_SRC:-/usr/share/octarine-os/gamemode.ini}
+    dest_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
+    if [ ! -f "$src_ini" ]; then
+        echo "Skipped: $src_ini is missing."
+        record "gamemode" "skipped (no source file)"
+    else
+        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
+        id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
+        if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
+            echo "$dest_ini already has the tuning."
+            record "gamemode" "already done"
+        else
+            if [ -f "$dest_ini" ]; then
+                echo "$dest_ini exists and differs:"
+                diff -u "$dest_ini" "$src_ini"
+                echo "Replacing it keeps a timestamped backup."
+                ask n "Replace it?"
+            else
+                echo "Installs the GameMode tuning (renice=10, desiredgov=powersave, tuned latency-performance while a game runs) as $dest_ini."
+                ask y "Apply?"
+            fi
+            if [ "$answer" != y ]; then
+                record "gamemode" "$(skipped_result)"
+            else
+                mkdir -p "$state_dir" "$(dirname "$dest_ini")"
+                backup=""
+                if [ -f "$dest_ini" ]; then
+                    backup="$dest_ini.bak-$(date +%Y%m%d%H%M%S)"
+                    cp -p -- "$dest_ini" "$backup"
+                fi
+                if cp -- "$src_ini" "$dest_ini"; then
+                    sha256sum "$dest_ini" | cut -d' ' -f1 >"$state_dir/gamemode.sha256"
+                    printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
+                    echo "Installed $dest_ini${backup:+ (previous file saved as $backup)}."
+                    record "gamemode" applied "ujust gaming-setup reset restores the backup or removes the file if unchanged"
+                else
+                    failed=1
+                    record "gamemode" FAILED
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # reset: undo what this recipe did; installed Flatpaks stay
+    if explicit reset; then
+    cur=reset
+    echo
+    echo "== reset"
+    mapfile -t gen_files < <(grep -lxF "$marker" "$apps_dir"/octarine-gaming-*.desktop 2>/dev/null)
+    ask y "Remove the generated launchers (${#gen_files[@]} found)?"
+    if [ "$answer" = y ]; then
+        if [ "${#gen_files[@]}" -gt 0 ]; then rm -f -- "${gen_files[@]}"; echo "Removed ${gen_files[*]}"; fi
+        record "reset: launchers" applied
+    else
+        record "reset: launchers" "$(skipped_result)"
+    fi
+    # only the lines this recipe (or the old steam-gamescope-setup / extest-steam-setup) added
+    ask y "Remove the PATH override line from $override_file?"
+    if [ "$answer" = y ]; then
+        if [ -f "$override_file" ] && grep -q '^PATH=.*/usr/lib/extensions/vulkan/' "$override_file"; then
+            tmp=$(mktemp "$override_file.XXXXXX")
+            grep -v '^PATH=.*/usr/lib/extensions/vulkan/' "$override_file" >"$tmp" || true
+            mv -- "$tmp" "$override_file"
+            echo "Removed the PATH override from $override_file"
+        fi
+        if [ -f "$override_file" ] && grep -qxF "LD_PRELOAD=$ext_so" "$override_file"; then
+            tmp=$(mktemp "$override_file.XXXXXX")
+            grep -vxF "LD_PRELOAD=$ext_so" "$override_file" >"$tmp" || true
+            content=$(<"$tmp")
+            content=${content//"$ext_dest:ro;"/}
+            printf '%s\n' "$content" >"$tmp"
+            mv -- "$tmp" "$override_file"
+            echo "Removed the old extest override entries from $override_file"
+        fi
+        record "reset: PATH override" applied
+    else
+        record "reset: PATH override" "$(skipped_result)"
+    fi
+    ask n "Also remove the extest library $ext_so?"
+    if [ "$answer" = y ]; then
+        rm -f -- "${ext_so:?}"
+        rmdir "${ext_dest:?}/lib64" "${ext_dest:?}" 2>/dev/null
+        record "reset: extest library" applied "ujust gaming-setup extest rebuilds it"
+    else
+        record "reset: extest library" "$(skipped_result)"
+    fi
+    dest_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
+    ask y "Undo the GameMode file (restore the backup, or remove it if unchanged)?"
+    if [ "$answer" = y ]; then
+        if [ -f "$state_dir/gamemode.sha256" ] && [ -f "$dest_ini" ] && [ "$(sha256sum "$dest_ini" | cut -d' ' -f1)" = "$(cat "$state_dir/gamemode.sha256")" ]; then
+            backup=$(cat "$state_dir/gamemode.backup" 2>/dev/null)
+            if [ -n "$backup" ] && [ -f "$backup" ]; then mv -f -- "$backup" "$dest_ini"; echo "Restored $backup to $dest_ini"; else rm -f -- "${dest_ini:?}"; echo "Removed $dest_ini"; fi
+            rm -f "${state_dir:?}/gamemode.sha256" "${state_dir:?}/gamemode.backup"
+            record "reset: gamemode file" applied
+        elif [ ! -f "$state_dir/gamemode.sha256" ]; then
+            echo "No record that this recipe installed $dest_ini; left alone."
+            record "reset: gamemode file" "skipped (not ours)"
+        else
+            echo "$dest_ini changed since it was installed; left alone."
+            record "reset: gamemode file" "skipped (changed since)"
+        fi
+    else
+        record "reset: gamemode file" "$(skipped_result)"
+    fi
+    fi
+
+    echo
+    echo "== Summary (mode: $mode)"
+    printf '%-28s %s\n' "STEP" "RESULT"
+    for i in "${!names[@]}"; do printf '%-28s %s\n' "${names[$i]}" "${results[$i]}"; done
+    any=0
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ] && [ "${undos[$i]}" != "-" ]; then
+            [ "$any" = 0 ] && { echo; echo "To undo (per step):"; any=1; }
+            echo "  ${names[$i]}: ${undos[$i]}"
+        fi
+    done
+    exit "$failed"
+
+# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-candy install-theme` or `ujust gnome-candy switch-icon Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+[positional-arguments]
+gnome-candy *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    url="${GNOME_THEMES_URL:-https://github.com/redcodeworks/gnome-themes.git}"
+    ref="${GNOME_THEMES_REF:-main}"
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes/repo"
+    if [ -d "$dir/.git" ]; then
+        git -C "$dir" remote set-url origin "$url"
+        git -C "$dir" fetch --quiet --tags origin
+    else
+        mkdir -p "$(dirname "$dir")"
+        git clone --quiet "$url" "$dir"
+    fi
+    git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
+    exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
+
+# Create and manage a toolbox (a distrobox from an image of github.com/redcodeworks/fedora-toolbox): `ujust toolbox` lists the toolboxes the image defines, `ujust toolbox <name>` creates one (for example `ujust toolbox dev-toolbox`) from /usr/share/ublue-os/distrobox/<name>.ini, offers to set it as the default for distrobox enter (Enter takes the toolbox's own name, another name sets that, `-` leaves the current value), and sets up what its optional <name>.conf lists: tools from a checklist (SPACE toggles, ENTER confirms, q skips; or name them: `ujust toolbox dev-toolbox sdkman nvm`; uv, rustup via rustup-init, SDKMAN, nvm) and exported commands (to ~/.local/bin). Options act only on the named toolbox: `--list` shows state, `--recreate` replaces the box (home is shared and survives), `--force` re-runs installers, `--upgrade` pulls the latest toolbox image and replaces the box if it is newer (`--upgrade --check` only reports), `--update` runs the package updates inside the existing box, `--set-default` offers the same default-container question again, `--ide [names]` (or `--ide-custom NAME COMMAND [ICON]`) creates launchers that start IDEs inside the box (the JetBrains icon is the one Toolbox registered, else the file in the app's bin/ directory; running `--ide` again refreshes the Icon= line of launchers this recipe created), `--remove` (with `--dry-run` to preview) destroys the box and removes only what the recipe recorded for that toolbox, after you type yes. The box is named like the toolbox. Tools come with the image; rustup is set up in your home by running rustup-init after you confirm (a normal download from static.rust-lang.org); only SDKMAN and nvm use vendor installer scripts, each downloaded, hashed, shown on request and run only after y, with sudo blocked. Nothing here edits your shell rc files or runs as root. TOOLBOX_IMAGE overrides the image reference of the named toolbox (for example ghcr.io/redcodeworks/fedora-toolbox:testing; the recipe prints the image it uses). TOOLBOX_DEFINITIONS points at another directory of definitions, for testing from a checkout. To start clean, `distrobox rm --force <name>` first (or use --recreate): the shared home survives, the container's own filesystem does not
+[positional-arguments]
+toolbox *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    defs_dir="${TOOLBOX_DEFINITIONS:-/usr/share/ublue-os/distrobox}"
+    image_override="${TOOLBOX_IMAGE:-}"
+    conf_file="${UPM_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/distrobox/distrobox.conf}"
+    brew_dir="${UPM_BREW_DIR:-/home/linuxbrew}"
+    tty_in="${UPM_TTY:-/dev/tty}"
+    export_dir="${UPM_EXPORT_DIR:-$HOME/.local/bin}"
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/ublue-os/toolbox"
+    # Homes of toolboxes with ISOLATED_HOME=true live in <homes_dir>/<name>
+    homes_dir="${TOOLBOX_HOMES_DIR:-$HOME/.local/share/toolbox-homes}"
+    app_dir="${UPM_APPS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}"
+
+    # Value of KEY in a sidecar file, read as data and never sourced. Values may only hold letters, digits,
+    # space and . _ + - (a line with anything else is ignored with a warning).
+    side_read() { # file, key
+        local line v
+        [ -r "$1" ] || return 0
+        line=$({ grep -E "^[[:space:]]*$2=" "$1" || true; } | tail -n1)
+        v=${line#*=}
+        v=$(printf '%s' "$v" | tr -d "\"'")
+        case "$v" in
+            *[!A-Za-z0-9\ ._+-]*)
+                echo "Ignoring $2 in $1: it holds characters other than letters, digits, space and . _ + -" >&2
+                return 0
+                ;;
+        esac
+        printf '%s\n' "$v"
+    }
+
+    conf_value() {
+        [ -f "$conf_file" ] || return 0
+        { grep -E '^[[:space:]]*container_name_default=' "$conf_file" || true; } | tail -1 | sed -E 's/^[^=]*=//' | tr -d "\"'"
+    }
+
+    # The toolbox name is the first word that is not an option (options take no values, except
+    # --ide-custom, which ends the scan). The container is named like the toolbox.
+    name=""
+    for a in "$@"; do
+        case "$a" in
+            --ide-custom) break ;;
+            -*) ;;
+            *)
+                name=$a
+                break
+                ;;
+        esac
+    done
+
+    known_toolboxes() {
+        local f
+        for f in "$defs_dir"/*.ini; do
+            [ -e "$f" ] || continue
+            basename -- "$f" .ini
+        done
+    }
+
+    # Image= line of a definition
+    ini_image() { sed -n 's/^image=//p' "$1" 2>/dev/null | head -1 | tr -d "\"'"; }
+
+    list_toolboxes() {
+        local n st def listing img
+        listing=""
+        if command -v distrobox >/dev/null 2>&1; then listing=$(distrobox list 2>/dev/null || true); fi
+        echo "Toolboxes defined in $defs_dir:"
+        echo
+        printf '%-12s %-9s %-8s %s\n' NAME BOX DEFAULT IMAGE
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            st=missing
+            if [ -n "$listing" ]; then
+                st=$(awk -F'|' -v b="$n" 'NR > 1 { x = $2; gsub(/ /, "", x); if (x == b) { s = $3; gsub(/^ +| +$/, "", s); print (s ~ /^Up/) ? "running" : "stopped" } }' <<<"$listing")
+                st=${st:-missing}
+            elif ! command -v distrobox >/dev/null 2>&1; then
+                st=unknown
+            fi
+            def=-
+            if [ "$(conf_value)" = "$n" ]; then def=yes; fi
+            img=$(ini_image "$defs_dir/$n.ini")
+            printf '%-12s %-9s %-8s %s\n' "$n" "$st" "$def" "${img:-?}"
+        done < <(known_toolboxes)
+        local sf iso apps a ln hs st f
+        while IFS= read -r n; do
+            [ -n "$n" ] || continue
+            sf="$defs_dir/$n.conf"
+            iso=$(side_read "$sf" ISOLATED_HOME 2>/dev/null || true)
+            apps=$(side_read "$sf" EXPORT_APPS 2>/dev/null || true)
+            if [ "$iso" != true ] && [ -z "$apps" ]; then continue; fi
+            if [ -z "${shown:-}" ]; then
+                echo
+                shown=1
+            fi
+            ln="  $n:"
+            if [ "$iso" = true ]; then
+                hs=missing
+                if [ -d "$homes_dir/$n" ]; then hs=exists; fi
+                ln+=" isolated home $homes_dir/$n ($hs);"
+            fi
+            for a in $apps; do
+                f="$app_dir/$n-$a.desktop"
+                st="not exported"
+                if [ -e "$f" ] && grep -qxF -- "app $f" "$state_dir/$n" 2>/dev/null; then st=exported; fi
+                ln+=" app $a ($st)"
+            done
+            echo "$ln"
+        done < <(known_toolboxes)
+        echo
+        echo "Run: ujust toolbox <name>          create it and set it up"
+        echo "     ujust toolbox <name> --list   tools, exports and state of one toolbox"
+        echo "     ujust toolbox <name> --help   every option"
+    }
+
+    usage() {
+        echo "Usage: ujust toolbox                       (list the toolboxes)"
+        echo "       ujust toolbox <name> [--list] [--recreate] [--force] [tool ...]"
+        echo "       ujust toolbox <name> --remove [--dry-run] [--purge-home]   (destroys the box and what this recipe recorded for it;"
+        echo "                                                    an isolated home is kept unless --purge-home is given)"
+        echo "       ujust toolbox <name> --upgrade [--check]    (pull the latest toolbox image and replace the box if it is newer)"
+        echo "       ujust toolbox <name> --update               (package updates inside the existing box: distrobox upgrade)"
+        echo "       ujust toolbox <name> --set-default          (make it the container_name_default of distrobox)"
+        echo "       ujust toolbox <name> --ide [--list|--remove [--dry-run]] [ide ...]   (launchers that start an IDE inside the box)"
+        echo "       ujust toolbox <name> --ide-custom NAME COMMAND [ICON]"
+    }
+
+    if [ -z "$name" ]; then
+        for a in "$@"; do
+            case "$a" in
+                -h | --help)
+                    usage
+                    exit 0
+                    ;;
+                --list) ;;
+                *)
+                    echo "Give the name of a toolbox first: ujust toolbox <name> $a" >&2
+                    echo >&2
+                    list_toolboxes >&2
+                    exit 2
+                    ;;
+            esac
+        done
+        list_toolboxes
+        exit 0
+    fi
+
+    # `dev` is the old name of dev-toolbox. If a state file of the old toolbox exists, `dev` still means that
+    # old box, for --remove only (legacy=1); otherwise it is an alias for dev-toolbox.
+    legacy=0
+    src=$name
+    if [ "$name" = dev ] && [ ! -r "$defs_dir/dev.ini" ]; then
+        src=dev-toolbox
+        if [ -f "$state_dir/dev" ]; then
+            legacy=1
+        else
+            echo "Note: the toolbox 'dev' is now called dev-toolbox; using dev-toolbox."
+            name=dev-toolbox
+        fi
+    fi
+    if ! [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || [ ! -r "$defs_dir/$src.ini" ]; then
+        echo "Unknown toolbox '$name'. Known toolboxes: $(known_toolboxes | tr '\n' ' ')" >&2
+        exit 2
+    fi
+    box=$name
+    def_file="$defs_dir/$src.ini"
+    side_file="$defs_dir/$src.conf"
+    state_file="$state_dir/$name"
+
+    # The optional sidecar <name>.conf: plain KEY=value lines (see side_read)
+    side_get() { side_read "$side_file" "$1"; }
+    conf_tools=$(side_get TOOLS)
+    conf_bins=$(side_get EXPORT_BINS)
+    conf_ides=$(side_get IDES)
+    # ISOLATED_HOME=true gives the container its own HOME; EXPORT_APPS lists apps whose launchers are exported
+    conf_isohome=$(side_get ISOLATED_HOME)
+    conf_apps=$(side_get EXPORT_APPS)
+    isolated=0
+    if [ "$conf_isohome" = true ]; then isolated=1; fi
+    box_home="$homes_dir/$box"
+    for t in $conf_apps; do
+        if ! [[ "$t" =~ ^[A-Za-z0-9][A-Za-z0-9_.+-]*$ ]]; then
+            echo "Invalid app name '$t' in EXPORT_APPS of $side_file" >&2
+            exit 2
+        fi
+    done
+
+    # One row per tool or group, fields separated by ^ :
+    #   id ^ label ^ source (image, installer or group) ^ tool name or installer URL ^ installed test
+    #   ^ environment for the installer ^ installer arguments ^ preselected (1/0) ^ exports ^ note
+    # image rows are baked into the toolbox image (packages/dev.txt in the fedora-toolbox repo); the recipe
+    # cannot install packages (that would need sudo), it only sets them up and exports them. Group rows are exported without a checklist.
+    # Exports, space separated: cmd:NAME exports the binary command -v finds in the box (skipped when absent),
+    # dir:PATH every executable in a directory, wrapper:sdk writes the sdk wrapper script.
+    # The installed test runs on the host (the box shares your home); where[NAME] holds what command -v found in the box.
+    # __PREFIX__ in a note is the brew prefix.
+    rows=(
+        'uv^uv (Python)^image^uv^[ -n "${where[uv]:-}" ]^^^1^cmd:uv cmd:uvx^uv comes with the toolbox image; uv and uvx are exported to the host.'
+        'rustup^rustup (Rust)^image^rustup-init^[ -x "$HOME/.cargo/bin/rustup" ]^^^1^dir:$HOME/.cargo/bin^Fedora ships only rustup-init (in the toolbox image); /usr/bin/rustup does not exist. The recipe runs rustup-init in your home (stable toolchain, no shell rc edits) and exports the proxies in ~/.cargo/bin (rustup, cargo, rustc and so on; rustup-init itself is not exported).\nInside the box, add to its shell rc:  . "$HOME/.cargo/env"'
+        'sdkman^SDKMAN^installer^https://get.sdkman.io?rcupdate=false^[ -s "$HOME/.sdkman/bin/sdkman-init.sh" ]^^^1^wrapper:sdk^No Fedora package exists, so this is a vendor installer script. sdk is a shell function, so the host gets a small wrapper script that runs it in the box.\nInside the box, add to its shell rc:  source "$HOME/.sdkman/bin/sdkman-init.sh"'
+        'nvm^nvm^installer^https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh^[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]^PROFILE=/dev/null^^1^^No Fedora package exists, so this is a vendor installer script. Nothing is exported: host node and npm stay the ones from brew.\nInside the box, add to its shell rc:\n  export NVM_DIR="$HOME/.nvm"\n  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"'
+    )
+
+    # EXPORT_BINS of the sidecar becomes one group row: commands exported to the host when they exist in the box
+    bin_exports=""
+    bin_test=""
+    for b in $conf_bins; do
+        bin_exports+="cmd:$b "
+        bin_test+="\${where[$b]:-}"
+    done
+    if [ -n "$conf_bins" ]; then
+        rows+=("bins^Exported commands^group^^[ -n \"$bin_test\" ]^^^1^${bin_exports% }^")
+    fi
+
+    # TOOLS of the sidecar selects rows of the catalog above; without a sidecar a toolbox gets none
+    tool_ids=()
+    group_ids=()
+    for r in "${rows[@]}"; do
+        IFS='^' read -r id _ src _ <<<"$r"
+        if [ "$src" = group ]; then
+            group_ids+=("$id")
+        elif [[ " $conf_tools " == *" $id "* ]]; then
+            tool_ids+=("$id")
+        fi
+    done
+    for t in $conf_tools; do
+        if [[ " ${tool_ids[*]-} " != *" $t "* ]]; then echo "Ignoring unknown tool '$t' in $side_file" >&2; fi
+    done
+
+    load() {
+        local r
+        for r in "${rows[@]}"; do
+            IFS='^' read -r id label src ref check envs iargs def exports note <<<"$r"
+            [ "$id" = "$1" ] && return 0
+        done
+        return 1
+    }
+
+    declare -A where=()
+
+    box_exists() {
+        command -v distrobox >/dev/null 2>&1 &&
+            distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); print $2 }' | grep -qx -- "$box"
+    }
+
+    # One trip into the box to find every command the table cares about
+    resolve_all() {
+        local t item n p names=(uv uvx rustup-init code)
+        where=()
+        box_exists || return 0
+        for t in "${tool_ids[@]}" "${group_ids[@]}"; do
+            load "$t"
+            for item in $exports; do
+                case "$item" in cmd:*) names+=("${item#cmd:}") ;; esac
+            done
+        done
+        while read -r n p; do
+            if [ -n "$p" ]; then where[$n]=$p; fi
+        done < <(distrobox enter "$box" -- bash -c 'for c in "$@"; do p=$(command -v "$c") && echo "$c $p"; done' _ "${names[@]}" </dev/null 2>/dev/null)
+    }
+
+    state() {
+        load "$1"
+        if (eval "$check") >/dev/null 2>&1; then echo installed; else echo missing; fi
+    }
+
+    recorded() { grep -qxF -- "export $1" "$state_file" 2>/dev/null; }
+
+    # A new conf record replaces this toolbox's older one
+    drop_conf_records() {
+        [ -f "$state_file" ] || return 0
+        sed -i -e '/^conf /d' -e '/^conf-value /d' "$state_file"
+    }
+
+    record() {
+        mkdir -p -- "$(dirname -- "$state_file")"
+        printf '%s\n' "$1" >>"$state_file"
+    }
+
+    # Source paths this row exports, one per line (wrapper entries as wrapper:NAME)
+    export_sources() {
+        local item d f
+        load "$1"
+        for item in $exports; do
+            case "$item" in
+                cmd:*) if [ -n "${where[${item#cmd:}]:-}" ]; then printf '%s\n' "${where[${item#cmd:}]}"; fi ;;
+                wrapper:*) printf '%s\n' "$item" ;;
+                dir:*)
+                    eval "d=\"${item#dir:}\""
+                    for f in "$d"/*; do
+                        if [ -f "$f" ] && [ -x "$f" ]; then printf '%s\n' "$f"; fi
+                    done
+                    ;;
+            esac
+        done
+    }
+
+    export_name() {
+        case "$1" in
+            wrapper:*) echo "${1#wrapper:}" ;;
+            *) basename -- "$1" ;;
+        esac
+    }
+
+    # yes, partial, no, or - when the row exports nothing
+    export_state() {
+        local s n=0 ok=0 dest ex
+        ex=$(
+            load "$1"
+            echo "$exports"
+        )
+        if [ -z "$ex" ]; then
+            echo "-"
+            return 0
+        fi
+        while IFS= read -r s; do
+            [ -n "$s" ] || continue
+            n=$((n + 1))
+            dest="$export_dir/$(export_name "$s")"
+            if [ "$s" = "$dest" ] || { [ -e "$dest" ] && recorded "$dest"; }; then ok=$((ok + 1)); fi
+        done < <(export_sources "$1")
+        if [ "$n" -eq 0 ] || [ "$ok" -eq 0 ]; then
+            echo no
+        elif [ "$ok" -eq "$n" ]; then
+            echo yes
+        else
+            echo partial
+        fi
+    }
+
+    # The image the box is made from: TOOLBOX_IMAGE, else the image= line of the definition
+    def_image() {
+        if [ -n "$image_override" ]; then
+            printf '%s\n' "$image_override"
+        else
+            ini_image "$def_file"
+        fi
+    }
+
+    undo_note() {
+        [ -f "$state_file" ] || return 0
+        echo
+        echo "To undo: what this recipe created is listed in $state_file."
+        echo "  - delete each 'export' path listed there (the files in $export_dir);"
+        echo "  - 'conf' lines say how container_name_default in $conf_file was set (created, appended, or changed from an older value);"
+        if [ "$isolated" = 1 ]; then
+            echo "  - 'app' lines are launchers in $app_dir; 'home' lines the isolated home ($box_home), which --remove keeps;"
+            echo "  - remove the box with: distrobox rm $box  (the isolated home stays)."
+        else
+            echo "  - remove the box with: distrobox rm $box  (your home is shared, so your files stay)."
+        fi
+    }
+
+    list_all() {
+        local t st ex cv f hs bs=missing
+        box_exists && bs=present
+        resolve_all
+        cv=$(conf_value)
+        echo "Box:           $box ($bs)"
+        echo "Image:         $(def_image)"
+        if [ -z "$cv" ]; then
+            echo "Default name:  not set in $conf_file"
+        elif [ "$cv" = "$box" ]; then
+            echo "Default name:  $box (container_name_default)"
+        else
+            echo "Default name:  $cv (not $box)"
+        fi
+        if grep -qx 'box-no-brew-mount' "$state_file" 2>/dev/null; then
+            echo "Brew mount:    missing (box made before the brew prefix existed; run --recreate)"
+        fi
+        if [ "$isolated" = 1 ]; then
+            hs=missing
+            if [ -d "$box_home" ]; then hs=exists; fi
+            echo "Home:          $box_home ($hs, isolated; --remove keeps it)"
+        fi
+        if [ -n "$conf_apps" ]; then
+            echo
+            printf '%-10s %-13s %s\n' APP LAUNCHER PATH
+            for t in $conf_apps; do
+                f="$app_dir/$box-$t.desktop"
+                if [ -e "$f" ]; then
+                    if grep -qxF -- "app $f" "$state_file" 2>/dev/null; then st=exported; else st="foreign file"; fi
+                else
+                    st="not exported"
+                fi
+                printf '%-10s %-13s %s\n' "$t" "$st" "$f"
+            done
+        fi
+        if [ "${#tool_ids[@]}" -gt 0 ] || [ "${#group_ids[@]}" -gt 0 ]; then echo; fi
+        if [ "${#tool_ids[@]}" -gt 0 ] || [ "${#group_ids[@]}" -gt 0 ]; then printf '%-10s %-10s %-18s %-9s %s\n' TOOL STATE SOURCE EXPORTED LABEL; fi
+        for t in "${tool_ids[@]}" "${group_ids[@]}"; do
+            load "$t"
+            st=$(state "$t")
+            if [ "$st" = installed ]; then ex=$(export_state "$t"); else ex=-; fi
+            case "$src" in
+                image) sdesc="image:$ref" ;;
+                installer) sdesc=installer ;;
+                *) sdesc=image ;;
+            esac
+            printf '%-10s %-10s %-18s %-9s %s\n' "$id" "$st" "$sdesc" "$ex" "$label"
+        done
+        undo_note
+    }
+
+    usage_lists() {
+        usage
+        echo "IDEs offered by $name: ${ide_ids[*]-none}"
+        echo "Tools offered by $name: ${tool_ids[*]-none}"
+        echo "With no tools named it shows a checklist (SPACE toggles, ENTER confirms, q skips)."
+    }
+
+    # IDE launchers (--ide): .desktop files that start an IDE inside the box. Detection only, nothing is installed.
+    # One row per IDE, fields separated by ^ : id ^ name ^ kind (jetbrains or vscode) ^ launcher name ^ StartupWMClass ^ categories
+    # jetbrains: the stable shell script JetBrains Toolbox generates (needs "Generate shell scripts" in the Toolbox settings,
+    # default folder below); the icon is the name Toolbox registered in the user icon theme (jetbrains-<tool>-<uuid>), else the file in the bin/
+    # directory of the app that script launches, so no versioned path or uuid is hardcoded.
+    # vscode: a code found inside the box, or a tarball install under the home. The window classes are from memory, unverified.
+    app_dir="${UPM_APPS_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/applications}"
+    jb_scripts="${UPM_JB_SCRIPTS:-$HOME/.local/share/JetBrains/Toolbox/scripts}"
+    jb_icons="${UPM_JB_ICONS:-${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps}"
+    ide_rows=(
+        'pycharm^PyCharm^jetbrains^pycharm^jetbrains-pycharm^Development;IDE;'
+        'idea^IntelliJ IDEA^jetbrains^idea^jetbrains-idea^Development;IDE;'
+        'datagrip^DataGrip^jetbrains^datagrip^jetbrains-datagrip^Development;IDE;'
+        'rustrover^RustRover^jetbrains^rustrover^jetbrains-rustrover^Development;IDE;'
+        'clion^CLion^jetbrains^clion^jetbrains-clion^Development;IDE;'
+        'goland^GoLand^jetbrains^goland^jetbrains-goland^Development;IDE;'
+        'webstorm^WebStorm^jetbrains^webstorm^jetbrains-webstorm^Development;IDE;'
+        'vscode^Visual Studio Code^vscode^code^Code^Development;IDE;TextEditor;'
+    )
+    # IDES of the sidecar selects which launchers this toolbox offers (none without a sidecar)
+    ide_ids=()
+    for r in "${ide_rows[@]}"; do
+        if [[ " $conf_ides " == *" ${r%%^*} "* ]]; then ide_ids+=("${r%%^*}"); fi
+    done
+    for t in $conf_ides; do
+        if [[ " ${ide_ids[*]-} " != *" $t "* ]]; then echo "Ignoring unknown IDE '$t' in $side_file" >&2; fi
+    done
+
+    ide_load() {
+        local r
+        for r in "${ide_rows[@]}"; do
+            IFS='^' read -r iid iname ikind icmd iwm icat <<<"$r"
+            [ "$iid" = "$1" ] && return 0
+        done
+        return 1
+    }
+
+    idcmd=""
+    idicon=""
+    idmsg=""
+    ide_detect() { # sets idcmd, idicon, idmsg
+        local s l d c f
+        l=""
+        idcmd=""
+        idicon=""
+        idmsg=""
+        ide_load "$1"
+        case "$ikind" in
+            jetbrains)
+                s="$jb_scripts/$icmd"
+                if [ ! -x "$s" ]; then
+                    idmsg="No launcher script $s. Turn on 'Generate shell scripts' in JetBrains Toolbox (its settings, Tools) and set the folder to $jb_scripts, then run this again."
+                    return 1
+                fi
+                idcmd=$s
+                # 1. the icon name Toolbox registered (jetbrains-<tool>-<uuid>.svg in the user hicolor theme): it follows
+                #    Toolbox's own updates; the uuid is per install, so only the glob is written here. Newest file wins.
+                for f in "$jb_icons"/jetbrains-"$icmd"-*.svg; do
+                    if [ -f "$f" ] && { [ -z "$l" ] || [ "$f" -nt "$l" ]; }; then l=$f; fi
+                done
+                if [ -n "$l" ]; then
+                    f=$(basename -- "$l")
+                    idicon=${f%.svg}
+                else
+                    # 2. the file in the app's own bin/ directory: the script execs <apps>/<dir>/bin/<name> (the dir name can
+                    #    differ from the script name, intellij-idea vs idea); else look in every <apps>/*/bin for <name>.svg
+                    l=$(grep -oE '/[^" ]+/bin/[^" /]+' "$s" 2>/dev/null | head -1 || true)
+                    for d in ${l:+"$(dirname -- "$l")"} "$(dirname -- "$jb_scripts")"/apps/*/bin; do
+                        for f in "$d/$icmd.svg" "$d/$icmd.png"; do
+                            if [ -f "$f" ]; then
+                                idicon=$f
+                                break 2
+                            fi
+                        done
+                    done
+                fi
+                ;;
+            vscode)
+                if [ -n "${where[code]:-}" ]; then
+                    idcmd=${where[code]}
+                    idicon=vscode
+                else
+                    for c in "$HOME"/.local/opt/*/bin/code "$HOME"/opt/*/bin/code "$HOME"/Applications/*/bin/code; do
+                        if [ -x "$c" ]; then
+                            idcmd=$c
+                            f="$(dirname -- "$(dirname -- "$c")")/resources/app/resources/linux/code.png"
+                            if [ -f "$f" ]; then idicon=$f; fi
+                            break
+                        fi
+                    done
+                fi
+                if [ -z "$idcmd" ]; then
+                    idmsg="No 'code' inside the box and no VS Code tarball under your home (~/.local/opt, ~/opt, ~/Applications). Nothing is installed for you: extract the tarball from code.visualstudio.com there, or install code in the box yourself. The Flatpak cannot be used from the box, and Microsoft's repo is not added."
+                    return 1
+                fi
+                ;;
+        esac
+    }
+
+    ide_file() { echo "$app_dir/$box-$1.desktop"; }
+
+    ide_write() { # file, name, command, icon, wm class, categories
+        mkdir -p -- "$(dirname -- "$1")"
+        {
+            printf '[Desktop Entry]\nType=Application\n'
+            printf 'Name=%s (toolbox)\n' "$2"
+            printf 'Comment=%s, started inside the %s distrobox\n' "$2" "$box"
+            printf 'Exec=distrobox enter -n %s -- "%s" %%F\n' "$box" "$3"
+            printf 'Icon=%s\n' "${4:-applications-development}"
+            printf 'Terminal=false\nStartupNotify=true\n'
+            if [ -n "$5" ]; then printf 'StartupWMClass=%s\n' "$5"; fi
+            printf 'Categories=%s\nX-Created-By=ujust toolbox\n' "${6:-Development;}"
+        } >"$1"
+        chmod 644 "$1"
+    }
+
+    refresh_apps() {
+        if command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$app_dir" >/dev/null 2>&1 || true; fi
+    }
+
+    list_ide() {
+        local t f st det c p
+        resolve_all
+        printf '%-10s %-9s %-13s %s\n' IDE DETECTED LAUNCHER COMMAND
+        for t in "${ide_ids[@]}"; do
+            f=$(ide_file "$t")
+            if ide_detect "$t"; then
+                det=yes
+                c=$idcmd
+            else
+                det=no
+                c="-"
+            fi
+            if [ -e "$f" ]; then
+                if grep -qxF -- "launcher $f" "$state_file" 2>/dev/null; then st=created; else st="foreign file"; fi
+            else
+                st="not created"
+            fi
+            printf '%-10s %-9s %-13s %s\n' "$t" "$det" "$st" "$c"
+        done
+        while IFS= read -r p; do
+            case "$p" in
+                "$app_dir/$box"-*.desktop) ;;
+                *) continue ;;
+            esac
+            c=${p##*/"$box"-}
+            c=${c%.desktop}
+            if [[ " ${ide_ids[*]} " != *" $c "* ]]; then printf '%-10s %-9s %-13s %s\n' "$c" "custom" "created" "$p"; fi
+        done < <(sed -n 's/^launcher //p' "$state_file" 2>/dev/null)
+        echo
+        echo "Launchers run the IDE inside the box (distrobox enter -n $box -- ...). Remove them with: ujust toolbox $box --ide --remove"
+        echo "StartupWMClass values are from memory and not verified against the real windows."
+    }
+
+    force=0
+    recreate=0
+    remove=0
+    dry=0
+    upgrade=0
+    check_only=0
+    update=0
+    assume=0
+    no_checklist=0
+    ide=0
+    list=0
+    setdef=0
+    purge=0
+    named=0
+    custom=()
+    want=()
+    argv=("$@")
+    ai=0
+    while [ "$ai" -lt "${#argv[@]}" ]; do
+        a=${argv[ai]}
+        ai=$((ai + 1))
+        case "$a" in
+            --list) list=1 ;;
+            --ide) ide=1 ;;
+            --ide-custom)
+                ide=1
+                custom=("${argv[@]:ai}")
+                break
+                ;;
+            -h | --help)
+                usage_lists
+                exit 0
+                ;;
+            --force) force=1 ;;
+            --recreate) recreate=1 ;;
+            --remove) remove=1 ;;
+            --dry-run) dry=1 ;;
+            --upgrade) upgrade=1 ;;
+            --check) check_only=1 ;;
+            --set-default) setdef=1 ;;
+            --purge-home) purge=1 ;;
+            --update) update=1 ;;
+            -*)
+                echo "Unknown option $a" >&2
+                usage >&2
+                exit 2
+                ;;
+            *)
+                # the first word is the toolbox name, the rest are tool or IDE names
+                if [ "$named" = 0 ]; then named=1; else want+=("$a"); fi
+                ;;
+        esac
+    done
+
+    if [ "$ide" = 1 ] && [ "${#ide_ids[@]}" -eq 0 ]; then
+        echo "The toolbox $name offers no IDE launchers (no IDES in $side_file)." >&2
+        exit 1
+    fi
+    if [ "$ide" = 1 ]; then valid=("${ide_ids[@]}"); else valid=("${tool_ids[@]}"); fi
+    for a in "${want[@]}"; do
+        if [[ " ${valid[*]} " != *" $a "* ]]; then
+            echo "Unknown name '$a'" >&2
+            usage >&2
+            exit 2
+        fi
+    done
+    if [ "$ide" = 1 ] && [ "${#custom[@]}" -gt 0 ] && { [ "${#custom[@]}" -lt 2 ] || [ "${#custom[@]}" -gt 3 ]; }; then
+        echo "Usage: --ide-custom NAME COMMAND [ICON]" >&2
+        exit 2
+    fi
+    if [ "$list" = 1 ]; then
+        if [ "$ide" = 1 ]; then list_ide; else list_all; fi
+        exit 0
+    fi
+
+    if [ "$dry" = 1 ] && [ "$remove" = 0 ]; then
+        echo "--dry-run only goes with --remove" >&2
+        exit 2
+    fi
+    if [ "$purge" = 1 ] && [ "$remove" = 0 ]; then
+        echo "--purge-home only goes with --remove" >&2
+        exit 2
+    fi
+    if [ "$check_only" = 1 ] && [ "$upgrade" = 0 ]; then
+        echo "--check only goes with --upgrade" >&2
+        exit 2
+    fi
+    if [ "$ide" = 1 ]; then
+        if [ $((upgrade + update + recreate + check_only + force + setdef)) -gt 0 ] || { [ "$remove" = 1 ] && [ "${#custom[@]}" -gt 0 ]; }; then
+            echo "--ide only combines with --list, --remove, --dry-run and IDE names" >&2
+            exit 2
+        fi
+    elif [ $((remove + upgrade + update + recreate + setdef)) -gt 1 ] || { [ $((remove + upgrade + update + setdef)) -gt 0 ] && [ "${#want[@]}" -gt 0 ]; }; then
+        echo "--remove, --upgrade, --update, --set-default and --recreate cannot be combined with each other or with tool names" >&2
+        exit 2
+    fi
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "Do not run this as root: the box and its tools belong to your user." >&2
+        exit 1
+    fi
+    command -v distrobox >/dev/null 2>&1 || {
+        echo "distrobox is not installed." >&2
+        exit 1
+    }
+
+    # --update: package updates inside the existing box, nothing else
+    if [ "$update" = 1 ]; then
+        if ! distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); print $2 }' | grep -qx -- "$box"; then
+            echo "The box $box does not exist; create it first with: ujust toolbox $box" >&2
+            exit 1
+        fi
+        exec distrobox upgrade "$box"
+    fi
+
+    # Keys and answers come from the terminal (or UPM_TTY in tests), not from stdin
+    if ! (: <"$tty_in") 2>/dev/null; then
+        echo "No terminal to read answers from; run this in an interactive shell." >&2
+        exit 1
+    fi
+    exec 3<"$tty_in"
+
+    work=$(mktemp -d "${TMPDIR:-/tmp}/upm.XXXXXX")
+    chmod 700 "$work"
+    cleanup() {
+        rm -rf -- "$work"
+        if [ -t 1 ]; then printf '\033[?25h'; fi
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT TERM
+
+    failed=0
+    ans=""
+    ask() { # prompt, optional file the v key shows
+        while :; do
+            printf '%s' "$1"
+            IFS= read -rsn1 -u 3 ans || ans=n
+            printf '%s\n' "$ans"
+            case "$ans" in
+                v | V)
+                    if [ -n "${2:-}" ]; then
+                        read -ra pg <<<"${PAGER:-less}"
+                        command -v "${pg[0]}" >/dev/null 2>&1 || pg=(cat)
+                        "${pg[@]}" "$2" || true
+                    fi
+                    ;;
+                y | Y)
+                    ans=y
+                    return 0
+                    ;;
+                *) return 1 ;;
+            esac
+        done
+    }
+
+    # Isolated home: create the directory (no sudo) and say whether this recipe made it
+    ensure_home() {
+        local h=$box_home existed=0
+        case "$h" in
+            /*) ;;
+            *)
+                echo "   TOOLBOX_HOMES_DIR must be an absolute path (got $homes_dir)."
+                return 1
+                ;;
+        esac
+        case "$h" in
+            *..* | *[!A-Za-z0-9/_.+@-]*)
+                echo "   Refusing the home path $h: only letters, digits and / _ . + - @ are allowed, and no '..'."
+                return 1
+                ;;
+        esac
+        if [ -e "$h" ] || [ -L "$h" ]; then
+            if [ ! -d "$h" ]; then
+                echo "   $h exists but is not a directory; not continuing."
+                return 1
+            fi
+            existed=1
+        elif ! mkdir -p -- "$h" 2>/dev/null; then
+            echo "   Could not create $h; not continuing."
+            return 1
+        fi
+        if [ ! -w "$h" ]; then
+            echo "   $h is not writable; not continuing."
+            return 1
+        fi
+        if ! grep -q -- "^home $h " "$state_file" 2>/dev/null; then
+            if [ "$existed" = 1 ]; then record "home $h existed"; else record "home $h created"; fi
+        fi
+        if [ "$existed" = 1 ]; then
+            echo "   Isolated home: $h (already existed, kept as it is)"
+        else
+            echo "   Isolated home: $h (created)"
+        fi
+    }
+
+    append_line() { # file, line
+        if [ -s "$1" ] && [ -n "$(tail -c1 "$1")" ]; then printf '\n' >>"$1"; fi
+        printf '%s\n' "$2" >>"$1"
+    }
+
+    # TOOLBOX_VOLUMES: space-separated src:dst[:opts] entries added as volume= lines. Absolute paths, an existing
+    # source directory, no '..'; anything else is skipped and reported.
+    add_volumes() { # definition file
+        local v src dst opts extra
+        for v in ${TOOLBOX_VOLUMES:-}; do
+            IFS=: read -r src dst opts extra <<<"$v"
+            if [ -n "$extra" ] || [ -z "$dst" ]; then
+                echo "   Skipped volume '$v': use src:dst or src:dst:opts."
+            elif [[ "$src$dst" == *..* ]] || [[ "$src$dst" == *[!A-Za-z0-9/_.+@-]* ]] || [[ "$src" != /* ]] || [[ "$dst" != /* ]] || [ "$dst" = / ]; then
+                echo "   Skipped volume '$v': paths must be absolute, without '..' and only letters, digits and / _ . + - @."
+            elif [ -n "$opts" ] && ! [[ "$opts" =~ ^[a-zA-Z,]+$ ]]; then
+                echo "   Skipped volume '$v': invalid options '$opts'."
+            elif [ ! -d "$src" ]; then
+                echo "   Skipped volume '$v': $src is not an existing directory."
+            else
+                append_line "$1" "volume=\"$src:$dst${opts:+:$opts}\""
+                echo "   Extra volume: $src -> $dst${opts:+ ($opts)}"
+            fi
+        done
+    }
+
+    # Step 1: the box
+    step_box() {
+        local tmpdef nobrew=0
+        if box_exists; then
+            if [ "$recreate" = 0 ]; then
+                echo "== Box $box exists"
+                if [ -d "$brew_dir" ] && grep -qx 'box-no-brew-mount' "$state_file" 2>/dev/null; then
+                    echo "   It was made before Homebrew existed, so it lacks the read-only $brew_dir mount."
+                    echo "   Run: ujust toolbox $box --recreate"
+                fi
+                return 0
+            fi
+            echo "== Recreating $box"
+            if [ "$isolated" = 1 ]; then
+                echo "   Its isolated home ($box_home) is kept; only the container's own filesystem"
+                echo "   (packages installed inside it, anything outside that home) is replaced."
+            else
+                echo "   Your home is shared, so your files, ~/.cargo and caches survive; only the container's own"
+                echo "   filesystem (packages installed inside it, anything outside your home) is replaced."
+            fi
+            if [ "$assume" = 0 ] && ! ask "   [y] remove and recreate the box, anything else keeps it: "; then
+                echo "   Kept the existing box."
+                return 0
+            fi
+            distrobox rm --force "$box" </dev/null || {
+                echo "   Could not remove $box."
+                failed=1
+                return 1
+            }
+            # Exports made by this recipe point at the old container: remove exactly those, nothing else
+            if [ -f "$state_file" ]; then
+                while IFS= read -r p; do
+                    if [ -e "$p" ] || [ -L "$p" ]; then
+                        rm -f -- "$p"
+                        echo "   Removed old export $p"
+                    fi
+                done < <(sed -n 's/^export //p' "$state_file")
+                sed -i '/^export /d' "$state_file"
+                while IFS= read -r p; do
+                    case "$p" in
+                        "$app_dir/$box"-*.desktop)
+                            if [ -e "$p" ] || [ -L "$p" ]; then
+                                rm -f -- "$p"
+                                echo "   Removed old app launcher $p"
+                            fi
+                            ;;
+                    esac
+                done < <(sed -n 's/^app //p' "$state_file")
+                sed -i '/^app /d' "$state_file"
+            fi
+        else
+            echo "== Box $box does not exist"
+            if ! ask "   [y] create it from $def_file (pulls the image, takes a while), anything else stops: "; then
+                echo "   Not created."
+                return 1
+            fi
+        fi
+        if [ ! -r "$def_file" ]; then
+            echo "   Definition not found: $def_file"
+            failed=1
+            return 1
+        fi
+        if ! grep -qx "\[$box\]" "$def_file"; then
+            echo "   $def_file has no [$box] section, so the container would not be named $box."
+            failed=1
+            return 1
+        fi
+        tmpdef="$work/$box.ini"
+        echo "   Image: $(def_image)"
+        if [ -n "$image_override" ]; then
+            awk -v img="$image_override" '/^image=/ { print "image=" img; next } { print }' "$def_file" >"$work/def.ini"
+        else
+            cp -- "$def_file" "$work/def.ini"
+        fi
+        if [ -d "$brew_dir" ]; then
+            cp -- "$work/def.ini" "$tmpdef"
+        else
+            # The mount's source must exist or container creation fails; the recipe cannot create it (needs root)
+            grep -v '^volume=.*linuxbrew' "$work/def.ini" >"$tmpdef" || true
+            nobrew=1
+            echo "   $brew_dir does not exist yet, so the box is created without the read-only brew mount."
+            echo "   Once the prefix exists (the first-boot brew-setup.service creates it), run 'ujust toolbox $box --recreate' to add it."
+        fi
+        if [ "$isolated" = 1 ]; then
+            ensure_home || {
+                failed=1
+                return 1
+            }
+            grep -v '^home=' "$tmpdef" >"$work/def.home" || true
+            cat "$work/def.home" >"$tmpdef"
+            append_line "$tmpdef" "home=$box_home"
+        fi
+        add_volumes "$tmpdef"
+        if ! distrobox assemble create --file "$tmpdef" </dev/null; then
+            echo "   distrobox assemble failed."
+            failed=1
+            return 1
+        fi
+        grep -qx "box $box" "$state_file" 2>/dev/null || record "box $box"
+        if [ -f "$state_file" ]; then
+            sed -i '/^box-no-brew-mount$/d' "$state_file"
+        fi
+        if [ "$nobrew" = 1 ]; then record "box-no-brew-mount"; fi
+        echo "   Created $box."
+    }
+
+    # Step 2: offer to set the default container for `distrobox enter` (the container_name_default line of
+    # distrobox.conf). Enter sets the toolbox's own name, another valid name sets that, a single dash leaves
+    # the current value. Only that one line changes. Without answers to read (no terminal) nothing is changed
+    # and the command to run later is printed.
+    container_exists() {
+        command -v distrobox >/dev/null 2>&1 &&
+            distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); print $2 }' | grep -qx -- "$1"
+    }
+    # distrobox-enter reads container_name from distrobox.conf before container_name_default, so a
+    # container_name= line there overrides the default. Comment such lines out (marked, and recorded in the
+    # state file as 'conf-shadow <line>' so --remove can restore them).
+    shadow_tag="# disabled by ujust toolbox: "
+    disable_shadow() {
+        local line tmp="$work/distrobox.shadow"
+        [ -f "$conf_file" ] || return 0
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            awk -v t="$shadow_tag" '/^[[:space:]]*container_name=/ { print t $0; next } { print }' "$conf_file" >"$tmp"
+            cat "$tmp" >"$conf_file"
+            record "conf-shadow $line"
+            echo "   Commented out '$line' in $conf_file: distrobox reads it before container_name_default."
+        done < <(grep -E '^[[:space:]]*container_name=' "$conf_file" || true)
+    }
+    step_default() {
+        local cur shown new line tmp
+        cur=$(conf_value)
+        if [ "$cur" = "$box" ]; then
+            echo "== container_name_default is already $box (already set), nothing written"
+            disable_shadow
+            return 0
+        fi
+        shown=${cur:-none}
+        if [ -n "$cur" ] && ! container_exists "$cur"; then shown="$cur, no such container"; fi
+        echo "== Default container for 'distrobox enter' ($conf_file)"
+        while :; do
+            printf "Default container for 'distrobox enter' (current: %s) [%s]: " "$shown" "$box"
+            if ! IFS= read -r -u 3 line; then
+                echo
+                echo "   No terminal to read an answer from; the default is unchanged. To set it, run:"
+                echo "   ujust toolbox $box --set-default"
+                return 0
+            fi
+            case "$line" in
+                "") new=$box ;;
+                -)
+                    echo "   Left as it was."
+                    return 0
+                    ;;
+                *[!A-Za-z0-9_.-]*)
+                    echo "   A container name may only use letters, digits, _, - and . ; try again."
+                    continue
+                    ;;
+                *) new=$line ;;
+            esac
+            break
+        done
+        if [ "$new" = "$cur" ]; then
+            echo "   $new is already set; nothing written."
+            disable_shadow
+            return 0
+        fi
+        mkdir -p -- "$(dirname -- "$conf_file")"
+        if [ ! -f "$conf_file" ]; then
+            printf 'container_name_default="%s"\n' "$new" >"$conf_file"
+            drop_conf_records
+            record "conf created"
+        elif ! grep -qE '^[[:space:]]*container_name_default=' "$conf_file"; then
+            if [ -s "$conf_file" ] && [ -n "$(tail -c1 "$conf_file")" ]; then printf '\n' >>"$conf_file"; fi
+            printf 'container_name_default="%s"\n' "$new" >>"$conf_file"
+            drop_conf_records
+            record "conf appended"
+        else
+            tmp="$work/distrobox.conf"
+            awk -v v="container_name_default=\"$new\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
+            cat "$tmp" >"$conf_file"
+            drop_conf_records
+            record "conf changed $cur"
+        fi
+        if [ "$new" != "$box" ]; then record "conf-value $new"; fi
+        disable_shadow
+        echo "   distrobox enter now opens $new."
+    }
+
+    # dev-toolbox replaces the toolbox that used to be called dev: say how to remove the old container and state
+    old_dev_note() {
+        [ "$box" = dev-toolbox ] || return 0
+        if [ -f "$state_dir/dev" ] || container_exists dev; then
+            echo
+            echo "An older toolbox named 'dev' is still around (it was renamed to dev-toolbox). To remove it:"
+            if [ -f "$state_dir/dev" ]; then
+                echo "  ujust toolbox dev --remove     (removes the container and what it recorded in $state_dir/dev)"
+            else
+                echo "  distrobox rm --force dev"
+            fi
+            echo "  Run it after checking that the exports in $export_dir now point at dev-toolbox (rerun this recipe if not)."
+        fi
+    }
+
+    # Run a command in the box with a sudo stub first on PATH and no_new_privs, so even an
+    # absolute /usr/bin/sudo cannot gain privileges. Output is kept in $log.
+    log=""
+    run_guarded() { # tag, environment words, command...
+        local tag=$1 envs_s=$2 e a rc=0 runner envarr=()
+        shift 2
+        runner="$work/run-$tag.sh"
+        log="$work/$tag.log"
+        mkdir -p "$work/bin"
+        {
+            printf '#!/bin/sh\n'
+            printf 'echo "sudo is not allowed here" >&2\n'
+            printf ': > %q\n' "$work/sudo-called"
+            printf 'exit 1\n'
+        } >"$work/bin/sudo"
+        chmod 700 "$work/bin/sudo"
+        rm -f "$work/sudo-called"
+        read -ra envarr <<<"$envs_s"
+        {
+            printf '#!/bin/bash\nset -eu\n'
+            printf 'command -v setpriv >/dev/null 2>&1 || { echo "setpriv is missing, refusing to run without the no-sudo guard" >&2; exit 97; }\n'
+            printf 'export PATH=%q:"$PATH"\n' "$work/bin"
+            for e in "${envarr[@]}"; do printf 'export %s=%q\n' "${e%%=*}" "${e#*=}"; done
+            printf 'exec setpriv --no-new-privs'
+            for a in "$@"; do printf ' %q' "$a"; done
+            printf '\n'
+        } >"$runner"
+        distrobox enter "$box" -- bash "$runner" </dev/null 2>&1 | tee "$log" || rc=${PIPESTATUS[0]}
+        return "$rc"
+    }
+
+    report_failure() { # label, exit code
+        if [ "$2" -eq 97 ]; then
+            echo "   $1 was not run: setpriv is missing, so the no-sudo guard could not be applied."
+        elif [ -e "$work/sudo-called" ] || grep -qiE 'sudo|no new privileges|no_new_privs' "$log"; then
+            echo "   $1 failed because it wanted sudo, which this recipe blocks on purpose."
+            echo "   Do the root-only step yourself (see the message above), then run this again."
+        else
+            echo "   $1 failed (exit $2)."
+        fi
+        failed=1
+    }
+
+    print_note() {
+        if [ -n "$note" ]; then
+            printf '%b\n' "${note//__PREFIX__/$brew_dir}" | sed 's/^/   /'
+        fi
+    }
+
+    # Export what a row provides to the host. Never overwrites anything that exists.
+    do_exports() {
+        local t=$1 s name dest created=0 already=0 bn
+        load "$t"
+        [ -n "$exports" ] || return 0
+        mkdir -p -- "$export_dir"
+        while IFS= read -r s; do
+            [ -n "$s" ] || continue
+            name=$(export_name "$s")
+            dest="$export_dir/$name"
+            if [ "$s" = "$dest" ]; then continue; fi
+            if [ -e "$dest" ] || [ -L "$dest" ]; then
+                if recorded "$dest"; then
+                    already=$((already + 1))
+                else
+                    echo "   Skipped $dest: a file or link is already there (not overwritten)."
+                fi
+                continue
+            fi
+            case "$s" in
+                wrapper:sdk)
+                    {
+                        printf '#!/bin/bash\n'
+                        printf 'exec distrobox enter %q -- bash -c %q _ "$@"\n' "$box" 'source ~/.sdkman/bin/sdkman-init.sh && sdk "$@"'
+                    } >"$dest"
+                    chmod 755 "$dest"
+                    ;;
+                *)
+                    bn=$(basename -- "$s")
+                    if ! distrobox enter "$box" -- distrobox-export --bin "$s" --export-path "$export_dir" </dev/null >/dev/null 2>&1 || [ ! -e "$export_dir/$bn" ]; then
+                        echo "   Could not export $s with distrobox-export."
+                        failed=1
+                        continue
+                    fi
+                    ;;
+            esac
+            record "export $dest"
+            created=$((created + 1))
+            echo "   Exported $dest"
+        done < <(export_sources "$t")
+        if [ "$already" -gt 0 ]; then echo "   $already already exported."; fi
+    }
+
+    # Export the launchers of EXPORT_APPS to the host (distrobox-export --app, run in the box). Never overwrites
+    # a file this recipe did not create; every launcher it creates is recorded.
+    do_apps() {
+        local a dest already=0
+        [ -n "$conf_apps" ] || return 0
+        echo "== App launchers in $app_dir"
+        mkdir -p -- "$app_dir"
+        for a in $conf_apps; do
+            dest="$app_dir/$box-$a.desktop"
+            if [ -e "$dest" ] || [ -L "$dest" ]; then
+                if grep -qxF -- "app $dest" "$state_file" 2>/dev/null; then
+                    already=$((already + 1))
+                else
+                    echo "   Skipped $dest: a file is already there (not overwritten)."
+                fi
+                continue
+            fi
+            if ! distrobox enter "$box" -- distrobox-export --app "$a" </dev/null >/dev/null 2>&1 || [ ! -e "$dest" ]; then
+                echo "   Could not export $a with distrobox-export (is it installed in the box?)."
+                failed=1
+                continue
+            fi
+            record "app $dest"
+            echo "   Exported $dest"
+        done
+        if [ "$already" -gt 0 ]; then echo "   $already already exported."; fi
+        refresh_apps
+    }
+
+    missing_package() {
+        echo "   $label is not in the box. It comes with the toolbox image ($ref); the image is rebuilt weekly."
+        echo "   Get the latest image and replace the box: ujust toolbox $box --upgrade"
+        echo "   (This recipe does not install packages itself, because that would need sudo.)"
+        failed=1
+    }
+
+    # Directories an install step creates (the box shares the home, so these are in your home)
+    row_dirs() {
+        case "$1" in
+            sdkman) echo "$HOME/.sdkman" ;;
+            nvm) echo "${NVM_DIR:-$HOME/.nvm}" ;;
+            rustup) echo "$HOME/.rustup $HOME/.cargo" ;;
+        esac
+    }
+
+    # Before an install step: remember, once, whether each directory already existed
+    note_dirs() {
+        local d
+        for d in $(row_dirs "$1"); do
+            if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
+            if [ -e "$d" ]; then record "dir $d existed"; else record "dir $d created"; fi
+        done
+    }
+
+    install_rustup() {
+        local rc=0
+        if [ "$(state rustup)" = installed ]; then
+            echo "   Already set up (~/.cargo/bin/rustup exists)."
+            note_dirs rustup
+            return 0
+        fi
+        if [ -z "${where[rustup-init]:-}" ]; then
+            missing_package
+            return 0
+        fi
+        echo "   The box only has rustup-init (there is no /usr/bin/rustup until it has run in your home)."
+        echo "   It downloads the stable toolchain from static.rust-lang.org: a normal download, not a piped script,"
+        echo "   and it does not touch your shell rc files (--no-modify-path)."
+        if ! ask "   [y] run 'rustup-init -y --no-modify-path --default-toolchain stable', anything else skips: "; then
+            echo "   Skipped."
+            return 0
+        fi
+        note_dirs rustup
+        run_guarded rustup "" rustup-init -y --no-modify-path --default-toolchain stable || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            report_failure "rustup-init" "$rc"
+            return 0
+        fi
+        if [ "$(state rustup)" = missing ]; then
+            echo "   rustup-init finished but ~/.cargo/bin/rustup does not exist; check its output above."
+            failed=1
+            return 0
+        fi
+        echo "   Installed rustup with a stable toolchain."
+    }
+
+    install_installer() {
+        local t=$1 file sum size envarr=() argarr=() rc=0
+        case "$ref" in
+            https://*) ;;
+            *)
+                echo "   Refusing a non-https installer URL: $ref"
+                failed=1
+                return 0
+                ;;
+        esac
+        file="$work/$t-installer.sh"
+        echo "   Downloading $ref"
+        if ! curl -fsSL --proto '=https' --tlsv1.2 -o "$file" "$ref"; then
+            echo "   Download failed; skipping $label."
+            failed=1
+            return 0
+        fi
+        sum=$(sha256sum "$file" | cut -d' ' -f1)
+        size=$(stat -c %s "$file")
+        echo "   sha256 $sum"
+        echo "   size   $size bytes"
+        echo "   This is vendor code, not ours: running it means you trust $ref."
+        if ! ask "   [v] view it, [y] run it, anything else skips: " "$file"; then
+            echo "   Skipped $label."
+            return 0
+        fi
+        read -ra argarr <<<"$iargs"
+        note_dirs "$t"
+        run_guarded "$t" "$envs" bash "$file" "${argarr[@]}" || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            report_failure "$label" "$rc"
+            return 0
+        fi
+        if [ "$(state "$t")" = missing ]; then
+            echo "   The installer finished but $label is still not detected; check its output above."
+            failed=1
+            return 0
+        fi
+        echo "   Installed $label."
+    }
+
+    install_one() {
+        local t=$1 st
+        load "$t"
+        st=$(state "$t")
+        echo "== $label"
+        case "$src" in
+            image)
+                if [ "$t" = rustup ]; then
+                    install_rustup
+                elif [ "$st" = missing ]; then
+                    missing_package
+                else
+                    echo "   Already in the box (from the toolbox image)."
+                fi
+                ;;
+            installer)
+                if [ "$st" != missing ] && [ "$force" = 0 ]; then
+                    echo "   Already installed, skipping (--force runs the installer again)."
+                    # Remember that this toolbox uses the shared directory too, so removing another toolbox keeps it
+                    note_dirs "$t"
+                else
+                    install_installer "$t"
+                fi
+                ;;
+        esac
+        load "$t"
+        if [ "$(state "$t")" = installed ]; then print_note; fi
+    }
+
+    states=()
+    sel=()
+    cur=-1
+
+    draw() {
+        local i m p s
+        for i in "${!tool_ids[@]}"; do
+            load "${tool_ids[i]}"
+            s=""
+            case "${states[i]}" in
+                installed)
+                    m='[-]'
+                    s="  (installed)"
+                    ;;
+                *) if [ "${sel[i]}" = 1 ]; then m='[x]'; else m='[ ]'; fi ;;
+            esac
+            if [ "$i" -eq "$cur" ]; then p='>'; else p=' '; fi
+            printf '\033[2K%s %s %-8s from %s%s\n' "$p" "$m" "$label" "$(if [ "$src" = image ]; then echo "image ($ref)"; else echo installer; fi)" "$s"
+        done
+        printf '\033[2K  SPACE toggles, ENTER sets up the ticked ones, q skips\n'
+    }
+
+    move() {
+        local d=$1 i=$cur n=${#tool_ids[@]}
+        while :; do
+            i=$(((i + d + n) % n))
+            if [ "${states[i]}" = missing ]; then
+                cur=$i
+                return 0
+            fi
+            if [ "$i" -eq "$cur" ]; then return 0; fi
+        done
+    }
+
+    checklist() {
+        local i key rest any=0
+        for i in "${!tool_ids[@]}"; do
+            states[i]=$(state "${tool_ids[i]}")
+            load "${tool_ids[i]}"
+            sel[i]=0
+            if [ "${states[i]}" = missing ]; then
+                any=1
+                if [ "$def" = 1 ]; then sel[i]=1; fi
+                if [ "$cur" -lt 0 ]; then cur=$i; fi
+            fi
+        done
+        if [ "$any" = 0 ]; then
+            echo "Every tool on the list is already set up."
+            return 0
+        fi
+        echo "Tools in the box"
+        if [ -t 1 ]; then
+            printf '\033[?25l'
+            draw
+        fi
+        while :; do
+            key=""
+            IFS= read -rsn1 -u 3 key || key=EOF
+            case "$key" in
+                EOF | q | Q)
+                    if [ -t 1 ]; then printf '\033[?25h'; fi
+                    echo "Skipped the tool list."
+                    return 0
+                    ;;
+                '') break ;;
+                ' ')
+                    if [ "${states[cur]}" = missing ]; then sel[cur]=$((1 - sel[cur])); fi
+                    ;;
+                j | J) move 1 ;;
+                k | K) move -1 ;;
+                $'\x1b')
+                    rest=""
+                    IFS= read -rsn2 -t 0.05 -u 3 rest || true
+                    case "$rest" in
+                        '[A') move -1 ;;
+                        '[B') move 1 ;;
+                    esac
+                    ;;
+            esac
+            if [ -t 1 ]; then
+                printf '\033[%dA' $((${#tool_ids[@]} + 1))
+                draw
+            fi
+        done
+        if [ -t 1 ]; then printf '\033[?25h'; fi
+        for i in "${!tool_ids[@]}"; do
+            if [ "${sel[i]}" = 1 ]; then want+=("${tool_ids[i]}"); fi
+        done
+    }
+
+    # --remove: destroy the box and remove only what the state file says this recipe created
+    size_of() { du -sh -- "$1" 2>/dev/null | cut -f1; }
+    drop_state() { # exact line to delete from the state file
+        if [ -f "$state_file" ]; then
+            grep -vxF -- "$1" "$state_file" >"$work/state.new" || true
+            cat "$work/state.new" >"$state_file"
+        fi
+    }
+    safe_dir() { # absolute, under $HOME, not $HOME itself, no ..
+        case "$1" in
+            "$HOME"/*) ;;
+            *) return 1 ;;
+        esac
+        case "$1" in
+            *..*) return 1 ;;
+        esac
+        return 0
+    }
+    home_safe() { # absolute, no .., not / or $HOME, a real directory (no symlink) named like the box
+        case "$1" in
+            /*) ;;
+            *) return 1 ;;
+        esac
+        case "$1" in
+            *..*) return 1 ;;
+        esac
+        [ "$1" != / ] && [ "$1" != "$HOME" ] && [ ! -L "$1" ] && [ -d "$1" ] && [ "$(basename -- "$1")" = "$box" ]
+    }
+    conf_key_remove() { # kind, old value
+        local tmp="$work/conf.new" kind=$1 old=$2
+        case "$kind" in
+            changed) awk -v v="container_name_default=\"$old\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp" ;;
+            *) grep -vE '^[[:space:]]*container_name_default=' "$conf_file" >"$tmp" || true ;;
+        esac
+        if [ "$kind" = created ] && ! grep -q '[^[:space:]]' "$tmp"; then
+            rm -f -- "$conf_file"
+        else
+            cat "$tmp" >"$conf_file"
+        fi
+    }
+
+    restore_shadow() { # put back the container_name= lines this recipe commented out
+        local l orig tmp="$work/conf.shadow"
+        [ -f "$state_file" ] || return 0
+        while IFS= read -r l; do
+            [ -n "$l" ] || continue
+            orig=${l#conf-shadow }
+            if [ -f "$conf_file" ]; then
+                T="$shadow_tag" O="$orig" awk '$0 == ENVIRON["T"] ENVIRON["O"] { print ENVIRON["O"]; next } { print }' "$conf_file" >"$tmp"
+                cat "$tmp" >"$conf_file"
+            fi
+            drop_state "$l"
+            echo "Restored '$orig' in $conf_file"
+        done < <(grep '^conf-shadow ' "$state_file" || true)
+    }
+
+    # Another toolbox whose state file lists this directory (a shared home directory such as ~/.cargo)
+    other_owner() {
+        local f
+        for f in "$state_dir"/*; do
+            [ -f "$f" ] || continue
+            [ "$f" = "$state_file" ] && continue
+            if grep -qF -- "dir $1 " "$f"; then
+                basename -- "$f"
+                return 0
+            fi
+        done
+        return 0
+    }
+
+    # This toolbox created the directory but another one uses it: that one is the owner from now on, so
+    # the last toolbox removed takes the directory with it
+    hand_over() {
+        local f
+        for f in "$state_dir"/*; do
+            [ -f "$f" ] || continue
+            [ "$f" = "$state_file" ] && continue
+            if grep -qxF -- "dir $1 existed" "$f"; then
+                awk -v l="dir $1 existed" -v n="dir $1 created" '$0 == l { print n; next } { print }' "$f" >"$work/handover.new"
+                cat "$work/handover.new" >"$f"
+            fi
+        done
+    }
+
+    do_remove() {
+        local p kind rest cur wrote conf_line have_box=0 line other hline hp home_p="" home_kind="" purge_ok=0
+        local exps=() dirs=() skipped=() lnch=() apps_l=() handover=()
+        if [ ! -f "$state_file" ]; then
+            echo "No state file ($state_file): this recipe has nothing recorded, so there is nothing to remove."
+            return 0
+        fi
+        while IFS= read -r p; do
+            if [ -e "$p" ] || [ -L "$p" ]; then
+                case "$p" in
+                    "$export_dir"/*) exps+=("$p") ;;
+                    *) skipped+=("$p (not under $export_dir, left alone)") ;;
+                esac
+            fi
+        done < <(sed -n 's/^export //p' "$state_file")
+        while IFS= read -r p; do
+            if [ -e "$p" ] || [ -L "$p" ]; then
+                case "$p" in
+                    "$app_dir/$box"-*.desktop) lnch+=("$p") ;;
+                    *) skipped+=("$p (not a launcher path this recipe creates, left alone)") ;;
+                esac
+            fi
+        done < <(sed -n 's/^launcher //p' "$state_file")
+        while IFS= read -r p; do
+            if [ -e "$p" ] || [ -L "$p" ]; then
+                case "$p" in
+                    "$app_dir/$box"-*.desktop) apps_l+=("$p") ;;
+                    *) skipped+=("$p (not an app launcher path this recipe creates, left alone)") ;;
+                esac
+            fi
+        done < <(sed -n 's/^app //p' "$state_file")
+        hline=$(grep '^home ' "$state_file" | head -1 || true)
+        if [ -n "$hline" ]; then
+            hp=${hline#home }
+            home_kind=${hp##* }
+            hp=${hp% *}
+            if [ -d "$hp" ]; then home_p=$hp; fi
+        fi
+        conf_line=$(grep -E '^conf (created|appended|changed)' "$state_file" | head -1 || true)
+        if grep -qx "box $box" "$state_file" && box_exists; then have_box=1; fi
+        while IFS= read -r line; do
+            p=${line#dir }
+            kind=${p##* }
+            p=${p% *}
+            if [ "$kind" = existed ]; then
+                skipped+=("$p (already existed before this recipe, left alone)")
+            elif [ -e "$p" ] && safe_dir "$p"; then
+                other=$(other_owner "$p")
+                if [ -n "$other" ]; then
+                    skipped+=("$p (the toolbox $other also uses it, left alone; $other takes it over)")
+                    handover+=("$p")
+                else
+                    dirs+=("$p")
+                fi
+            elif [ -e "$p" ]; then
+                skipped+=("$p (not a safe path under your home, left alone)")
+            fi
+        done < <(grep '^dir ' "$state_file" || true)
+
+        echo "This would remove, in this order:"
+        for p in "${exps[@]}"; do echo "  export    $p  ($(size_of "$p"))"; done
+        for p in "${lnch[@]}"; do echo "  launcher  $p  ($(size_of "$p"))"; done
+        for p in "${apps_l[@]}"; do echo "  app       $p  ($(size_of "$p"))"; done
+        if [ -n "$conf_line" ]; then
+            cur=$(conf_value)
+            wrote=$(grep '^conf-value ' "$state_file" | tail -1 | sed 's/^conf-value //' || true)
+            if [ "$cur" = "${wrote:-$box}" ]; then
+                echo "  setting   container_name_default in $conf_file (${conf_line#conf })"
+            else
+                skipped+=("container_name_default in $conf_file (now '$cur', not what this recipe wrote)")
+                conf_line=""
+            fi
+        fi
+        if grep -q '^conf-shadow ' "$state_file"; then
+            echo "  restoring the container_name= line(s) in $conf_file that the recipe commented out"
+        fi
+        if [ "$have_box" = 1 ]; then echo "  container $box  (distrobox rm --force; size not shown)"; fi
+        for p in "${dirs[@]}"; do echo "  directory $p  ($(size_of "$p"))"; done
+        if [ -n "$home_p" ]; then
+            if [ "$purge" = 1 ] && [ "$home_kind" = created ] && home_safe "$home_p"; then
+                purge_ok=1
+                echo "  home      $home_p  ($(size_of "$home_p"); isolated home, DELETED because of --purge-home)"
+                echo "            It holds what the box keeps in its own home: the Steam library, Proton prefixes, saves, settings."
+            elif [ "$purge" = 1 ]; then
+                skipped+=("$home_p (the isolated home existed before this recipe or is not a safe path; delete it by hand if you want it gone)")
+            else
+                echo "  kept      $home_p  (isolated home; add --purge-home to delete it)"
+            fi
+        fi
+        echo "  state     $state_file  (last)"
+        if [ "${#skipped[@]}" -gt 0 ]; then
+            echo "Left alone:"
+            for p in "${skipped[@]}"; do echo "  $p"; done
+        fi
+        echo "Never touched: anything under /usr or /etc, $export_dir itself, files this recipe did not create. No sudo is used."
+        if [ "$dry" = 1 ]; then
+            echo "Dry run: nothing was removed."
+            return 0
+        fi
+        echo
+        if [ "${#dirs[@]}" -gt 0 ]; then
+            echo "Warning: ~/.cargo and ~/.sdkman can hold things you installed later (cargo install binaries,"
+            echo "JDKs, Spark, Hadoop). They are lost with the directory."
+        fi
+        if [ "$purge_ok" = 1 ]; then
+            echo "Warning: the isolated home cannot be recovered once deleted."
+        fi
+        printf "Type yes to remove all of the above: "
+        IFS= read -r -u 3 line || line=""
+        printf '%s\n' "$line"
+        if [ "$line" != yes ]; then
+            echo "Nothing was removed."
+            return 0
+        fi
+        for p in "${exps[@]}"; do
+            rm -f -- "$p" || {
+                echo "Could not remove $p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "export $p"
+            echo "Removed $p"
+        done
+        for p in "${lnch[@]}"; do
+            rm -f -- "$p" || {
+                echo "Could not remove $p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "launcher $p"
+            echo "Removed $p"
+        done
+        if [ "${#lnch[@]}" -gt 0 ]; then refresh_apps; fi
+        for p in "${apps_l[@]}"; do
+            rm -f -- "$p" || {
+                echo "Could not remove $p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "app $p"
+            echo "Removed $p"
+        done
+        if [ "${#apps_l[@]}" -gt 0 ]; then refresh_apps; fi
+        if [ -n "$conf_line" ]; then
+            kind=${conf_line#conf }
+            rest=${kind#* }
+            kind=${kind%% *}
+            if [ "$rest" = "$kind" ]; then rest=""; fi
+            conf_key_remove "$kind" "$rest" || {
+                echo "Could not edit $conf_file; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "$conf_line"
+            echo "Removed the container_name_default setting"
+        fi
+        restore_shadow
+        if [ "$have_box" = 1 ]; then
+            distrobox rm --force "$box" </dev/null || {
+                echo "Could not remove the container $box; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "box $box"
+            drop_state "box-no-brew-mount"
+            echo "Removed the container $box"
+        fi
+        for p in "${handover[@]}"; do
+            hand_over "$p"
+            drop_state "dir $p created"
+        done
+        for p in "${dirs[@]}"; do
+            rm -rf -- "$p" || {
+                echo "Could not remove $p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "dir $p created"
+            echo "Removed $p"
+        done
+        if [ "$purge_ok" = 1 ]; then
+            rm -rf -- "$home_p" || {
+                echo "Could not remove $home_p; stopped. Run again to finish."
+                return 1
+            }
+            drop_state "home $home_p $home_kind"
+            echo "Removed the isolated home $home_p"
+        fi
+        if [ -n "$home_p" ] && [ "$purge_ok" = 0 ] && [ "$home_kind" = created ]; then
+            echo "The isolated home was kept: $home_p"
+            echo "Delete it later with: ujust toolbox $box --remove --purge-home"
+            grep '^home ' "$state_file" >"$work/state.home" || true
+            cat "$work/state.home" >"$state_file"
+            echo "Removed everything else; $state_file keeps only the home record. Done."
+        else
+            if [ -n "$home_p" ] && [ "$purge_ok" = 0 ]; then echo "The isolated home was kept: $home_p"; fi
+            rm -f -- "$state_file"
+            echo "Removed $state_file. Done."
+        fi
+    }
+
+    # --ide: launchers that start an IDE inside the box
+    isel=()
+    ist=()
+    icur=-1
+
+    ide_draw() {
+        local i m p s
+        for i in "${!ide_ids[@]}"; do
+            ide_load "${ide_ids[i]}"
+            s=""
+            case "${ist[i]}" in
+                done)
+                    m='[-]'
+                    s="  (launcher exists)"
+                    ;;
+                none)
+                    m='[-]'
+                    s="  (not detected)"
+                    ;;
+                *) if [ "${isel[i]}" = 1 ]; then m='[x]'; else m='[ ]'; fi ;;
+            esac
+            if [ "$i" -eq "$icur" ]; then p='>'; else p=' '; fi
+            printf '\033[2K%s %s %s%s\n' "$p" "$m" "$iname" "$s"
+        done
+        printf '\033[2K  SPACE toggles, ENTER creates the ticked launchers, q skips\n'
+    }
+
+    ide_move() {
+        local d=$1 i=$icur n=${#ide_ids[@]}
+        while :; do
+            i=$(((i + d + n) % n))
+            if [ "${ist[i]}" = ready ]; then
+                icur=$i
+                return 0
+            fi
+            if [ "$i" -eq "$icur" ]; then return 0; fi
+        done
+    }
+
+    ide_checklist() {
+        local i key rest any=0
+        for i in "${!ide_ids[@]}"; do
+            isel[i]=0
+            if [ -e "$(ide_file "${ide_ids[i]}")" ]; then
+                ist[i]=done
+            elif ide_detect "${ide_ids[i]}"; then
+                ist[i]=ready
+                isel[i]=1
+                any=1
+                if [ "$icur" -lt 0 ]; then icur=$i; fi
+            else
+                ist[i]=none
+            fi
+        done
+        if [ "$any" = 0 ]; then
+            echo "No detected IDE still needs a launcher. 'ujust toolbox $box --ide --list' says why."
+            return 0
+        fi
+        echo "IDE launchers (they start the IDE inside $box)"
+        if [ -t 1 ]; then
+            printf '\033[?25l'
+            ide_draw
+        fi
+        while :; do
+            key=""
+            IFS= read -rsn1 -u 3 key || key=EOF
+            case "$key" in
+                EOF | q | Q)
+                    if [ -t 1 ]; then printf '\033[?25h'; fi
+                    echo "Skipped."
+                    return 0
+                    ;;
+                '') break ;;
+                ' ')
+                    if [ "${ist[icur]}" = ready ]; then isel[icur]=$((1 - isel[icur])); fi
+                    ;;
+                j | J) ide_move 1 ;;
+                k | K) ide_move -1 ;;
+                $'\x1b')
+                    rest=""
+                    IFS= read -rsn2 -t 0.05 -u 3 rest || true
+                    case "$rest" in
+                        '[A') ide_move -1 ;;
+                        '[B') ide_move 1 ;;
+                    esac
+                    ;;
+            esac
+            if [ -t 1 ]; then
+                printf '\033[%dA' $((${#ide_ids[@]} + 1))
+                ide_draw
+            fi
+        done
+        if [ -t 1 ]; then printf '\033[?25h'; fi
+        for i in "${!ide_ids[@]}"; do
+            if [ "${isel[i]}" = 1 ]; then want+=("${ide_ids[i]}"); fi
+        done
+    }
+
+    # Create one launcher. Never overwrites a file this recipe did not create.
+    make_launcher() { # file, name, command, icon, wm class, categories
+        local f=$1
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            if grep -qxF -- "launcher $f" "$state_file" 2>/dev/null; then
+                echo "   Already created $f"
+            else
+                echo "   Skipped $f: it exists and was not created by this recipe (not touched)."
+            fi
+            return 0
+        fi
+        ide_write "$f" "$2" "$3" "$4" "$5" "$6"
+        record "launcher $f"
+        echo "   Created $f"
+        echo "   It runs: distrobox enter -n $box -- $3 %F"
+    }
+
+    # Re-detect the icon of a launcher this recipe created and rewrite its Icon= line when it differs. Never touches others.
+    refresh_icon() { # file, ide id
+        local f=$1 cur
+        grep -qxF -- "launcher $f" "$state_file" 2>/dev/null || return 0
+        if ! ide_detect "$2" || [ -z "$idicon" ]; then return 0; fi
+        cur=$(sed -n 's/^Icon=//p' "$f" | head -1)
+        if [ "$cur" = "$idicon" ]; then return 0; fi
+        sed -i "s|^Icon=.*|Icon=${idicon//|/\\|}|" "$f"
+        echo "   Refreshed the icon: ${cur:-none} -> $idicon"
+    }
+
+    install_ide() {
+        local t=$1
+        ide_load "$t"
+        echo "== $iname"
+        if [ -e "$(ide_file "$t")" ]; then
+            make_launcher "$(ide_file "$t")" "$iname" "" "" "" ""
+            refresh_icon "$(ide_file "$t")" "$t"
+            return 0
+        fi
+        if ! ide_detect "$t"; then
+            echo "   $idmsg"
+            failed=1
+            return 0
+        fi
+        make_launcher "$(ide_file "$t")" "$iname" "$idcmd" "$idicon" "$iwm" "$icat"
+    }
+
+    install_custom() {
+        local name=${custom[0]} cmd=${custom[1]} icon=${custom[2]:-} id
+        id=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//')
+        echo "== $name"
+        if [ -z "$id" ]; then
+            echo "   The name needs letters or digits."
+            failed=1
+            return 0
+        fi
+        case "$cmd" in
+            "$HOME"/*) ;;
+            *)
+                echo "   The command must be an absolute path under your home (the box sees your home, not the host's /usr)."
+                failed=1
+                return 0
+                ;;
+        esac
+        case "$cmd$icon" in
+            *'"'* | *%* | *$'\n'*)
+                echo "   Quotes, percent signs and newlines are not allowed in the command or icon."
+                failed=1
+                return 0
+                ;;
+        esac
+        if [ ! -f "$cmd" ] || [ ! -x "$cmd" ]; then
+            echo "   $cmd is not an executable file."
+            failed=1
+            return 0
+        fi
+        if [ -n "$icon" ] && [ ! -f "$icon" ]; then
+            echo "   Icon $icon not found; using a generic icon."
+            icon=""
+        fi
+        make_launcher "$(ide_file "$id")" "$name" "$cmd" "$icon" "" "Development;"
+    }
+
+    ide_box_ready() {
+        local st
+        if ! box_exists; then
+            echo "The box $box does not exist. Create it first with: ujust toolbox $box (this option never creates it)."
+            return 1
+        fi
+        st=$(distrobox list 2>/dev/null | awk -F'|' -v b="$box" '{ n = $2; gsub(/ /, "", n); if (n == b) { s = $3; gsub(/^ +| +$/, "", s); print s } }')
+        case "$st" in
+            Up*) ;;
+            *)
+                echo "The box is not running (status: ${st:-unknown})."
+                if ask "[y] start it now, anything else leaves it stopped (distrobox enter starts it on first launch anyway): "; then
+                    podman start "$box" >/dev/null || {
+                        echo "Could not start $box."
+                        return 1
+                    }
+                fi
+                ;;
+        esac
+    }
+
+    do_ide() {
+        local t
+        ide_box_ready || return 1
+        resolve_all
+        if [ "${#custom[@]}" -gt 0 ]; then
+            install_custom
+        else
+            if [ "${#want[@]}" -eq 0 ]; then ide_checklist; fi
+            for t in "${want[@]}"; do install_ide "$t"; done
+        fi
+        refresh_apps
+        echo
+        echo "The launcher starts the IDE as a process of the container, so its terminals, run configurations and"
+        echo "language servers use the box's compilers, libraries and package managers. The GUI works through"
+        echo "distrobox's display and GPU passthrough. Downloads made inside the IDE (JDKs, plugins) land in your"
+        echo "shared home, and a recreated box needs no new launchers."
+        echo "To undo: ujust toolbox $box --ide --remove (only launchers listed in $state_file are deleted)."
+    }
+
+    ide_remove() {
+        local p t ok f files=()
+        while IFS= read -r p; do
+            case "$p" in
+                "$app_dir/$box"-*.desktop) ;;
+                *) continue ;;
+            esac
+            if [ "${#want[@]}" -gt 0 ]; then
+                ok=0
+                for t in "${want[@]}"; do
+                    if [ "$p" = "$(ide_file "$t")" ]; then ok=1; fi
+                done
+                [ "$ok" = 1 ] || continue
+            fi
+            files+=("$p")
+        done < <(sed -n 's/^launcher //p' "$state_file" 2>/dev/null)
+        if [ "${#files[@]}" -eq 0 ]; then
+            echo "No launchers recorded by this recipe; nothing to remove."
+            return 0
+        fi
+        echo "This would delete (only files this recipe created):"
+        for f in "${files[@]}"; do echo "  $f"; done
+        if [ "$dry" = 1 ]; then
+            echo "Dry run: nothing was removed."
+            return 0
+        fi
+        if ! ask "[y] delete them, anything else keeps them: "; then
+            echo "Nothing was removed."
+            return 0
+        fi
+        for f in "${files[@]}"; do
+            rm -f -- "$f"
+            drop_state "launcher $f"
+            echo "Removed $f"
+        done
+        refresh_apps
+    }
+
+    if [ "$legacy" = 1 ] && [ "$remove" != 1 ]; then
+        echo "The old toolbox 'dev' (state file $state_file) is now called dev-toolbox. Only" >&2
+        echo "'ujust toolbox dev --remove' works on the old one; create the new one with: ujust toolbox dev-toolbox" >&2
+        exit 2
+    fi
+
+    if [ "$ide" = 1 ]; then
+        if [ "$remove" = 1 ]; then ide_remove || failed=1; else do_ide || failed=1; fi
+        exit "$failed"
+    fi
+
+    if [ "$remove" = 1 ]; then
+        do_remove || failed=1
+        exit "$failed"
+    fi
+
+    # --upgrade: compare the base image the box was built from with the latest one; replace the box if newer
+    img_ver() { # image id: VERSION_ID from /etc/os-release inside it, or unknown
+        local v
+        v=$(podman run --rm --entrypoint cat "$1" /etc/os-release 2>/dev/null | sed -n 's/^VERSION_ID=//p' | tr -d "\"'" | head -1 || true)
+        echo "${v:-unknown}"
+    }
+
+    do_upgrade() {
+        local image cur_id new_id cur_dig new_dig cur_ver new_ver line
+        local o='{' c='}'
+        local f_id="$o$o.Id$c$c" f_dig="$o$o.Digest$c$c" f_img="$o$o.Image$c$c"
+        if ! box_exists; then
+            echo "The box $box does not exist; create it first with: ujust toolbox $box"
+            return 1
+        fi
+        command -v podman >/dev/null 2>&1 || {
+            echo "podman is not installed."
+            return 1
+        }
+        image=$(def_image)
+        if [ -z "$image" ]; then
+            echo "No image= line in $def_file (and TOOLBOX_IMAGE is not set)."
+            return 1
+        fi
+        echo "Toolbox image: $image"
+        echo "Pulling it (a normal image pull) to see whether it changed"
+        podman pull -q "$image" >/dev/null || {
+            echo "Could not pull $image."
+            return 1
+        }
+        new_id=$(podman image inspect --format "$f_id" "$image")
+        cur_id=$(podman inspect --type container --format "$f_img" "$box")
+        cur_dig=$(podman image inspect --format "$f_dig" "$cur_id" 2>/dev/null || echo unknown)
+        new_dig=$(podman image inspect --format "$f_dig" "$new_id" 2>/dev/null || echo unknown)
+        cur_ver=$(img_ver "$cur_id")
+        new_ver=$(img_ver "$new_id")
+        echo "Box $box was created from:  $cur_id"
+        echo "  digest $cur_dig, Fedora $cur_ver"
+        echo "Latest $image:  $new_id"
+        echo "  digest $new_dig, Fedora $new_ver"
+        if [ "$cur_id" = "$new_id" ]; then
+            echo "The box is already on the latest image."
+            return 0
+        fi
+        if [ "$check_only" = 1 ]; then
+            echo "A newer image is available. Check only: nothing was changed."
+            return 0
+        fi
+        if [ "$cur_ver" != "$new_ver" ] && [ "$cur_ver" != unknown ] && [ "$new_ver" != unknown ]; then
+            echo "Warning: the Fedora release changes from $cur_ver to $new_ver. Tools you built or installed in your"
+            echo "home (~/.cargo, SDKMAN, Python environments with compiled extensions) may need a rebuild."
+        fi
+        echo
+        echo "Upgrading replaces the container: your home is shared, so your files, ~/.cargo, ~/.rustup,"
+        echo "~/.sdkman, ~/.nvm and caches survive; the box is recreated from the image and the"
+        echo "container's own filesystem is lost. Exports listed in the state file are made again."
+        printf "Type yes to replace the box: "
+        IFS= read -r -u 3 line || line=""
+        printf '%s\n' "$line"
+        if [ "$line" != yes ]; then
+            echo "Nothing was changed."
+            exit 0
+        fi
+        recreate=1
+        assume=1
+        no_checklist=1
+        return 0
+    }
+
+    if [ "$setdef" = 1 ]; then
+        step_default
+        exit "$failed"
+    fi
+
+    if [ "$upgrade" = 1 ]; then
+        do_upgrade || exit 1
+        if [ "$recreate" = 0 ]; then exit 0; fi
+    fi
+
+    if [ "${#tool_ids[@]}" -gt 0 ]; then
+        echo "Installers in the box are vendor scripts (SDKMAN, nvm). Each one is downloaded to a file, hashed and shown to you before it runs."
+    fi
+    step_box || {
+        undo_note
+        old_dev_note
+        exit "$failed"
+    }
+    step_default
+    resolve_all
+    if [ "${#tool_ids[@]}" -gt 0 ] && [ "${#want[@]}" -eq 0 ] && [ "$no_checklist" = 0 ]; then checklist; fi
+    for t in "${want[@]}"; do
+        install_one "$t"
+    done
+    echo "== Exports to $export_dir"
+    resolve_all
+    for t in "${tool_ids[@]}" "${group_ids[@]}"; do
+        if [ "$(state "$t")" = installed ]; then do_exports "$t"; fi
+    done
+    do_apps
+    undo_note
+    old_dev_note
+    exit "$failed"

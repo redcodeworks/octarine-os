@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>MoonDeckBuddy</short>
+  <description>MoonDeckBuddy is a companion service integrating SteamDeck's MoonDeck plugin with Sunshine/Moonlight.</description>
+  <port port="59999" protocol="tcp"/>
+</service>

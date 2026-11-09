@@ -1,0 +1,628 @@
+---
+name: Build container image
+# Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
+# through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
+# path filter) so the required "Build and push image" check always exists for the commit being promoted:
+# the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
+# aggregate job named "Build and push image" then passes without it.
+on:
+  pull_request:
+    branches:
+      - testing
+  schedule:
+    - cron: '05 10 * * *'  # 10:05am UTC everyday (runs on the default branch, so it refreshes latest)
+  push:
+    branches:
+      - main
+      - testing
+  workflow_dispatch:
+
+env:
+  IMAGE_REGISTRY: "ghcr.io/${{ github.repository_owner }}"  # do not edit
+  # The base image is ${BASE_IMAGE}:${FEDORA_VERSION}. A repository variable of the same name overrides the default
+  # (set with `gh variable set FEDORA_VERSION --body 46`, undo with `gh variable delete FEDORA_VERSION`); the
+  # defaults repeat the Containerfile ARG defaults, keep them in sync. The build logs the resolved base and its
+  # digest and records them as OCI labels.
+  BASE_IMAGE: ${{ vars.BASE_IMAGE || 'ghcr.io/ublue-os/silverblue-main' }}
+  FEDORA_VERSION: ${{ vars.FEDORA_VERSION || '45' }}
+  # A scheduled run skips the build while the base image, the repository content and `latest` are all unchanged, but
+  # never when `latest` is older than this many days: the build installs RPMs from live Fedora and RPM Fusion
+  # repositories, so package updates arrive without a base image change (7 = a week of staleness at most)
+  SCHEDULED_REBUILD_MAX_AGE_DAYS: '7'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A newer push to any branch but main cancels the older build; main (publishes or promotes the tested
+  # image) and the scheduled refresh of latest are never cancelled mid-way.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
+
+jobs:
+  plan:
+    name: Plan build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.final.outputs.build }}
+      promote: ${{ steps.final.outputs.promote }}
+      source_tag: ${{ steps.promote.outputs.source_tag }}
+      source_digest: ${{ steps.promote.outputs.source_digest }}
+      image: ${{ steps.names.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether the image needs building
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          echo "Build image: ${build}"
+
+      - name: Image name
+        id: names
+        run: |
+          IMAGE_NAME=$(sed -n 's/^IMAGE_NAME=//p' image-template.env | head -n1 | tr -d '"')
+          [[ -n "${IMAGE_NAME}" ]] || { echo "::error::IMAGE_NAME not found in image-template.env"; exit 1; }
+          registry="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          echo "image=${registry,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
+
+      # Scheduled refresh: skip the build when nothing changed since the published `latest` (decision rules and
+      # failure modes in .github/scripts/plan-skip.sh; any lookup that fails means build, never skip)
+      - name: Install Cosign (scheduled skip check)
+        if: github.event_name == 'schedule'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Scheduled run, skip when nothing changed
+        id: sched
+        if: github.event_name == 'schedule'
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+        run: |
+          set +e
+          label() { jq -r --arg k "$1" '.config.Labels[$k] // empty' <<<"${cfg}"; }
+          base_now=$(skopeo inspect --raw "docker://${BASE_IMAGE}:${FEDORA_VERSION}" | sha256sum | sed 's/ .*//; s/^/sha256:/')
+          [[ "${base_now}" == sha256:???*  && "${base_now}" != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] || base_now=""
+          cfg=$(skopeo inspect --config "docker://${IMAGE}:latest" 2>/dev/null)
+          latest_base=$(label io.github.redcodeworks.octarine-os.base-index-digest)
+          revision=$(label org.opencontainers.image.revision)
+          created=$(label org.opencontainers.image.created)
+          repo_same=false
+          if [[ -n "${revision}" ]] && git cat-file -e "${revision}^{commit}" 2>/dev/null \
+              && [[ "$(git rev-parse "${revision}^{tree}")" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            repo_same=true
+          fi
+          signed=false
+          digest=$(skopeo inspect --raw "docker://${IMAGE}:latest" 2>/dev/null | sha256sum | sed 's/ .*//')
+          if [[ -n "${cfg}" && -n "${digest}" ]] && cosign verify --key cosign.pub "${IMAGE}@sha256:${digest}" > /dev/null 2>&1; then
+            signed=true
+          fi
+          decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
+            REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
+            .github/scripts/plan-skip.sh)
+          echo "${decision}"
+          echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
+
+      # Build once, promote: a merge into main whose content equals an already published and signed
+      # `testing` image retags that digest to `latest` instead of rebuilding (see CLAUDE.md "Promotion")
+      - name: Look for a tested testing image to promote
+        id: promote
+        if: steps.plan.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          PROMOTE_ENABLED: ${{ vars.PROMOTE_ENABLED }}
+          IMAGE: ${{ steps.names.outputs.image }}
+          REGISTRY_LOOKUP: ${{ github.workspace }}/.github/scripts/registry-digest.sh
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          AFTER: ${{ github.sha }}
+        run: |
+          .github/scripts/plan-promote.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Install Cosign
+        if: steps.promote.outputs.promote == 'true'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      # The signature belongs to the digest and exists from the testing publish; without a valid one the
+      # normal build and sign runs instead
+      - name: Verify the signature of the image to promote
+        id: verify
+        if: steps.promote.outputs.promote == 'true'
+        continue-on-error: true
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          DIGEST: ${{ steps.promote.outputs.source_digest }}
+        run: |
+          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          echo "signature of ${DIGEST} is valid"
+
+      - name: Final decision
+        id: final
+        env:
+          BUILD_PLAN: ${{ steps.plan.outputs.build }}
+          SCHED_SKIP: ${{ steps.sched.outputs.skip }}
+          CANDIDATE: ${{ steps.promote.outputs.promote }}
+          VERIFY: ${{ steps.verify.outcome }}
+        run: |
+          if [[ "${CANDIDATE}" == true && "${VERIFY}" == success ]]; then
+            build=false; promote=true
+          else
+            build="${BUILD_PLAN}"; promote=false
+            [[ "${SCHED_SKIP}" != true ]] || build=false
+            [[ "${CANDIDATE}" != true ]] || echo "::warning::Signature verification of the testing image failed: building instead of promoting"
+          fi
+          echo "build=${build}" >> "${GITHUB_OUTPUT}"
+          echo "promote=${promote}" >> "${GITHUB_OUTPUT}"
+          echo "build=${build} promote=${promote}"
+
+  build_push:
+    name: Build image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-26.04
+
+    outputs:
+      publish: ${{ steps.channel.outputs.publish }}
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push-image.outputs.digests }}
+      alias_tags: ${{ steps.gen-build-tags.outputs.alias_tags }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # These stage versions are pinned by https://github.com/renovatebot/renovate
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # main publishes `latest`, testing publishes `testing`; pull request builds publish nothing
+      - name: Choose channel
+        id: channel
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          publish=false
+          tag=testing
+          if [[ "${EVENT}" != "pull_request" ]]; then
+            case "${REF}" in
+              refs/heads/main) publish=true; tag=latest ;;
+              refs/heads/testing) publish=true ;;
+            esac
+          fi
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "Channel: tag=${tag} publish=${publish}"
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
+
+      - name: Check Just Syntax
+        shell: bash
+        run: |
+          just check
+
+      - name: Image Name
+        id: image-name
+        run: |
+          IMAGE_NAME=$(just image_name)
+
+          echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+
+      - name: Default Tag
+        id: gen-default-tag
+        env:
+          TAG: ${{ steps.channel.outputs.tag }}
+        run: |
+          echo "DEFAULT_TAG=${TAG}" >> $GITHUB_ENV
+
+      - name: Prepare environment
+        id: names
+        run: |
+          # Lowercase the image uri https://github.com/macbre/push-to-ghcr/issues/12
+          echo "IMAGE_REGISTRY=${IMAGE_REGISTRY,,}" >> ${GITHUB_ENV}
+          echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
+          echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
+
+      # The Homebrew files image is pinned to a dated tag; resolve it to a digest, check its signature against the
+      # vendored ublue-os/brew public key before anything is built from it
+      - name: Install Cosign (brew image check)
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Resolve and verify the brew image
+        run: |
+          tag=$(sed -n 's/^ARG BREW_TAG=//p' Containerfile)
+          [[ "${tag}" =~ ^[0-9]{8}$ ]] || { echo "::error::BREW_TAG missing or not a YYYYMMDD tag in the Containerfile"; exit 1; }
+          image="ghcr.io/ublue-os/brew:${tag}"
+          digest=$(skopeo inspect --raw "docker://${image}" | sha256sum | sed 's/ .*//')
+          [[ -n "${digest}" ]] || { echo "::error::Cannot resolve ${image}"; exit 1; }
+          pinned="${image%:*}@sha256:${digest}"
+          cosign verify --key keys/ublue-os-brew-cosign.pub "${pinned}" > /dev/null
+          echo "Brew image ${image} resolved to ${pinned}; signature valid"
+          echo "BREW_IMAGE=${pinned}" >> "${GITHUB_ENV}"
+
+      # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
+      - name: Check the base image can be pulled
+        run: |
+          [[ -n "${BASE_IMAGE}" && "${FEDORA_VERSION}" =~ ^[0-9]+$ ]] || { echo "::error::BASE_IMAGE or FEDORA_VERSION missing or invalid (repository variable or workflow default)"; exit 1; }
+          base="${BASE_IMAGE}:${FEDORA_VERSION}"
+          echo "BASE_REF=${base}" >> "${GITHUB_ENV}"
+          if ! podman pull "${base}" >/dev/null; then
+            echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
+            exit 1
+          fi
+          podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
+          digest=$(podman image inspect "${base}" --format '{{.Digest}}')
+          [[ "${digest}" == sha256:* ]] || { echo "::error::Cannot determine the digest of ${base}"; exit 1; }
+          echo "Base image ${base} resolved to ${BASE_IMAGE}@${digest}"
+          echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
+          # digest of the manifest list, the same value the scheduled skip check computes without pulling
+          index=$(skopeo inspect --raw "docker://${base}" | sha256sum | sed 's/ .*//')
+          [[ -n "${index}" ]] || { echo "::error::Cannot determine the manifest digest of ${base}"; exit 1; }
+          echo "BASE_INDEX_DIGEST=sha256:${index}" >> "${GITHUB_ENV}"
+
+      # This actually builds the container image
+      - name: Build Image
+        id: build-image
+        run: |
+          just build \
+            ${IMAGE_NAME} \
+            ${DEFAULT_TAG}
+
+      # Catch accidental bloat (for example a disk image copied into the build) before anything is pushed
+      - name: Check image size
+        env:
+          MAX_IMAGE_GIB: 15
+        run: |
+          size=$(podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"
+          if (( size > MAX_IMAGE_GIB * 1024 * 1024 * 1024 )); then
+            echo "::error::The image is larger than ${MAX_IMAGE_GIB} GiB; check what was added"
+            exit 1
+          fi
+
+      # Fail the build before anything is pushed if the image is missing what it should have
+      - name: Smoke test image
+        run: |
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+            fail=0
+            check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+
+            echo "== os-release (the Fedora release the base tag resolved to)"
+            cat /etc/os-release
+            echo "== enabled system units"
+            systemctl list-unit-files --state=enabled --no-legend --no-pager || true
+            echo "== enabled user units (global)"
+            systemctl --global list-unit-files --state=enabled --no-legend --no-pager || true
+            echo "== checks"
+
+            check "enabled flatpak-preinstall.service" "systemctl is-enabled flatpak-preinstall.service"
+            # pcp is an optional package: its units are enabled only when it is installed
+            check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
+            check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
+            check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
+            check "brew-upgrade.timer stays disabled" "! systemctl is-enabled brew-upgrade.timer"
+            check "brew tarball present" "test -s /usr/share/homebrew.tar.zst"
+            check "brew profile script present" "test -f /etc/profile.d/brew.sh"
+            check "our brew preset present" "grep -qx \"disable brew-upgrade.timer\" /usr/lib/systemd/system-preset/00-octarine-brew.preset"
+            check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
+
+            # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
+            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh"
+            for p in $CRITICAL; do
+              check "package $p" "rpm -q $p"
+              # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
+              check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
+            done
+            # OPTIONAL packages: informational only, never fail (the missing list is reported below)
+            for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
+                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock \
+                     nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
+                     cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
+                     pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
+                     restic rclone guestfs-tools libguestfs \
+                     libguestfs-xfs virt-v2v; do
+              if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
+            done
+            check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
+            check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
+            check "new users default to zsh" "grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
+            check "zsh login files source /etc/profile (brew.sh relies on it)" "grep -q /etc/profile /etc/zprofile"
+            check "skel zshrc" "test -s /etc/skel/.zshrc"
+            check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
+            check "sudo PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/sudo"
+            check "polkit PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/polkit-1"
+            check "pam_u2f module present" "test -e /usr/lib64/security/pam_u2f.so"
+            check "firefox removed" "! rpm -q firefox"
+            check "toolbox removed" "! rpm -q toolbox"
+            check "distrobox present" "rpm -q distrobox"
+            check "gnome-software removed" "! rpm -q gnome-software"
+            for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
+            check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
+            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"octarineOS\\\"\" /etc/os-release"
+
+            check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
+            check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
+            check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
+            check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
+            check "sudoers valid" "visudo -c"
+            check "sudo timestamp_timeout is 30 (minutes, not seconds)" "grep -qx \"Defaults timestamp_timeout=30\" /etc/sudoers.d/10-timestamp-timeout"
+            check "sudoers fragment valid" "visudo -c -f /etc/sudoers.d/10-timestamp-timeout"
+            check "firewalld config valid" "firewall-offline-cmd --check-config"
+            check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
+            check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
+            check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
+            check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
+            check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
+            check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
+            check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
+            check "logo files" "test -s /usr/share/octarine-os/logo/octarine-logo.png && test -s /usr/share/octarine-os/logo/octarine-logo-neutral-512.png"
+            check "GDM logo override file" "grep -qF octarine-logo.png /usr/share/glib-2.0/schemas/zz-octarine-login-screen.gschema.override"
+            check "GDM logo override compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo | grep -qF octarine-logo.png"
+            check "plymouth theme file" "grep -qx ModuleName=two-step /usr/share/plymouth/themes/octarine/octarine.plymouth"
+            check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/watermark.png /usr/share/octarine-os/logo/octarine-logo.png"
+            check "plymouth theme selected" "grep -qx Theme=octarine /etc/plymouth/plymouthd.conf"
+            check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
+            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            exit $fail
+          '
+
+      # Optional packages that could not be installed (build.sh writes the list): a warning each, never a failure
+      - name: Report missing optional packages
+        run: |
+          missing=$(podman run --rm "${IMAGE_NAME}:${DEFAULT_TAG}" cat /usr/share/octarine-os/optional-packages-missing)
+          {
+            echo "### Optional packages"
+            if [[ -z "${missing}" ]]; then
+              echo "All optional packages are installed."
+            else
+              echo "These optional packages could not be installed (the build went on without them):"
+              echo
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"
+          while IFS= read -r name; do
+            [[ -n "${name}" ]] || continue
+            echo "::warning title=Optional package missing::${name}"
+            echo "- \`${name}\`" >> "${GITHUB_STEP_SUMMARY}"
+          done <<< "${missing}"
+
+      # This is optional, this provides smaller delta updates
+      - name: Rechunk with rpm-ostree
+        id: rechunk
+        run: |
+          just ostree-rechunk \
+            ${IMAGE_NAME} \
+            ${DEFAULT_TAG}
+
+      # If you are feeling adventurous, use the new distro agnostic rechunker
+      # https://github.com/coreos/chunkah
+      # You can delete the Rechunk with rpm-ostree portion then if you use this
+      #- name: Rechunk with Chunkah
+      #  id: rechunk
+      #  run: |
+      #    just rechunk \
+      #      ${IMAGE_NAME} \
+      #      ${DEFAULT_TAG}
+
+      # A promoted image keeps its build's version, so no version may name a channel
+      - name: Check the version is channel-neutral
+        run: |
+          podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
+            | .github/scripts/check-version-neutral.sh
+
+      - name: Generate Build Tags
+        id: gen-build-tags
+        run: |
+          alias_tags="$(just generate-build-tags \
+                        ${IMAGE_NAME} \
+                        ${DEFAULT_TAG})"
+
+          echo "Tags for this Action..."
+          echo "${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> $GITHUB_OUTPUT
+
+      - name: Tag Image
+        id: tag-images
+        env:
+          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
+        run: |
+          just tag-images \
+            "${IMAGE_NAME}" \
+            "${DEFAULT_TAG}" \
+            "${ALIAS_TAGS}"
+
+      # These `if` statements are so that pull requests for your custom images do not make it publish any packages under your name without you knowing
+      # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        if: steps.channel.outputs.publish == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push To GHCR
+        if: steps.channel.outputs.publish == 'true'
+        id: push-image
+        env:
+          ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          : > /tmp/digests
+          for tag in ${ALIAS_TAGS}; do
+            podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
+            cat /tmp/digestfile >> /tmp/digests
+            echo >> /tmp/digests
+          done
+
+          # The tags do not all end up with the same manifest digest (the first one pushed
+          # differs), so keep every distinct digest and sign each of them
+          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
+
+          echo "digests=${digests}" >> $GITHUB_OUTPUT
+
+  # Build once, promote: retag the tested and signed `testing` digest as latest and its dated aliases, no
+  # rebuild. The digest is compared before and after every copy.
+  promote:
+    name: Promote tested image
+    needs: plan
+    if: needs.plan.outputs.promote == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ needs.plan.outputs.image }}
+      digests: ${{ needs.plan.outputs.source_digest }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate the tags a main build would publish
+        id: tags
+        run: |
+          alias_tags="$(just generate-build-tags x latest)"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retag the tested digest
+        env:
+          IMAGE: ${{ needs.plan.outputs.image }}
+          SOURCE_TAG: ${{ needs.plan.outputs.source_tag }}
+          SOURCE_DIGEST: ${{ needs.plan.outputs.source_digest }}
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          lookup=.github/scripts/registry-digest.sh
+          now=$("${lookup}" "${SOURCE_TAG}")
+          [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
+          for tag in ${ALIAS_TAGS}; do
+            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            after=$("${lookup}" "${tag}")
+            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
+            echo "promoted ${tag} -> ${after}"
+          done
+
+  # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
+  # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
+  # or was cancelled.
+  build_result:
+    name: Build and push image
+    needs: [plan, build_push, promote, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the build result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD_WANTED: ${{ needs.plan.outputs.build }}
+          PROMOTE_WANTED: ${{ needs.plan.outputs.promote }}
+          PUBLISH: ${{ needs.build_push.outputs.publish }}
+          BUILD: ${{ needs.build_push.result }}
+          PROMOTE: ${{ needs.promote.result }}
+          SIGN: ${{ needs.sign.result }}
+        run: .github/scripts/aggregate-result.sh
+
+  sign:
+    name: Sign and verify images
+    needs: [build_push, promote]
+    if: >-
+      always() && (
+      (needs.build_push.result == 'success' && needs.build_push.outputs.publish == 'true') ||
+      needs.promote.result == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          # be careful when upgrading major versions
+          cosign-release: 'v3.1.4'
+
+      # Promote path: the digest was signed when `testing` was published; check it before and after
+      # the retag (the promote job copies the tags in between) and never sign anything here
+      - name: Verify the digest that was promoted is signed
+        if: needs.promote.result == 'success'
+        env:
+          IMAGE: ${{ needs.promote.outputs.image }}
+          DIGESTS: ${{ needs.promote.outputs.digests }}
+        run: |
+          set -euo pipefail
+          for digest in ${DIGESTS}; do
+            cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            echo "signed: ${digest}"
+          done
+
+      - name: Sign every pushed digest
+        if: needs.build_push.result == 'success'
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.build_push.outputs.image }}
+          DIGESTS: ${{ needs.build_push.outputs.digests }}
+        run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+          # https://github.com/containers/container-libs/issues/388
+          # https://github.com/coreos/rpm-ostree/issues/5509
+          # use old bundle format, so we can use newer cosign 3.X.X instead of 2.X.X
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+          done
+
+      - name: Verify every pushed tag is signed
+        env:
+          IMAGE: ${{ needs.build_push.outputs.image || needs.promote.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build_push.outputs.alias_tags || needs.promote.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done

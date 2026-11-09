@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>Sunshine</short>
+  <description>Sunshine is a self-hosted game stream host for Moonlight.</description>
+  <port port="47984-47990" protocol="tcp"/>
+  <port port="48010" protocol="tcp"/>
+  <port port="47998-48000" protocol="udp"/>
+</service>

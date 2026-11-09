@@ -1,0 +1,14 @@
+[Flatpak Preinstall org.virt_manager.virt-manager]
+Branch=stable
+
+[Flatpak Preinstall com.borgbase.Vorta]
+Branch=stable
+
+[Flatpak Preinstall com.github.tchx84.Flatseal]
+Branch=stable
+
+[Flatpak Preinstall com.mattjakeman.ExtensionManager]
+Branch=stable
+
+[Flatpak Preinstall io.github.kolunmi.Bazaar]
+Branch=stable

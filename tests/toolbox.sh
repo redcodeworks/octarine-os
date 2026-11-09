@@ -1,0 +1,1301 @@
+#!/usr/bin/env bash
+# Tests for `ujust toolbox <name>` (system_files/usr/share/ublue-os/just/60-custom.just).
+# No network and nothing real is installed or created: curl, distrobox and distrobox-export are fakes,
+# keystrokes come from a file through UPM_TTY, and everything runs in a temp dir with its own HOME.
+# Needs: bash, just, setpriv (util-linux). Run: tests/toolbox.sh
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+justfile="$here/../system_files/usr/share/ublue-os/just/60-custom.just"
+shipped_dir="$here/../system_files/usr/share/ublue-os/distrobox"
+shipped_def="$shipped_dir/dev-toolbox.ini"
+shipped_conf="$shipped_dir/dev-toolbox.conf"
+gaming_def="$shipped_dir/gaming.ini"
+gaming_conf="$shipped_dir/gaming.conf"
+root=$(mktemp -d)
+trap 'rm -rf -- "$root"' EXIT
+pass=0
+failn=0
+
+ok() {
+    pass=$((pass + 1))
+    echo "ok   $1"
+}
+bad() {
+    failn=$((failn + 1))
+    echo "FAIL $1"
+    echo "---- output ----"
+    sed 's/^/     /' "$root/out" 2>/dev/null
+    echo "----------------"
+}
+check() { # description, command...
+    local d=$1
+    shift
+    if "$@"; then ok "$d"; else bad "$d"; fi
+}
+has() { grep -qF -- "$1" "$root/out"; }
+hasnt() { ! grep -qF -- "$1" "$root/out"; }
+logged() { grep -qF -- "$1" "$LOG" 2>/dev/null; }
+notlogged() { ! grep -qF -- "$1" "$LOG" 2>/dev/null; }
+instate() { grep -qxF -- "$1" "$state" 2>/dev/null; }
+boxes() { cat "$FAKE_STATE/boxes" 2>/dev/null; }
+
+# ---- fakes -----------------------------------------------------------------
+tpl="$root/tpl"
+mkdir -p "$tpl" "$root/fakebin"
+
+# host side: curl
+cat >"$root/fakebin/curl" <<'EOF'
+#!/bin/bash
+out=""
+url=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) out=$2; shift 2 ;;
+        --proto) shift 2 ;;
+        -*) shift ;;
+        *) url=$1; shift ;;
+    esac
+done
+echo "curl url=$url" >>"$LOG"
+case "$url" in
+    https://*) ;;
+    *) exit 1 ;;
+esac
+case "$url" in
+    *sdkman*) id=sdkman ;;
+    *nvm*) id=nvm ;;
+    *) exit 1 ;;
+esac
+case " ${FAKE_CURL_FAIL:-} " in *" $id "*) exit 22 ;; esac
+cat >"$out" <<EOS
+#!/bin/bash
+echo "installer $id args=\$* nonint=\${NONINTERACTIVE:-} path0=\${PATH%%:*}" >>"$LOG"
+if [ -n "\${FAKE_SUDO:-}" ]; then sudo true || exit 1; fi
+mk() { mkdir -p "\$(dirname "\$1")"; echo x >"\$1"; chmod +x "\$1"; }
+case "$id" in
+    sdkman) mk "\$HOME/.sdkman/bin/sdkman-init.sh" ;;
+    nvm) mk "\$HOME/.nvm/nvm.sh" ;;
+esac
+EOS
+EOF
+
+# host side: distrobox (state in $FAKE_STATE)
+cat >"$root/fakebin/distrobox" <<'EOF'
+#!/bin/bash
+case "$1" in
+    list)
+        echo 'ID | NAME | STATUS | IMAGE'
+        while read -r b; do [ -n "$b" ] && echo "abc123 | $b | ${FAKE_BOX_STATUS:-Up 2 hours} | fedora"; done <"$FAKE_STATE/boxes" 2>/dev/null
+        exit 0
+        ;;
+    assemble)
+        shift
+        [ "$1" = create ] && shift
+        [ "$1" = --file ] && f=$2
+        echo "assemble $f" >>"$LOG"
+        [ -n "${FAKE_ASSEMBLE_FAIL:-}" ] && exit 1
+        cp -- "$f" "$FAKE_STATE/assembled.ini"
+        sed -n 's/^\[\(.*\)\]$/\1/p' "$f" >>"$FAKE_STATE/boxes"
+        ;;
+    rm)
+        shift
+        echo "rm $*" >>"$LOG"
+        [ -n "${FAKE_RM_FAIL:-}" ] && exit 1
+        for last; do :; done
+        grep -vx -- "$last" "$FAKE_STATE/boxes" >"$FAKE_STATE/boxes.new" || true
+        mv -- "$FAKE_STATE/boxes.new" "$FAKE_STATE/boxes"
+        ;;
+    enter)
+        export CONTAINER_ID=$2
+        shift 2
+        [ "$1" = -- ] && shift
+        export PATH="$FAKE_BOXBIN"
+        exec "$@"
+        ;;
+esac
+EOF
+
+cat >"$root/fakebin/podman" <<'EOF'
+#!/bin/bash
+# image ids live in $FAKE_STATE/cur_id (what the box was built from) and new_id (what a pull gives)
+case "$1" in
+    pull)
+        echo "podman pull $*" >>"$LOG"
+        cat "$FAKE_STATE/new_id"
+        ;;
+    inspect) cat "$FAKE_STATE/cur_id" ;;
+    start)
+        shift
+        echo "podman start $*" >>"$LOG"
+        ;;
+    image)
+        for last; do :; done
+        case "$*" in
+            *.Id*) cat "$FAKE_STATE/new_id" ;;
+            *.Digest*) echo "sha256:digest-$last" ;;
+        esac
+        ;;
+    run)
+        shift
+        shift # --rm
+        ep=""
+        if [ "$1" = --entrypoint ]; then ep=$2; shift 2; fi
+        id=$1
+        shift
+        if [ "$ep" = cat ]; then
+            echo "VERSION_ID=$(cat "$FAKE_STATE/ver-$id")"
+        fi
+        ;;
+esac
+EOF
+chmod +x "$root/fakebin/podman"
+sed -i 's/^    enter)$/    upgrade)\n        echo "upgrade $*" >>"$LOG"\n        ;;\n    enter)/' "$root/fakebin/distrobox"
+
+# box side tools, copied into each environment's boxbin
+cat >"$tpl/distrobox-export" <<'EOF'
+#!/bin/bash
+bin=""
+dir=""
+app=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --app) app=$2; shift 2 ;;
+        --bin) bin=$2; shift 2 ;;
+        --export-path) dir=$2; shift 2 ;;
+        *) shift ;;
+    esac
+done
+if [ -n "$app" ]; then
+    echo "export app=$app" >>"$LOG"
+    [ -n "${FAKE_APP_FAIL:-}" ] && exit 1
+    mkdir -p "$HOME/.local/share/applications"
+    printf '[Desktop Entry]\nName=%s\n' "$app" >"$HOME/.local/share/applications/${CONTAINER_ID:-box}-$app.desktop"
+    exit 0
+fi
+echo "export bin=$bin" >>"$LOG"
+printf '#!/bin/sh\n# exported %s\n' "$bin" >"$dir/$(basename "$bin")"
+chmod +x "$dir/$(basename "$bin")"
+EOF
+# Fedora's rustup package ships only rustup-init: the proxies in ~/.cargo/bin exist after it has run
+cat >"$tpl/rustup-init" <<'EOF'
+#!/bin/bash
+echo "rustup-init $*" >>"$LOG"
+if [ -n "${FAKE_SUDO:-}" ]; then sudo true || exit 1; fi
+if [ "$*" = "-y --no-modify-path --default-toolchain stable" ]; then
+    mkdir -p "$HOME/.rustup/toolchains/stable-x86_64" "$HOME/.cargo/bin"
+    for t in rustup cargo rustc; do echo x >"$HOME/.cargo/bin/$t"; chmod +x "$HOME/.cargo/bin/$t"; done
+else
+    exit 2
+fi
+EOF
+for t in gcc make uv uvx lsscsi; do printf '#!/bin/sh\necho %s\n' "$t" >"$tpl/$t"; done
+chmod +x "$root/fakebin"/* "$tpl"/*
+
+command -v just >/dev/null || {
+    echo "just is required"
+    exit 2
+}
+command -v setpriv >/dev/null || {
+    echo "setpriv is required"
+    exit 2
+}
+
+n=0
+ORIG_PATH=$PATH
+newenv() { # fresh HOME, temp dir, fake box tools and log
+    n=$((n + 1))
+    E="$root/e$n"
+    mkdir -p "$E/home/.local/bin" "$E/tmp" "$E/run" "$E/boxbin" "$E/fake"
+    local t
+    for t in bash sh setpriv mkdir dirname basename chmod cat env; do ln -s "$(command -v "$t")" "$E/boxbin/$t"; done
+    cp "$tpl"/* "$E/boxbin/"
+    export HOME="$E/home" TMPDIR="$E/tmp" XDG_RUNTIME_DIR="$E/run"
+    export UPM_BREW_DIR="$E/linuxbrew" UPM_BREW_PREFIX="$E/linuxbrew/.linuxbrew"
+    export LOG="$E/log" FAKE_STATE="$E/fake" FAKE_BOXBIN="$E/boxbin"
+    : >"$LOG"
+    unset FAKE_SUDO FAKE_CURL_FAIL FAKE_ASSEMBLE_FAIL FAKE_RM_FAIL FAKE_BOX_STATUS TOOLBOX_IMAGE TOOLBOX_HOMES_DIR TOOLBOX_VOLUMES FAKE_APP_FAIL XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
+    apps="$HOME/.local/share/applications"
+    export UPM_JB_SCRIPTS="$E/jb/scripts"
+    mkdir -p "$E/jb/scripts" "$E/jb/apps/PyCharm/ch-0/9.9/bin" "$E/jb/apps/DataGrip/ch-0/9.9/bin"
+    for t in pycharm datagrip; do
+        case "$t" in pycharm) D=PyCharm ;; *) D=DataGrip ;; esac
+        printf '#!/bin/sh\nexec "%s/jb/apps/%s/ch-0/9.9/bin/%s.sh" "$@"\n' "$E" "$D" "$t" >"$E/jb/scripts/$t"
+        chmod +x "$E/jb/scripts/$t"
+        printf '<svg/>' >"$E/jb/apps/$D/ch-0/9.9/bin/$t.svg"
+    done
+    mkdir -p "$E/defs"
+    cp "$shipped_dir/dev-toolbox.ini" "$shipped_dir/dev-toolbox.conf" "$shipped_dir/gaming.ini" "$shipped_dir/gaming.conf" "$E/defs/"
+    printf '[plain]\nimage=example.invalid/plain:latest\nvolume="/home/linuxbrew:/home/linuxbrew:ro"\n' >"$E/defs/plain.ini"
+    export TOOLBOX_DEFINITIONS="$E/defs"
+    name=dev-toolbox
+    echo old1 >"$FAKE_STATE/cur_id"
+    echo old1 >"$FAKE_STATE/new_id"
+    echo 44 >"$FAKE_STATE/ver-old1"
+    echo 44 >"$FAKE_STATE/ver-new2"
+    export PATH="$root/fakebin:$ORIG_PATH"
+    state="$HOME/.local/state/ublue-os/toolbox/dev-toolbox"
+    conf="$HOME/.config/distrobox/distrobox.conf"
+}
+mkbox() { echo dev-toolbox >"$FAKE_STATE/boxes"; }
+rc=0
+# The default-container question reads a whole line. Most tests are not about it, so run() answers it with
+# a blank line (the toolbox's own name) at the right place in their keys: after the box step's answer (the
+# create or recreate confirmation) or first when the box needs no answer. DEFKEY="" runs without that line and
+# DEFKEY=text puts text there instead. Runs that never reach the question (--list, --remove, ...) get nothing.
+run() { # keys, args...
+    local keys=$1 dk="${DEFKEY-$'\n'}" a inject=1 asks=1
+    shift
+    for a in "$@"; do
+        case "$a" in --list | --remove | --update | --upgrade | --check | --dry-run | --set-default | --ide | --ide-custom) inject=0 ;; esac
+    done
+    if grep -qx "container_name_default=\"$name\"" "$conf" 2>/dev/null; then inject=0; fi
+    if grep -qx "$name" "$FAKE_STATE/boxes" 2>/dev/null && ! printf '%s\n' "$@" | grep -qx -e --recreate; then asks=0; fi
+    if [ "$inject" = 1 ] && [ -n "$dk" ]; then
+        if [ "$asks" = 1 ]; then keys="${keys:0:1}$dk${keys:1}"; else keys="$dk$keys"; fi
+    fi
+    printf '%s' "$keys" >"$root/keys"
+    UPM_TTY="$root/keys" just --justfile "$justfile" toolbox "$name" "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+
+# ---- the shipped definition ---------------------------------------------------
+check "definition has the dev-toolbox section" grep -qx '\[dev-toolbox\]' "$shipped_def"
+check "definition uses our toolbox image" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$shipped_def"
+check "definition pulls, does not replace, starts" bash -c "grep -qx 'pull=true' '$shipped_def' && grep -qx 'replace=false' '$shipped_def' && grep -qx 'start_now=true' '$shipped_def'"
+check "definition has no additional_packages key" bash -c "! grep -qE '^additional_packages' '$shipped_def'"
+check "definition has no home= key" bash -c "! grep -qE '^home=' '$shipped_def'"
+check "definition has no exported_bins keys" bash -c "! grep -qE '^exported_bins' '$shipped_def'"
+check "definition mounts brew read-only" grep -qx 'volume="/home/linuxbrew:/home/linuxbrew:ro"' "$shipped_def"
+check "definition has no pixi" bash -c "! grep -q pixi '$shipped_def'"
+check "definition says where the packages live" bash -c "grep -q 'packages/dev.txt' '$shipped_def' && grep -q 'rustup-init' '$shipped_def'"
+
+# ---- --list on an empty machine -----------------------------------------------
+newenv
+run "" --list
+check "--list exits 0" test "$rc" -eq 0
+check "--list shows the box missing" has "dev-toolbox (missing)"
+check "--list shows the default name unset" has "not set in"
+check "--list shows every row" bash -c "for t in uv rustup sdkman nvm bins; do grep -q \"^\$t \" '$root/out' || exit 1; done"
+check "--list shows each source" bash -c "grep -qE '^uv .*image:uv' '$root/out' && grep -qE '^rustup .*image:rustup-init' '$root/out' && grep -qE '^sdkman .*installer' '$root/out'"
+run "" nosuchtool
+check "unknown tool exits 2" test "$rc" -eq 2
+run "" --bogus
+check "unknown option exits 2" test "$rc" -eq 2
+run "" --dry-run
+check "--dry-run alone exits 2" test "$rc" -eq 2
+run "" --remove nvm
+check "--remove with a tool exits 2" test "$rc" -eq 2
+
+# ---- create the box, no brew dir, named tools -------------------------------------
+newenv
+run "yyy" sdkman nvm
+check "first run exits 0" test "$rc" -eq 0
+check "box was assembled" logged "assemble "
+check "assembled copy has no brew volume while the dir is missing" bash -c "! grep -q '^volume=' '$FAKE_STATE/assembled.ini'"
+check "assembled copy keeps the image line" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$FAKE_STATE/assembled.ini"
+check "the recipe prints the image it uses" has "Image: ghcr.io/redcodeworks/fedora-toolbox:latest"
+check "missing brew dir is explained" has "does not exist yet"
+check "missing-brew note names no removed recipe" hasnt "ujust brew"
+check "recreate hint printed" has "ujust toolbox dev-toolbox --recreate"
+check "box recorded" instate "box dev-toolbox"
+check "no-brew-mount recorded" instate "box-no-brew-mount"
+check "default name written" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+check "default name creation recorded" instate "conf created"
+check "sdkman installed" test -s "$HOME/.sdkman/bin/sdkman-init.sh"
+check "nvm installed" test -s "$HOME/.nvm/nvm.sh"
+check "directories recorded as created" bash -c "grep -qxF 'dir $HOME/.sdkman created' '$state' && grep -qxF 'dir $HOME/.nvm created' '$state'"
+check "curl url logged" logged "curl url=https://get.sdkman.io?rcupdate=false"
+check "sudo stub first on PATH" logged "path0=$E/tmp/upm."
+check "hash printed" has "sha256 "
+check "vendor warning printed" has "vendor code"
+check "build chain exported" test -e "$HOME/.local/bin/gcc" -a -e "$HOME/.local/bin/make"
+check "cli tools exported" test -e "$HOME/.local/bin/lsscsi"
+check "uv and uvx exported" test -e "$HOME/.local/bin/uv" -a -e "$HOME/.local/bin/uvx"
+check "export used distrobox-export" logged "export bin=$E/boxbin/gcc"
+check "exports recorded" instate "export $HOME/.local/bin/gcc"
+check "sdk wrapper enters the box" grep -q "distrobox enter dev-toolbox" "$HOME/.local/bin/sdk"
+check "sdk wrapper sources sdkman" grep -q "sdkman-init.sh" "$HOME/.local/bin/sdk"
+check "sdk wrapper recorded" instate "export $HOME/.local/bin/sdk"
+check "rustup not exported before a toolchain exists" test ! -e "$HOME/.local/bin/rustup"
+check "undo note printed" has "To undo"
+check "rc files untouched" test ! -e "$HOME/.bashrc"
+check "no temp files left" bash -c "! ls '$E/tmp'/upm.* >/dev/null 2>&1"
+
+# ---- second run is idempotent ------------------------------------------------------
+: >"$LOG"
+run "" sdkman nvm
+check "rerun exits 0" test "$rc" -eq 0
+check "rerun keeps the box" has "exists"
+check "rerun does not assemble" notlogged "assemble "
+check "rerun does not download" notlogged "curl url="
+check "rerun does not export again" notlogged "export bin="
+check "rerun says already exported" has "already exported"
+check "rerun leaves the default alone" has "already dev-toolbox"
+run "" --list
+check "--list shows the box present" has "dev-toolbox (present)"
+check "--list shows the default name" has "Default name:  dev-toolbox"
+check "--list shows uv exported" grep -qE '^uv +installed +image:uv +yes' "$root/out"
+check "--list shows sdkman exported" grep -qE '^sdkman +installed +installer +yes' "$root/out"
+check "--list shows rustup missing" grep -qE '^rustup +missing' "$root/out"
+
+# ---- brew dir present: the mount stays in the assembled copy ---------------------------
+newenv
+mkdir -p "$UPM_BREW_DIR"
+run "yq"
+check "brew mount kept when the dir exists" grep -q 'linuxbrew' "$FAKE_STATE/assembled.ini"
+check "no missing-brew note when it exists" hasnt "does not exist yet"
+check "no-brew-mount not recorded" bash -c "! grep -qx box-no-brew-mount '$state'"
+
+# ---- definitions directory override ---------------------------------------------------
+newenv
+mkdir -p "$E/custom"
+printf '# custom definition\n[dev-toolbox]\nimage=example\nvolume="/home/linuxbrew:/home/linuxbrew:ro"\n' >"$E/custom/dev-toolbox.ini"
+export TOOLBOX_DEFINITIONS="$E/custom"
+run "yq"
+check "TOOLBOX_DEFINITIONS overrides the definitions directory" grep -q 'custom definition' "$FAKE_STATE/assembled.ini"
+check "a toolbox without a sidecar gets no checklist" hasnt "Tools in the box"
+
+# ---- upgrade and update -------------------------------------------------------------
+newenv
+mkbox
+run "" --upgrade
+check "same base: exit 0" test "$rc" -eq 0
+check "same base: says so" has "already on the latest image"
+check "same base: prints the image" has "Toolbox image: ghcr.io/redcodeworks/fedora-toolbox:latest"
+check "same base: pulled the image" logged "podman pull"
+check "same base: nothing replaced" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
+check "same base: no package resolution test" notlogged "dnf5"
+
+echo new2 >"$FAKE_STATE/new_id"
+run "" --upgrade --check
+check "check: exit 0" test "$rc" -eq 0
+check "check: shows current digest and release" bash -c "grep -q 'digest sha256:digest-old1, Fedora 44' '$root/out'"
+check "check: shows new digest and release" bash -c "grep -q 'digest sha256:digest-new2, Fedora 44' '$root/out'"
+check "check: says check only" has "Check only: nothing was changed"
+check "check: changes nothing" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
+check "check: no package resolution test" notlogged "dnf5"
+
+echo 45 >"$FAKE_STATE/ver-new2"
+run "no
+" --upgrade
+check "major change warns" has "Fedora release changes from 44 to 45"
+check "major change says tools in home may need a rebuild" has "may need a rebuild"
+check "no package resolution test before asking" notlogged "dnf5"
+check "declining the upgrade changes nothing" has "Nothing was changed"
+check "declining leaves the box" bash -c "! grep -q '^rm ' '$LOG' && grep -qx dev-toolbox '$FAKE_STATE/boxes'"
+
+
+newenv
+run "yyy" sdkman nvm
+echo new2 >"$FAKE_STATE/new_id"
+: >"$LOG"
+run "yes
+" --upgrade
+check "newer base: exit 0" test "$rc" -eq 0
+check "newer base: container replaced" bash -c "grep -q '^rm --force dev-toolbox' '$LOG' && grep -q '^assemble' '$LOG'"
+check "newer base: no second confirmation" hasnt "remove and recreate the box"
+check "newer base: no tool checklist" hasnt "Tools in the box"
+check "newer base: exports made again" test -e "$HOME/.local/bin/gcc"
+check "newer base: installs in the shared home survive" test -s "$HOME/.sdkman/bin/sdkman-init.sh" -a -s "$HOME/.nvm/nvm.sh"
+check "newer base: no installer re-run" notlogged "installer "
+
+newenv
+mkbox
+run "" --update
+check "update runs distrobox upgrade on the box" logged "upgrade dev-toolbox"
+check "update exits 0" test "$rc" -eq 0
+newenv
+run "" --update
+check "update without a box fails" test "$rc" -ne 0
+run "" --upgrade --remove
+check "upgrade with remove exits 2" test "$rc" -eq 2
+run "" --check
+check "check alone exits 2" test "$rc" -eq 2
+
+# ---- declining and failing box creation -------------------------------------------------
+newenv
+run "n"
+check "declining creation exits 0" test "$rc" -eq 0
+check "declined box is not assembled" notlogged "assemble "
+check "declined box writes no default" test ! -e "$conf"
+newenv
+export FAKE_ASSEMBLE_FAIL=1
+run "y"
+check "failed assemble exits non-zero" test "$rc" -ne 0
+check "failed assemble is reported" has "assemble failed"
+
+# ---- default container question: blank, a name, a dash, a bad name, stale and same values, no terminal -----
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_manager="podman"\ncontainer_name_default="other"\n' >"$conf"
+DEFKEY="-
+" run ""
+check "prompt wording with a stale current value" has "Default container for 'distrobox enter' (current: other, no such container) [dev-toolbox]: "
+check "prompt says nothing about y" hasnt "anything else leaves it"
+check "a dash leaves the value alone" grep -qx 'container_name_default="other"' "$conf"
+check "a dash records nothing" bash -c "! grep -q '^conf' '$state' 2>/dev/null"
+DEFKEY="
+" run ""
+check "blank sets the toolbox name, only that key" bash -c "grep -qx 'container_name_default=\"dev-toolbox\"' '$conf' && grep -qx 'container_manager=\"podman\"' '$conf'"
+check "change recorded with the old value" instate "conf changed other"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="other"\n' >"$conf"
+echo other >>"$FAKE_STATE/boxes"
+DEFKEY="
+" run ""
+check "an existing current container has no stale note" has "(current: other) [dev-toolbox]: "
+newenv
+mkbox
+DEFKEY="
+" run ""
+check "no file: prompt says current none" has "(current: none) [dev-toolbox]: "
+check "no file: blank creates it" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+newenv
+mkbox
+DEFKEY="mine
+" run ""
+check "a typed name is set" grep -qx 'container_name_default="mine"' "$conf"
+check "a typed name is recorded for the undo" instate "conf-value mine"
+check "a typed name is reported" has "distrobox enter now opens mine"
+run "yes
+" --remove
+check "remove restores (deletes) a typed name" bash -c "[ ! -f '$conf' ] || ! grep -q container_name_default '$conf'"
+newenv
+mkbox
+DEFKEY="bad name
+x/y
+good.name_1-a
+" run ""
+check "an invalid name is refused with a message" has "A container name may only use letters, digits"
+check "after refusal the valid name is set" grep -qx 'container_name_default="good.name_1-a"' "$conf"
+check "the prompt came back after the refusal" bash -c "[ \$(grep -c \"Default container for 'distrobox enter'\" '$root/out') -ge 4 ]"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="same"\n' >"$conf"
+DEFKEY="same
+" run ""
+check "the same typed value says already set" has "already set"
+check "the same typed value writes nothing" bash -c "grep -qx 'container_name_default=\"same\"' '$conf' && ! grep -q '^conf' '$state' 2>/dev/null"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="dev-toolbox"\n' >"$conf"
+DEFKEY="" run ""
+check "default already the toolbox name: no prompt" hasnt "Default container for 'distrobox enter' ("
+check "default already the toolbox name: says already set" has "already set"
+DEFKEY="" run "" --recreate
+check "--recreate does not re-prompt" hasnt "Default container for 'distrobox enter' ("
+newenv
+mkbox
+: >"$root/keys"
+UPM_TTY="$root/keys" just --justfile "$justfile" toolbox dev >"$root/out" 2>&1 </dev/null
+rc=$?
+check "no answer to read: exits 0" test "$rc" -eq 0
+check "no answer to read: prints the command to run" has "ujust toolbox dev-toolbox --set-default"
+check "no answer to read: no config written" test ! -e "$conf"
+
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_manager="podman"' >"$conf"
+run ""
+check "missing key is appended on its own line" bash -c "grep -qx 'container_manager=\"podman\"' '$conf' && grep -qx 'container_name_default=\"dev-toolbox\"' '$conf'"
+check "append recorded" instate "conf appended"
+
+# ---- checklist ---------------------------------------------------------------------------------
+newenv
+mkbox
+run "q"
+check "q skips the tool list" has "Skipped the tool list"
+check "q exits 0" test "$rc" -eq 0
+check "q installs nothing" notlogged "installer "
+check "q still exports" test -e "$HOME/.local/bin/gcc"
+
+newenv
+mkbox
+run "$(printf ' \nyy')"
+check "checklist install exits 0" test "$rc" -eq 0
+check "SPACE toggled rustup off" test ! -d "$HOME/.rustup/toolchains/stable-x86_64"
+check "sdkman and nvm installed from the checklist" test -s "$HOME/.sdkman/bin/sdkman-init.sh" -a -s "$HOME/.nvm/nvm.sh"
+
+newenv
+mkbox
+run "$(printf '\nyyy')"
+check "ENTER with defaults runs rustup-init" logged "rustup-init -y --no-modify-path --default-toolchain stable"
+check "rustup-init asked first" has "[y] run 'rustup-init"
+check "toolchain exists" test -d "$HOME/.rustup/toolchains/stable-x86_64"
+check "rustup proxies created in ~/.cargo/bin" test -x "$HOME/.cargo/bin/rustup"
+check "rustup proxies exported" test -e "$HOME/.local/bin/cargo" -a -e "$HOME/.local/bin/rustc" -a -e "$HOME/.local/bin/rustup"
+check "rustup-init itself is not exported" bash -c "test ! -e '$HOME/.local/bin/rustup-init' && ! grep -q 'rustup-init\$' '$state'"
+check "no /usr/bin/rustup is assumed" notlogged "bin=/usr/bin/rustup"
+check "rc files untouched by rustup-init" test ! -e "$HOME/.bashrc"
+check "rustup exports recorded" instate "export $HOME/.local/bin/cargo"
+check "rustup toolchain download explained" has "static.rust-lang.org"
+check "rustup directories recorded" bash -c "grep -qxF 'dir $HOME/.rustup created' '$state' && grep -qxF 'dir $HOME/.cargo created' '$state'"
+run ""
+check "everything set up: checklist says so" has "already set up"
+
+# ---- missing dnf package --------------------------------------------------------------------------
+newenv
+mkbox
+rm -f "$E/boxbin/uv" "$E/boxbin/uvx"
+run "" uv
+check "missing uv is reported" has "is not in the box"
+check "upgrade hint for a missing package" has "ujust toolbox dev-toolbox --upgrade"
+check "missing package fails" test "$rc" -ne 0
+newenv
+mkbox
+rm -f "$E/boxbin/rustup-init"
+run "" rustup
+check "missing rustup-init is reported" has "is not in the box"
+check "missing rustup-init fails" test "$rc" -ne 0
+check "missing rustup-init points at --upgrade" has "ujust toolbox dev-toolbox --upgrade"
+
+# rustup already set up in the home (rustup-init gone from the box): nothing to do, proxies still export
+newenv
+mkbox
+mkdir -p "$HOME/.cargo/bin"
+for t in rustup cargo rustc; do echo x >"$HOME/.cargo/bin/$t"; chmod +x "$HOME/.cargo/bin/$t"; done
+rm -f "$E/boxbin/rustup-init"
+run "" rustup
+check "existing ~/.cargo/bin/rustup counts as installed" has "Already set up"
+check "existing rustup exits 0" test "$rc" -eq 0
+check "existing rustup runs no rustup-init" notlogged "rustup-init"
+check "existing rustup proxies are exported" test -e "$HOME/.local/bin/cargo" -a -e "$HOME/.local/bin/rustup"
+check "existing ~/.cargo is not recorded as created" bash -c "! grep -qxF 'dir $HOME/.cargo created' '$state'"
+run "" --list
+check "--list: rustup installed from ~/.cargo/bin/rustup alone" grep -qE '^rustup +installed' "$root/out"
+
+# TOOLBOX_IMAGE overrides the image= line
+newenv
+export TOOLBOX_IMAGE=ghcr.io/redcodeworks/fedora-toolbox:testing
+run "y" sdkman
+check "override: assembled copy uses the override image" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:testing' "$FAKE_STATE/assembled.ini"
+check "override: the old image line is gone" bash -c "! grep -q 'toolbox:latest' '$FAKE_STATE/assembled.ini'"
+check "override: other keys kept" grep -qx 'pull=true' "$FAKE_STATE/assembled.ini"
+check "override: the recipe prints the image" has "Image: ghcr.io/redcodeworks/fedora-toolbox:testing"
+run "" --list
+check "override: --list shows the image" has "Image:         ghcr.io/redcodeworks/fedora-toolbox:testing"
+echo new2 >"$FAKE_STATE/new_id"
+run "" --upgrade --check
+check "override: --upgrade pulls the override image" logged "pull -q ghcr.io/redcodeworks/fedora-toolbox:testing"
+unset TOOLBOX_IMAGE
+
+# ---- sudo is blocked --------------------------------------------------------------------------------
+newenv
+mkbox
+export FAKE_SUDO=1
+run "y" nvm
+check "sudo attempt fails the installer" test "$rc" -ne 0
+check "stub message shown" has "sudo is not allowed here"
+check "plain explanation shown" has "wanted sudo"
+check "nothing installed after the sudo attempt" test ! -e "$HOME/.nvm/nvm.sh"
+run "y" rustup
+check "rustup-init blocked from sudo too" has "wanted sudo"
+check "no toolchain after the sudo attempt" test ! -d "$HOME/.rustup/toolchains/stable-x86_64"
+unset FAKE_SUDO
+check "no executable sudo in either recipe" bash -c "! sed -n '/^toolbox \*args:/,\$p' '$justfile' | grep -w sudo | grep -vE '^\s*(echo|printf|#)|grep -qiE|sudo-called|bin/sudo|no-sudo guard'"
+
+# ---- failed download, declining, view --------------------------------------------------------------------
+newenv
+mkbox
+export FAKE_CURL_FAIL=nvm
+run "y" nvm
+check "failed download reported" has "Download failed"
+check "failed download exits non-zero" test "$rc" -ne 0
+unset FAKE_CURL_FAIL
+run "n" nvm
+check "declining skips" has "Skipped nvm"
+check "declined installer not run" notlogged "installer nvm"
+export PAGER=cat
+run "vy" nvm
+check "v shows the installer" has "installer nvm"
+check "then y runs it" test -s "$HOME/.nvm/nvm.sh"
+
+# ---- never overwrite ------------------------------------------------------------------------------------------
+newenv
+mkbox
+printf 'mine\n' >"$HOME/.local/bin/gcc"
+printf 'mine\n' >"$HOME/.local/bin/sdk"
+run "y" sdkman
+check "existing gcc kept" test "$(cat "$HOME/.local/bin/gcc")" = mine
+check "existing sdk kept" test "$(cat "$HOME/.local/bin/sdk")" = mine
+check "skip reported" has "Skipped $HOME/.local/bin/gcc"
+check "skipped files not recorded" bash -c "! grep -qxF 'export $HOME/.local/bin/gcc' '$state' && ! grep -qxF 'export $HOME/.local/bin/sdk' '$state'"
+
+# ---- recreate ---------------------------------------------------------------------------------------------------
+newenv
+run "yyy" sdkman nvm
+printf 'mine\n' >"$HOME/.local/bin/mytool"
+: >"$LOG"
+run "n" --recreate
+check "declining recreate keeps the box" has "Kept the existing box"
+check "declining recreate removes nothing" notlogged "rm "
+check "declining recreate keeps exports" test -e "$HOME/.local/bin/gcc"
+run "y" --recreate
+check "recreate exits 0" test "$rc" -eq 0
+check "recreate says home survives" has "Your home is shared"
+check "recreate removed the container" logged "rm --force dev-toolbox"
+check "recreate removed a listed stale export" has "Removed old export $HOME/.local/bin/gcc"
+check "recreate leaves unlisted files alone" test "$(cat "$HOME/.local/bin/mytool")" = mine
+check "recreate assembled again" logged "assemble "
+check "exports are made again" test -e "$HOME/.local/bin/gcc"
+check "shared home survives a recreate" test -s "$HOME/.sdkman/bin/sdkman-init.sh"
+
+# ---- remove ---------------------------------------------------------------------------------------------------
+newenv
+mkdir -p "$HOME/.cargo/bin" # exists before the recipe runs, so it must survive --remove
+printf 'kept\n' >"$HOME/.cargo/bin/user-installed"
+run "yyyy" sdkman nvm rustup
+printf 'mine\n' >"$HOME/.local/bin/mytool"
+check "setup for remove: pre-existing dir recorded as existed" instate "dir $HOME/.cargo existed"
+check "setup for remove: new dirs recorded as created" bash -c "grep -qxF 'dir $HOME/.rustup created' '$state' && grep -qxF 'dir $HOME/.sdkman created' '$state'"
+: >"$LOG"
+run "" --remove --dry-run
+check "dry run exits 0" test "$rc" -eq 0
+check "dry run lists exports with sizes" has "export    $HOME/.local/bin/gcc"
+check "dry run lists the container" has "container dev-toolbox"
+check "dry run lists created directories" bash -c "grep -q 'directory $HOME/.sdkman' '$root/out' && grep -q 'directory $HOME/.nvm' '$root/out' && grep -q 'directory $HOME/.rustup' '$root/out'"
+check "dry run lists the setting and the state file" bash -c "grep -q 'setting   container_name_default' '$root/out' && grep -q 'state     $state' '$root/out'"
+check "dry run names the skipped pre-existing dir and why" has "$HOME/.cargo (already existed before this recipe, left alone)"
+check "dry run says nothing was removed" has "Dry run: nothing was removed"
+check "dry run changed nothing" bash -c "test -e '$HOME/.local/bin/gcc' -a -d '$HOME/.sdkman' -a -d '$HOME/.rustup' -a -f '$state' -a -f '$conf' && grep -qx dev-toolbox '$FAKE_STATE/boxes'"
+check "dry run never called distrobox rm" notlogged "rm "
+run "no
+" --remove
+check "declining the prompt exits 0" test "$rc" -eq 0
+check "declining says nothing was removed" has "Nothing was removed"
+check "warning about ~/.cargo and ~/.sdkman shown" has "cargo install binaries"
+check "declining changed nothing" bash -c "test -e '$HOME/.local/bin/gcc' -a -d '$HOME/.sdkman' -a -f '$state' && grep -qx dev-toolbox '$FAKE_STATE/boxes'"
+check "declining never called distrobox rm" notlogged "rm "
+# simulated failure at the container step: exports and the setting go, the rest stays, state is kept
+export FAKE_RM_FAIL=1
+run "yes
+" --remove
+check "failed step exits non-zero" test "$rc" -ne 0
+check "failed step is reported" has "Could not remove the container"
+check "exports were removed before the failure" test ! -e "$HOME/.local/bin/gcc"
+check "the default-name setting was removed before the failure" test ! -e "$conf"
+check "directories survive a failed container step" test -d "$HOME/.sdkman" -a -d "$HOME/.rustup"
+check "state file survives a failed step" test -f "$state"
+unset FAKE_RM_FAIL
+run "yes
+" --remove
+check "rerun finishes the job" test "$rc" -eq 0
+check "rerun removed the container" bash -c "! grep -qx dev-toolbox '$FAKE_STATE/boxes'"
+check "recorded directories removed" test ! -e "$HOME/.sdkman" -a ! -e "$HOME/.nvm" -a ! -e "$HOME/.rustup"
+check "pre-existing ~/.cargo survives" test "$(cat "$HOME/.cargo/bin/user-installed")" = kept
+check "files the recipe did not create survive" test "$(cat "$HOME/.local/bin/mytool")" = mine
+check "~/.local/bin itself survives" test -d "$HOME/.local/bin"
+check "state file removed last" test ! -e "$state"
+run "" --remove
+check "with no state there is nothing to remove" has "nothing to remove"
+
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_manager="podman"\ncontainer_name_default="other"\n' >"$conf"
+run "y" nvm
+check "setup for conf restore" instate "conf changed other"
+run "yes
+" --remove
+check "remove restores the old default name" grep -qx 'container_name_default="other"' "$conf"
+check "remove keeps other settings" grep -qx 'container_manager="podman"' "$conf"
+newenv
+mkbox
+run "y" nvm
+printf 'container_name_default="changed-later"\n' >"$conf"
+run "yes
+" --remove
+check "a setting changed since is left alone and explained" bash -c "grep -qx 'container_name_default=\"changed-later\"' '$conf' && grep -q 'now .changed-later., not what this recipe wrote' '$root/out'"
+
+# ---- IDE launchers -------------------------------------------------------------------
+newenv
+mkbox
+run "" --ide --list
+check "ide list exits 0" test "$rc" -eq 0
+check "ide list detects the Toolbox scripts" bash -c "grep -qE '^pycharm +yes +not created' '$root/out' && grep -qE '^datagrip +yes' '$root/out'"
+check "ide list shows undetected IDEs" bash -c "grep -qE '^idea +no' '$root/out' && grep -qE '^vscode +no' '$root/out'"
+check "ide list creates nothing" test ! -e "$apps"
+run "" --ide idea
+check "an undetected IDE is explained" has "Generate shell scripts"
+check "an undetected IDE fails" test "$rc" -ne 0
+run "" --ide vscode
+check "missing VS Code says what is missing" has "no VS Code tarball under your home"
+check "missing VS Code does not install anything" notlogged "curl url="
+run "" --ide nosuch
+check "unknown IDE exits 2" test "$rc" -eq 2
+
+run "" --ide pycharm datagrip
+pc="$apps/dev-toolbox-pycharm.desktop"
+check "launcher created" test -f "$pc"
+check "launcher name" grep -qx 'Name=PyCharm (toolbox)' "$pc"
+check "launcher runs inside the named box" grep -qx "Exec=distrobox enter -n dev-toolbox -- \"$E/jb/scripts/pycharm\" %F" "$pc"
+check "launcher icon comes from the IDE directory, absolute" grep -qx "Icon=$E/jb/apps/PyCharm/ch-0/9.9/bin/pycharm.svg" "$pc"
+check "launcher window class" grep -qx 'StartupWMClass=jetbrains-pycharm' "$pc"
+check "launcher flags" grep -q '^Terminal=false' "$pc" && check "launcher startup notify" grep -q '^StartupNotify=true' "$pc"
+check "second launcher created" test -f "$apps/dev-toolbox-datagrip.desktop"
+check "launchers recorded" instate "launcher $pc"
+check "output explains the toolchain" has "use the box's compilers"
+check "no versioned directory hardcoded in the recipe" bash -c "! grep -qE 'ch-0|Toolbox/apps/[A-Z]' '$justfile'"
+run "" --ide pycharm
+check "rerun says already created" has "Already created"
+run "" --ide --list
+check "ide list shows created" grep -qE '^pycharm +yes +created' "$root/out"
+
+# icon detection: script name differs from the app directory, no .sh suffix (the real Toolbox layout)
+newenv
+mkbox
+mkdir -p "$E/jb/apps/intellij-idea/bin"
+printf '#!/bin/bash\n\n"%s/jb/apps/intellij-idea/bin/idea" "$@"' "$E" >"$E/jb/scripts/idea"
+chmod +x "$E/jb/scripts/idea"
+printf '<svg/>' >"$E/jb/apps/intellij-idea/bin/idea.svg"
+printf 'png' >"$E/jb/apps/intellij-idea/bin/idea.png"
+run "" --ide idea
+check "idea: icon from the app directory (intellij-idea), svg first" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.svg" "$apps/dev-toolbox-idea.desktop"
+rm "$E/jb/apps/intellij-idea/bin/idea.svg"
+rm "$apps/dev-toolbox-idea.desktop"
+sed -i '/^launcher /d' "$state"
+run "" --ide idea
+check "idea: png when there is no svg" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.png" "$apps/dev-toolbox-idea.desktop"
+# a script that does not name the app directory: found through <apps>/*/bin/<name>
+printf '#!/bin/bash\nexec /nonexistent/launcher\n' >"$E/jb/scripts/idea"
+rm "$apps/dev-toolbox-idea.desktop"
+sed -i '/^launcher /d' "$state"
+run "" --ide idea
+check "idea: fallback search of the apps directory" grep -qx "Icon=$E/jb/apps/intellij-idea/bin/idea.png" "$apps/dev-toolbox-idea.desktop"
+
+# the Toolbox-registered icon name wins, and a rerun refreshes launchers the recipe created
+newenv
+mkbox
+run "" --ide pycharm
+pc="$apps/dev-toolbox-pycharm.desktop"
+check "before: icon is a file path" grep -qx "Icon=$E/jb/apps/PyCharm/ch-0/9.9/bin/pycharm.svg" "$pc"
+ic="$HOME/.local/share/icons/hicolor/scalable/apps"
+mkdir -p "$ic"
+printf '<svg/>' >"$ic/jetbrains-pycharm-1111.svg"
+printf '<svg/>' >"$ic/jetbrains-pycharm-2222.svg"
+touch -d '1 hour ago' "$ic/jetbrains-pycharm-1111.svg"
+run "" --ide pycharm
+check "rerun refreshes to the registered icon name (newest)" grep -qx 'Icon=jetbrains-pycharm-2222' "$pc"
+check "refresh is announced" has "Refreshed the icon"
+check "refresh keeps the rest of the launcher" grep -qx 'StartupWMClass=jetbrains-pycharm' "$pc"
+run "" --ide pycharm
+check "a second rerun changes nothing and says nothing" bash -c "! grep -q 'Refreshed the icon' '$root/out'"
+# a launcher the recipe did not create is not touched
+mkdir -p "$apps"
+printf '[Desktop Entry]\nIcon=mine\n' >"$apps/dev-toolbox-datagrip.desktop"
+printf '<svg/>' >"$ic/jetbrains-datagrip-3333.svg"
+run "" --ide datagrip
+check "foreign launcher keeps its icon" grep -qx 'Icon=mine' "$apps/dev-toolbox-datagrip.desktop"
+
+newenv
+mkbox
+mkdir -p "$apps"
+printf 'mine\n' >"$apps/dev-toolbox-pycharm.desktop"
+printf 'theirs\n' >"$apps/jetbrains-pycharm.desktop"
+run "" --ide pycharm
+check "a foreign file is not overwritten" test "$(cat "$apps/dev-toolbox-pycharm.desktop")" = mine
+check "the skip is explained" has "not created by this recipe"
+check "the foreign launcher is not recorded" bash -c "! grep -q 'launcher' '$state' 2>/dev/null"
+run "y" --ide --remove
+check "remove never deletes unrecorded files" test -e "$apps/dev-toolbox-pycharm.desktop" -a -e "$apps/jetbrains-pycharm.desktop"
+
+newenv
+mkbox
+run $'\n' --ide
+check "checklist creates the detected launchers" test -f "$apps/dev-toolbox-pycharm.desktop" -a -f "$apps/dev-toolbox-datagrip.desktop"
+check "checklist skips undetected IDEs" test ! -e "$apps/dev-toolbox-idea.desktop"
+newenv
+mkbox
+run "q" --ide
+check "q skips the IDE checklist" test ! -e "$apps/dev-toolbox-pycharm.desktop"
+
+newenv
+mkbox
+printf '#!/bin/sh\n' >"$E/boxbin/code"
+chmod +x "$E/boxbin/code"
+run "" --ide vscode
+check "VS Code found in the box" grep -qx "Exec=distrobox enter -n dev-toolbox -- \"$E/boxbin/code\" %F" "$apps/dev-toolbox-vscode.desktop"
+check "VS Code window class" grep -qx 'StartupWMClass=Code' "$apps/dev-toolbox-vscode.desktop"
+newenv
+mkbox
+mkdir -p "$HOME/.local/opt/VSCode-linux-x64/bin" "$HOME/.local/opt/VSCode-linux-x64/resources/app/resources/linux"
+printf '#!/bin/sh\n' >"$HOME/.local/opt/VSCode-linux-x64/bin/code"
+chmod +x "$HOME/.local/opt/VSCode-linux-x64/bin/code"
+printf 'png' >"$HOME/.local/opt/VSCode-linux-x64/resources/app/resources/linux/code.png"
+run "" --ide vscode
+check "VS Code tarball under the home found" grep -qx "Exec=distrobox enter -n dev-toolbox -- \"$HOME/.local/opt/VSCode-linux-x64/bin/code\" %F" "$apps/dev-toolbox-vscode.desktop"
+check "VS Code tarball icon used" grep -qx "Icon=$HOME/.local/opt/VSCode-linux-x64/resources/app/resources/linux/code.png" "$apps/dev-toolbox-vscode.desktop"
+
+newenv
+mkbox
+mkdir -p "$HOME/bin"
+printf '#!/bin/sh\n' >"$HOME/bin/myide"
+chmod +x "$HOME/bin/myide"
+printf 'x' >"$HOME/bin/myide.png"
+run "" --ide-custom "My IDE" "$HOME/bin/myide" "$HOME/bin/myide.png"
+check "custom launcher created" grep -qx "Exec=distrobox enter -n dev-toolbox -- \"$HOME/bin/myide\" %F" "$apps/dev-toolbox-my-ide.desktop"
+check "custom launcher icon and name" bash -c "grep -qx 'Name=My IDE (toolbox)' '$apps/dev-toolbox-my-ide.desktop' && grep -qx 'Icon=$HOME/bin/myide.png' '$apps/dev-toolbox-my-ide.desktop'"
+check "custom launcher recorded" instate "launcher $apps/dev-toolbox-my-ide.desktop"
+run "" --ide --list
+check "ide list shows the custom launcher" grep -qE '^my-ide +custom' "$root/out"
+run "" --ide-custom "Bad" /usr/bin/true
+check "custom command outside the home is refused" has "absolute path under your home"
+check "custom refusal fails" test "$rc" -ne 0
+run "" --ide-custom "Only"
+check "custom needs a command" test "$rc" -eq 2
+
+newenv
+run "" --ide pycharm
+check "no box: refuses and does not create it" has "never creates it"
+check "no box: no launcher" test ! -e "$apps/dev-toolbox-pycharm.desktop"
+check "no box: nothing assembled" notlogged "assemble "
+newenv
+mkbox
+export FAKE_BOX_STATUS=Exited
+run "y" --ide pycharm
+check "stopped box: offers to start it" has "not running"
+check "stopped box: starts it on y" logged "podman start dev-toolbox"
+check "stopped box: launcher still created" test -f "$apps/dev-toolbox-pycharm.desktop"
+unset FAKE_BOX_STATUS
+
+newenv
+mkbox
+run "" --ide pycharm datagrip
+printf 'mine\n' >"$apps/other.desktop"
+run "" --ide --remove --dry-run
+check "ide remove dry run lists launchers" has "dev-toolbox-pycharm.desktop"
+check "ide remove dry run removes nothing" test -f "$apps/dev-toolbox-pycharm.desktop" -a -f "$apps/dev-toolbox-datagrip.desktop"
+run "n" --ide --remove
+check "declining keeps launchers" test -f "$apps/dev-toolbox-pycharm.desktop"
+run "y" --ide --remove pycharm
+check "named remove deletes only that launcher" bash -c "test ! -e '$apps/dev-toolbox-pycharm.desktop' && test -f '$apps/dev-toolbox-datagrip.desktop'"
+run "y" --ide --remove
+check "remove deletes the rest of the recorded ones" test ! -e "$apps/dev-toolbox-datagrip.desktop"
+check "remove leaves other files" test "$(cat "$apps/other.desktop")" = mine
+check "removed launchers leave the state file" bash -c "! grep -q '^launcher ' '$state'"
+
+newenv
+run "yyy" sdkman nvm
+run "" --ide pycharm
+check "launcher exists before the main remove" test -f "$apps/dev-toolbox-pycharm.desktop"
+run "" --remove --dry-run
+check "main remove lists the launcher" has "launcher  $apps/dev-toolbox-pycharm.desktop"
+run "yes
+" --remove
+check "main remove deletes the launcher" test ! -e "$apps/dev-toolbox-pycharm.desktop"
+check "main remove still finishes" test ! -e "$state"
+
+# ---- the toolbox scope: list, unknown names, a toolbox without a sidecar --------------------------
+rawrun() { # args (no name, no keys)
+    just --justfile "$justfile" toolbox "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+newenv
+rawrun
+check "no name lists the toolboxes" test "$rc" -eq 0
+check "list shows dev-toolbox and plain" bash -c "grep -qE '^dev-toolbox +missing' '$root/out' && grep -qE '^plain +missing' '$root/out'"
+check "list shows the image references" bash -c "grep -q 'ghcr.io/redcodeworks/fedora-toolbox:latest' '$root/out' && grep -q 'example.invalid/plain:latest' '$root/out'"
+check "list says how to run each" has "ujust toolbox <name>"
+mkbox
+rawrun
+check "list shows a running box" grep -qE '^dev-toolbox +running' "$root/out"
+FAKE_BOX_STATUS="Exited (0) 2 hours ago" rawrun
+check "list shows a stopped box" grep -qE '^dev-toolbox +stopped' "$root/out"
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="dev-toolbox"\n' >"$conf"
+rawrun
+check "list marks the default" grep -qE '^dev-toolbox +running +yes' "$root/out"
+check "list: only the default is marked" grep -qE '^plain +missing +-' "$root/out"
+rawrun --list
+check "--list without a name is the list too" has "Toolboxes defined in"
+rawrun --remove
+check "an option without a name exits 2" test "$rc" -eq 2
+rawrun nosuch
+check "unknown name exits 2" test "$rc" -eq 2
+check "unknown name lists the known ones" has "Known toolboxes: dev-toolbox gaming plain"
+rawrun ../dev
+check "a name with a path is refused" test "$rc" -eq 2
+rawrun nosuch --remove
+check "unknown name with an option exits 2" test "$rc" -eq 2
+rawrun dev-toolbox --help
+check "--help lists the IDEs of the toolbox" has "IDEs offered by dev-toolbox: pycharm idea datagrip rustrover clion goland webstorm vscode"
+check "--help lists the tools of the toolbox" has "Tools offered by dev-toolbox: uv rustup sdkman nvm"
+check "the old dev-toolbox recipe is gone" bash -c "! just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx dev-toolbox"
+rawrun dev --help
+check "dev is an alias for dev-toolbox" bash -c "grep -q 'now called dev-toolbox' '$root/out' && grep -q 'IDEs offered by dev-toolbox' '$root/out'"
+mkdir -p "$HOME/.local/state/ublue-os/toolbox"
+echo "box dev" >"$HOME/.local/state/ublue-os/toolbox/dev"
+UPM_TTY=/dev/null rawrun dev --recreate
+check "dev with an old state file works for --remove only" test "$rc" -eq 2
+check "dev with an old state file says what to do" has "ujust toolbox dev --remove"
+rm -f "$HOME/.local/state/ublue-os/toolbox/dev"
+
+newenv
+name=plain
+run "y"
+check "plain toolbox is created" test "$rc" -eq 0
+check "plain box assembled as [plain]" grep -qx '\[plain\]' "$FAKE_STATE/assembled.ini"
+check "plain gets no tool checklist" hasnt "Tools in the box"
+check "plain gets no vendor installer banner" hasnt "vendor scripts"
+check "plain exports nothing" bash -c "! grep -q '^export ' '$HOME/.local/state/ublue-os/toolbox/plain'"
+check "plain exports no gcc" test ! -e "$HOME/.local/bin/gcc"
+check "plain state is its own file" test -f "$HOME/.local/state/ublue-os/toolbox/plain"
+check "plain became the default (key was unset)" grep -qx 'container_name_default="plain"' "$conf"
+run "" sdkman
+check "a tool the sidecar does not offer is unknown" test "$rc" -eq 2
+run "" --ide
+check "plain offers no IDE launchers" test "$rc" -eq 1
+check "plain says why" has "offers no IDE launchers"
+run "" --list
+check "--list of plain shows its image" has "Image:         example.invalid/plain:latest"
+
+# ---- the sidecar is data, not code --------------------------------------------------------------
+newenv
+printf '[evil]\nimage=example.invalid/evil:latest\n' >"$E/defs/evil.ini"
+printf 'TOOLS="uv; touch %s/pwned1"\nEXPORT_BINS=$(touch %s/pwned2)\nIDES="pycharm nosuchide"\n' "$E" "$E" >"$E/defs/evil.conf"
+name=evil
+run "" --list
+check "unsafe TOOLS is ignored with a warning" has "Ignoring TOOLS"
+check "unsafe EXPORT_BINS is ignored with a warning" has "Ignoring EXPORT_BINS"
+check "the sidecar was not executed" test ! -e "$E/pwned1" -a ! -e "$E/pwned2"
+check "unknown IDE in the sidecar is reported" has "Ignoring unknown IDE 'nosuchide'"
+printf 'TOOLS="uv bogus"\n' >"$E/defs/evil.conf"
+run "" --list
+check "unknown tool in the sidecar is reported" has "Ignoring unknown tool 'bogus'"
+check "known tools of the sidecar still show" grep -qE '^uv ' "$root/out"
+check "tools not in the sidecar do not show" bash -c "! grep -qE '^(sdkman|nvm) ' '$root/out'"
+name=dev-toolbox
+
+# ---- state per toolbox and --remove isolation -----------------------------------------------------
+newenv
+run "yyy" sdkman nvm
+check "dev-toolbox state is dev-toolbox's own file" test -f "$HOME/.local/state/ublue-os/toolbox/dev-toolbox"
+name=plain
+DEFKEY="-
+" run "y"
+check "another default value is offered" has "(current: dev-toolbox)"
+check "declining keeps the other default" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+check "plain state exists next to dev-toolbox's" test -f "$HOME/.local/state/ublue-os/toolbox/plain"
+check "plain state records no dev-toolbox exports" bash -c "! grep -q '^export ' '$HOME/.local/state/ublue-os/toolbox/plain'"
+check "both boxes exist" bash -c "grep -qx dev-toolbox '$FAKE_STATE/boxes' && grep -qx plain '$FAKE_STATE/boxes'"
+before=$(cat "$HOME/.local/state/ublue-os/toolbox/dev-toolbox")
+run "yes
+" --remove
+check "removing plain succeeds" test "$rc" -eq 0
+check "plain box removed" bash -c "grep -qx dev-toolbox '$FAKE_STATE/boxes' && ! grep -qx plain '$FAKE_STATE/boxes'"
+check "plain removal logs only plain" bash -c "grep -q '^rm --force plain' '$LOG' && ! grep -q '^rm --force dev-toolbox' '$LOG'"
+check "plain state file removed" test ! -e "$HOME/.local/state/ublue-os/toolbox/plain"
+check "dev-toolbox state untouched by plain's removal" test "$(cat "$HOME/.local/state/ublue-os/toolbox/dev-toolbox")" = "$before"
+check "dev-toolbox exports survive plain's removal" test -e "$HOME/.local/bin/gcc" -a -e "$HOME/.local/bin/sdk"
+check "dev-toolbox's directories survive" test -d "$HOME/.sdkman" -a -d "$HOME/.nvm"
+check "the default pointing at dev-toolbox is left alone" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+name=dev-toolbox
+
+# ---- shared directories across toolboxes ------------------------------------------------------------
+newenv
+printf '[second]\nimage=example.invalid/second:latest\n' >"$E/defs/second.ini"
+printf 'TOOLS="sdkman"\n' >"$E/defs/second.conf"
+run "yyy" sdkman
+check "dev-toolbox created ~/.sdkman" instate "dir $HOME/.sdkman created"
+name=second
+run "yn" sdkman
+check "second finds sdkman installed" has "Already installed"
+check "second records the shared directory as existing" grep -qxF "dir $HOME/.sdkman existed" "$HOME/.local/state/ublue-os/toolbox/second"
+name=dev-toolbox
+run "" --remove --dry-run
+check "dry run says second also uses ~/.sdkman" has "second also uses it"
+check "dry run does not offer to delete ~/.sdkman" bash -c "! grep -q 'directory $HOME/.sdkman' '$root/out'"
+run "yes
+" --remove
+check "removing dev-toolbox keeps the shared directory" test -d "$HOME/.sdkman"
+check "ownership passed to second" grep -qxF "dir $HOME/.sdkman created" "$HOME/.local/state/ublue-os/toolbox/second"
+check "dev-toolbox's state is gone" test ! -e "$state"
+name=second
+run "yes
+" --remove
+check "removing the last user deletes the shared directory" test ! -e "$HOME/.sdkman"
+name=dev-toolbox
+# the other order: the borrower goes first, the creator keeps ownership
+newenv
+printf '[second]\nimage=example.invalid/second:latest\n' >"$E/defs/second.ini"
+printf 'TOOLS="sdkman"\n' >"$E/defs/second.conf"
+run "yyy" sdkman
+name=second
+run "yn" sdkman
+run "yes
+" --remove
+check "removing the borrower keeps the directory" test -d "$HOME/.sdkman"
+name=dev-toolbox
+run "yes
+" --remove
+check "removing the creator then deletes it" test ! -e "$HOME/.sdkman"
+
+# ---- --set-default ------------------------------------------------------------------------------------
+newenv
+mkbox
+run "
+" --set-default
+check "--set-default with no key sets it" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+check "--set-default records the creation" instate "conf created"
+run "" --set-default
+check "--set-default when already set says so" has "already dev-toolbox"
+printf 'container_name_default="other"\n' >"$conf"
+rm -f "$state"
+run "-
+" --set-default
+check "--set-default shows the current value" has "(current: other, no such container) [dev-toolbox]: "
+check "--set-default with a dash changes nothing" grep -qx 'container_name_default="other"' "$conf"
+run "
+" --set-default
+check "--set-default with blank changes it" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+check "--set-default records the old value" instate "conf changed other"
+check "--set-default needs no recreate" bash -c "! grep -q '^rm ' '$LOG' && ! grep -q '^assemble' '$LOG'"
+
+run "" --set-default --remove
+check "--set-default does not combine with --remove" test "$rc" -eq 2
+run "" --set-default uv
+check "--set-default does not combine with tool names" test "$rc" -eq 2
+run "yes
+" --remove
+check "removing restores the old default" grep -qx 'container_name_default="other"' "$conf"
+
+# a container_name= line beats container_name_default in distrobox-enter: it is commented out, recorded, restored
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name="fedora-toolbox"\ncontainer_manager="podman"\n' >"$conf"
+run "
+" --set-default
+check "container_name line is commented out" bash -c "! grep -qx 'container_name=\"fedora-toolbox\"' '$conf' && grep -qxF '# disabled by ujust toolbox: container_name=\"fedora-toolbox\"' '$conf'"
+check "default is written next to it" grep -qx 'container_name_default="dev-toolbox"' "$conf"
+check "the other keys are untouched" grep -qx 'container_manager="podman"' "$conf"
+check "the shadowed line is recorded" instate 'conf-shadow container_name="fedora-toolbox"'
+run "" --set-default
+check "a rerun adds no second record" bash -c "test \$(grep -c '^conf-shadow ' '$state') -eq 1"
+run "" --remove --dry-run
+check "dry run mentions restoring the line" has "restoring the container_name="
+run "yes
+" --remove
+check "remove restores the container_name line" grep -qx 'container_name="fedora-toolbox"' "$conf"
+check "remove drops the default and the marker" bash -c "! grep -q 'container_name_default' '$conf' && ! grep -q 'disabled by ujust' '$conf'"
+
+# ---- environment overrides ------------------------------------------------------------------------------
+newenv
+export TOOLBOX_IMAGE=example.invalid/other:tag
+rawrun
+check "list shows definition images, not the override" has "ghcr.io/redcodeworks/fedora-toolbox:latest"
+run "y" sdkman
+check "TOOLBOX_IMAGE applies to the named toolbox" grep -qx 'image=example.invalid/other:tag' "$FAKE_STATE/assembled.ini"
+unset TOOLBOX_IMAGE
+
+# ---- the gaming toolbox: isolated home, app export, extra volumes ---------------------------------------
+check "gaming definition has the gaming section" grep -qx '\[gaming\]' "$gaming_def"
+check "gaming definition uses the gaming image" grep -qx 'image=ghcr.io/redcodeworks/fedora-gaming:latest' "$gaming_def"
+check "gaming definition: no init, no nvidia" bash -c "grep -qx 'init=false' '$gaming_def' && grep -qx 'nvidia=false' '$gaming_def'"
+check "gaming definition has no home, volume or additional_packages line" bash -c "! grep -qE '^(home|volume|additional_packages|unshare_netns)=' '$gaming_def'"
+check "gaming sidecar isolates the home and exports steam" bash -c "grep -qx 'ISOLATED_HOME=true' '$gaming_conf' && grep -qx 'EXPORT_APPS=\"steam\"' '$gaming_conf'"
+check "gaming sidecar has no tools, bins or IDEs" bash -c "grep -qx 'TOOLS=\"\"' '$gaming_conf' && grep -qx 'EXPORT_BINS=\"\"' '$gaming_conf' && grep -qx 'IDES=\"\"' '$gaming_conf'"
+check "shipped files hold no personal path" bash -c "! grep -qE '/var/mnt|/mnt/container_data|kevin|linux_data' '$gaming_def' '$gaming_conf'"
+
+newenv
+name=gaming
+gstate="$HOME/.local/state/ublue-os/toolbox/gaming"
+ghome="$HOME/.local/share/toolbox-homes/gaming"
+rawrun
+check "overview lists gaming, dev-toolbox and plain" bash -c "grep -q '^gaming ' '$root/out' && grep -q '^dev-toolbox ' '$root/out' && grep -q '^plain ' '$root/out'"
+check "overview shows the gaming image" has "ghcr.io/redcodeworks/fedora-gaming:latest"
+run "" --list
+check "gaming --list shows its home missing" has "$ghome (missing"
+check "gaming --list shows the app not exported" grep -qE '^steam +not exported' "$root/out"
+check "gaming --list has no tool table" hasnt "TOOL "
+run "y"
+check "gaming first run exits 0" test "$rc" -eq 0
+check "gaming home created" test -d "$ghome"
+check "gaming home creation recorded" bash -c "grep -qxF 'home $ghome created' '$gstate'"
+check "gaming prints the home path" has "Isolated home: $ghome (created)"
+check "assembled definition has home=" grep -qxF "home=$ghome" "$FAKE_STATE/assembled.ini"
+check "assembled definition keeps init=false" grep -qx 'init=false' "$FAKE_STATE/assembled.ini"
+check "assembled definition has no brew volume (shipped has none)" bash -c "! grep -q linuxbrew '$FAKE_STATE/assembled.ini'"
+check "steam launcher exported" test -e "$apps/gaming-steam.desktop"
+check "steam launcher recorded" bash -c "grep -qxF 'app $apps/gaming-steam.desktop' '$gstate'"
+check "no tools are offered or installed" notlogged "curl url="
+check "nothing exported to ~/.local/bin" bash -c "! ls '$HOME/.local/bin'/* >/dev/null 2>&1"
+check "dev-toolbox's state file untouched" test ! -e "$HOME/.local/state/ublue-os/toolbox/dev-toolbox"
+run "" --list
+check "gaming --list shows the home exists" has "$ghome (exists"
+check "gaming --list shows the app exported" grep -qE '^steam +exported' "$root/out"
+rawrun
+check "overview shows home and app state" bash -c "grep -qF 'gaming: isolated home $ghome (exists); app steam (exported)' '$root/out'"
+: >"$LOG"
+run ""
+check "rerun exits 0" test "$rc" -eq 0
+check "rerun does not export again" notlogged "export app="
+check "rerun says already exported" has "already exported"
+run "" --ide
+check "--ide is refused cleanly for gaming" test "$rc" -eq 1
+check "--ide says there are no IDES" has "offers no IDE launchers"
+run "" --purge-home
+check "--purge-home without --remove exits 2" test "$rc" -eq 2
+
+# --remove keeps the home; the launcher goes
+echo hello >"$ghome/save.dat"
+run "yes
+" --remove
+check "gaming --remove exits 0" test "$rc" -eq 0
+check "the launcher is removed" test ! -e "$apps/gaming-steam.desktop"
+check "the box is removed" logged "rm --force gaming"
+check "the home is kept with its data" test -s "$ghome/save.dat"
+check "the home kept message names the path" has "The isolated home was kept: $ghome"
+check "the plain remove mentions --purge-home" has "--purge-home"
+check "the state file keeps only the home record" bash -c "[ \"\$(cat '$gstate')\" = 'home $ghome created' ]"
+
+# --remove --purge-home: dry run, declined, accepted
+mkbox_g() { echo gaming >"$FAKE_STATE/boxes"; }
+run "" --remove --dry-run --purge-home
+check "dry run lists the home with its size" bash -c "grep -qE 'home +$ghome +\(' '$root/out'"
+check "dry run warns what the home holds" has "Steam library"
+check "dry run deletes nothing" test -s "$ghome/save.dat"
+run "no
+" --remove --purge-home
+check "declined purge removes nothing" test -s "$ghome/save.dat"
+check "declined purge says so" has "Nothing was removed"
+run "yes
+" --remove --purge-home
+check "accepted purge deletes the home" test ! -e "$ghome"
+check "accepted purge removes the state file" test ! -e "$gstate"
+check "the parent directory is left" test -d "$HOME/.local/share/toolbox-homes"
+
+# an existing directory is adopted, never purged
+newenv
+name=gaming
+ghome="$HOME/.local/share/toolbox-homes/gaming"
+gstate="$HOME/.local/state/ublue-os/toolbox/gaming"
+mkdir -p "$ghome"
+echo keep >"$ghome/old"
+run "y"
+check "existing home: run succeeds" test "$rc" -eq 0
+check "existing home: said so" has "already existed"
+check "existing home recorded as existed" bash -c "grep -qxF 'home $ghome existed' '$gstate'"
+check "existing home content untouched" test -s "$ghome/old"
+run "yes
+" --remove --purge-home
+check "an existing home is not purged" test -s "$ghome/old"
+check "an existing home is reported as left alone" has "existed before this recipe"
+
+# a path that is not a directory, and an unwritable one
+newenv
+name=gaming
+mkdir -p "$HOME/.local/share/toolbox-homes"
+echo x >"$HOME/.local/share/toolbox-homes/gaming"
+run "y"
+check "a file in place of the home stops the run" test "$rc" -ne 0
+check "the refusal says it is not a directory" has "is not a directory"
+check "no box was created" notlogged "assemble "
+newenv
+name=gaming
+mkdir -p "$HOME/.local/share/toolbox-homes/gaming"
+chmod 500 "$HOME/.local/share/toolbox-homes/gaming"
+if [ "$(id -u)" -ne 0 ]; then
+    run "y"
+    check "an unwritable home stops the run" test "$rc" -ne 0
+    check "the refusal says it is not writable" has "is not writable"
+fi
+chmod 700 "$HOME/.local/share/toolbox-homes/gaming"
+
+# TOOLBOX_HOMES_DIR
+newenv
+name=gaming
+export TOOLBOX_HOMES_DIR="$E/elsewhere/homes"
+run "y"
+check "TOOLBOX_HOMES_DIR sets the home" test -d "$E/elsewhere/homes/gaming"
+check "TOOLBOX_HOMES_DIR reaches the definition" grep -qxF "home=$E/elsewhere/homes/gaming" "$FAKE_STATE/assembled.ini"
+newenv
+name=gaming
+export TOOLBOX_HOMES_DIR="relative/dir"
+run "y"
+check "a relative TOOLBOX_HOMES_DIR is refused" test "$rc" -ne 0
+check "the refusal asks for an absolute path" has "absolute"
+unset TOOLBOX_HOMES_DIR
+
+# TOOLBOX_VOLUMES, for gaming and for another toolbox
+newenv
+name=gaming
+mkdir -p "$E/games" "$E/more"
+export TOOLBOX_VOLUMES="$E/games:/mnt/games $E/more:/mnt/more:ro relative:/x $E/nodir:/y $E/games:/a/../b $E/games:rel $E/games"
+run "y"
+check "volumes: run succeeds" test "$rc" -eq 0
+check "volumes: a valid entry becomes a volume line" grep -qxF "volume=\"$E/games:/mnt/games\"" "$FAKE_STATE/assembled.ini"
+check "volumes: options are kept" grep -qxF "volume=\"$E/more:/mnt/more:ro\"" "$FAKE_STATE/assembled.ini"
+check "volumes: a relative source is skipped" has "Skipped volume 'relative:/x'"
+check "volumes: a missing source is skipped" has "Skipped volume '$E/nodir:/y'"
+check "volumes: .. is skipped" has "/a/../b'"
+check "volumes: a relative destination is skipped" has "Skipped volume '$E/games:rel'"
+check "volumes: a lone path is skipped" has "Skipped volume '$E/games': use src:dst"
+check "volumes: only the two valid entries are in the definition" bash -c "[ \$(grep -c '^volume=' '$FAKE_STATE/assembled.ini') -eq 2 ]"
+newenv
+name=plain
+mkdir -p "$E/games"
+export TOOLBOX_VOLUMES="$E/games:/mnt/games"
+mkdir -p "$UPM_BREW_DIR"
+run "y"
+check "volumes also apply to another toolbox" grep -qxF "volume=\"$E/games:/mnt/games\"" "$FAKE_STATE/assembled.ini"
+check "the other toolbox keeps its own volume" grep -q linuxbrew "$FAKE_STATE/assembled.ini"
+check "a plain toolbox has no home= line" bash -c "! grep -q '^home=' '$FAKE_STATE/assembled.ini'"
+unset TOOLBOX_VOLUMES
+
+# app export: foreign file, failure, recreate, state isolation from dev-toolbox
+newenv
+name=gaming
+mkdir -p "$apps"
+echo mine >"$apps/gaming-steam.desktop"
+run "y"
+check "a foreign launcher is not overwritten" grep -qx mine "$apps/gaming-steam.desktop"
+check "the skip is reported" has "not overwritten"
+check "a foreign launcher is not recorded" bash -c "! grep -q '^app ' '$HOME/.local/state/ublue-os/toolbox/gaming'"
+run "" --list
+check "--list shows a foreign file" grep -qE '^steam +foreign file' "$root/out"
+run "yes
+" --remove
+check "--remove leaves the foreign launcher" grep -qx mine "$apps/gaming-steam.desktop"
+newenv
+name=gaming
+export FAKE_APP_FAIL=1
+run "y"
+check "a failing export is reported and fails the run" bash -c "[ $rc -ne 0 ] && grep -q 'Could not export steam' '$root/out'"
+unset FAKE_APP_FAIL
+newenv
+name=gaming
+run "y"
+rm -f "$apps/gaming-steam.desktop.mine"
+check "recreate: first export exists" test -e "$apps/gaming-steam.desktop"
+: >"$LOG"
+run "yy" --recreate
+check "recreate: exits 0" test "$rc" -eq 0
+check "recreate: removes the old launcher" has "Removed old app launcher"
+check "recreate: exports it again" logged "export app=steam"
+check "recreate: launcher exists again and is recorded" bash -c "test -e '$apps/gaming-steam.desktop' && grep -qxF 'app $apps/gaming-steam.desktop' '$HOME/.local/state/ublue-os/toolbox/gaming'"
+check "recreate keeps the home" test -d "$HOME/.local/share/toolbox-homes/gaming"
+run "" --upgrade --check
+check "--upgrade --check works for gaming" test "$rc" -eq 0
+run "" --set-default
+check "--set-default works for gaming" grep -qx 'container_name_default="gaming"' "$conf"
+run "" --update
+check "--update works for gaming" logged "upgrade gaming"
+# dev-toolbox next to gaming: separate state, no home line, no app line
+name=dev-toolbox
+run "yyy"
+check "dev-toolbox has its own state file" test -s "$HOME/.local/state/ublue-os/toolbox/dev-toolbox"
+check "dev-toolbox's state has no home or app lines" bash -c "! grep -qE '^(home|app) ' '$HOME/.local/state/ublue-os/toolbox/dev-toolbox'"
+check "dev-toolbox's assembled definition has no home=" bash -c "! grep -q '^home=' '$FAKE_STATE/assembled.ini'"
+check "gaming's state has no export lines" bash -c "! grep -q '^export ' '$HOME/.local/state/ublue-os/toolbox/gaming'"
+
+echo
+echo "$pass passed, $failn failed"
+[ "$failn" -eq 0 ]

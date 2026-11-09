@@ -1,0 +1,4 @@
+# Homebrew timers. systemd uses the first matching line across preset files in name order, so this file
+# (00-) wins over ublue-os/brew's 01-homebrew.preset, which enables brew-upgrade.timer. Upgrades stay
+# manual (the owner's soak policy); brew-setup.service and brew-update.timer keep their upstream presets.
+disable brew-upgrade.timer
