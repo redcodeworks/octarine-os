@@ -15,6 +15,20 @@ mkdir -p "$bin"
 export LOG="$root/log" INSTALLED="$root/installed" OVR="$root/ovr" GROUPS_OF="$root/groups" FAILAPP="$root/failapp"
 export HOME="$root/home"
 mkdir -p "$HOME"
+export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
+export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
+export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"
+mkdir -p "$root/skel" "$root/sp1" "$root/sp2"
+printf '#!/bin/sh\n' >"$USER_SETUP_FISH"; chmod +x "$USER_SETUP_FISH"
+printf '#!/bin/sh\n' >"$USER_SETUP_ZSH"; chmod +x "$USER_SETUP_ZSH"
+echo skelrc >"$root/skel/.zshrc"
+REAL_JUST=$(command -v just)
+# a PATH with only the basics, so the real ptyxis, brew, starship, git and gsettings are never seen
+sysbin="$root/sysbin"
+mkdir -p "$sysbin"
+for c in chmod bash sh env cat grep awk tr cut sed mkdir cp mv rm realpath dirname head tail sort uniq date touch ls readlink mktemp tee cmp basename wc; do
+    p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
+done
 
 cat >"$bin/flatpak" <<'F'
 #!/usr/bin/env bash
@@ -49,10 +63,12 @@ F
 cat >"$bin/usermod" <<'F'
 #!/usr/bin/env bash
 echo "usermod $*" >>"$LOG"
+if [ "$1" = -s ]; then echo "$2" >"$SHELLF"; exit 0; fi
 echo "$2" >>"$GROUPS_OF"
 F
 cat >"$bin/getent" <<'F'
 #!/usr/bin/env bash
+if [ "$1" = passwd ]; then echo "$2:x:1000:1000::/home/$2:$(cat "$SHELLF")"; exit 0; fi
 case "$2" in gamemode | input | libvirt) echo "$2:x:1:" ;; *) exit 2 ;; esac
 F
 cat >"$bin/id" <<'F'
@@ -63,13 +79,71 @@ case "$1" in
     *) [ "$1" = tester ] ;;
 esac
 F
+cat >"$bin/gsettings" <<'F'
+#!/usr/bin/env bash
+# state file: "schema[:path] key=value" lines
+echo "gsettings $*" >>"$LOG"
+case "$1" in
+    get)
+        v=$(grep -F -- "$2 $3=" "$GS" 2>/dev/null | tail -1 | sed "s/^[^=]*=//")
+        if [ -z "$v" ]; then
+            case "$3" in
+                profile-uuids | enabled | disabled) v="@as []" ;;
+                sort-order) v="['org.gnome.Settings.desktop', 'org.gnome.Contacts.desktop', 'org.gnome.Nautilus.desktop']" ;;
+                default-profile-uuid | label | custom-command) v="''" ;;
+                use-custom-command) v=false ;;
+            esac
+        fi
+        echo "$v"
+        ;;
+    set)
+        grep -vF -- "$2 $3=" "$GS" >"$GS.n" 2>/dev/null; mv "$GS.n" "$GS"
+        v=$4
+        case "$v" in \[* | @* | true | false) ;; *) v="'$v'" ;; esac
+        echo "$2 $3=$v" >>"$GS"
+        ;;
+    list-keys) ;;
+esac
+F
+for n in ptyxis; do printf '#!/bin/sh\necho "%s $*" >>"$LOG"\n' "$n" >"$bin/$n"; done
+cat >"$bin/brew" <<'F'
+#!/bin/sh
+echo "brew $*" >>"$LOG"
+printf '#!/bin/sh\n' >"$bin_dir/starship"; chmod +x "$bin_dir/starship"
+F
+export bin_dir="$bin"
+cat >"$bin/uuidgen" <<'F'
+#!/usr/bin/env bash
+n=$(( $(cat "$root_cnt" 2>/dev/null || echo 0) + 1 )); echo $n >"$root_cnt"
+printf 'AAAAAAAA-0000-0000-0000-%012d\n' "$n"
+F
+export root_cnt="$root/uuidcnt"
+cat >"$bin/git" <<'F'
+#!/usr/bin/env bash
+echo "git $*" >>"$LOG"
+[ -n "${GIT_FAIL:-}" ] && exit 1
+if [ "$1" = clone ]; then d=${@: -1}; mkdir -p "$d/.git"; echo "install:" >"$d/justfile"; fi
+exit 0
+F
+cat >"$bin/just" <<'F'
+#!/usr/bin/env bash
+echo "just $*" >>"$LOG"
+F
 chmod +x "$bin"/*
 
-reset() { rm -f "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".*; : >"$LOG"; : >"$INSTALLED"; }
+reset() {
+    rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".* "$root_cnt"
+    rm -rf "$HOME" "$XDG_CACHE_HOME" "$root"/sp1/* "$root"/sp2/*
+    mkdir -p "$HOME"
+    : >"$LOG"; : >"$INSTALLED"; : >"$GS"
+    echo /bin/bash >"$SHELLF"
+    echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
+    unset GIT_FAIL
+}
 run() { # stdin text, args...
     local input=$1
     shift
-    printf '%b' "$input" | PATH="$bin:$PATH" just --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1
+    printf '%b' "$input" | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1
     rc=$?
 }
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
@@ -131,13 +205,23 @@ check "failure: later step still ran" logged "it.mijorus.gearlever"
 # 6. interactive: Enter takes defaults, steam devices yes, games path given
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n'"$root"'/games\ny\n\n\n\n\n'
+run '
+
+
+'"$root"'/games
+y
+
+
+
+
+
+'
 check "interactive: exit 0" test "$rc" = 0
 check "interactive: steam devices yes" logged "--device=usb"
 check "interactive: games path applied" logged "--filesystem=$root/games net.lutris.Lutris"
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n\n\n\n\n\n\n'
+run '\n\n\n\n\n\n\n\n\n\n'
 check "interactive: steam devices default no" notlogged "--device=usb"
 
 # 7. unknown flag is an error, unsafe games path refused
@@ -146,8 +230,144 @@ run '' --bogus
 check "unknown flag: error" test "$rc" = 2
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n/\n\n\n\n\n\n\n'
+run '\n\n\n/\n\n\n\n\n\n\n'
 check "games path: / refused" has "Refusing to expose"
+
+# ---- login shell
+reset
+run '' --yes
+check "shell: switched with --yes" logged "usermod -s $USER_SETUP_ZSH tester"
+check "shell: skeleton copied" test -f "$HOME/.zshrc"
+check "shell: undo printed" has "usermod -s /bin/bash tester"
+: >"$LOG"
+run '' --yes
+check "shell: second run no usermod -s" notlogged "usermod -s"
+reset
+echo "$USER_SETUP_ZSH" >"$SHELLF"
+run '' --yes
+check "shell: already zsh skipped" notlogged "usermod -s"
+reset
+echo /usr/bin/other >"$USER_SETUP_SHELLS"
+run '' --yes
+check "shell: not in /etc/shells skipped with reason" has "is not listed in"
+check "shell: not in /etc/shells no change" notlogged "usermod -s"
+reset
+echo mine >"$HOME/.zshenv"
+run '' --yes
+check "shell: skeleton not copied when a zsh file exists" test ! -f "$HOME/.zshrc"
+reset
+run '' --no
+check "shell: --no changes nothing" notlogged "usermod -s"
+check "shell: --no copies nothing" test ! -f "$HOME/.zshrc"
+
+# ---- fish profile and starship
+reset
+run '' --yes
+check "fish: profile created" grep -q 'custom-command=.*fakefish' "$GS"
+check "fish: default set" grep -q 'default-profile-uuid=.aaaaaaaa' "$GS"
+check "fish: starship hook written" grep -q 'starship init fish' "$HOME/.config/fish/conf.d/starship.fish"
+check "fish: brew install ran" logged "brew install starship"
+n1=$(grep -c "Profiles" "$GS"); cp "$HOME/.config/fish/conf.d/starship.fish" "$root/hook1"
+: >"$LOG"
+run '' --yes
+check "fish: second run no new uuid" test "$(grep -c "Profiles" "$GS")" = "$n1"
+check "fish: second run no gsettings set" notlogged "gsettings set"
+check "fish: second run hook untouched" cmp -s "$HOME/.config/fish/conf.d/starship.fish" "$root/hook1"
+check "fish: profile list has no duplicate" test "$(grep 'profile-uuids=' "$GS" | grep -o "'[^']*'" | wc -l)" = 1
+reset
+p=org.gnome.Ptyxis.Profile:/org/gnome/Ptyxis/Profiles/bbbb/
+printf "org.gnome.Ptyxis profile-uuids=['aaaa', 'bbbb']\n%s custom-command='%s'\n%s use-custom-command=true\norg.gnome.Ptyxis default-profile-uuid='aaaa'\n" "$p" "$USER_SETUP_FISH" "$p" >"$GS"
+run '' --yes
+check "fish: existing profile reused as default" grep -q "default-profile-uuid='bbbb'" "$GS"
+check "fish: existing profile, list unchanged" grep -q "profile-uuids=\['aaaa', 'bbbb'\]" "$GS"
+check "fish: previous default in undo" has "default-profile-uuid 'aaaa'"
+reset
+rm "$USER_SETUP_FISH"
+run '' --yes
+printf '#!/bin/sh\n' >"$USER_SETUP_FISH"; chmod +x "$USER_SETUP_FISH"
+check "fish missing: whole item skipped" has "skipped (no fish)"
+check "fish missing: no brew" notlogged "brew install"
+reset
+rm "$bin/ptyxis"
+run '' --yes
+printf '#!/bin/sh\n' >"$bin/ptyxis"; chmod +x "$bin/ptyxis"
+check "ptyxis missing: no profile" notlogged "Ptyxis.Profile"
+check "ptyxis missing: starship still set up" test -f "$HOME/.config/fish/conf.d/starship.fish"
+reset
+mv "$bin/brew" "$root/brew.off"
+run '' --yes
+mv "$root/brew.off" "$bin/brew"
+check "brew missing: starship skipped" has "skipped (no brew)"
+check "brew missing: no hook file" test ! -f "$HOME/.config/fish/conf.d/starship.fish"
+reset
+mkdir -p "$HOME/.config/fish/conf.d"; echo "# mine" >"$HOME/.config/fish/conf.d/starship.fish"
+run '' --yes
+check "other starship.fish left alone" test "$(cat "$HOME/.config/fish/conf.d/starship.fish")" = "# mine"
+check "other starship.fish reported" has "has other content"
+reset
+run '' --no
+check "fish: --no changes nothing" notlogged "gsettings set"
+check "fish: --no no hook" test ! -f "$HOME/.config/fish/conf.d/starship.fish"
+check "fish: --no no brew" notlogged "brew install"
+
+# ---- dot-files
+reset
+run '' --yes
+check "dotfiles: not run by default" notlogged "git clone"
+check "dotfiles: default no noted" has "skipped (default no"
+reset
+run '' --with-dotfiles
+check "dotfiles: --with-dotfiles clones" logged "git clone"
+check "dotfiles: installer called" logged "install preserve niri noctalia"
+check "dotfiles: only that step ran" notlogged "usermod"
+check "dotfiles: follow-up printed" has "config.example.kdl"
+: >"$LOG"
+run '' --with-dotfiles
+check "dotfiles: second run reuses cache" notlogged "git clone"
+check "dotfiles: second run fetches" logged "fetch"
+reset
+run '\n\n\ny\n'
+check "dotfiles: interactive yes runs installer" logged "install preserve niri noctalia"
+reset
+mv "$bin/git" "$root/git.off"
+run '' --with-dotfiles
+mv "$root/git.off" "$bin/git"
+check "dotfiles: git missing skipped" has "skipped (no git/just)"
+reset
+export GIT_FAIL=1; run '' --with-dotfiles
+check "dotfiles: clone failure exits non-zero" test "$rc" != 0
+check "dotfiles: clone failure reported" has "FAILED"
+
+# ---- gnome search
+reset
+printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
+printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
+run '' --yes
+check "search: both enabled" grep -q "enabled=\['io.github.kolunmi.Bazaar.desktop', 'org.gnome.Calculator.desktop'\]\|enabled=\['org.gnome.Calculator.desktop', 'io.github.kolunmi.Bazaar.desktop'\]" "$GS"
+check "search: calculator first" grep -q "sort-order=\['org.gnome.Calculator.desktop', 'org.gnome.Settings.desktop'" "$GS"
+: >"$LOG"
+run '' --yes
+check "search: second run no search change" notlogged "gsettings set org.gnome.desktop.search-providers"
+reset
+printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
+run '' --yes
+check "search: calculator provider missing, not enabled" test "$(grep -c 'Calculator' "$GS")" = 0
+check "search: bazaar still enabled" grep -q "enabled=\['io.github.kolunmi.Bazaar.desktop'\]" "$GS"
+reset
+printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
+printf "org.gnome.desktop.search-providers enabled=['x.desktop', 'io.github.kolunmi.Bazaar.desktop']\norg.gnome.desktop.search-providers disabled=['io.github.kolunmi.Bazaar.desktop', 'org.mozilla.firefox.desktop']\n" >"$GS"
+run '' --yes
+check "search: disabled bazaar removed, others kept" grep -q "disabled=\['org.mozilla.firefox.desktop'\]" "$GS"
+check "search: user enabled list kept in order" grep -q "enabled=\['x.desktop', 'io.github.kolunmi.Bazaar.desktop'\]" "$GS"
+reset
+printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
+printf "org.gnome.desktop.search-providers enabled=['org.gnome.Calculator.desktop']\norg.gnome.desktop.search-providers sort-order=['org.gnome.Calculator.desktop', 'a.desktop']\n" >"$GS"
+run '' --yes
+check "search: sort-order already first untouched" notlogged "gsettings set org.gnome.desktop.search-providers sort-order"
+reset
+printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
+run '' --no
+check "search: --no changes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

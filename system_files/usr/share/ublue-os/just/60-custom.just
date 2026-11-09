@@ -1,17 +1,19 @@
 # vim: set ft=make :
 
-# One-time user setup, step by step: groups (gamemode, input, libvirt) and Flatpak access overrides. `ujust user-setup [user] [--yes|--no]`: asks y/n per step; --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Uses sudo only for the groups step
+# One-time user setup, step by step: groups (gamemode, input, libvirt), login shell zsh, a fish terminal profile with the starship prompt, GNOME search providers (Calculator, Bazaar), and Flatpak access overrides. `ujust user-setup [user] [--yes|--no|--with-dotfiles]`: asks y/n per step; --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan, --with-dotfiles alone runs only the optional dot-files step (default no otherwise). Uses sudo only for the groups and login shell steps
 [positional-arguments]
 user-setup *args:
     #!/usr/bin/env bash
     set -uo pipefail
     mode=ask
+    dot=ask
     user=""
     for a in "$@"; do
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            -*) echo "Unknown option: $a (use --yes or --no)" >&2; exit 2 ;;
+            --with-dotfiles) dot=force ;;
+            -*) echo "Unknown option: $a (use --yes, --no or --with-dotfiles)" >&2; exit 2 ;;
             *)
                 if [ -n "$user" ]; then echo "Only one user name is accepted" >&2; exit 2; fi
                 user=$a
@@ -19,6 +21,8 @@ user-setup *args:
         esac
     done
     user=${user:-$(id -un)}
+    only=0
+    if [ "$dot" = force ] && [ "$mode" = ask ]; then only=1; fi
     if ! [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || ! id "$user" >/dev/null 2>&1; then
         echo "'$user' is not an existing user name"
         exit 1
@@ -94,6 +98,7 @@ user-setup *args:
         fi
     }
 
+    if [ "$only" = 0 ]; then
     # 1. groups. gamemode and input only exist in /usr/lib/group, so their lines are copied into /etc/group first
     # or usermod -aG would not see them.
     groups_todo=()
@@ -129,6 +134,268 @@ user-setup *args:
             if [ "$gfail" = 1 ]; then failed=1; record "groups" "FAILED" "$undo"; else
                 echo "Log out and back in for the new groups to apply."
                 record "groups" "applied" "$undo"
+            fi
+        fi
+    fi
+
+    # 1b. login shell. New accounts get zsh from /etc/default/useradd; an account made before the rebase keeps its shell.
+    # chsh is not installed on this image, so usermod -s does the change.
+    echo
+    echo "== login-shell"
+    zsh=${USER_SETUP_ZSH:-/usr/bin/zsh}
+    shells_file=${USER_SETUP_SHELLS:-/etc/shells}
+    skel=${USER_SETUP_SKEL:-/etc/skel}
+    cur=$(getent passwd "$user" | cut -d: -f7)
+    if [ "$cur" = "$zsh" ]; then
+        echo "Already zsh."
+        record "login-shell" "already done"
+    elif [ ! -x "$zsh" ]; then
+        echo "Skipped: $zsh does not exist on this system."
+        record "login-shell" "skipped (no zsh)"
+    elif ! grep -qxF "$zsh" "$shells_file" 2>/dev/null; then
+        echo "Skipped: $zsh is not listed in $shells_file, so it is not an allowed login shell."
+        record "login-shell" "skipped (not in /etc/shells)"
+    else
+        echo "Switch $user's login shell from ${cur:-unknown} to zsh? Takes effect at the next login; bash stays installed as the fallback."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "login-shell" "planned (would ask)"; else record "login-shell" "skipped (not applied)"; fi
+        elif sudo usermod -s "$zsh" "$user"; then
+            echo "Login shell of $user is now $zsh (next login)."
+            if [ "$user" = "$(id -un)" ]; then
+                if [ ! -e "$HOME/.zshrc" ] && [ ! -e "$HOME/.zprofile" ] && [ ! -e "$HOME/.zshenv" ]; then
+                    for f in .zshrc .zprofile; do
+                        [ -f "$skel/$f" ] && cp -n "$skel/$f" "$HOME/$f"
+                    done
+                    echo "Copied the skeleton zsh startup files so zsh's first-run wizard does not appear."
+                fi
+            else
+                echo "For $user's home, run as that user: cp -n $skel/.zshrc ~/"
+            fi
+            record "login-shell" "applied" "sudo usermod -s ${cur:-/bin/bash} $user (effective at next login)"
+        else
+            echo "Failed: login-shell" >&2
+            failed=1
+            record "login-shell" "FAILED"
+        fi
+    fi
+
+    # 1c. fish terminal profile in Ptyxis plus the starship prompt (Homebrew only, no installer script)
+    echo
+    echo "== fish-profile"
+    fish=${USER_SETUP_FISH:-/usr/bin/fish}
+    pschema=org.gnome.Ptyxis
+    prof_schema=org.gnome.Ptyxis.Profile
+    conf="$HOME/.config/fish/conf.d/starship.fish"
+    gs_list() { gsettings get "$pschema" profile-uuids 2>/dev/null | grep -oE "'[^']+'" | tr -d "'"; }
+    find_fish_profile() {
+        local u c v
+        for u in $(gs_list); do
+            c=$(gsettings get "$prof_schema:/org/gnome/Ptyxis/Profiles/$u/" custom-command 2>/dev/null)
+            v=$(gsettings get "$prof_schema:/org/gnome/Ptyxis/Profiles/$u/" use-custom-command 2>/dev/null)
+            if [ "$c" = "'$fish'" ] && [ "$v" = true ]; then echo "$u"; return 0; fi
+        done
+        return 1
+    }
+    cur_default() { gsettings get "$pschema" default-profile-uuid 2>/dev/null | tr -d "'"; }
+
+    if [ ! -x "$fish" ]; then
+        echo "Skipped: $fish is missing (fish is an optional package of the image; install it with the image's package set, then rerun)."
+        record "fish-profile: ptyxis" "skipped (no fish)"
+        record "fish-profile: starship" "skipped (no fish)"
+    else
+        a_state=todo
+        if ! command -v ptyxis >/dev/null 2>&1 || ! command -v gsettings >/dev/null 2>&1; then
+            a_state=none
+        else
+            existing=$(find_fish_profile || true)
+            if [ -n "$existing" ] && [ "$(cur_default)" = "$existing" ]; then a_state=done; fi
+        fi
+        b_state=todo
+        need_install=0
+        if command -v starship >/dev/null 2>&1; then
+            :
+        elif command -v brew >/dev/null 2>&1; then
+            need_install=1
+        else
+            b_state=nobrew
+        fi
+        if [ "$b_state" = todo ]; then
+            if [ -f "$conf" ] && grep -qF 'starship init fish' "$conf"; then
+                [ "$need_install" = 0 ] && b_state=done
+            elif [ -f "$conf" ]; then
+                b_state=otherfile
+            fi
+        fi
+        [ "$a_state" = none ] && echo "Part A skipped: Ptyxis or gsettings is not available."
+        [ "$b_state" = nobrew ] && echo "Part B skipped: starship is not installed and Homebrew is missing (the image installs Homebrew on first boot; rerun later)."
+        [ "$b_state" = otherfile ] && echo "Part B skipped: $conf exists with other content; left alone."
+        if [ "$a_state" = todo ] || [ "$b_state" = todo ]; then
+            echo "Sets up a Ptyxis profile that starts fish (made the default; open new Ptyxis windows to see it) and the starship prompt (brew install starship if needed, hooked into fish through $conf)."
+            ask y "Apply?"
+            run_it=$answer
+        else
+            run_it=n
+        fi
+        # part A
+        case "$a_state" in
+            none) record "fish-profile: ptyxis" "skipped (no ptyxis/gsettings)" ;;
+            done) echo "Ptyxis fish profile already the default."; record "fish-profile: ptyxis" "already done" ;;
+            todo)
+                if [ "$run_it" != y ]; then
+                    if [ "$mode" = no ]; then record "fish-profile: ptyxis" "planned (would ask)"; else record "fish-profile: ptyxis" "skipped (not applied)"; fi
+                else
+                    prev=$(cur_default)
+                    created=0
+                    ok=1
+                    uuid=$existing
+                    if [ -z "$uuid" ]; then
+                        uuid=$(uuidgen | tr -d - | tr 'A-F' 'a-f')
+                        created=1
+                        p="$prof_schema:/org/gnome/Ptyxis/Profiles/$uuid/"
+                        gsettings set "$p" label fish && gsettings set "$p" custom-command "$fish" && gsettings set "$p" use-custom-command true || ok=0
+                        if [ "$ok" = 1 ]; then
+                            newlist="["
+                            for u in $(gs_list) "$uuid"; do newlist="$newlist'$u', "; done
+                            newlist="${newlist%, }]"
+                            gsettings set "$pschema" profile-uuids "$newlist" || ok=0
+                        fi
+                    fi
+                    [ "$ok" = 1 ] && { gsettings set "$pschema" default-profile-uuid "$uuid" || ok=0; }
+                    if [ "$ok" = 1 ]; then
+                        echo "Ptyxis profile $uuid starts fish and is the default (new windows pick it up)."
+                        if [ -n "$prev" ]; then undo="gsettings set $pschema default-profile-uuid '$prev'"; else undo="gsettings reset $pschema default-profile-uuid"; fi
+                        if [ "$created" = 1 ]; then
+                            undo="$undo; dconf reset -f /org/gnome/Ptyxis/Profiles/$uuid/ and set profile-uuids again without '$uuid' (gsettings set $pschema profile-uuids \"[...]\")"
+                        fi
+                        record "fish-profile: ptyxis" "applied" "$undo"
+                    else
+                        echo "Failed: fish-profile (Ptyxis part)" >&2
+                        failed=1
+                        record "fish-profile: ptyxis" "FAILED"
+                    fi
+                fi
+                ;;
+        esac
+        # part B
+        case "$b_state" in
+            nobrew) record "fish-profile: starship" "skipped (no brew)" ;;
+            otherfile) record "fish-profile: starship" "skipped (starship.fish has other content)" ;;
+            done) echo "Starship already installed and hooked into fish."; record "fish-profile: starship" "already done" ;;
+            todo)
+                if [ "$run_it" != y ]; then
+                    if [ "$mode" = no ]; then record "fish-profile: starship" "planned (would ask)"; else record "fish-profile: starship" "skipped (not applied)"; fi
+                else
+                    ok=1
+                    if [ "$need_install" = 1 ]; then brew install starship || ok=0; fi
+                    if [ "$ok" = 1 ] && [ ! -f "$conf" ]; then
+                        mkdir -p "$(dirname "$conf")" && {
+                            echo "# Created by ujust user-setup"
+                            echo "if status is-interactive; and type -q starship; starship init fish | source; end"
+                        } >"$conf" || ok=0
+                    fi
+                    if [ "$ok" = 1 ]; then
+                        echo "Starship is installed and hooked into fish (hint: starship preset --list shows ready-made styles)."
+                        record "fish-profile: starship" "applied" "rm $conf; brew uninstall starship"
+                    else
+                        echo "Failed: fish-profile (starship part)" >&2
+                        failed=1
+                        record "fish-profile: starship" "FAILED"
+                    fi
+                fi
+                ;;
+        esac
+    fi
+
+    # 1d. GNOME search: Calculator and Bazaar providers are DefaultDisabled in their provider files, so they only
+    # show once their id is in `enabled`; a provider missing from sort-order sorts after the listed ones.
+    echo
+    echo "== gnome-search"
+    sschema=org.gnome.desktop.search-providers
+    calc=org.gnome.Calculator.desktop
+    bazaar=io.github.kolunmi.Bazaar.desktop
+    sdirs=${USER_SETUP_SEARCH_DIRS:-/usr/share/gnome-shell/search-providers:/var/lib/flatpak/exports/share/gnome-shell/search-providers:$HOME/.local/share/flatpak/exports/share/gnome-shell/search-providers}
+    provider_present() {
+        local d IFS=:
+        for d in $sdirs; do
+            grep -lxF "DesktopId=$1" "$d"/*.ini >/dev/null 2>&1 && return 0
+        done
+        return 1
+    }
+    sget() { gsettings get "$sschema" "$1" 2>/dev/null | grep -oE "'[^']+'" | tr -d "'"; }
+    # mklist <id...>: GVariant string array text
+    mklist() {
+        local out="[" i
+        for i in "$@"; do out="$out'$i', "; done
+        [ "$out" = "[" ] && { echo "@as []"; return; }
+        echo "${out%, }]"
+    }
+    in_list() { local n=$1; shift; local i; for i in "$@"; do [ "$i" = "$n" ] && return 0; done; return 1; }
+    if ! command -v gsettings >/dev/null 2>&1; then
+        echo "Skipped: gsettings is not available."
+        record "gnome-search: providers" "skipped (no gsettings)"
+        record "gnome-search: calculator first" "skipped (no gsettings)"
+    else
+        mapfile -t s_enabled < <(sget enabled)
+        mapfile -t s_disabled < <(sget disabled)
+        mapfile -t s_sort < <(sget sort-order)
+        to_enable=()
+        for id in "$bazaar" "$calc"; do
+            if ! provider_present "$id"; then
+                echo "Skipped $id: its search provider is not installed."
+                continue
+            fi
+            if ! in_list "$id" "${s_enabled[@]}" || in_list "$id" "${s_disabled[@]}"; then to_enable+=("$id"); fi
+        done
+        sort_todo=0
+        if provider_present "$calc"; then
+            [ "${s_sort[0]:-}" = "$calc" ] || sort_todo=1
+        fi
+        if [ "${#to_enable[@]}" -eq 0 ] && [ "$sort_todo" = 0 ]; then
+            echo "Nothing to do (providers enabled, or not installed; Calculator already first)."
+            record "gnome-search: providers" "already done"
+            record "gnome-search: calculator first" "already done"
+        else
+            echo "Enables the GNOME search providers for ${to_enable[*]:-(none needed)} and puts the Calculator first in the search order (only those entries change)."
+            ask y "Apply?"
+            if [ "$answer" != y ]; then
+                if [ "$mode" = no ]; then r="planned (would ask)"; else r="skipped (not applied)"; fi
+                record "gnome-search: providers" "$r"
+                record "gnome-search: calculator first" "$r"
+            else
+                prev_enabled=$(mklist "${s_enabled[@]}")
+                prev_sort=$(mklist "${s_sort[@]}")
+                if [ "${#to_enable[@]}" -eq 0 ]; then
+                    record "gnome-search: providers" "already done"
+                else
+                    new_enabled=("${s_enabled[@]}")
+                    new_disabled=()
+                    for id in "${to_enable[@]}"; do in_list "$id" "${new_enabled[@]}" || new_enabled+=("$id"); done
+                    for id in "${s_disabled[@]}"; do in_list "$id" "${to_enable[@]}" || new_disabled+=("$id"); done
+                    if gsettings set "$sschema" enabled "$(mklist "${new_enabled[@]}")" \
+                        && { [ "${#new_disabled[@]}" -eq "${#s_disabled[@]}" ] || gsettings set "$sschema" disabled "$(mklist "${new_disabled[@]}")"; }; then
+                        echo "Enabled: ${to_enable[*]}"
+                        record "gnome-search: providers" "applied" "gsettings set $sschema enabled \"$prev_enabled\" (previous value; 'dconf reset /org/gnome/desktop/search-providers/enabled' resets the whole key to defaults and drops providers you enabled by hand)"
+                    else
+                        echo "Failed: gnome-search providers" >&2
+                        failed=1
+                        record "gnome-search: providers" "FAILED"
+                    fi
+                fi
+                if [ "$sort_todo" = 0 ]; then
+                    record "gnome-search: calculator first" "already done"
+                else
+                    new_sort=("$calc")
+                    for id in "${s_sort[@]}"; do [ "$id" = "$calc" ] || new_sort+=("$id"); done
+                    if gsettings set "$sschema" sort-order "$(mklist "${new_sort[@]}")"; then
+                        echo "Calculator is first in the search order."
+                        record "gnome-search: calculator first" "applied" "gsettings set $sschema sort-order \"$prev_sort\" (previous value; 'dconf reset /org/gnome/desktop/search-providers/sort-order' resets the whole key to defaults)"
+                    else
+                        echo "Failed: gnome-search sort order" >&2
+                        failed=1
+                        record "gnome-search: calculator first" "FAILED"
+                    fi
+                fi
             fi
         fi
     fi
@@ -220,6 +487,48 @@ user-setup *args:
         "flatpak override --user --nofilesystem=~/Applications it.mijorus.gearlever" \
         'has_val it.mijorus.gearlever filesystems "~/Applications" "$HOME/Applications"' \
         'mkdir -p "$HOME/Applications" && flatpak override --user --filesystem=~/Applications it.mijorus.gearlever && echo "Gear Lever can now use ~/Applications"'
+
+    fi # only=0
+
+    # 3. copy the niri and Noctalia config files of github.com/redcodeworks/dot-files with that repository's own
+    # installer (same checkout pattern as the gnome-themes recipe). Default no; --with-dotfiles runs it without asking
+    echo
+    echo "== dot-files (niri, Noctalia)"
+    if ! command -v git >/dev/null 2>&1 || ! command -v just >/dev/null 2>&1; then
+        echo "Skipped: git and just are needed (both ship in the image; install them if you removed them)."
+        record "dot-files" "skipped (no git/just)"
+    else
+        echo "Fetch github.com/redcodeworks/dot-files and copy its niri and Noctalia config files into ~/.config; existing files you changed are kept. This runs that repository's installer as you (code from that repository, the same trust as the gnome-themes recipe) and needs the network."
+        if [ "$dot" = force ]; then answer=y; else ask n "Apply?"; fi
+        if [ "$answer" != y ]; then
+            if [ "$mode" = no ]; then record "dot-files" "planned (would ask)"
+            elif [ "$mode" = yes ]; then record "dot-files" "skipped (default no; use --with-dotfiles)"
+            else record "dot-files" "skipped (not applied)"; fi
+        else
+            durl="${DOT_FILES_URL:-https://github.com/redcodeworks/dot-files.git}"
+            dref="${DOT_FILES_REF:-main}"
+            ddir="${XDG_CACHE_HOME:-$HOME/.cache}/dot-files/repo"
+            if (
+                if [ -d "$ddir/.git" ]; then
+                    git -C "$ddir" remote set-url origin "$durl" || exit 1
+                    git -C "$ddir" fetch --quiet --tags origin || exit 1
+                else
+                    mkdir -p "$(dirname "$ddir")" || exit 1
+                    git clone --quiet "$durl" "$ddir" || exit 1
+                fi
+                git -C "$ddir" checkout --quiet --detach "$(git -C "$ddir" rev-parse --verify --quiet "origin/$dref" || echo "$dref")" || exit 1
+                env -u DOT_DEST just --justfile "$ddir/justfile" --working-directory "$ddir" install preserve niri noctalia || exit 1
+            ); then
+                echo "niri: paste the include lines you want from ~/.config/niri/config.example.kdl into your ~/.config/niri/config.kdl (your own config.kdl is not touched)."
+                echo "Noctalia: copy ~/.config/noctalia/config.example.toml to ~/.config/noctalia/config.toml and edit it."
+                record "dot-files" "applied" "backups are in ~/.local/state/dot-files/backup/; delete the installed files by hand; remove ~/.cache/dot-files"
+            else
+                echo "Failed: dot-files (network or the repository's installer)" >&2
+                failed=1
+                record "dot-files" "FAILED"
+            fi
+        fi
+    fi
 
     echo
     echo "== Summary (user: $user, mode: $mode)"

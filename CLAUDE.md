@@ -348,14 +348,21 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   scripts; nothing here needs sudo.
 - **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
-  `user-setup [user] [--yes|--no]` replaced the seven single-purpose recipes `add-user-groups`, `flatpak-games-access`,
+  `user-setup [user] [--yes|--no|--with-dotfiles]` replaced the seven single-purpose recipes `add-user-groups`, `flatpak-games-access`,
   `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`, `chrome-flatpak-webapps` and
   `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; the groups step copies the
   `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first and is the only sudo use. Each
   Flatpak step is skipped when the app is missing (`flatpak info`) or the override is present (`flatpak override
   --user --show`); defaults are yes except the Steam devices (widens the sandbox) and the games directory (needs a
   path); `--yes` takes defaults, `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Tests: `tests/user-setup.sh` (fake flatpak, sudo, id, getent, usermod). The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
+  non-zero. Further steps, in order after the groups: login shell (`usermod -s /usr/bin/zsh`, second sudo use; skeleton zsh
+  files copied with `cp -n` for the invoking user only), fish profile (Ptyxis profile via `gsettings`, reused when one
+  already starts fish; starship via `brew install`, hook file `~/.config/fish/conf.d/starship.fish`), GNOME search
+  (`org.gnome.desktop.search-providers`: Calculator and Bazaar into `enabled`, Calculator first in `sort-order`), then
+  the Flatpak steps, then dot-files (default no; shallow clone into `~/.cache/dot-files/repo`, `DOT_FILES_REF`, runs
+  `just install preserve niri noctalia` of that repo; `--with-dotfiles` alone runs only it and runs it without asking).
+  Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS`. Tests: `tests/user-setup.sh` (fake flatpak, sudo, id,
+  getent, usermod, gsettings, brew, git, just). The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
   contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
   shipped) and preload the 64-bit build into Flatpak Steam.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are

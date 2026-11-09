@@ -61,7 +61,7 @@ Added by this image:
 - Maintainer details (channels, promotion, base image variables) are in `CLAUDE.md`
 
 **`ujust` recipes** (`system_files/usr/share/ublue-os/just/60-custom.just`)
-- `user-setup` (groups and Flatpak access steps, one y/n question each), `toolbox`, `gnome-themes` (themes and icons live in their own repo), Steam gamescope and extest helpers; the full list is under "Recipes"
+- `user-setup` (groups, login shell, fish terminal profile with starship, GNOME search providers, Flatpak access steps and an optional dot-files copy, one y/n question each), `toolbox`, `gnome-themes` (themes and icons live in their own repo), Steam gamescope and extest helpers; the full list is under "Recipes"
 
 ## Use it
 
@@ -78,8 +78,10 @@ Added by this image:
    sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
    ```
 
-4. Optionally run the user-level setup, an interactive checklist for the `gamemode`, `input` and `libvirt` groups
-   and the Flatpak access overrides (`--yes` takes the defaults, `--no` only prints the plan):
+4. Optionally run the user-level setup, an interactive checklist for the `gamemode`, `input` and `libvirt` groups,
+   the zsh login shell, a fish terminal profile with the starship prompt, the Calculator and Bazaar search providers
+   and the Flatpak access overrides, with an optional copy of the niri and Noctalia config files from `redcodeworks/dot-files`
+   (`--yes` takes the defaults, `--no` only prints the plan, `--with-dotfiles` runs only the dot-files copy):
 
    ```
    ujust user-setup
@@ -143,7 +145,7 @@ Built on Universal Blue's `silverblue-main` for the current Fedora release (`ghc
 
 | Recipe | What it does |
 |---|---|
-| `ujust user-setup [user] [--yes\|--no]` | Interactive checklist: add the user to `gamemode`, `input` and `libvirt` (sudo), then Flatpak overrides for game launchers (a games directory you name), Steam USB/input devices (default no, widens the sandbox), VS Code and the Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers and Gear Lever's `~/Applications`; steps for apps that are not installed or already done are skipped, and the summary lists how to undo each applied step |
+| `ujust user-setup [user] [--yes\|--no\|--with-dotfiles]` | Interactive checklist: add the user to `gamemode`, `input` and `libvirt` (sudo), switch the login shell to zsh (sudo), a Ptyxis profile that starts fish plus the starship prompt (from Homebrew), the Calculator and Bazaar GNOME search providers (Calculator first), then Flatpak overrides for game launchers (a games directory you name), Steam USB/input devices (default no, widens the sandbox), VS Code and the Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers and Gear Lever's `~/Applications`; steps for apps that are not installed or already done are skipped, the summary lists how to undo each applied step; the optional copy of the niri and Noctalia config files from `redcodeworks/dot-files` (runs that repository's installer, default no, `--with-dotfiles` runs only it) |
 | `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options; `--ide` makes IDE launchers (JetBrains icon: the one Toolbox registered, else the file in the app's `bin/`; rerunning refreshes the icon of launchers it created) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
 | `ujust steam-gamescope-setup` / `-reset` | Make Flatpak Steam and the gamescope layer work together, or undo it |

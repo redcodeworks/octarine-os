@@ -252,7 +252,7 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
 3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest`, reboot, then repeat it with
    `--enforce-container-sigpolicy` and reboot again (the first switch runs under stock Fedora's accept-anything policy).
    Remove old layered packages first, since local layers get in the way of `bootc upgrade`.
-4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and `libvirt`, plus the Flatpak access steps), restore the
+4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and `libvirt`, the zsh login shell, fish profile, search providers and the Flatpak access steps), restore the
    `crypttab` and `fstab` lines for the data drives, and re-enroll TPM unlock.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
@@ -271,8 +271,11 @@ Recipes run through `ujust`; arguments are positional, for example `ujust toolbo
 They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
 and safeguards are in `CLAUDE.md`. What you need to use them:
 
-- **`user-setup [user] [--yes|--no]`:** an interactive checklist. Step 1 joins `gamemode`, `input` and `libvirt`; the
-  Flatpak steps follow (games directory for Steam, Bottles and Lutris, Steam USB and input devices, VS Code and the
+- **`user-setup [user] [--yes|--no|--with-dotfiles]`:** an interactive checklist. In order: join `gamemode`, `input`
+  and `libvirt`; switch the login shell to zsh when it is not (`usermod -s`, sudo; copies the skeleton zsh files when
+  you have none); a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in through
+  `~/.config/fish/conf.d/starship.fish`; the Calculator and Bazaar GNOME search providers with the Calculator first;
+  the Flatpak steps (games directory for Steam, Bottles and Lutris, Steam USB and input devices, VS Code and the
   rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers, Gear Lever's
   `~/Applications`). Each step is skipped when the app is not installed or the change is already in place; Enter
   takes the default (yes, except the Steam devices and the games directory, which default to no). `--yes` takes the
