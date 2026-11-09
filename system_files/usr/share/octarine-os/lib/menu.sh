@@ -26,12 +26,26 @@
 #                       y and the answer is empty. Returns 0 for yes, 1 for no. It never uses `ugum confirm`: its
 #                       fallback treats Esc as YES.
 
+# gum colors: ANSI palette colors 0-15 only (no 256-color or hex values), so menus follow the terminal theme. Each is
+# exported only when the user has not set it (an empty value counts as set), so a user's own GUM_* settings win.
+menu_palette() {
+    local pair var val
+    for pair in GUM_CHOOSE_CURSOR_FOREGROUND=2 GUM_CHOOSE_SELECTED_FOREGROUND=2 GUM_CHOOSE_HEADER_FOREGROUND=4 \
+        GUM_CONFIRM_PROMPT_FOREGROUND=4 GUM_CONFIRM_SELECTED_FOREGROUND=0 GUM_CONFIRM_SELECTED_BACKGROUND=2 \
+        GUM_CONFIRM_UNSELECTED_FOREGROUND=7 GUM_CONFIRM_UNSELECTED_BACKGROUND=8; do
+        var=${pair%%=*}
+        val=${pair#*=}
+        if [ -z "${!var+x}" ]; then export "$var=$val"; fi
+    done
+}
+menu_palette
+
 menu_tty() { [ -n "${OCTARINE_MENU_FORCE_TTY:-}" ] || { [ -t 0 ] && [ -t 1 ]; }; }
 menu_ready() { menu_tty && command -v gum >/dev/null 2>&1; }
 menu_ready_one() { menu_tty && command -v ugum >/dev/null 2>&1; }
 
 menu_title() {
-    if menu_ready; then gum style --bold --foreground 212 "$1"; else printf '%s\n' "$1"; fi
+    if menu_ready; then gum style --bold --foreground 4 "$1"; else printf '%s\n' "$1"; fi
 }
 
 menu_multi() {

@@ -308,6 +308,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   default) never prompt, only required ones do. Scoped menus read recipes from `just --dump --dump-format json`, never
   from the human `just --list` (it prints group headings): public recipes only, no `default`; jq, then python3, else the
   plain `--summary` list.
+- Menus follow the terminal palette: `menu.sh` exports gum's `GUM_CHOOSE_*` and `GUM_CONFIRM_*` color variables as ANSI colors 0-15
+  only (cursor and selected green 2, header and prompt blue 4, buttons 0/2 and 7/8, titles `--foreground 4`), never
+  overriding a variable the user set; no 256-color or hex values.
 - Scoped recipes (`gnome-candy`, `toolbox`) open a menu of their next commands when run with no arguments on a
   terminal; explicit arguments pass straight through.
 - Every recipe gets a test in `tests/` with stubbed binaries; tests fake a terminal with `OCTARINE_MENU_FORCE_TTY=1`.
