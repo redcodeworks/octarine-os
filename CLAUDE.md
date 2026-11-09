@@ -262,7 +262,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** `iommu=pt`.
 - **Size and compilers:** the image carries no compilers; those live in the toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
-- **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
+- **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
   image, so it is unverified (users can check first with `cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest`).
@@ -282,7 +282,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Existing accounts and root keep their shell. Rolling back to an image without zsh breaks only accounts created while
   zsh was the default; distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh
   (`dev-toolbox` has it; check the `gaming` one).
-- **Flatpaks:** a preinstall list of apps; themes and icons are not in the image.
+- **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image.
 
 ## Forking
 

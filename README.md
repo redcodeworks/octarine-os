@@ -67,7 +67,13 @@ Added by this image:
    sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
    ```
 
-4. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers, and optional config, GNOME settings and GNOME extensions from `redcodeworks/dot-files`; GNOME asks you to confirm each extension):
+4. Install the preinstalled apps (run it from the desktop, in a terminal):
+
+   ```
+   ujust flatpak-preinstall
+   ```
+
+5. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers, and optional config, GNOME settings and GNOME extensions from `redcodeworks/dot-files`; GNOME asks you to confirm each extension):
 
    ```
    ujust user-setup
@@ -107,6 +113,7 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 
 | Recipe | What it does |
 |---|---|
+| `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists (`--dry-run` shows them); run it from a desktop terminal, safe to repeat |
 | `ujust user-setup` | Step-by-step checklist for a new user (see above); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
 | `ujust gaming-setup` | Step-by-step checklist for gaming: Steam, ProtonUp-Qt and Lutris from Flathub (verified apps only), gamescope, MangoHud and Proton-GE for Steam, an experimental extest build, generated Steam launchers (including a gamescope one at your screen's resolution), and the GameMode tuning; `ujust gaming-setup reset` undoes it |
 | `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |

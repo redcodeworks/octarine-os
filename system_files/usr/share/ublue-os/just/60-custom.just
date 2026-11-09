@@ -913,6 +913,64 @@ user-setup *args:
     fi
     exit "$failed"
 
+# Install the Flatpak apps this image lists (/usr/share/flatpak/preinstall.d). Run it from a desktop terminal as yourself, not with sudo: it needs your session bus, and the system installation asks for authorization through polkit if required. `ujust flatpak-preinstall` installs, `ujust flatpak-preinstall --dry-run` only shows the plan. Safe to repeat; "Nothing to do" is success
+[positional-arguments]
+flatpak-preinstall *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    dry=0
+    for a in "$@"; do
+        case "$a" in
+            --dry-run) dry=1 ;;
+            *) echo "Unknown option: $a" >&2; echo "Usage: ujust flatpak-preinstall [--dry-run]" >&2; exit 2 ;;
+        esac
+    done
+    flatpak_bin=${FLATPAK_BIN:-/usr/bin/flatpak}
+    dir=${FLATPAK_PREINSTALL_DIR:-/usr/share/flatpak/preinstall.d}
+    echo "Flatpak apps this will install (those already installed are left alone):"
+    shopt -s nullglob
+    count=0
+    for f in "$dir"/*.preinstall; do
+        while IFS= read -r line; do
+            case "$line" in
+                "[Flatpak Preinstall "*"]") ref=${line#"[Flatpak Preinstall "}; echo "  ${ref%]}"; count=$((count + 1)) ;;
+            esac
+        done <"$f"
+    done
+    [ "$count" -gt 0 ] || { echo "  (no list found in $dir)"; exit 1; }
+    [ "$dry" = 1 ] && { echo "Dry run: nothing was changed."; exit 0; }
+    if [ "$(id -u)" = 0 ]; then
+        echo "Run this as your normal user from the desktop, not with sudo or as root (root has no session bus)." >&2
+        exit 1
+    fi
+    if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        echo "No desktop session bus found (DBUS_SESSION_BUS_ADDRESS is not set). Run this from a terminal inside your desktop session." >&2
+        exit 1
+    fi
+    if ! "$flatpak_bin" remotes --columns=name 2>/dev/null | grep -qx flathub; then
+        echo "The flathub remote is missing. Check with: flatpak remotes" >&2
+        echo "The image adds it at boot (flatpak-add-fedora-repos.service); add it by hand with: flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo" >&2
+        exit 1
+    fi
+    if ! getent ahosts dl.flathub.org >/dev/null 2>&1; then
+        echo "No network: dl.flathub.org does not resolve. Connect and run this again." >&2
+        exit 1
+    fi
+    echo "Installing. If a polkit prompt appears, authorize it."
+    out=$(mktemp)
+    "$flatpak_bin" preinstall -y 2>&1 | tee "$out"
+    status=${PIPESTATUS[0]}
+    if [ "$status" -eq 0 ]; then
+        echo "Done (exit status 0)."
+    else
+        echo "Failed (exit status $status)." >&2
+        if grep -qi 'autolaunch' "$out"; then
+            echo "The error mentions D-Bus autolaunch: an enabled 'fedora' OCI remote (stock Silverblue) asks for a token over the session bus. This recipe already runs in your session, so please report it; as a workaround, 'flatpak remote-modify --disable fedora' (system) and run it again." >&2
+        fi
+    fi
+    rm -f -- "${out:?}"
+    exit "$status"
+
 # Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam's runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display's resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)
 [positional-arguments]
 gaming-setup *args:

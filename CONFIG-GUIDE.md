@@ -255,7 +255,7 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
 4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and `libvirt`, the zsh login shell, fish profile, search providers and the Flatpak access steps), restore the
    `crypttab` and `fstab` lines for the data drives, and re-enroll TPM unlock.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
-6. **Flatpaks:** the image preinstalls a set at first boot. Restore the rest and their overrides
+6. **Flatpaks:** `ujust flatpak-preinstall` (from a desktop terminal) installs the set the image lists. Restore the rest and their overrides
    from the manifest. Restore app data before first launch where it matters (browser profiles).
 7. **Homebrew, then dev-toolbox:** brew's prefix appears on first boot (`brew-setup.service`), so run
    `brew bundle` from the Brewfile, then `ujust toolbox dev-toolbox` (builds the box, installs nothing on the
