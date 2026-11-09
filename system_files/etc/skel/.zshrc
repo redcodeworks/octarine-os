@@ -1,4 +1,4 @@
-# Default zshrc for new users (octarine-os). Stops the zsh-newuser-install wizard; edit freely.
+# Default zshrc for new users (octarineOS). Stops the zsh-newuser-install wizard; edit freely.
 # /etc/zprofile and /etc/zshrc (Fedora zsh package) already source /etc/profile.d, so PATH and brew are set.
 HISTFILE=~/.zsh_history
 HISTSIZE=10000
