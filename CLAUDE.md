@@ -78,6 +78,33 @@ encouraged). American English throughout.
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
 The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
+## Branching: GitLab Flow
+
+GitLab Flow, "production branch" variant (reference implementation for the owner's other repos). `testing` is the
+integration branch (GitLab's "main"); `main` is the production branch.
+
+- **Environments.** dev = the validation build on a pull request (`build.yml`, event `pull_request` into `testing`:
+  same plan, brew pin check, build, size check, smoke test, rechunk and version check; no registry login, no push,
+  no tags, no signing); UAT = the `testing` image (the `octarine-testing` VM follows it); prod = `latest` (the
+  owner's machine).
+- **Direction.** One way, downstream: feature branch -> pull request into `testing` -> pull request from `testing`
+  into `main`. Fixes go upstream first (into `testing`, then promoted).
+- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch alone builds nothing;
+  only the pull request event does.
+- **Rebase and merge everywhere** (once the owner switches the repository setting): `main` never holds commits
+  `testing` lacks, so there is no back-merge. Until then the repo allows only merge commits and `origin/main` is
+  merged (or fast-forwarded) into `testing` after each promotion.
+- **Promotion.** Pull request `testing` -> `main` (`require-testing-branch.yml` runs on pull requests into `main`
+  only, never on those into `testing`); the push to `main` retags the tested `testing` image by tree hash and signs.
+- **Hotfix rule.** Fix on a `hotfix/<topic>` branch into `testing`, then promote. If `testing` is red and prod needs
+  an emergency fix, open the pull request into `main` and cherry-pick the same fix into `testing` straight away.
+- **Pull request builds are validation only.** An image is built twice per change, once on the pull request and once
+  on merge; only the merge build is promoted. Gating: the build job's "Choose channel" step sets `publish=false`
+  for `pull_request`; "Login to GitHub Container Registry" and "Push To GHCR" need `publish == 'true'`; the `sign`
+  job runs only after a publish or a promotion, so it skips; the aggregate job `Build and push image` still runs
+  and passes. Concurrency group is workflow plus ref (one per PR), cancel-in-progress on. Test: `tests/pr-validation.sh`.
+- The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+
 ## Rules
 
 - Home- or user-level configuration (themes, icons, dotfiles) never goes in the image. It lives in its own
@@ -112,6 +139,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `.github/scripts/plan-build.sh`.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
+- `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
@@ -130,7 +158,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 
 - **Tags.** `testing` pushes publish `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>`.
   `main` publishes (build, or promote of the tested `testing` digest) `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>`
-  (`just generate-build-tags`). A daily schedule on `main` (10:05 UTC) refreshes `latest`. Pull requests
+  (`just generate-build-tags`). A daily schedule on `main` (11:00 UTC, GitHub may delay on-the-hour runs by several minutes) refreshes `latest`. Pull requests
   into `testing` build without publishing. Dependabot proposes changes to `testing`.
 - **Promotion.** `main` merges only when `Build and push image` passed on the tip of `testing` and
   `require-testing-branch` passes (it rejects any other source branch). Use a merge commit so `testing`
@@ -171,7 +199,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
   or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
   hand with `dry_run` on to see the plan.
-- **Scheduled skip.** The 10:05 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
+- **Scheduled skip.** The 11:00 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
   when nothing changed") reads the published `latest` with `skopeo inspect --config` and compares: the base image's
   manifest-list digest now (`sha256sum` of `skopeo inspect --raw`) against the label
   `io.github.redcodeworks.octarine-os.base-index-digest`; the git tree of main HEAD against the tree of the commit in
@@ -335,7 +363,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## Beta channel (`octarine-os:beta`)
 
-- `.github/workflows/build-beta.yml`: weekly (Wednesday 13:41 UTC, clear of the daily 10:05, Sunday 04:17 prune and Sunday 11:23
+- `.github/workflows/build-beta.yml`: weekly (Wednesday 14:00 UTC, clear of the daily 11:00, Sunday 05:00 prune and Sunday 12:00
   NVIDIA runs) and on dispatch from any ref, never on pushes or pull requests, not a required check. It builds the normal
   image FROM `ghcr.io/ublue-os/silverblue-main:beta` (workflow env `BASE_IMAGE`, `FEDORA_VERSION=beta`; the repository variables
   are ignored), smoke tests (a copy of build.yml's block, `tests/beta-channel.sh` fails on drift), rechunks, pushes `beta` and
@@ -346,8 +374,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## NVIDIA variant (`octarine-os-nvidia`)
 
-- **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 11:23 UTC, after the
-  daily 10:05 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
+- **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 12:00 UTC, after the
+  daily 11:00 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
   or `testing`, no testing or promote channel; it publishes `latest` and the dated aliases and signs them with the same key
   in the `signing` environment. A separate small workflow because `build.yml` is built around testing, promote and docs-only
   semantics; the tag, push and sign steps are the same. The default image, its daily skip logic and its promote flow do not know about it.

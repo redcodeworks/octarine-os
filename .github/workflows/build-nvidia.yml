@@ -2,13 +2,13 @@
 name: Build NVIDIA variant
 # The NVIDIA variant (ghcr.io/<owner>/octarine-os-nvidia): the published default image plus the proprietary NVIDIA
 # driver, built weekly. It has no testing or promote channel and never runs on pushes or pull requests: only the
-# weekly schedule (Sunday 11:23 UTC, after the daily 10:05 run of build.yml so both come from a fresh base) and a
+# weekly schedule (Sunday 12:00 UTC, after the daily 11:00 run of build.yml so both come from a fresh base) and a
 # manual dispatch, and only on `main`, which publishes `latest` and the dated tags and signs them with the same key in
 # the `signing` environment. A separate small workflow instead of build.yml because that one is built around the
 # testing/promote/docs-only semantics; the tag, push and sign steps are the same as there. Design in CLAUDE.md.
 on:
   schedule:
-    - cron: '23 11 * * 0'
+    - cron: '0 12 * * 0'
   workflow_dispatch:
 
 env:

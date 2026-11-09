@@ -138,8 +138,9 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 
 ## Contributing
 
-This is a personal image; see `AGENTS.md`. `main` is protected: work happens on `testing` and a pull request
-promotes it. Maintainer notes (design, CI, base image upgrades, forking, logo files) are in `CLAUDE.md`.
+This is a personal image; see `AGENTS.md`. Work happens on a branch (`feat/<topic>`, `fix/<topic>`) that goes by
+pull request into `testing`, and a pull request promotes `testing` to `main`. Maintainer notes (branching, CI, base
+image upgrades, forking, logo files) are in `CLAUDE.md`.
 
 ## License
 
