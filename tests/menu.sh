@@ -29,6 +29,7 @@ mkdir -p "$HOME"
 cat >"$bin/gum" <<'F'
 #!/usr/bin/env bash
 echo "gum $*" >>"$LOG"
+env | grep '^GUM_' | sort | sed 's/^/env /' >>"$LOG"
 case "$1" in
     choose)
         n=$(( $(cat "$GUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$GUMQ.n"
@@ -125,6 +126,23 @@ check "multi: no gum returns 3 (caller falls back)" grep -q 'rc=3' "$root/out"
 reset
 h 'menu_multi "" "a^A^0"; echo rc=$?'
 check "multi: no terminal returns 3" grep -q 'rc=3' "$root/out"
+
+# ---- palette: ANSI colors only, user settings win
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+h 'menu_multi "" "a^A^0"; menu_confirm "Go?" y; menu_title T'
+check "palette: cursor green" logged "env GUM_CHOOSE_CURSOR_FOREGROUND=2"
+check "palette: selected green" logged "env GUM_CHOOSE_SELECTED_FOREGROUND=2"
+check "palette: header blue" logged "env GUM_CHOOSE_HEADER_FOREGROUND=4"
+check "palette: confirm prompt, selected and unselected buttons" bash -c "grep -q 'env GUM_CONFIRM_PROMPT_FOREGROUND=4' '$LOG' && grep -q 'env GUM_CONFIRM_SELECTED_BACKGROUND=2' '$LOG' && grep -q 'env GUM_CONFIRM_UNSELECTED_BACKGROUND=8' '$LOG'"
+check "palette: titles use an ANSI color" logged "style --bold --foreground 4 T"
+check "palette: no 256-color or hex values" bash -c "! grep '^env GUM_' '$LOG' | grep -E '=([0-9]{2,3}|#)'"
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+GUM_CHOOSE_CURSOR_FOREGROUND=212 GUM_CHOOSE_HEADER_FOREGROUND= h 'menu_multi "" "a^A^0"'
+check "palette: a user's own value is kept" logged "env GUM_CHOOSE_CURSOR_FOREGROUND=212"
+check "palette: a user's empty value is kept" logged "env GUM_CHOOSE_HEADER_FOREGROUND="
+check "palette: unset ones still get the default" logged "env GUM_CHOOSE_SELECTED_FOREGROUND=2"
 
 # ---- menu_one
 reset

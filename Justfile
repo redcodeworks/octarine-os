@@ -101,7 +101,7 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "IMAGE_ORG={{ repo_organization }}")
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
-    # CI sets BREW_IMAGE to the digest it verified; without it the Containerfile default (the dated BREW_TAG) is used
+    # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
@@ -605,13 +605,30 @@ release $merge="false":
         echo "When the checks pass, merge it with: just release true   (or: gh pr merge --merge)"
     fi
 
-# List the newest dated tags of the Homebrew files image; to bump, set ARG BREW_TAG in the Containerfile to one of them
+# List the newest dated tags of the Homebrew files image and the current pin (bump it with `just brew-bump`)
 [group('Image')]
 brew-tags:
     #!/usr/bin/env bash
     set -euo pipefail
     skopeo list-tags docker://ghcr.io/ublue-os/brew | python3 -c 'import json,re,sys; print("\n".join(sorted(t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"\d{8}", t))[-8:]))'
-    echo "Current: $(sed -n 's/^ARG BREW_TAG=//p' Containerfile)"
+    echo "Current: $(sed -n 's/^ARG BREW_TAG=//p' Containerfile)@$(sed -n 's/^ARG BREW_DIGEST=//p' Containerfile)"
+
+# Bump the Homebrew files image pin: resolve the digest of a dated tag (default: the newest), verify its cosign signature, write tag and digest into the Containerfile
+[group('Image')]
+brew-bump tag="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ tag }}"
+    if [[ -z "${tag}" ]]; then
+        tag=$(skopeo list-tags docker://ghcr.io/ublue-os/brew | python3 -c 'import json,re,sys; print(sorted(t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"\d{8}", t))[-1])')
+    fi
+    [[ "${tag}" =~ ^[0-9]{8}$ ]] || { echo "tag must be YYYYMMDD, got '${tag}'" >&2; exit 1; }
+    digest=$(skopeo inspect --raw "docker://ghcr.io/ublue-os/brew:${tag}" | sha256sum | sed 's/ .*//')
+    [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ghcr.io/ublue-os/brew:${tag}" >&2; exit 1; }
+    ref="ghcr.io/ublue-os/brew@sha256:${digest}"
+    cosign verify --key keys/ublue-os-brew-cosign.pub "${ref}" > /dev/null || { echo "cosign verification failed for ${ref}; the Containerfile is unchanged" >&2; exit 1; }
+    sed -i -e "s/^ARG BREW_TAG=.*/ARG BREW_TAG=${tag}/" -e "s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:${digest}/" Containerfile
+    echo "Containerfile now pins ghcr.io/ublue-os/brew:${tag}@sha256:${digest} (signature valid)"
 
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]

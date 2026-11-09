@@ -152,9 +152,9 @@ timers are installed but not enabled. Turn on what you use.
   `sudo systemctl enable --now brew-upgrade.timer`, undone with `disable --now`), so they stay under your soak
   policy, and only `brew update` (metadata, every 6 hours per the upstream unit) runs by itself. brew goes at the end of `PATH` (system binaries win).
   The image does not pin formulae: `brew bundle` from a Brewfile (kept outside the image) is what makes them
-  reproducible. The brew tarball is pinned to a dated tag (`ARG BREW_TAG` in the Containerfile; bump it there,
-  `just brew-tags` lists the newest); CI resolves the tag to a digest, verifies its signature, builds from that
-  digest and logs it, which is the record of what a build used. Upstream builds the tarball by running
+  reproducible. The brew tarball is pinned by digest (`ARG BREW_TAG` and `ARG BREW_DIGEST` in the Containerfile; `just brew-bump`
+  moves the pin and verifies its signature, `just brew-tags` lists the newest tags); the build logs the pinned
+  reference, which is the record of what a build used. Upstream builds the tarball by running
   Homebrew's own `install.sh`. To undo: remove the `brew` stage, the `COPY --from=brew` line, the
   `systemctl preset` line and the preset file; existing prefixes are untouched. If the prefix is missing,
   repair by hand (unverified): `sudo mkdir -p /var/home/linuxbrew/.linuxbrew`, chown it to your user, and
@@ -275,19 +275,14 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
   the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
   input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
-  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 12-font set from
+  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: the 12-font developer set from
   `/usr/share/octarine-os/homebrew/fonts.Brewfile` by default, JetBrains Mono only, a pick from all Nerd Font casks, or
-  skip; then optionally the Ptyxis terminal font), `brew` (CLI tools: `just brew` of the dot-files repository, default
-  no), `fish-terminal` (a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in
-  through `~/.config/fish/conf.d/starship.fish`), `search` (the Calculator, Bazaar, Characters and Clocks GNOME search
-  providers; the Calculator goes first; existing entries are merged, never replaced), `dotfiles` (config files of
-  github.com/redcodeworks/dot-files chosen per app, default no, installed with that repository's `just install preserve`,
-  which keeps files you changed) and `gnome` (`just gnome-apply`: many GNOME settings, default no; missing GNOME extensions are installed first through GNOME's own installer, which asks you to confirm each; answer `p` for the
-  plan only). The dot-files, brew and gnome steps run code from that repository and need the network; they are skipped
-  when the checkout lacks the recipe. Each step is skipped when the app is not installed or the change is already in
-  place; Enter takes the default. `--yes` takes the defaults without asking (default-no steps run under `--yes` only
-  when named with `--only`; `DOT_FILES_APPS=niri,noctalia` names the apps then), `--no` changes nothing and prints the
-  plan. The summary lists how to undo each applied step.
+  skip; then optionally the Ptyxis terminal font), `fish-terminal` (a Ptyxis profile that starts fish, made the default,
+  plus starship from Homebrew hooked in through `~/.config/fish/conf.d/starship.fish`) and `search` (the Calculator,
+  Bazaar, Characters and Clocks GNOME search providers; the Calculator goes first; existing entries are merged, never
+  replaced). Each step is skipped when the app is not installed or the change is already in place; Enter takes the
+  default. `--yes` takes the defaults without asking, `--no` changes nothing and prints the plan. The summary lists how
+  to undo each applied step.
 - **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-theme`, `switch-theme`, `install-icon`, `switch-icon`; no name opens a checklist with everything off).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one

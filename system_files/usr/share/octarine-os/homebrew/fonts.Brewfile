@@ -1,4 +1,4 @@
-# Kevin's Nerd Font set for `ujust user-setup` (fonts step), installed with `brew bundle --file`.
+# Developer Nerd Font set for `ujust user-setup` (fonts step), installed with `brew bundle --file`.
 # Bluefin's developer font list (projectbluefin/common,
 # system_files/shared/usr/share/ublue-os/homebrew/fonts-dev.Brewfile) plus Fantasque Sans Mono.
 cask "font-0xproto-nerd-font"
