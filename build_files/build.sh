@@ -153,7 +153,7 @@ for pkg in firefox firefox-langpacks toolbox; do
     fi
 done
 
-# gnome-software: Bazaar (a preinstalled Flatpak) is the software centre; fwupd and PackageKit stay, so
+# gnome-software: Bazaar (a preinstalled Flatpak) is the software center; fwupd and PackageKit stay, so
 # firmware updates remain available through `fwupdmgr`. Preview the transaction first and fail the build if it
 # would take anything from the protected list with it (the single place that list lives).
 PROTECTED_PKGS="gnome-shell nautilus fwupd flatpak PackageKit gdm gnome-control-center gnome-session-wayland-session ostree rpm-ostree bootc podman systemd"
@@ -211,7 +211,7 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # --- end branding ---
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
-# `ujust gnome-themes install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
+# `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).
 
 # Use a COPR Example:
 #

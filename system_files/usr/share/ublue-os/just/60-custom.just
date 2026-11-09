@@ -873,109 +873,416 @@ user-setup *args:
     fi
     exit "$failed"
 
-# Make Flatpak Steam and the Flatpak gamescope layer work together
-steam-gamescope-setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    app=com.valvesoftware.Steam
-    ext=org.freedesktop.Platform.VulkanLayer.gamescope
-    install=$(flatpak list --app --columns=application,installation | awk -v a="$app" '$1 == a {print $2; exit}')
-    if [ -z "$install" ]; then
-        echo "$app is not installed. Install it first: flatpak install flathub $app"
-        exit 1
-    fi
-    # The layer's branch has to match the runtime branch Steam uses
-    branch=$(flatpak info --show-runtime "$app" | cut -d/ -f3)
-    echo "Steam runtime branch: $branch ($install install)"
-    if ! flatpak info "$ext//$branch" >/dev/null 2>&1; then
-        flatpak install --"$install" -y flathub "$ext//$branch"
-    fi
-    # Put the extension's bin directory on Steam's PATH so `gamescope` resolves inside the sandbox
-    flatpak override --user \
-        --env=PATH=/app/bin:/app/utils/bin:/usr/bin:/usr/lib/extensions/vulkan/gamescope/bin "$app"
-    echo
-    echo "Done. In Steam, set a game's launch options to, for example:"
-    echo "  gamescope -f -W 2560 -H 1440 -r 144 --adaptive-sync -- %command%"
-    echo "The Flatpak copy has no cap_sys_nice and no --backend drm; undo with: ujust steam-gamescope-reset"
-
-# Undo steam-gamescope-setup (removes the PATH override; leaves the layer installed)
-steam-gamescope-reset:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # `flatpak override --unset-env=PATH` would not remove the override: it writes PATH= and
-    # unsets PATH inside the sandbox. `--reset` would drop every other override too (filesystem
-    # access, for one). So delete only the line steam-gamescope-setup added.
-    file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/com.valvesoftware.Steam"
-    line='PATH=/app/bin:/app/utils/bin:/usr/bin:/usr/lib/extensions/vulkan/gamescope/bin'
-    if [ -f "$file" ] && grep -qxF "$line" "$file"; then
-        tmp=$(mktemp "$file.XXXXXX")
-        grep -vxF "$line" "$file" > "$tmp" || true
-        mv -- "$tmp" "$file"
-        echo "Removed the PATH override from $file"
-    else
-        echo "No gamescope PATH override found in $file; nothing to do"
-    fi
-
-# extest: https://github.com/Supreeeme/extest by Supreeeme and contributors, MIT licence. This repo only
-# builds a pinned upstream commit on the user's machine and ships none of its source.
-# EXPERIMENTAL: build extest (X11 XTEST to uinput shim for Steam Input on Wayland)
-extest-build $src=`echo "$HOME/Repos/extest"` $dest=`echo "$HOME/.local/lib/extest"` $commit="cb77cd4f80f83393a24bae17dd975e14fa6eb1b2":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Lets Steam Input work on Wayland without the "Allow Remote Interaction" prompt.
-    # Needs cargo and a C linker. Reuses an existing checkout in src, or clones upstream there,
-    # pinned to the commit this setup was tested with.
-    command -v cargo >/dev/null || { echo "cargo not found. Install Rust first (for example with rustup)."; exit 1; }
-    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || { echo "commit must be a full 40-character SHA"; exit 1; }
-    if [ ! -d "$src/.git" ]; then
-        git clone https://github.com/Supreeeme/extest "$src"
-    fi
-    cd "$src"
-    if [ "$(git rev-parse HEAD)" != "$commit" ]; then
-        git fetch --quiet origin
-        git checkout --quiet --detach "$commit"
-    fi
-    # The repo's .cargo/config.toml defaults to i686; Steam's client is 64-bit now, so build x86_64
-    cargo build --release --locked --target x86_64-unknown-linux-gnu
-    install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"
-    echo "Installed $dest/lib64/libextest.so"
-    echo "extest by Supreeeme and contributors, MIT licence: https://github.com/Supreeeme/extest"
-    echo "Next: ujust extest-steam-setup"
-
-# EXPERIMENTAL: preload the built extest library into Flatpak Steam
-extest-steam-setup $lib=`echo "$HOME/.local/lib/extest"`:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Not verified end to end inside the Flatpak client yet. Check that it loaded with:
-    #   grep libextest /proc/$(pgrep -x steam | head -1)/maps
-    lib=$(readlink -f -- "$lib")
-    so="$lib/lib64/libextest.so"
-    [ -f "$so" ] || { echo "$so not found. Run: ujust extest-build"; exit 1; }
-    # Explicit 64-bit path: $LIB does not resolve inside the Flatpak runtime, and a 32-bit
-    # library only logs "wrong ELF class" for every process it is preloaded into.
-    flatpak override --user --filesystem="$lib:ro" --env=LD_PRELOAD="$so" com.valvesoftware.Steam
-    echo "Steam will preload $so. Quit and relaunch Steam for it to take effect."
-    echo "Undo with: ujust extest-steam-reset"
-
-# Undo extest-steam-setup by deleting only its two entries from Steam's override file
-extest-steam-reset $lib=`echo "$HOME/.local/lib/extest"`:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    lib=$(readlink -f -- "$lib")
-    file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/com.valvesoftware.Steam"
-    [ -f "$file" ] || { echo "No override file at $file; nothing to do"; exit 0; }
-    tmp=$(mktemp "$file.XXXXXX")
-    grep -vxF "LD_PRELOAD=$lib/lib64/libextest.so" "$file" > "$tmp" || true
-    # Literal (not regex) removal of the filesystem entry
-    content=$(<"$tmp")
-    content=${content//"$lib:ro;"/}
-    printf '%s\n' "$content" > "$tmp"
-    mv -- "$tmp" "$file"
-    echo "Removed the extest entries from $file"
-
-# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-themes install-themes` or `ujust gnome-themes switch-icons Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+# Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam's runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display's resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)
 [positional-arguments]
-gnome-themes *args:
+gaming-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    mode=ask
+    steps=""
+    valid=" steam protonup lutris extensions extest desktop gamemode reset "
+    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|reset ...] [--yes|--no]"
+    for a in "$@"; do
+        case "$a" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
+            *)
+                case "$valid" in
+                    *" $a "*) steps="$steps $a" ;;
+                    *) echo "Unknown step: $a" >&2; echo "$usage" >&2; exit 1 ;;
+                esac
+                ;;
+        esac
+    done
+
+    steam=com.valvesoftware.Steam
+    apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+    override_file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/$steam"
+    state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gaming-setup"
+    ext_dest=$(readlink -f -- "${EXTEST_DEST:-$HOME/.local/lib/extest}")
+    ext_so="$ext_dest/lib64/libextest.so"
+    marker="X-Octarine-Generated=ujust gaming-setup"
+    names=()
+    results=()
+    undos=()
+    failed=0
+    cur=""
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # selected <step>: explicitly named, or no step named at all
+    selected() { [ -z "$steps" ] && return 0; case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
+    explicit() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
+    # ask <default y|n> <question>: an explicitly named step counts as yes
+    ask() {
+        local def=$1 q=$2 reply hint="[Y/n]"
+        [ "$def" = n ] && hint="[y/N]"
+        if [ "$mode" = no ]; then answer=n; return; fi
+        if [ "$cur" != reset ] && explicit "$cur"; then answer=y; return; fi
+        if [ "$mode" = yes ]; then answer=$def; return; fi
+        printf '%s %s ' "$q" "$hint"
+        read -r reply || reply=""
+        case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$def ;; esac
+    }
+    skipped_result() { if [ "$mode" = no ]; then echo "planned (would ask)"; else echo "skipped (not applied)"; fi; }
+
+    app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
+    installed() { flatpak info "$1" >/dev/null 2>&1; }
+
+    # verified <app-id>: Flathub's appstream data marks the app verified (fails closed when it cannot tell)
+    verified() {
+        local d f dirs=${GAMING_SETUP_APPSTREAM_DIRS:-$HOME/.local/share/flatpak/appstream/flathub/x86_64/active:/var/lib/flatpak/appstream/flathub/x86_64/active} IFS=:
+        for d in $dirs; do
+            f="$d/appstream.xml.gz"
+            [ -f "$f" ] || continue
+            zcat "$f" 2>/dev/null | awk -v id="$1" '
+                /<component/ { inb = 0; ok = 0 }
+                index($0, "<id>" id "</id>") { inb = 1 }
+                inb && /verification::verified">true</ { ok = 1 }
+                /<\/component>/ { if (inb && ok) f = 1; inb = 0 }
+                END { exit !f }' && return 0
+        done
+        return 1
+    }
+    # install_app <app-id>: install from Flathub in the user installation when verified; sets $inst_result
+    install_app() {
+        local id=$1
+        if ! verified "$id"; then
+            echo "Not installing $id: Flathub does not list it as verified (or the catalog is not available; run flatpak update --appstream and retry)."
+            inst_result="skipped (not verified)"
+            return 0
+        fi
+        flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1
+        if flatpak install --user -y flathub "$id"; then inst_result=applied; return 0; fi
+        inst_result=FAILED
+        return 1
+    }
+    app_step() { # step label app-id default
+        cur=$1
+        echo
+        echo "== $1"
+        if installed "$3"; then
+            echo "$2 is already installed."
+            record "$1" "already done"
+            return
+        fi
+        echo "Installs $2 ($3) from Flathub, only if Flathub lists it as verified."
+        ask "$4" "Apply?"
+        if [ "$answer" != y ]; then record "$1" "$(skipped_result)"; return; fi
+        install_app "$3"
+        case "$inst_result" in
+            applied) record "$1" applied "flatpak uninstall --user $3" ;;
+            FAILED) failed=1; record "$1" FAILED ;;
+            *) record "$1" "$inst_result" ;;
+        esac
+    }
+    # path_value: the PATH override for Steam, with the extension bin directories that are installed
+    path_value() {
+        local v="PATH=/app/bin:/app/utils/bin:/usr/bin"
+        flatpak info "org.freedesktop.Platform.VulkanLayer.gamescope//$1" >/dev/null 2>&1 && v="$v:/usr/lib/extensions/vulkan/gamescope/bin"
+        flatpak info "org.freedesktop.Platform.VulkanLayer.MangoHud//$1" >/dev/null 2>&1 && v="$v:/usr/lib/extensions/vulkan/MangoHud/bin"
+        echo "$v"
+    }
+
+    if selected steam && ! explicit reset; then app_step steam "Steam" "$steam" y; fi
+    if selected protonup && ! explicit reset; then app_step protonup "ProtonUp-Qt" net.davidotek.pupgui2 y; fi
+    if selected lutris && ! explicit reset; then app_step lutris "Lutris" net.lutris.Lutris n; fi
+
+    # extensions: gamescope and MangoHud Vulkan layers (branch = Steam's runtime branch) and Proton-GE (branch stable)
+    if selected extensions && ! explicit reset; then
+    cur=extensions
+    echo
+    echo "== extensions"
+    inst=$(app_install_type "$steam")
+    if [ -z "$inst" ]; then
+        echo "Skipped: $steam is not installed (step steam)."
+        record "extensions" "skipped (no Steam)"
+    else
+        branch=$(flatpak info --show-runtime "$steam" | cut -d/ -f3)
+        refs=("org.freedesktop.Platform.VulkanLayer.gamescope//$branch" "org.freedesktop.Platform.VulkanLayer.MangoHud//$branch" "com.valvesoftware.Steam.CompatibilityTool.Proton-GE//stable")
+        todo=()
+        for ref in "${refs[@]}"; do
+            if flatpak info "$ref" >/dev/null 2>&1; then continue; fi
+            if flatpak remote-info flathub "$ref" >/dev/null 2>&1; then todo+=("$ref"); else echo "Not available on Flathub: $ref"; fi
+        done
+        path_done=0
+        [ -f "$override_file" ] && grep -qxF "$(path_value "$branch")" "$override_file" && path_done=1
+        if [ "${#todo[@]}" -eq 0 ] && [ "$path_done" = 1 ]; then
+            echo "Extensions installed and the PATH override is in place."
+            record "extensions" "already done"
+        else
+            echo "Installs (${inst}): ${todo[*]:-nothing new} and sets the Steam PATH override so gamescope and mangohud resolve inside the sandbox. Steam runtime branch: $branch."
+            ask y "Apply?"
+            if [ "$answer" != y ]; then
+                record "extensions" "$(skipped_result)"
+            else
+                ok=1
+                if [ "${#todo[@]}" -gt 0 ]; then flatpak install --"$inst" -y flathub "${todo[@]}" || ok=0; fi
+                flatpak override --user "--env=$(path_value "$branch")" "$steam" || ok=0
+                if [ "$ok" = 1 ]; then
+                    echo "In Steam, set a game's launch options to, for example: gamescope -f -W 2560 -H 1440 -r 144 --adaptive-sync -- %command%   or   mangohud %command%"
+                    record "extensions" applied "ujust gaming-setup reset removes the PATH line; flatpak uninstall ${todo[*]:-the extensions} removes them"
+                else
+                    failed=1
+                    record "extensions" FAILED
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # extest: build the pinned upstream commit (https://github.com/Supreeeme/extest by Supreeeme and contributors,
+    # MIT license; this repo ships none of its source)
+    if selected extest && ! explicit reset; then
+    cur=extest
+    echo
+    echo "== extest (experimental)"
+    src="${EXTEST_SRC:-$HOME/Repos/extest}"
+    commit="${EXTEST_COMMIT:-cb77cd4f80f83393a24bae17dd975e14fa6eb1b2}"
+    if [ -f "$ext_so" ]; then
+        echo "extest is already built: $ext_so"
+        record "extest" "already done"
+    elif ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "EXTEST_COMMIT must be a full 40-character SHA."
+        failed=1
+        record "extest" FAILED
+    else
+        echo "Builds extest (X11 XTEST to uinput shim for Steam Input on Wayland) from commit $commit into $ext_dest. Needs cargo and a C linker: the build runs in the dev-toolbox when the host has none. Not verified end to end inside the Flatpak client."
+        ask n "Apply?"
+        if [ "$answer" != y ]; then
+            record "extest" "$(skipped_result)"
+        else
+            build='set -euo pipefail
+    export PATH="$HOME/.cargo/bin:$PATH"
+    src=$1; dest=$2; commit=$3
+    command -v cargo >/dev/null || { echo "cargo not found. Install Rust first (for example with rustup)."; exit 1; }
+    if [ ! -d "$src/.git" ]; then git clone https://github.com/Supreeeme/extest "$src"; fi
+    cd "$src"
+    if [ "$(git rev-parse HEAD)" != "$commit" ]; then git fetch --quiet origin; git checkout --quiet --detach "$commit"; fi
+    cargo build --release --locked --target x86_64-unknown-linux-gnu
+    install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"'
+            if command -v cargo >/dev/null 2>&1; then
+                bash -c "$build" _ "$src" "$ext_dest" "$commit"
+            elif command -v distrobox >/dev/null 2>&1; then
+                echo "No cargo on the host: building inside dev-toolbox."
+                distrobox enter -n dev-toolbox -- bash -c "$build" _ "$src" "$ext_dest" "$commit"
+            else
+                echo "No cargo and no distrobox: cannot build."
+                false
+            fi
+            if [ $? -eq 0 ] && [ -f "$ext_so" ]; then
+                echo "Installed $ext_so (extest by Supreeeme and contributors, MIT license: https://github.com/Supreeeme/extest). Run the desktop step next."
+                record "extest" applied "ujust gaming-setup reset (offers to remove the library); the source checkout $src stays"
+            else
+                echo "Failed: extest build" >&2
+                failed=1
+                record "extest" FAILED
+            fi
+        fi
+    fi
+    fi
+
+    # desktop: generated launchers, recognizable by the X-Octarine-Generated key; only files carrying it are overwritten
+    if selected desktop && ! explicit reset; then
+    cur=desktop
+    echo
+    echo "== desktop (Steam launchers)"
+    if ! installed "$steam"; then
+        echo "Skipped: $steam is not installed (step steam)."
+        record "desktop" "skipped (no Steam)"
+    else
+        hook=""
+        label=""
+        if [ -f "$ext_so" ]; then hook=" --filesystem=$ext_dest:ro --env=LD_PRELOAD=$ext_so"; label="extest"; fi
+        res=${GAMING_SETUP_RES:-}
+        if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
+            st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
+            cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
+            if [ -n "$cur_mode" ]; then
+                res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
+            fi
+        fi
+        if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
+            [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
+        fi
+        if [ -z "$res" ] && [ "$mode" = ask ] && ! explicit desktop; then
+            printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip the gamescope launcher): '
+            read -r res || res=""
+        fi
+        if [ -n "$res" ] && ! [[ "$res" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]]; then
+            echo "Ignoring '$res': not WIDTHxHEIGHT@HZ."
+            res=""
+        fi
+        if [ -z "$res" ]; then
+            echo "No display mode found: the gamescope launcher will not be generated (set GAMING_SETUP_RES=WIDTHxHEIGHT@HZ to give it)."
+        else
+            gw=${res%%x*}; rest=${res#*x}; gh=${rest%%@*}; ghz=${rest#*@}; ghz=$(printf '%.0f' "$ghz")
+        fi
+        echo "Generates Steam launchers in $apps_dir${label:+ with extest hooked in}${res:+, and a gamescope launcher at ${gw}x${gh} ${ghz} Hz}; only files carrying the $marker line are ever overwritten."
+        ask y "Apply?"
+        if [ "$answer" != y ]; then
+            record "desktop" "$(skipped_result)"
+        else
+            mkdir -p "$apps_dir"
+            changed=0
+            dfail=0
+            gen() { # file name exec
+                local f="$apps_dir/$1" content
+                content=$(printf '%s\n' "[Desktop Entry]" \
+                    "# Generated by ujust gaming-setup; regenerate with: ujust gaming-setup desktop; remove with: ujust gaming-setup reset" \
+                    "$marker" "Type=Application" "Name=$2" "Exec=$3" "Icon=com.valvesoftware.Steam" "Terminal=false" "Categories=Game;")
+                if [ -f "$f" ] && ! grep -qxF "$marker" "$f"; then
+                    echo "Not overwriting $f: it has no generated-file marker."
+                    dfail=1
+                    return
+                fi
+                if [ -f "$f" ] && [ "$(cat "$f")" = "$content" ]; then return; fi
+                if printf '%s\n' "$content" >"$f"; then changed=1; else dfail=1; fi
+            }
+            gen octarine-gaming-steam.desktop "Steam${label:+ ($label)}" "flatpak run$hook $steam %U"
+            if [ -n "$res" ]; then
+                gen octarine-gaming-steam-gamescope.desktop "Steam (gamescope${label:+, $label})" "flatpak run --command=gamescope$hook $steam -f -W $gw -H $gh -r $ghz --adaptive-sync -- steam -gamepadui"
+            fi
+            command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps_dir" 2>/dev/null
+            if [ "$dfail" = 1 ]; then failed=1; record "desktop" FAILED
+            elif [ "$changed" = 0 ]; then echo "Launchers already up to date."; record "desktop" "already done"
+            else
+                echo "Launchers written to $apps_dir."
+                record "desktop" applied "ujust gaming-setup reset removes the generated launchers (files named octarine-gaming-*.desktop)"
+            fi
+        fi
+    fi
+    fi
+
+    # gamemode: the GameMode tuning as ~/.config/gamemode.ini (never overwritten silently)
+    if selected gamemode && ! explicit reset; then
+    cur=gamemode
+    echo
+    echo "== gamemode"
+    src_ini=${GAMING_SETUP_GAMEMODE_SRC:-/usr/share/octarine-os/gamemode.ini}
+    dest_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
+    if [ ! -f "$src_ini" ]; then
+        echo "Skipped: $src_ini is missing."
+        record "gamemode" "skipped (no source file)"
+    else
+        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
+        id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
+        if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
+            echo "$dest_ini already has the tuning."
+            record "gamemode" "already done"
+        else
+            if [ -f "$dest_ini" ]; then
+                echo "$dest_ini exists and differs:"
+                diff -u "$dest_ini" "$src_ini"
+                echo "Replacing it keeps a timestamped backup."
+                ask n "Replace it?"
+            else
+                echo "Installs the GameMode tuning (renice=10, desiredgov=powersave, tuned latency-performance while a game runs) as $dest_ini."
+                ask y "Apply?"
+            fi
+            if [ "$answer" != y ]; then
+                record "gamemode" "$(skipped_result)"
+            else
+                mkdir -p "$state_dir" "$(dirname "$dest_ini")"
+                backup=""
+                if [ -f "$dest_ini" ]; then
+                    backup="$dest_ini.bak-$(date +%Y%m%d%H%M%S)"
+                    cp -p -- "$dest_ini" "$backup"
+                fi
+                if cp -- "$src_ini" "$dest_ini"; then
+                    sha256sum "$dest_ini" | cut -d' ' -f1 >"$state_dir/gamemode.sha256"
+                    printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
+                    echo "Installed $dest_ini${backup:+ (previous file saved as $backup)}."
+                    record "gamemode" applied "ujust gaming-setup reset restores the backup or removes the file if unchanged"
+                else
+                    failed=1
+                    record "gamemode" FAILED
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # reset: undo what this recipe did; installed Flatpaks stay
+    if explicit reset; then
+    cur=reset
+    echo
+    echo "== reset"
+    mapfile -t gen_files < <(grep -lxF "$marker" "$apps_dir"/octarine-gaming-*.desktop 2>/dev/null)
+    ask y "Remove the generated launchers (${#gen_files[@]} found)?"
+    if [ "$answer" = y ]; then
+        if [ "${#gen_files[@]}" -gt 0 ]; then rm -f -- "${gen_files[@]}"; echo "Removed ${gen_files[*]}"; fi
+        record "reset: launchers" applied
+    else
+        record "reset: launchers" "$(skipped_result)"
+    fi
+    # only the lines this recipe (or the old steam-gamescope-setup / extest-steam-setup) added
+    ask y "Remove the PATH override line from $override_file?"
+    if [ "$answer" = y ]; then
+        if [ -f "$override_file" ] && grep -q '^PATH=.*/usr/lib/extensions/vulkan/' "$override_file"; then
+            tmp=$(mktemp "$override_file.XXXXXX")
+            grep -v '^PATH=.*/usr/lib/extensions/vulkan/' "$override_file" >"$tmp" || true
+            mv -- "$tmp" "$override_file"
+            echo "Removed the PATH override from $override_file"
+        fi
+        if [ -f "$override_file" ] && grep -qxF "LD_PRELOAD=$ext_so" "$override_file"; then
+            tmp=$(mktemp "$override_file.XXXXXX")
+            grep -vxF "LD_PRELOAD=$ext_so" "$override_file" >"$tmp" || true
+            content=$(<"$tmp")
+            content=${content//"$ext_dest:ro;"/}
+            printf '%s\n' "$content" >"$tmp"
+            mv -- "$tmp" "$override_file"
+            echo "Removed the old extest override entries from $override_file"
+        fi
+        record "reset: PATH override" applied
+    else
+        record "reset: PATH override" "$(skipped_result)"
+    fi
+    ask n "Also remove the extest library $ext_so?"
+    if [ "$answer" = y ]; then
+        rm -f -- "${ext_so:?}"
+        rmdir "${ext_dest:?}/lib64" "${ext_dest:?}" 2>/dev/null
+        record "reset: extest library" applied "ujust gaming-setup extest rebuilds it"
+    else
+        record "reset: extest library" "$(skipped_result)"
+    fi
+    dest_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
+    ask y "Undo the GameMode file (restore the backup, or remove it if unchanged)?"
+    if [ "$answer" = y ]; then
+        if [ -f "$state_dir/gamemode.sha256" ] && [ -f "$dest_ini" ] && [ "$(sha256sum "$dest_ini" | cut -d' ' -f1)" = "$(cat "$state_dir/gamemode.sha256")" ]; then
+            backup=$(cat "$state_dir/gamemode.backup" 2>/dev/null)
+            if [ -n "$backup" ] && [ -f "$backup" ]; then mv -f -- "$backup" "$dest_ini"; echo "Restored $backup to $dest_ini"; else rm -f -- "${dest_ini:?}"; echo "Removed $dest_ini"; fi
+            rm -f "${state_dir:?}/gamemode.sha256" "${state_dir:?}/gamemode.backup"
+            record "reset: gamemode file" applied
+        elif [ ! -f "$state_dir/gamemode.sha256" ]; then
+            echo "No record that this recipe installed $dest_ini; left alone."
+            record "reset: gamemode file" "skipped (not ours)"
+        else
+            echo "$dest_ini changed since it was installed; left alone."
+            record "reset: gamemode file" "skipped (changed since)"
+        fi
+    else
+        record "reset: gamemode file" "$(skipped_result)"
+    fi
+    fi
+
+    echo
+    echo "== Summary (mode: $mode)"
+    printf '%-28s %s\n' "STEP" "RESULT"
+    for i in "${!names[@]}"; do printf '%-28s %s\n' "${names[$i]}" "${results[$i]}"; done
+    any=0
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ] && [ "${undos[$i]}" != "-" ]; then
+            [ "$any" = 0 ] && { echo; echo "To undo (per step):"; any=1; }
+            echo "  ${names[$i]}: ${undos[$i]}"
+        fi
+    done
+    exit "$failed"
+
+# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-candy install-theme` or `ujust gnome-candy switch-icon Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+[positional-arguments]
+gnome-candy *args:
     #!/usr/bin/env bash
     set -euo pipefail
     url="${GNOME_THEMES_URL:-https://github.com/redcodeworks/gnome-themes.git}"
@@ -1206,7 +1513,7 @@ toolbox *args:
         rows+=("bins^Exported commands^group^^[ -n \"$bin_test\" ]^^^1^${bin_exports% }^")
     fi
 
-    # TOOLS of the sidecar selects rows of the catalogue above; without a sidecar a toolbox gets none
+    # TOOLS of the sidecar selects rows of the catalog above; without a sidecar a toolbox gets none
     tool_ids=()
     group_ids=()
     for r in "${rows[@]}"; do
