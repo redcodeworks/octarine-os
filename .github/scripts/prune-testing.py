@@ -17,7 +17,13 @@ PRUNE_KIND=released prunes a repository that has no `testing` tags (the NVIDIA v
 `latest` and dated tags from main): the candidates are then versions whose tags are ALL dated or `latest-*`
 aliases, never one that still carries the bare `latest` tag; the same keep-newest rule applies.
 
-Environment: PRUNE_KIND (testing, the default, or released), API_BASE (e.g. users/<owner>/packages/container/<image>), DRY_RUN (default true),
+PRUNE_KIND=beta prunes the beta channel of the default package (tags `beta` and `beta-<date>-<sha>`): of the versions
+carrying a dated `beta-*` tag only the newest KEEP (the workflow passes 3) are kept; a version that carries the moving
+`beta` tag is never deleted, and versions with any other tag (latest*, testing*, dated stable tags) are not candidates.
+This kind deletes only those versions and their signatures; untagged versions and orphan signatures are left to the
+other pass over the same package.
+
+Environment: PRUNE_KIND (testing, the default, released or beta), API_BASE (e.g. users/<owner>/packages/container/<image>), DRY_RUN (default true),
 KEEP (default 10), UNTAGGED_DAYS (default 7), MAX_DELETES (default 60).
 """
 import json
@@ -34,6 +40,8 @@ DRY_RUN = (os.environ.get("DRY_RUN") or "true").lower() != "false"
 API_BASE = os.environ.get("API_BASE", "")
 KIND = os.environ.get("PRUNE_KIND") or "testing"
 RELEASED_TAG = re.compile(r"^(latest-[0-9a-f]{7}|latest-\d{8}(-[0-9a-f]{7})?|\d{8}(-[0-9a-f]{7})?)$")
+
+BETA_DATED = re.compile(r"^beta-\d{8}-[0-9a-f]{7}$")
 
 SIG = re.compile(r"^sha256-([0-9a-f]{64})\.sig$")
 SHA_TAG = re.compile(r"-([0-9a-f]{7})$")
@@ -69,6 +77,50 @@ def label(version):
     return f'id={version["id"]} {digest_of(version)[:12]} tags={",".join(tags_of(version)) or "(none)"}'
 
 
+def prune_beta(versions, sigs, images):
+    ranked = []
+    for v in images:
+        tags = tags_of(v)
+        if tags and all(t == "beta" or BETA_DATED.match(t) for t in tags) and any(BETA_DATED.match(t) for t in tags):
+            ranked.append(v)
+    ranked.sort(key=when, reverse=True)
+    kept = ranked[:KEEP]
+    doomed = [v for v in ranked[KEEP:] if "beta" not in tags_of(v)]
+    for v in doomed:
+        assert all(BETA_DATED.match(t) for t in tags_of(v)), label(v)
+    doomed_digests = {digest_of(v) for v in doomed}
+    doomed_sigs = [sv for d, sv in sigs.items() if d in doomed_digests]
+    plan = doomed + doomed_sigs
+    print(f"{len(versions)} versions: {len(ranked)} beta builds, keeping the newest {KEEP}")
+    for v in kept:
+        print(f"  keep   build: {label(v)}")
+    for v in ranked[KEEP:]:
+        if v not in doomed:
+            print(f"  keep   build (carries the beta tag): {label(v)}")
+    for v in doomed:
+        print(f"  DELETE image {label(v)}")
+    for v in doomed_sigs:
+        print(f"  DELETE sig   {label(v)}")
+    finish(plan)
+
+
+def finish(plan):
+    if len(plan) > MAX_DELETES:
+        sys.exit(f"Refusing to delete {len(plan)} versions (limit {MAX_DELETES})")
+    if not plan:
+        print("Nothing to prune.")
+        return
+    if DRY_RUN:
+        print(f"Dry run: {len(plan)} versions would be deleted.")
+        return
+    if not API_BASE:
+        sys.exit("API_BASE is required to delete")
+    for v in plan:
+        subprocess.run(["gh", "api", "-X", "DELETE", f"{API_BASE}/versions/{v['id']}"], check=True)
+        print(f"deleted {v['id']}")
+    print(f"Deleted {len(plan)} versions.")
+
+
 def main():
     versions = read_versions(sys.stdin.read())
     sigs, images = {}, []
@@ -80,6 +132,9 @@ def main():
         else:
             images.append(v)
     image_digests = {digest_of(v) for v in images}
+
+    if KIND == "beta":
+        return prune_beta(versions, sigs, images)
 
     # Group testing-only versions into builds by the git sha in their tags
     groups = {}
@@ -115,20 +170,7 @@ def main():
         print(f"  DELETE image {label(v)}")
     for v in doomed_sigs:
         print(f"  DELETE sig   {label(v)}")
-    if len(plan) > MAX_DELETES:
-        sys.exit(f"Refusing to delete {len(plan)} versions (limit {MAX_DELETES})")
-    if not plan:
-        print("Nothing to prune.")
-        return
-    if DRY_RUN:
-        print(f"Dry run: {len(plan)} versions would be deleted.")
-        return
-    if not API_BASE:
-        sys.exit("API_BASE is required to delete")
-    for v in plan:
-        subprocess.run(["gh", "api", "-X", "DELETE", f"{API_BASE}/versions/{v['id']}"], check=True)
-        print(f"deleted {v['id']}")
-    print(f"Deleted {len(plan)} versions.")
+    finish(plan)
 
 
 if __name__ == "__main__":
