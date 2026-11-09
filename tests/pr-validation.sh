@@ -19,7 +19,7 @@ on = w.get(True) or w.get("on")
 assert on["pull_request"] == {"branches": ["testing"]}, on["pull_request"]
 assert on["push"] == {"branches": ["main", "testing"]}, on["push"]
 assert set(on) == {"pull_request", "push", "schedule", "workflow_dispatch"}, set(on)
-assert on["schedule"] == [{"cron": "05 10 * * *"}]
+assert on["schedule"] == [{"cron": "0 11 * * *"}]
 PY
 check "build.yml: concurrency is per ref (one group per PR) and cancels everything but main and schedule" python3 - "$here" <<'PY'
 import sys, yaml
@@ -79,6 +79,16 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
         continue
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     assert "pull_request" not in on and "pull_request_target" not in on, f
+PY
+check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00" python3 - "$here" <<'PY'
+import glob, sys, yaml
+crons = {}
+for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
+    on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
+    for s in (on.get("schedule") or []):
+        crons[f.rsplit("/", 1)[1]] = s["cron"]
+assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0"}, crons
+assert len(set(crons.values())) == len(crons)
 PY
 
 echo "passed: $pass, failed: $failn"

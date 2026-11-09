@@ -3,14 +3,14 @@ name: Build beta image
 # The beta channel: the normal octarine-os image built on Universal Blue's beta base (ghcr.io/ublue-os/silverblue-main:beta)
 # and published as the moving tag `ghcr.io/<owner>/octarine-os:beta` plus a dated tag `beta-<date>-<sha>` (the daily
 # build's naming; prune-testing.yml keeps the newest three dated beta builds), so a failure that a coming Fedora release
-# would cause shows up as a red scheduled run before the base moves. Weekly (Wednesday 13:41 UTC: the daily build.yml runs
-# at 10:05 UTC, build-nvidia.yml on Sunday 11:23 and prune-testing.yml on Sunday 04:17, so nothing overlaps) plus manual
+# would cause shows up as a red scheduled run before the base moves. Weekly (Wednesday 14:00 UTC: the daily build.yml runs
+# at 11:00 UTC, build-nvidia.yml on Sunday 12:00 and prune-testing.yml on Sunday 05:00, so nothing overlaps) plus manual
 # dispatch. Never runs on pushes or pull requests and is not a required check. Never touches `latest`, `testing` or dated tags. A separate small workflow because build.yml is built around
 # testing/promote/docs-only semantics; setup, base check, build, smoke test, rechunk, push and signing are the same
 # steps (the smoke test is a copy, tests/beta-channel.sh fails when the two drift). Design in CLAUDE.md.
 on:
   schedule:
-    - cron: '41 13 * * 3'
+    - cron: '0 14 * * 3'
   workflow_dispatch:
 
 env:

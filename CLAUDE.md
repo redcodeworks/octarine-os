@@ -158,7 +158,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
 
 - **Tags.** `testing` pushes publish `testing`, `testing-<date>-<sha>`, `testing-<sha>`, `testing-<date>`.
   `main` publishes (build, or promote of the tested `testing` digest) `latest`, `latest-<date>-<sha>`, `latest-<sha>`, `latest-<date>`, `<date>`, `<date>-<sha>`
-  (`just generate-build-tags`). A daily schedule on `main` (10:05 UTC) refreshes `latest`. Pull requests
+  (`just generate-build-tags`). A daily schedule on `main` (11:00 UTC, GitHub may delay on-the-hour runs by several minutes) refreshes `latest`. Pull requests
   into `testing` build without publishing. Dependabot proposes changes to `testing`.
 - **Promotion.** `main` merges only when `Build and push image` passed on the tip of `testing` and
   `require-testing-branch` passes (it rejects any other source branch). Use a merge commit so `testing`
@@ -199,7 +199,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
   or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
   hand with `dry_run` on to see the plan.
-- **Scheduled skip.** The 10:05 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
+- **Scheduled skip.** The 11:00 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
   when nothing changed") reads the published `latest` with `skopeo inspect --config` and compares: the base image's
   manifest-list digest now (`sha256sum` of `skopeo inspect --raw`) against the label
   `io.github.redcodeworks.octarine-os.base-index-digest`; the git tree of main HEAD against the tree of the commit in
@@ -363,7 +363,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## Beta channel (`octarine-os:beta`)
 
-- `.github/workflows/build-beta.yml`: weekly (Wednesday 13:41 UTC, clear of the daily 10:05, Sunday 04:17 prune and Sunday 11:23
+- `.github/workflows/build-beta.yml`: weekly (Wednesday 14:00 UTC, clear of the daily 11:00, Sunday 05:00 prune and Sunday 12:00
   NVIDIA runs) and on dispatch from any ref, never on pushes or pull requests, not a required check. It builds the normal
   image FROM `ghcr.io/ublue-os/silverblue-main:beta` (workflow env `BASE_IMAGE`, `FEDORA_VERSION=beta`; the repository variables
   are ignored), smoke tests (a copy of build.yml's block, `tests/beta-channel.sh` fails on drift), rechunks, pushes `beta` and
@@ -374,8 +374,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## NVIDIA variant (`octarine-os-nvidia`)
 
-- **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 11:23 UTC, after the
-  daily 10:05 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
+- **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 12:00 UTC, after the
+  daily 11:00 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
   or `testing`, no testing or promote channel; it publishes `latest` and the dated aliases and signs them with the same key
   in the `signing` environment. A separate small workflow because `build.yml` is built around testing, promote and docs-only
   semantics; the tag, push and sign steps are the same. The default image, its daily skip logic and its promote flow do not know about it.

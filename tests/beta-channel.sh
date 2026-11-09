@@ -112,7 +112,7 @@ beta_out=$(pj 5 beta-on-oldest | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I 
 check "prune beta: a version holding the beta tag is kept however old" bash -c "! grep -q 'DELETE image id=1 ' <<<'$beta_out' && grep -q 'DELETE image id=2 ' <<<'$beta_out'"
 check "prune beta: dry run is the default" bash -c "pj() { :; }; echo '[]' | env -u DRY_RUN PRUNE_KIND=beta python3 -I '$prune' | grep -q 'Nothing to prune'"
 check "prune testing kind leaves beta versions alone" bash -c "! (python3 -c 'print(1)' >/dev/null; $(declare -f pj); pj 5 | PRUNE_KIND=testing KEEP=1 DRY_RUN=true python3 -I '$prune' | grep -E 'DELETE image id=[1-5] ')"
-check "prune workflow runs weekly and passes the beta kind with keep 3" bash -c "grep -q \"cron: '17 4 \* \* 0'\" '$here/.github/workflows/prune-testing.yml' && grep -q 'PRUNE_KIND=beta KEEP=3' '$here/.github/workflows/prune-testing.yml'"
+check "prune workflow runs weekly and passes the beta kind with keep 3" bash -c "grep -q \"cron: '0 5 \* \* 0'\" '$here/.github/workflows/prune-testing.yml' && grep -q 'PRUNE_KIND=beta KEEP=3' '$here/.github/workflows/prune-testing.yml'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
