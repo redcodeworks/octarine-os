@@ -17,7 +17,12 @@ fail=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
 nvidia_pkgs() { rpm -qa | grep -i nvidia | grep -vi firmware; }
-nvidia_modules() { find "${modules_dir}" -name 'nvidia*.ko*' 2>/dev/null; }
+# Exact names of the proprietary driver's modules, anywhere under the modules directory. A glob like nvidia*.ko* also
+# matches the stock kernel's nvidia-wmi-ec-backlight.ko.xz (a laptop backlight helper, no relation to the driver).
+nvidia_re='nvidia(-drm|-modeset|-uvm|-peermem)?\.ko(\.[a-z0-9]+)?'
+nvidia_modules() { find "${modules_dir}" -type f 2>/dev/null | grep -E "/${nvidia_re}\$"; }
+# lsinitrd lists "mode owner size date path": match the module file names, not the word nvidia
+initrd_has_nvidia() { lsinitrd "$1" 2>/dev/null | grep -qE "(^|[ /])${nvidia_re}( |\$)"; }
 
 case "${mode}" in
     present)
@@ -28,7 +33,7 @@ case "${mode}" in
         check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "test -n '${BASE_KERNEL:-}' && test '${kver}' = '${BASE_KERNEL:-}'"
         check "the initramfs for the kernel exists" "test -s '${modules_dir}/${kver}/initramfs.img'"
         if command -v lsinitrd >/dev/null 2>&1; then
-            check "the initramfs contains the nvidia modules" "lsinitrd '${modules_dir}/${kver}/initramfs.img' | grep -qi nvidia"
+            check "the initramfs contains the nvidia modules" "initrd_has_nvidia '${modules_dir}/${kver}/initramfs.img'"
         else
             echo "INFO lsinitrd not available: initramfs content not checked"
         fi

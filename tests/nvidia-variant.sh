@@ -131,6 +131,27 @@ check "smoke absent: the default image (firmware package only) passes" smoke abs
 mk_image "$K"
 smoke absent >"$root/out" 2>&1; check "smoke absent: a driver package fails" test $? -ne 0
 
+# ---- the in-tree backlight module is not the driver; every real driver module name counts
+bl() { rm -rf "$root/img/modules/$K/extra"; mkdir -p "$root/img/modules/$K/kernel/drivers/platform/x86"; echo ko >"$root/img/modules/$K/kernel/drivers/platform/x86/nvidia-wmi-ec-backlight.ko.xz"; }
+mk_image "$K"; bl; printf 'bash\n' >"$RPM_LIST"
+check "smoke absent: only the stock nvidia-wmi-ec-backlight module passes" smoke absent
+mk_image "$K"; bl
+smoke present >"$root/out" 2>&1; check "smoke present: only the stock backlight module fails the module check" grep -q 'FAIL an NVIDIA kernel module exists' "$root/out"
+for m in nvidia nvidia-drm nvidia-modeset nvidia-uvm nvidia-peermem; do
+    mk_image "$K"; rm "$root/img/modules/$K/extra/nvidia.ko.xz"; echo ko >"$root/img/modules/$K/extra/$m.ko.xz"; printf 'bash\n' >"$RPM_LIST"
+    smoke absent >"$root/out" 2>&1; check "smoke absent: $m.ko.xz is caught" test $? -ne 0
+    mk_image "$K"; rm "$root/img/modules/$K/extra/nvidia.ko.xz"; mkdir -p "$root/img/modules/$K/extra/nvidia"; echo ko >"$root/img/modules/$K/extra/nvidia/$m.ko.xz"
+    smoke present >"$root/out" 2>&1; check "smoke present: extra/nvidia/$m.ko.xz passes" test $? -eq 0
+done
+# initramfs check: the backlight module alone must not satisfy it
+cp "$root/bin/lsinitrd" "$root/lsinitrd.real"
+printf '#!/usr/bin/env bash\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/kernel/drivers/platform/x86/nvidia-wmi-ec-backlight.ko.xz"\n' >"$root/bin/lsinitrd"
+mk_image "$K"
+smoke present >"$root/out" 2>&1; grep -q 'FAIL the initramfs contains the nvidia modules' "$root/out"; check "smoke present: the backlight module in the initramfs does not count" test $? -eq 0
+printf '#!/usr/bin/env bash\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia-drm.ko"\n' >"$root/bin/lsinitrd"
+smoke present >"$root/out" 2>&1; check "smoke present: nvidia-drm.ko in the initramfs counts" test $? -eq 0
+cp "$root/lsinitrd.real" "$root/bin/lsinitrd"
+
 # ---- prune: released tags of the variant
 d() { printf "$1%.0s" {1..64}; }
 json=$(cat <<EOJ
