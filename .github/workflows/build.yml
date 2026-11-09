@@ -48,6 +48,7 @@ jobs:
       source_tag: ${{ steps.promote.outputs.source_tag }}
       source_digest: ${{ steps.promote.outputs.source_digest }}
       image: ${{ steps.names.outputs.image }}
+      brew_pin_changed: ${{ steps.brewpin.outputs.changed }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -65,6 +66,21 @@ jobs:
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
           echo "Build image: ${build}"
 
+      # The brew image pin is verified with cosign (in the build job) whenever it changed in this push, and on every
+      # run without a usable before-commit (schedule, dispatch, new branch), so a hand-edited digest cannot ship unverified
+      - name: Did the brew image pin change?
+        id: brewpin
+        env:
+          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          changed=true
+          if [[ -n "${BEFORE}" && ! "${BEFORE}" =~ ^0+$ ]] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            if ! git diff "${BEFORE}" "${AFTER}" -- Containerfile | grep -qE '^[+-]ARG BREW_(TAG|DIGEST)='; then changed=false; fi
+          fi
+          echo "changed=${changed}" >> "${GITHUB_OUTPUT}"
+          echo "Brew pin changed: ${changed}"
+
       - name: Image name
         id: names
         run: |
@@ -75,11 +91,11 @@ jobs:
 
       # Scheduled refresh: skip the build when nothing changed since the published `latest` (decision rules and
       # failure modes in .github/scripts/plan-skip.sh; any lookup that fails means build, never skip)
-      - name: Install Cosign (scheduled skip check)
+      - name: Set up cosign (scheduled skip check)
         if: github.event_name == 'schedule'
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        uses: ./.github/actions/setup-tool
         with:
-          cosign-release: 'v3.1.4'
+          tool: cosign
 
       - name: Scheduled run, skip when nothing changed
         id: sched
@@ -127,11 +143,11 @@ jobs:
         run: |
           .github/scripts/plan-promote.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
 
-      - name: Install Cosign
+      - name: Set up cosign
         if: steps.promote.outputs.promote == 'true'
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        uses: ./.github/actions/setup-tool
         with:
-          cosign-release: 'v3.1.4'
+          tool: cosign
 
       # The signature belongs to the digest and exists from the testing publish; without a valid one the
       # normal build and sign runs instead
@@ -208,8 +224,10 @@ jobs:
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
 
-      - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
 
       - name: Check Just Syntax
         shell: bash
@@ -238,24 +256,29 @@ jobs:
           echo "IMAGE_NAME=${IMAGE_NAME,,}" >> ${GITHUB_ENV}
           echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
-      # The Homebrew files image is pinned to a dated tag; resolve it to a digest, check its signature against the
-      # vendored ublue-os/brew public key before anything is built from it
-      - name: Install Cosign (brew image check)
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
-        with:
-          cosign-release: 'v3.1.4'
-
-      - name: Resolve and verify the brew image
+      # The Homebrew files image is pinned by digest in the Containerfile (ARG BREW_DIGEST), verified with cosign when
+      # the pin is bumped (`just brew-bump`) and again in CI when the pin changed (verify-brew-pin step). Here: an offline
+      # format check, and the pinned reference goes into the log as the record of what the build used.
+      - name: Check the brew image pin
         run: |
           tag=$(sed -n 's/^ARG BREW_TAG=//p' Containerfile)
+          digest=$(sed -n 's/^ARG BREW_DIGEST=//p' Containerfile)
           [[ "${tag}" =~ ^[0-9]{8}$ ]] || { echo "::error::BREW_TAG missing or not a YYYYMMDD tag in the Containerfile"; exit 1; }
-          image="ghcr.io/ublue-os/brew:${tag}"
-          digest=$(skopeo inspect --raw "docker://${image}" | sha256sum | sed 's/ .*//')
-          [[ -n "${digest}" ]] || { echo "::error::Cannot resolve ${image}"; exit 1; }
-          pinned="${image%:*}@sha256:${digest}"
-          cosign verify --key keys/ublue-os-brew-cosign.pub "${pinned}" > /dev/null
-          echo "Brew image ${image} resolved to ${pinned}; signature valid"
-          echo "BREW_IMAGE=${pinned}" >> "${GITHUB_ENV}"
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BREW_DIGEST missing or not sha256:<64 hex> in the Containerfile"; exit 1; }
+          echo "Brew image pinned: ghcr.io/ublue-os/brew:${tag}@${digest}"
+          echo "BREW_PIN=ghcr.io/ublue-os/brew@${digest}" >> "${GITHUB_ENV}"
+
+      - name: Set up cosign (brew pin check)
+        if: needs.plan.outputs.brew_pin_changed == 'true'
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Verify the brew image signature (the pin changed)
+        if: needs.plan.outputs.brew_pin_changed == 'true'
+        run: |
+          cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
+          echo "Signature of ${BREW_PIN} is valid"
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
@@ -498,8 +521,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 #v4.0.0
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -581,11 +606,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
         with:
-          # be careful when upgrading major versions
-          cosign-release: 'v3.1.4'
+          tool: cosign
 
       # Promote path: the digest was signed when `testing` was published; check it before and after
       # the retag (the promote job copies the tags in between) and never sign anything here

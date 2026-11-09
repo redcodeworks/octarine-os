@@ -47,12 +47,16 @@ encouraged). American English throughout.
   `PATH`, a fish snippet and a nofile limit). `COPY --from=brew /system_files /` runs before `build.sh`, which
   copies `system_files/` over it and runs `systemctl preset brew-setup.service brew-update.timer
   brew-upgrade.timer`.
-- Pinned to a dated tag: `ARG BREW_TAG=20261108` in the Containerfile (upstream builds weekly; the tag is
-  `YYYYMMDD`). Bump by changing that one value; `just brew-tags` lists the newest tags (needs skopeo). A dated
-  tag can in principle be re-pushed, so the build job (before the base pull) resolves it to a digest, verifies
-  that digest with cosign against `keys/ublue-os-brew-cosign.pub` (vendored, see `keys/README.md`), logs it
-  ("Brew image ... resolved to ...") and passes `ref@digest` as `BREW_IMAGE` to `just build`, so verify and use
-  cannot diverge; the logged digest is the record of what a build used.
+- Pinned by DIGEST: `ARG BREW_TAG` (dated tag, `YYYYMMDD`, upstream builds weekly, kept for humans), `ARG BREW_DIGEST`
+  (`sha256:` plus 64 hex) and `ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}` in the Containerfile (a
+  re-pushed tag cannot change what is built). Bump with `just brew-bump [tag]` (default: the newest dated tag; needs
+  skopeo, cosign and python3): it resolves the digest (`skopeo inspect --raw | sha256sum`), runs `cosign verify --key
+  keys/ublue-os-brew-cosign.pub ghcr.io/ublue-os/brew@sha256:...` (the key is vendored, see `keys/README.md`) and only then
+  writes tag and digest; `just brew-tags` lists the newest tags and the current pin. CI no longer resolves or verifies
+  per build: the build job's "Check the brew image pin" step fails unless tag and digest have the right format and logs
+  `Brew image pinned: ...` (the record of what a build used); the plan job output `brew_pin_changed` is true when the
+  push changed `BREW_TAG`/`BREW_DIGEST` (or there is no usable before-commit: schedule, dispatch, new branch) and then the
+  build job runs `cosign verify` on the pinned digest, so a hand-edited digest cannot ship unverified. Test: `tests/brew-bump.sh`.
 - Presets: `system_files/usr/lib/systemd/system-preset/00-octarine-brew.preset` disables `brew-upgrade.timer`
   (upgrades are manual and stay under the owner's soak policy; opt in per machine with `sudo systemctl enable --now brew-upgrade.timer`, undone with `disable --now`). systemd takes the first matching line in file-name order, so
   the `00-` name beats upstream's `01-homebrew.preset`, which enables it. Enabled: `brew-setup.service`
@@ -106,6 +110,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
@@ -183,8 +188,16 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `ubuntu-latest`, so the toolchain (podman, skopeo, just) changes only when this repo changes it. No layer or registry
   cache: the image is one large `RUN build.sh` after `COPY system_files`, whose cache key changes with every commit and
   with the daily base, so a layer cache would almost never hit, and the rechunk step rebuilds the layers anyway; the
-  scheduled skip removes the repeated identical builds instead. The three `cosign-installer` uses are the only repeated
-  step; a composite action was judged not worth it.
+  scheduled skip removes the repeated identical builds instead. Tool installs go through the composite action
+  `.github/actions/setup-tool` (`tool: cosign` or `tool: just`, versions pinned inside it): it restores the binary from
+  `actions/cache` (key `octarine-tool-<tool>-<version>-linux-amd64`, path `~/.cache/octarine-tools/<tool>-<version>`),
+  skips the download on a hit, and on a miss runs the SHA-pinned installer (`sigstore/cosign-installer`,
+  `extractions/setup-just`) with `continue-on-error`, waits 60 s and tries once more if it failed (GitHub release
+  downloads return 504 now and then), failing only when both attempts fail; the cache is saved after a successful install
+  (the binary is copied there). Cache scoping: a run can read caches of its own branch and of the default branch, but
+  not those of another branch, so `testing` and pull request runs fall back to `main`'s cache and `main` never sees
+  `testing`'s: the first run on each branch downloads, then it is a hit. A cached binary that does not run is ignored
+  and reinstalled. Bumping a tool means changing the version in the action (and the installer's `with:`).
 - **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
   request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`

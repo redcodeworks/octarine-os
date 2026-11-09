@@ -152,9 +152,9 @@ timers are installed but not enabled. Turn on what you use.
   `sudo systemctl enable --now brew-upgrade.timer`, undone with `disable --now`), so they stay under your soak
   policy, and only `brew update` (metadata, every 6 hours per the upstream unit) runs by itself. brew goes at the end of `PATH` (system binaries win).
   The image does not pin formulae: `brew bundle` from a Brewfile (kept outside the image) is what makes them
-  reproducible. The brew tarball is pinned to a dated tag (`ARG BREW_TAG` in the Containerfile; bump it there,
-  `just brew-tags` lists the newest); CI resolves the tag to a digest, verifies its signature, builds from that
-  digest and logs it, which is the record of what a build used. Upstream builds the tarball by running
+  reproducible. The brew tarball is pinned by digest (`ARG BREW_TAG` and `ARG BREW_DIGEST` in the Containerfile; `just brew-bump`
+  moves the pin and verifies its signature, `just brew-tags` lists the newest tags); the build logs the pinned
+  reference, which is the record of what a build used. Upstream builds the tarball by running
   Homebrew's own `install.sh`. To undo: remove the `brew` stage, the `COPY --from=brew` line, the
   `systemctl preset` line and the preset file; existing prefixes are untouched. If the prefix is missing,
   repair by hand (unverified): `sudo mkdir -p /var/home/linuxbrew/.linuxbrew`, chown it to your user, and

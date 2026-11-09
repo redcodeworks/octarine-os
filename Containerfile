@@ -1,10 +1,11 @@
 # Homebrew, as files only: Universal Blue's `ghcr.io/ublue-os/brew` is a FROM scratch image that holds
-# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). Pinned to a dated
-# tag (YYYYMMDD, upstream rebuilds weekly); bump it here, in one place (`just brew-tags` lists the newest).
-# A dated tag can in principle be re-pushed, so CI resolves it to a digest, verifies that digest with cosign
-# (keys/ublue-os-brew-cosign.pub), logs it and passes `ref@digest` as BREW_IMAGE; the logged digest is the record.
+# /system_files (a tarball of the prefix plus the first-boot, update and upgrade units). Pinned by DIGEST, with the
+# dated tag (YYYYMMDD, upstream rebuilds weekly) kept for humans. Bump both with `just brew-bump [tag]`, which resolves the
+# digest, verifies it with cosign against keys/ublue-os-brew-cosign.pub and writes both lines; CI checks the format
+# on every build and the signature whenever the pin changed. The pinned reference is logged by the build.
 ARG BREW_TAG=20261108
-ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}
+ARG BREW_DIGEST=sha256:2993b28cf9a54efebdc418ef42228618f5c68e8b931430f2d60eddc190e30016
+ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
 ARG FEDORA_VERSION=45
