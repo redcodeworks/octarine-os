@@ -632,6 +632,29 @@ brew-bump tag="":
     sed -i -e "s/^ARG BREW_TAG=.*/ARG BREW_TAG=${tag}/" -e "s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ghcr.io/ublue-os/brew:${tag}@sha256:${digest} (signature valid)"
 
+# Bump the pinned dev-packages digest in the dx Containerfile (verified)
+[group('Image')]
+dev-packages-bump tag="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tag="{{ tag }}"
+    [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "tag must be latest or latest-YYYYMMDD-<short sha>, got '${tag}'" >&2; exit 1; }
+    repo=ghcr.io/redcodeworks/dev-packages
+    file=variants/dx/Containerfile
+    digest=$(skopeo inspect --raw "docker://${repo}:${tag}" | sha256sum | sed 's/ .*//')
+    [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ${repo}:${tag}" >&2; exit 1; }
+    ref="${repo}@sha256:${digest}"
+    cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null || { echo "cosign verification failed for ${ref}; ${file} is unchanged" >&2; exit 1; }
+    # the pin records a dated tag for humans: when asked for latest, find the dated tag that points at the same digest
+    if [[ "${tag}" == latest ]]; then
+        for t in $(skopeo list-tags "docker://${repo}" | python3 -c 'import json,re,sys; print("\n".join(sorted((t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", t)), reverse=True)[:10]))'); do
+            d=$(skopeo inspect --raw "docker://${repo}:${t}" | sha256sum | sed 's/ .*//')
+            if [[ "${d}" == "${digest}" ]]; then tag="${t}"; break; fi
+        done
+    fi
+    sed -i -e "s/^ARG DEV_PACKAGES_TAG=.*/ARG DEV_PACKAGES_TAG=${tag}/" -e "s/^ARG DEV_PACKAGES_DIGEST=.*/ARG DEV_PACKAGES_DIGEST=sha256:${digest}/" "${file}"
+    echo "${file} now pins ${repo}:${tag}@sha256:${digest} (signature valid)"
+
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]
 install-hooks:

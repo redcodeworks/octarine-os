@@ -1,0 +1,45 @@
+# Packages the dx image installs on top of the shared developer list (ghcr.io/redcodeworks/dev-packages, pinned in
+# variants/dx/Containerfile). One name per line, blank lines and #-comments ignored; installed in ONE strict
+# `dnf5 install` (a name that does not exist on the base's Fedora release fails the build). Fedora's own repositories only.
+# Not included on purpose: incus, incus-agent, lxc, podman-machine, p7zip (gone on Fedora 45), Docker CE and VS Code RPMs
+# (outside repositories; VS Code is a Flatpak, see system_files/usr/share/flatpak/preinstall.d/dx.preinstall).
+
+# --- VM hosting ---
+# The default image ships these today; they are listed here so dx stays self-sufficient when the default image
+# drops its VM-hosting set (planned, see CLAUDE.md). Already-installed packages are skipped by dnf5.
+libvirt
+qemu-kvm
+cockpit-machines
+virt-install
+virtiofsd
+swtpm
+swtpm-tools
+dnsmasq
+edk2-ovmf
+
+# --- Virtualization extras ---
+virt-manager
+virt-viewer
+libvirt-nss
+qemu-user-binfmt
+qemu-user-static
+genisoimage
+osbuild-selinux
+udica
+
+# --- Tracing and performance ---
+bcc
+bpftop
+bpftrace
+sysprof
+tiptop
+trace-cmd
+numactl
+
+# --- Developer extras ---
+git-subtree
+git-svn
+android-tools
+dbus-x11
+ydotool
+cascadia-code-fonts

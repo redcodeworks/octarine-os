@@ -23,7 +23,12 @@ carrying a dated `beta-*` tag only the newest KEEP (the workflow passes 3) are k
 This kind deletes only those versions and their signatures; untagged versions and orphan signatures are left to the
 other pass over the same package.
 
-Environment: PRUNE_KIND (testing, the default, released or beta), API_BASE (e.g. users/<owner>/packages/container/<image>), DRY_RUN (default true),
+PRUNE_KIND=dx prunes the developer image's package (octarine-os-dx), which carries two channels: per channel (`latest`,
+`beta`) only the newest KEEP (the workflow passes 3) dated builds (`latest-<date>-<sha>`, `beta-<date>-<sha>`) are kept. A
+version that carries a bare `latest` or `beta` tag is never deleted, and neither is any version with another tag
+(it is not a candidate). Signatures of deleted images go with them; untagged versions are left alone.
+
+Environment: PRUNE_KIND (testing, the default, released, beta or dx), API_BASE (e.g. users/<owner>/packages/container/<image>), DRY_RUN (default true),
 KEEP (default 10), UNTAGGED_DAYS (default 7), MAX_DELETES (default 60).
 """
 import json
@@ -42,6 +47,8 @@ KIND = os.environ.get("PRUNE_KIND") or "testing"
 RELEASED_TAG = re.compile(r"^(latest-[0-9a-f]{7}|latest-\d{8}(-[0-9a-f]{7})?|\d{8}(-[0-9a-f]{7})?)$")
 
 BETA_DATED = re.compile(r"^beta-\d{8}-[0-9a-f]{7}$")
+DX_CHANNELS = ("latest", "beta")
+DX_DATED = {c: re.compile(r"^" + c + r"-\d{8}-[0-9a-f]{7}$") for c in DX_CHANNELS}
 
 SIG = re.compile(r"^sha256-([0-9a-f]{64})\.sig$")
 SHA_TAG = re.compile(r"-([0-9a-f]{7})$")
@@ -104,6 +111,39 @@ def prune_beta(versions, sigs, images):
     finish(plan)
 
 
+def prune_dx(versions, sigs, images):
+    def dx_tag(t):
+        return t in DX_CHANNELS or any(p.match(t) for p in DX_DATED.values())
+
+    candidates = []
+    for v in images:
+        tags = tags_of(v)
+        if tags and all(dx_tag(t) for t in tags) and any(p.match(t) for t in tags for p in DX_DATED.values()):
+            candidates.append(v)
+    kept_ids = set()
+    for channel, dated in DX_DATED.items():
+        ranked = sorted((v for v in candidates if any(dated.match(t) for t in tags_of(v))), key=when, reverse=True)
+        kept_ids.update(v["id"] for v in ranked[:KEEP])
+        print(f"{channel}: {len(ranked)} dated builds, keeping the newest {KEEP}")
+    doomed = [v for v in candidates if v["id"] not in kept_ids and not any(t in DX_CHANNELS for t in tags_of(v))]
+    for v in doomed:
+        assert all(dx_tag(t) and t not in DX_CHANNELS for t in tags_of(v)), label(v)
+    doomed_digests = {digest_of(v) for v in doomed}
+    doomed_sigs = [sv for d, sv in sigs.items() if d in doomed_digests]
+    plan = doomed + doomed_sigs
+    print(f"{len(versions)} versions: {len(candidates)} dated dx builds")
+    for v in candidates:
+        if v["id"] in kept_ids:
+            print(f"  keep   build: {label(v)}")
+        elif v not in doomed:
+            print(f"  keep   build (carries a channel tag): {label(v)}")
+    for v in doomed:
+        print(f"  DELETE image {label(v)}")
+    for v in doomed_sigs:
+        print(f"  DELETE sig   {label(v)}")
+    finish(plan)
+
+
 def finish(plan):
     if len(plan) > MAX_DELETES:
         sys.exit(f"Refusing to delete {len(plan)} versions (limit {MAX_DELETES})")
@@ -135,6 +175,8 @@ def main():
 
     if KIND == "beta":
         return prune_beta(versions, sigs, images)
+    if KIND == "dx":
+        return prune_dx(versions, sigs, images)
 
     # Group testing-only versions into builds by the git sha in their tags
     groups = {}
