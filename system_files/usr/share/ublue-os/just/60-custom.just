@@ -119,6 +119,46 @@ user-setup *args:
         fi
     }
     missing_recipe() { echo "Skipped: the dot-files checkout has no $1 recipe yet (update dot-files)."; }
+    # install_extensions: the GNOME extensions of the dot-files setup that are not installed yet, through GNOME's own
+    # D-Bus method (it fetches the build for the running Shell from extensions.gnome.org and asks you to confirm each one)
+    gnome_extensions="arcmenu@arcmenu.com hotedge@jonathan.jdoda.ca CoverflowAltTab@palatis.blogspot.com clipboard-indicator@tudmotu.com tilingshell@ferrarodomenico.com dash-to-dock@micxgx.gmail.com blur-my-shell@aunetx caffeine@patapon.info appindicatorsupport@rgcjonas.gmail.com auto-move-windows@gnome-shell-extensions.gcampax.github.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io user-theme@gnome-shell-extensions.gcampax.github.com"
+    install_extensions() {
+        local u have missing=() done_list=() undo="" bad=0 res
+        if ! command -v gnome-extensions >/dev/null 2>&1 || ! command -v gdbus >/dev/null 2>&1; then
+            echo "Extensions: gnome-extensions or gdbus is missing; install them with the Extension Manager app instead."
+            record "gnome: extensions" "skipped (no gnome-extensions/gdbus)"
+            return
+        fi
+        have=$(gnome-extensions list 2>/dev/null)
+        for u in $gnome_extensions; do
+            if printf '%s\n' "$have" | grep -qxF "$u"; then echo "  present: $u"; else missing+=("$u"); fi
+        done
+        if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All extensions are already installed."
+            record "gnome: extensions" "already done"
+            return
+        fi
+        if [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
+            echo "Extensions: no graphical session here. Run these inside your GNOME session, or use the Extension Manager app:"
+            for u in "${missing[@]}"; do
+                echo "  gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension '$u'"
+            done
+            record "gnome: extensions" "skipped (no graphical session)"
+            return
+        fi
+        echo "Installing ${#missing[@]} extension(s) from extensions.gnome.org; GNOME asks you to confirm each one."
+        for u in "${missing[@]}"; do
+            res=$(gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension "$u" 2>&1)
+            case "$res" in
+                *successful*) echo "  installed: $u"; undo="$undo gnome-extensions uninstall $u;" ;;
+                *cancelled*) echo "  not approved: $u" ;;
+                *) echo "  failed: $u ($res)"; bad=1 ;;
+            esac
+        done
+        if [ "$bad" = 1 ]; then failed=1; record "gnome: extensions" "FAILED" "$undo"
+        elif [ -n "$undo" ]; then record "gnome: extensions" "applied" "$undo"
+        else record "gnome: extensions" "skipped (not approved)"; fi
+    }
     in_list() { local n=$1; shift; local i; for i in "$@"; do [ "$i" = "$n" ] && return 0; done; return 1; }
     installed() { flatpak info "$1" >/dev/null 2>&1; }
 
@@ -814,7 +854,7 @@ user-setup *args:
     if ! need_gj; then
         record "gnome" "skipped (no git/just)"
     else
-        echo "Apply the dot-files GNOME settings and extensions (just gnome-apply). This changes many GNOME settings: app grid folders, interface, shell keybindings, dock, shell theme. It backs up the current dconf values first, enables only installed extensions and lists the missing ones. Code from that repository; needs the network."
+        echo "Apply the dot-files GNOME settings and extensions (just gnome-apply). This changes many GNOME settings: app grid folders, interface, shell keybindings, dock, shell theme. It first offers to install the missing GNOME extensions through GNOME's own installer (you confirm each), backs up the current dconf values, enables only installed extensions and lists the missing ones. Code from that repository; needs the network."
         gchoice=n
         case "$mode" in
             no) ;;
@@ -843,7 +883,7 @@ user-setup *args:
         elif ! dot_has gnome-apply; then
             missing_recipe gnome-apply
             record "gnome" "skipped (recipe missing)"
-        elif dot_just gnome-apply; then
+        elif install_extensions; dot_just gnome-apply; then
             record "gnome" "applied" "the recipe backed up the previous dconf values first (see its output for the backup path); load that backup with dconf load to undo"
         else
             echo "Failed: gnome" >&2

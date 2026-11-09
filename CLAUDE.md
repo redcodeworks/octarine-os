@@ -407,7 +407,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
   when nothing changes), `dotfiles` (default no; per-app y/n over `config/*/` of the checkout, then `just install preserve
-  <apps>` and `just hint <apps>`) and `gnome` (`just gnome-apply`, `p` runs `--dry-run`; default no). The dot-files
+  <apps>` and `just hint <apps>`) and `gnome` (`just gnome-apply`, `p` runs `--dry-run`; default no; before it, `install_extensions` installs the 13 extensions of the dot-files setup that `gnome-extensions list` does not show, through the Shell D-Bus method `org.gnome.Shell.Extensions.InstallRemoteExtension`, which fetches the build for the running Shell from extensions.gnome.org and asks for confirmation per extension; no graphical session means the exact `gdbus` commands are printed; undo `gnome-extensions uninstall <uuid>`; unverified: the method on Shell 51 and that all 13 exist for it). The dot-files
   checkout is a shallow clone in `~/.cache/dot-files/repo` (`DOT_FILES_REF`, default `main`, same pattern as the
   `gnome-candy` recipe), shared by the three steps; each recipe is checked with `just --summary` first and the step is
   skipped when it is missing. `--yes` takes defaults; a default-no step runs under `--yes` only when named in `--only`

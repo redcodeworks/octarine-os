@@ -17,6 +17,7 @@ export HOME="$root/home"
 mkdir -p "$HOME"
 export BREW_CASKS="$root/casks" FC_FAMILIES="$root/families"
 export USER_SETUP_FONTS_BREWFILE="$here/../system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
+export EXT_PRESENT="$root/extpresent" EXT_FAIL="$root/extfail" EXT_ERR="$root/exterr" WAYLAND_DISPLAY=wayland-test
 export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
 export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"
@@ -129,6 +130,21 @@ n=$(( $(cat "$root_cnt" 2>/dev/null || echo 0) + 1 )); echo $n >"$root_cnt"
 printf 'AAAAAAAA-0000-0000-0000-%012d\n' "$n"
 F
 export root_cnt="$root/uuidcnt"
+cat >"$bin/gnome-extensions" <<'F'
+#!/bin/sh
+echo "gnome-extensions $*" >>"$LOG"
+[ "$1" = list ] && cat "$EXT_PRESENT"
+exit 0
+F
+cat >"$bin/gdbus" <<'F'
+#!/usr/bin/env bash
+echo "gdbus $*" >>"$LOG"
+u=${!#}
+if grep -qx -- "$u" "$EXT_FAIL" 2>/dev/null; then echo "('cancelled',)"; exit 0; fi
+if grep -qx -- "$u" "$EXT_ERR" 2>/dev/null; then echo "('error',)"; exit 0; fi
+echo "$u" >>"$EXT_PRESENT"
+echo "('successful',)"
+F
 cat >"$bin/fc-list" <<'F'
 #!/bin/sh
 cat "$FC_FAMILIES" 2>/dev/null
@@ -158,7 +174,7 @@ reset() {
     echo /bin/bash >"$SHELLF"
     echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
     unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS
-    : >"$BREW_CASKS"; : >"$FC_FAMILIES"
+    : >"$BREW_CASKS"; : >"$FC_FAMILIES"; : >"$EXT_PRESENT"; : >"$EXT_FAIL"; : >"$EXT_ERR"
 }
 run() { # stdin text, args...
     local input=$1
@@ -401,6 +417,40 @@ check "gnome: y applies" logged "gnome-apply"
 reset
 JUST_SUMMARY="install" run '' --yes --only gnome
 check "gnome: missing recipe skip" has "has no gnome-apply recipe yet"
+
+# ---- gnome extensions (installed through GNOME's D-Bus method before gnome-apply)
+reset
+run '' --yes --only gnome
+check "extensions: 13 requested through InstallRemoteExtension" test "$(grep -c 'InstallRemoteExtension' "$LOG")" = 13
+check "extensions: arcmenu requested" logged "InstallRemoteExtension arcmenu@arcmenu.com"
+check "extensions: installed before gnome-apply" bash -c "[ \$(grep -n InstallRemoteExtension '$LOG' | tail -1 | cut -d: -f1) -lt \$(grep -n gnome-apply '$LOG' | head -1 | cut -d: -f1) ]"
+check "extensions: undo printed" has "gnome-extensions uninstall arcmenu@arcmenu.com"
+: >"$LOG"
+run '' --yes --only gnome
+check "extensions: second run installs nothing" notlogged "InstallRemoteExtension"
+check "extensions: second run says already done" has "already done"
+reset
+printf 'dash-to-dock@micxgx.gmail.com\nuser-theme@gnome-shell-extensions.gcampax.github.com\n' >"$EXT_PRESENT"
+run '' --yes --only gnome
+check "extensions: present ones skipped" notlogged "InstallRemoteExtension dash-to-dock@micxgx.gmail.com"
+check "extensions: others installed" test "$(grep -c 'InstallRemoteExtension' "$LOG")" = 11
+reset
+echo caffeine@patapon.info >"$EXT_FAIL"
+run '' --yes --only gnome
+check "extensions: a declined one is reported, not an error" has "not approved: caffeine@patapon.info"
+check "extensions: declined is not a failure" test "$rc" = 0
+reset
+echo caffeine@patapon.info >"$EXT_ERR"
+run '' --yes --only gnome
+check "extensions: an error fails soft, gnome-apply still ran" logged "gnome-apply"
+check "extensions: an error exits non-zero" test "$rc" != 0
+reset
+WAYLAND_DISPLAY= DISPLAY= run '' --yes --only gnome
+check "extensions: no graphical session prints the commands" has "no graphical session"
+check "extensions: no graphical session installs nothing" notlogged "InstallRemoteExtension"
+reset
+run '' --yes
+check "extensions: not touched by default (gnome step is default no)" notlogged "InstallRemoteExtension"
 
 # ---- brew tools
 reset

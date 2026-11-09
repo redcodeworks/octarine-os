@@ -67,7 +67,7 @@ Added by this image:
    sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
    ```
 
-4. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers, and optional config and settings from `redcodeworks/dot-files`):
+4. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers, and optional config, GNOME settings and GNOME extensions from `redcodeworks/dot-files`; GNOME asks you to confirm each extension):
 
    ```
    ujust user-setup

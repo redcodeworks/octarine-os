@@ -282,7 +282,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   through `~/.config/fish/conf.d/starship.fish`), `search` (the Calculator, Bazaar, Characters and Clocks GNOME search
   providers; the Calculator goes first; existing entries are merged, never replaced), `dotfiles` (config files of
   github.com/redcodeworks/dot-files chosen per app, default no, installed with that repository's `just install preserve`,
-  which keeps files you changed) and `gnome` (`just gnome-apply`: many GNOME settings, default no; answer `p` for the
+  which keeps files you changed) and `gnome` (`just gnome-apply`: many GNOME settings, default no; missing GNOME extensions are installed first through GNOME's own installer, which asks you to confirm each; answer `p` for the
   plan only). The dot-files, brew and gnome steps run code from that repository and need the network; they are skipped
   when the checkout lacks the recipe. Each step is skipped when the app is not installed or the change is already in
   place; Enter takes the default. `--yes` takes the defaults without asking (default-no steps run under `--yes` only
