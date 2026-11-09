@@ -219,15 +219,15 @@ user-setup *args:
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
         ui=1
         menu_title "octarineOS user setup"
-        menu_multi "SPACE toggles, ENTER confirms, Esc skips everything" \
-            "^── Account ───^0" \
+        menu_multi "User setup: choose the steps" \
+            "^Account^0" \
             "groups^Add $user to gamemode, input and libvirt (sudo)^1" \
             "shell^Login shell zsh (sudo)^1" \
-            "^── Apps ───^0" \
+            "^Apps^0" \
             "flatpak^Flatpak access overrides^1" \
             "fonts^Nerd Fonts from Homebrew casks^1" \
             "brew^Homebrew CLI tools from dot-files^0" \
-            "^── Desktop ───^0" \
+            "^Desktop^0" \
             "fish-terminal^Fish terminal profile with the starship prompt^1" \
             "search^GNOME search providers^1" \
             "dotfiles^Config files from dot-files, chosen per app^0" \
@@ -469,7 +469,7 @@ user-setup *args:
                     if [ "$ui" = 1 ]; then
                         specs=()
                         for c in "${allcasks[@]}"; do specs+=("$c^$c^0"); done
-                        menu_multi "Nerd Font casks: SPACE toggles, ENTER confirms" "${specs[@]}"
+                        menu_multi "Nerd Font casks" "${specs[@]}"
                         mrc=$?
                         if [ "$mrc" = 0 ]; then selected+=("${MENU_RESULT[@]}"); fi
                     fi
@@ -895,7 +895,7 @@ user-setup *args:
                     if [ -n "${app_desc[$a]:-}" ]; then label="$a - ${app_desc[$a]}"; fi
                     specs+=("$a^$label^0")
                 done
-                menu_multi "Apps to copy config files for: SPACE toggles, ENTER confirms" "${specs[@]}"
+                menu_multi "Apps to copy config files for" "${specs[@]}"
                 chosen=("${MENU_RESULT[@]}")
             elif [ "$mode" = yes ]; then
                 apps_env=${DOT_FILES_APPS:-}
@@ -1205,14 +1205,14 @@ gaming-setup *args:
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
         menu_title "octarineOS gaming setup"
-        menu_multi "SPACE toggles, ENTER confirms, Esc skips everything" \
-            "^── Apps (Flathub, verified only) ───^0" \
+        menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
+            "^Apps^0" \
             "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
-            "^── Steam extras ───^0" \
+            "^Steam extras^0" \
             "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
             "extest^extest build (experimental)^0" \
             "desktop^Generated Steam launchers^1" \
-            "^── Tuning ───^0" \
+            "^Tuning^0" \
             "gamemode^GameMode tuning in ~/.config/gamemode.ini^1"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
@@ -1537,30 +1537,66 @@ gnome-candy *args:
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
-    # No arguments in a terminal: a menu of the checked-out repository's public recipes (name - comment), then run the
-    # choice; a recipe that takes parameters asks for them. Explicit arguments pass straight through.
+    # No arguments in a terminal: a menu of the checked-out repository's public recipes (name - comment), read from the
+    # structured `just --dump --dump-format json` (never from the human `just --list`, which prints group headings).
+    # Private recipes and `default` are not offered; only REQUIRED parameters (no default) are asked for. A parser
+    # failure or no parser (jq, then python3) shows the plain recipe list instead, never a broken menu.
     if [ "$#" -eq 0 ] && menu_ready_one; then
-        mapfile -t listing < <(just --justfile "$dir/justfile" --working-directory "$dir" --list --unsorted --list-heading '' --list-prefix '' 2>/dev/null)
-        specs=()
-        for line in "${listing[@]}"; do
-            [ -n "${line// }" ] || continue
-            rname=${line%% *}
-            comment=""
-            case "$line" in *"# "*) comment=${line#*# } ;; esac
-            specs+=("$rname^$rname${comment:+ - $comment}")
-        done
-        if [ "${#specs[@]}" -gt 0 ]; then
-            if menu_one "gnome-candy: choose a recipe" "${specs[@]}"; then
-                reply=""
-                if printf '%s\n' "${listing[@]}" | grep -E "^$MENU_ONE( |$)" | sed 's/#.*//' | grep -q '[A-Za-z*+]'; then
-                    read -r -p "Arguments for $MENU_ONE (empty for none): " reply || reply=""
-                fi
-                # shellcheck disable=SC2086
-                exec just --justfile "$dir/justfile" --working-directory "$dir" "$MENU_ONE" $reply
+        recipes_tsv() {
+            local json
+            json=$(just --justfile "$dir/justfile" --working-directory "$dir" --dump --dump-format json 2>/dev/null) || return 1
+            if command -v jq >/dev/null 2>&1; then
+                printf '%s' "$json" | jq -r '.recipes | to_entries | map(select(.value.private == false and .key != "default"))
+                    | map({n: .key, d: (.value.doc // ""), g: ([.value.attributes[]? | select(type == "object") | .group // empty] | first // "~"),
+                           r: ([.value.parameters[]? | select(.default == null and .kind != "star") | .name] | join(" "))})
+                    | sort_by(.g, .n) | .[] | [.n, .d, .r] | join("\u001f")' 2>/dev/null
+            elif command -v python3 >/dev/null 2>&1; then
+                printf '%s' "$json" | python3 -I -c '
+    import json, sys
+    d = json.load(sys.stdin)
+    rows = []
+    for n, r in d["recipes"].items():
+        if r.get("private") or n == "default":
+            continue
+        g = "~"
+        for a in r.get("attributes", []):
+            if isinstance(a, dict) and a.get("group"):
+                g = a["group"]
+                break
+        req = [p["name"] for p in r.get("parameters", []) if p.get("default") is None and p.get("kind") != "star"]
+        rows.append((g, n, r.get("doc") or "", " ".join(req)))
+    for g, n, doc, req in sorted(rows):
+        print("\x1f".join([n, doc, req]))' 2>/dev/null
+            else
+                return 1
             fi
-            echo "Nothing chosen."
+        }
+        specs=()
+        declare -A required_of=()
+        if rows=$(recipes_tsv); then
+            while IFS=$'\x1f' read -r rname rdoc rreq; do
+                [ -n "$rname" ] || continue
+                rdoc=${rdoc//^/ }
+                specs+=("$rname^$rname${rdoc:+ - $rdoc}")
+                required_of[$rname]=$rreq
+            done <<<"$rows"
+        fi
+        if [ "${#specs[@]}" -eq 0 ]; then
+            echo "Recipes of gnome-themes (run: ujust gnome-candy <recipe>):"
+            just --justfile "$dir/justfile" --working-directory "$dir" --summary | tr ' ' '\n' | sed 's/^/  /'
             exit 0
         fi
+        if menu_one "gnome-candy: choose a recipe" "${specs[@]}"; then
+            vals=()
+            for pname in ${required_of[$MENU_ONE]:-}; do
+                read -r -p "$pname: " pval || pval=""
+                if [ -z "$pval" ]; then echo "$pname is required; nothing run."; exit 0; fi
+                vals+=("$pval")
+            done
+            exec just --justfile "$dir/justfile" --working-directory "$dir" "$MENU_ONE" "${vals[@]}"
+        fi
+        echo "Nothing chosen."
+        exit 0
     fi
     if [ "${1:-}" = help ] || [ "${1:-}" = --help ]; then
         echo "ujust gnome-candy [recipe [arguments]]: runs a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout. Recipes:"
@@ -2898,7 +2934,7 @@ toolbox *args:
                     specs+=("${tool_ids[i]}^$label from $(if [ "$src" = image ]; then echo "image ($ref)"; else echo installer; fi)^${sel[i]}")
                 fi
             done
-            menu_multi "SPACE toggles, ENTER sets up the ticked ones, Esc skips" "${specs[@]}"
+            menu_multi "Tools to set up in the box" "${specs[@]}"
             want+=("${MENU_RESULT[@]}")
             if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Skipped the tool list."; fi
             return 0
@@ -3288,7 +3324,7 @@ toolbox *args:
                     specs+=("${ide_ids[i]}^${iname}^${isel[i]}")
                 fi
             done
-            menu_multi "SPACE toggles, ENTER creates the ticked launchers, Esc skips" "${specs[@]}"
+            menu_multi "IDE launchers to create" "${specs[@]}"
             want+=("${MENU_RESULT[@]}")
             if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Skipped."; fi
             return 0

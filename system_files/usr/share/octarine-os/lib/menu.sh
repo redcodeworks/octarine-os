@@ -5,8 +5,10 @@
 #   [ -r "$menu_lib" ] && . "$menu_lib"
 #
 # Items are strings "id^text^selected": id is what the caller gets back, text is what the user sees, selected is 1 to
-# preselect (checklists only). An item with an EMPTY id is a section heading ("^── Group ───^0"): it is shown and
-# never returned. Text must not contain "^"; commas in text are shown as ";" (gum splits --selected on commas).
+# preselect (checklists only). An item with an EMPTY id is a GROUP label ("^Account^0"), not a row: it is never shown
+# as a selectable entry (gum cannot make a row unselectable); instead the items after it show it as a prefix
+# ("Account: Login shell"). Every row the user can pick is a real choice. Text must not contain "^"; commas in text are
+# shown as ";" (gum splits --selected on commas).
 #
 # Functions (all keep stdout for the caller's own output; results come back in variables):
 #   menu_tty            true on a terminal (stdin and stdout), or when OCTARINE_MENU_FORCE_TTY is set (tests)
@@ -33,7 +35,7 @@ menu_title() {
 }
 
 menu_multi() {
-    local header=$1 spec id text sel line out rows h n
+    local header=$1 spec id text sel line out rows h n group=""
     shift
     MENU_RESULT=()
     menu_ready || return 3
@@ -41,12 +43,16 @@ menu_multi() {
     local items=() selected=() args
     for spec in "$@"; do
         IFS='^' read -r id text sel <<<"$spec"
-        text=${text//,/;}
-        items+=("$text")
-        if [ -n "$id" ]; then
-            id_of["$text"]=$id
-            if [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
+        if [ -z "$id" ]; then
+            group=${text//─/}
+            group=${group#"${group%%[![:space:]]*}"}
+            group=${group%"${group##*[![:space:]]}"}
+            continue
         fi
+        text=${group:+$group: }${text//,/;}
+        items+=("$text")
+        id_of["$text"]=$id
+        if [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
     done
     rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
     [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
@@ -55,12 +61,15 @@ menu_multi() {
     if [ "$n" -lt "$h" ]; then h=$n; fi
     if [ "$h" -lt 3 ]; then h=3; fi
     args=(choose --no-limit --height "$h" --selected-prefix "◉  " --unselected-prefix "○  " --cursor "▸  ")
-    if [ -n "$header" ]; then args+=(--header "$header"); fi
+    args+=(--header "${header:+$header$'\n'}x or space ticks an entry, ENTER confirms the ticked ones, Esc cancels")
     if [ "${#selected[@]}" -gt 0 ]; then args+=(--selected "$(IFS=,; echo "${selected[*]}")"); fi
     out=$(gum "${args[@]}" "${items[@]}") || true
     while IFS= read -r line; do
         if [ -n "$line" ] && [ -n "${id_of[$line]:-}" ]; then MENU_RESULT+=("${id_of[$line]}"); fi
     done <<<"$out"
+    if [ "${#MENU_RESULT[@]}" -eq 0 ]; then
+        echo "Nothing ticked: press x (or space) on an entry first, then ENTER." >&2
+    fi
     return 0
 }
 

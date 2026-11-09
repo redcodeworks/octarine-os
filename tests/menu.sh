@@ -17,6 +17,12 @@ REAL_JUST=$(command -v just)
 for c in bash sh env cat grep sed awk tr cut mkdir rm mktemp id head basename dirname sort printf tput wc cmp mv cp date readlink touch ls; do
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
+sysjq="$root/sysjq"
+syspy="$root/syspy"
+mkdir -p "$sysjq" "$syspy"
+for c in "$sysbin"/*; do ln -sf "$(readlink -f "$c")" "$sysjq/$(basename "$c")"; ln -sf "$(readlink -f "$c")" "$syspy/$(basename "$c")"; done
+p=$(command -v jq) && ln -sf "$p" "$sysjq/jq"
+p=$(command -v python3) && ln -sf "$p" "$syspy/python3"
 export LOG="$root/log" GUMQ="$root/q/gum" UGUMQ="$root/q/ugum" OCTARINE_MENU_LIB="$lib" HOME="$root/home" XDG_CACHE_HOME="$root/cache"
 mkdir -p "$HOME"
 
@@ -52,7 +58,10 @@ F
 cat >"$bin/just" <<'F'
 #!/usr/bin/env bash
 echo "just $*" >>"$LOG"
-case " $* " in *" --list "*) printf '%b' "${JUST_LIST-}" ;; esac
+case " $* " in
+    *" --dump "*) printf '%s' "${DUMP_JSON-}" ;;
+    *" --summary "*) printf '%s\n' "${SUMMARY-a b}" ;;
+esac
 exit 0
 F
 chmod +x "$bin"/*
@@ -85,19 +94,22 @@ check "no gum: menu_ready false" test $? -ne 0
 # ---- menu_multi
 reset
 export OCTARINE_MENU_FORCE_TTY=1
-queue gum.1 'Steam\nLutris\n'
+queue gum.1 'Apps: Steam\nApps: Lutris\n'
 h 'menu_multi "Pick" "^── Apps ───^0" "steam^Steam^1" "protonup^ProtonUp-Qt^0" "lutris^Lutris^1"; echo "rc=$? result=${MENU_RESULT[*]}"'
 check "multi: chosen texts map back to ids" grep -q 'result=steam lutris' "$root/out"
 check "multi: --no-limit and the Bluefin prefixes" logged "choose --no-limit --height"
 check "multi: selected prefix" logged "--selected-prefix ◉   --unselected-prefix ○   --cursor ▸   "
 check "multi: header passed" logged "--header Pick"
-check "multi: preselection uses the exact item texts" logged "--selected Steam,Lutris"
-check "multi: heading shown as an item" logged "── Apps ───"
+check "multi: preselection uses the exact item texts (with the group prefix)" logged "--selected Apps: Steam,Apps: Lutris"
+check "multi: a group label is never a row" notlogged "── Apps"
+check "multi: the group label is not an item of its own" bash -c "! grep -q 'choose.* Apps ProtonUp' '$LOG'"
+check "multi: key hint in the header" logged "x or space ticks an entry, ENTER confirms the ticked ones"
 reset
 export OCTARINE_MENU_FORCE_TTY=1
 queue gum.1 '── Apps ───\n'
 h 'menu_multi "" "^── Apps ───^0" "steam^Steam^0"; echo "rc=$? n=${#MENU_RESULT[@]}"'
-check "multi: a heading is never returned" grep -q 'rc=0 n=0' "$root/out"
+check "multi: nothing returned for a stray divider" grep -q 'rc=0 n=0' "$root/out"
+check "multi: nothing ticked prints a hint" grep -q "Nothing ticked: press x" "$root/out"
 reset
 export OCTARINE_MENU_FORCE_TTY=1
 h 'menu_multi "" "steam^Steam^1"; echo "rc=$? n=${#MENU_RESULT[@]}"'
@@ -184,24 +196,54 @@ export OCTARINE_MENU_FORCE_TTY=1
 runrecipe toolbox '' a --list
 check "toolbox with arguments: no menu" notlogged "ugum"
 
-# ---- scoped menus: gnome-candy with no arguments
+# ---- scoped menus: gnome-candy with no arguments (recipes read from `just --dump --dump-format json`)
+JSON='{"first":"default","recipes":{
+ "default":{"private":false,"doc":null,"attributes":[],"parameters":[]},
+ "_hidden":{"private":true,"doc":"hidden","attributes":[],"parameters":[]},
+ "install-theme":{"private":false,"doc":"Install a theme","attributes":[{"group":"themes"},"positional-arguments"],"parameters":[{"name":"name","default":"","kind":"singular"}]},
+ "switch-icon":{"private":false,"doc":"Switch the icon set","attributes":[{"group":"icons"}],"parameters":[{"name":"name","default":null,"kind":"singular"}]},
+ "list-themes":{"private":false,"doc":null,"attributes":[{"group":"themes"}],"parameters":[{"name":"rest","default":null,"kind":"star"}]}}}'
+runc() { # PATH dir, stdin, args...
+    local pd=$1 input=$2
+    shift 2
+    printf '%b' "$input" | PATH="$bin:$pd" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy "$@" >"$root/out" 2>&1
+    rc=$?
+}
+for variant in jq py; do
+    if [ "$variant" = jq ]; then pd=$sysjq; else pd=$syspy; fi
+    reset
+    export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON="$JSON"
+    queue ugum.1 'install-theme - Install a theme\n'
+    runc "$pd" ''
+    check "gnome-candy menu ($variant): public recipes only, name - comment, grouped order" logged "ugum choose switch-icon - Switch the icon set install-theme - Install a theme list-themes"
+    check "gnome-candy menu ($variant): no private or default recipe" bash -c "! grep -E 'ugum choose' '$LOG' | grep -qE '_hidden|default'"
+    check "gnome-candy menu ($variant): no group headings" bash -c "! grep -E 'ugum choose' '$LOG' | grep -qF '['"
+    check "gnome-candy menu ($variant): an optional parameter never prompts" bash -c "grep -q 'install-theme\$' '$LOG' && ! grep -q 'name:' '$root/out'"
+    reset
+    export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON="$JSON"
+    queue ugum.1 'switch-icon - Switch the icon set\n'
+    runc "$pd" 'Papirus-Dark\n'
+    check "gnome-candy menu ($variant): a required parameter prompts and is passed on" logged "switch-icon Papirus-Dark"
+    reset
+    export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON="$JSON"
+    queue ugum.1 'switch-icon - Switch the icon set\n'
+    runc "$pd" '\n'
+    check "gnome-candy menu ($variant): an empty required value runs nothing" bash -c "! grep -q 'switch-icon' '$LOG' || ! grep -q '^just .*switch-icon' '$LOG'"
+done
 reset
-export OCTARINE_MENU_FORCE_TTY=1 JUST_LIST='install-theme  # Install a theme\nswitch-icon NAME  # Switch the icon set\n'
-queue ugum.1 'install-theme - Install a theme\n'
-runrecipe gnome-candy ''
-check "gnome-candy menu: items are name - comment" logged "ugum choose install-theme - Install a theme switch-icon - Switch the icon set"
-check "gnome-candy menu: the choice runs in the checkout" logged "install-theme"
+export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON='{ not json'
+runc "$sysjq" ''
+check "gnome-candy menu: corrupt JSON shows the plain list, no menu" bash -c "! grep -q ugum '$LOG' && grep -q '  a' '$root/out'"
 reset
-export OCTARINE_MENU_FORCE_TTY=1 JUST_LIST='install-theme  # Install a theme\nswitch-icon NAME  # Switch the icon set\n'
-queue ugum.1 'switch-icon - Switch the icon set\n'
-runrecipe gnome-candy 'Papirus-Dark\n'
-check "gnome-candy menu: a recipe with parameters asks for them" logged "switch-icon Papirus-Dark"
+export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON="$JSON"
+runc "$sysbin" ''
+check "gnome-candy menu: no jq and no python falls back to the plain list" bash -c "! grep -q ugum '$LOG' && grep -q 'Recipes of gnome-themes' '$root/out'"
 reset
-export OCTARINE_MENU_FORCE_TTY=1 JUST_LIST='install-theme  # x\n'
-runrecipe gnome-candy '' list-themes
+export OCTARINE_MENU_FORCE_TTY=1 DUMP_JSON="$JSON"
+runc "$sysjq" '' list-themes
 check "gnome-candy with arguments: straight through, no menu" bash -c "grep -q 'list-themes' '$LOG' && ! grep -q ugum '$LOG'"
 reset
-JUST_LIST='install-theme  # x\n' runrecipe gnome-candy ''
+DUMP_JSON="$JSON" runc "$sysjq" ''
 check "gnome-candy without a terminal: no menu" notlogged "ugum"
 
 echo "passed: $pass, failed: $failn"

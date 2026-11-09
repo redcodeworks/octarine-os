@@ -302,12 +302,18 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   answers YES on Esc). `menu_ready`/`menu_ready_one` say whether gum or ugum is usable on a real terminal; return code 3
   from `menu_multi`/`menu_one` means no handler, and the recipe falls back to its built-in prompts. Menus appear only
   on a terminal; `--yes`, `--no`, `--only` and a named step never open one. `gum` is an optional package of the image.
+- Every selectable entry must be valid: no dividers or headings as rows in any `gum`-rendered list (gum cannot make a row
+  unselectable; the helper turns a group label into a prefix, `Account: Login shell`, and puts the key hint in the header:
+  `x` or space ticks, ENTER confirms the ticked rows, an empty result prints a hint); optional parameters (those with a
+  default) never prompt, only required ones do. Scoped menus read recipes from `just --dump --dump-format json`, never
+  from the human `just --list` (it prints group headings): public recipes only, no `default`; jq, then python3, else the
+  plain `--summary` list.
 - Scoped recipes (`gnome-candy`, `toolbox`) open a menu of their next commands when run with no arguments on a
   terminal; explicit arguments pass straight through.
 - Every recipe gets a test in `tests/` with stubbed binaries; tests fake a terminal with `OCTARINE_MENU_FORCE_TTY=1`.
-- The `gnome-candy` menu is built from `just --list --unsorted` of the checkout (name - comment); `just --choose` was not
-  used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the other menus. Untested
-  on a real terminal (no tty or gum here).
+- The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
+  `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
+  other menus. Untested on a real terminal (no tty or gum here).
 
 ## Forking
 

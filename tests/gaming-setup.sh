@@ -269,11 +269,11 @@ check "reset: library removed when asked" test ! -f "$EXTEST_DEST/lib64/libextes
 reset
 appstream net.lutris.Lutris
 export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Lutris\n'
+gumq 1 'Apps: Lutris\n'
 run ''
 check "gum checklist: the chosen step runs" logged "flatpak install --user -y flathub net.lutris.Lutris"
 check "gum checklist: unchosen steps do not run" notlogged "flathub com.valvesoftware.Steam"
-check "gum checklist: defaults preselected, Lutris not" logged "--selected Steam,ProtonUp-Qt,"
+check "gum checklist: defaults preselected, Lutris not" logged "--selected Apps: Steam,Apps: ProtonUp-Qt,"
 check "gum checklist: summary confirmed" logged "gum confirm Run these steps?"
 reset
 export OCTARINE_MENU_FORCE_TTY=1
@@ -283,7 +283,7 @@ check "gum checklist: Esc is not a failure" test "$rc" = 0
 reset
 appstream net.lutris.Lutris
 export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
-gumq 1 'Lutris\n'
+gumq 1 'Apps: Lutris\n'
 run ''
 check "gum checklist: declining changes nothing" notlogged "flatpak install"
 reset
