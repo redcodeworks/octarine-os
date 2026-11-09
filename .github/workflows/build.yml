@@ -384,6 +384,7 @@ jobs:
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
+            check "signature policy also covers the NVIDIA variant repository" "grep -q $REF-nvidia /etc/containers/policy.json"
             check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
             check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
             check "sudoers valid" "visudo -c"

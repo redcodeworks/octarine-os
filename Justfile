@@ -4,6 +4,8 @@ set dotenv-load
 export image_name := env_var("IMAGE_NAME")
 export repo_organization := env_var("REPO_ORGANIZATION")
 export image_desc := env_var("IMAGE_DESC")
+# The repository name (URLs in the labels); IMAGE_NAME may carry a variant suffix such as -nvidia in CI
+repo_name := env_var_or_default("REPO_NAME", image_name)
 export image_keywords := env_var("IMAGE_KEYWORDS")
 export image_logo_url := env_var("IMAGE_LOGO_URL")
 export default_tag := env_var("DEFAULT_TAG")
@@ -115,9 +117,9 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${BASE_INDEX_DIGEST:-}" ]]; then LABELS+=("--label" "io.github.redcodeworks.octarine-os.base-index-digest=${BASE_INDEX_DIGEST}"); fi
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
-        LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
-        LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
+        LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
+        LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
+        LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ repo_name }}/tree/${GIT_SHA}")
         LABELS+=("--label" "org.opencontainers.image.version=$(.github/scripts/image-version.sh)")
         # The full commit this image was built from (the scheduled skip check compares its content with main)
         LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
@@ -131,10 +133,10 @@ build $target_image=image_name $tag=default_tag:
     LABELS+=("--label" "io.artifacthub.package.logo-url={{ image_logo_url }}")
     LABELS+=("--label" "io.artifacthub.package.prerelease=false")
     # The source label links the GHCR package to the repository; the licenses label is shown on the package page
-    LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ image_name }}")
+    LABELS+=("--label" "org.opencontainers.image.source=https://github.com/{{ repo_organization }}/{{ repo_name }}")
     LABELS+=("--label" "org.opencontainers.image.licenses=Apache-2.0")
     LABELS+=("--label" "org.opencontainers.image.created=$(date -u +%Y\-%m\-%d\T%H\:%M\:%S\Z)")
-    LABELS+=("--label" "org.opencontainers.image.description={{ image_desc }}")
+    LABELS+=("--label" "org.opencontainers.image.description={{ image_desc }}${IMAGE_VARIANT:+ (NVIDIA variant for NVIDIA GPUs, built weekly from the NVIDIA base)}")
     LABELS+=("--label" "org.opencontainers.image.title=${target_image}")
     LABELS+=("--label" "org.opencontainers.image.vendor={{ repo_organization }}")
 

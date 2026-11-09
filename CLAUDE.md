@@ -110,6 +110,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
@@ -330,6 +331,47 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
+
+## NVIDIA variant (`octarine-os-nvidia`)
+
+- **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 11:23 UTC, after the
+  daily 10:05 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
+  or `testing`, no testing or promote channel; it publishes `latest` and the dated aliases and signs them with the same key
+  in the `signing` environment. A separate small workflow because `build.yml` is built around testing, promote and docs-only
+  semantics; the tag, push and sign steps are the same. The default image, its daily skip logic and its promote flow do not know about it.
+  The owner does not use it; it exists for others (opt-in, unsupported).
+- **How it is built.** `variants/nvidia/Containerfile` starts FROM `ghcr.io/redcodeworks/octarine-os@<digest of :latest at
+  build time>` (verified with cosign first) and adds only the driver: an akmods stage `ghcr.io/ublue-os/akmods-nvidia-lts@<digest>`
+  (proprietary driver, closed kernel modules, the 580 branch, which supports older cards; the `-open` modules need RTX 20 or
+  newer) is bind-mounted at `/tmp/akmods-rpms` and `variants/nvidia/nvidia.sh` runs its
+  `IMAGE_NAME=silverblue .../ublue-os/nvidia-install.sh` (needs dnf5 and the network: negativo17, NVIDIA's container toolkit
+  repository and a build-time COPR; it exits 1 when kmod and driver versions differ), then writes
+  `/usr/lib/modprobe.d/00-nouveau-blacklist.conf` and `/usr/lib/bootc/kargs.d/00-nvidia.toml` (`rd.driver.blacklist=nouveau`,
+  `modprobe.blacklist=nouveau`, `nvidia-drm.modeset=1`, the Bluefin LTS shape, unverified for Fedora; bootc merges it with the
+  default image's own kargs file) and rebuilds the initramfs with dracut. No rechunk (a layer on a chunked image). `silverblue-nvidia` was
+  retired by Universal Blue (notice of 7 Nov 2026), which is why the variant starts from our image instead.
+- **Kernel match (the main risk).** The workflow reads the kernel inside the pulled base (`rpm -q kernel-core`) and
+  `.github/scripts/nvidia-akmods-ref.sh` picks the akmods tag pinned to exactly that kernel: `main-<fedora>-<kernel with arch>`
+  or without the arch suffix (the tag form is unverified, both are tried), resolved to a digest with skopeo. No such tag, a
+  kernel of another Fedora release or a malformed kernel fails the job loudly and publishes nothing; the moving `main-<fedora>`
+  tag is never used. `nvidia.sh` also asserts the kernel is unchanged by the install. Base and akmods digests are logged and
+  recorded in the labels (`org.opencontainers.image.base.digest`, `io.github.redcodeworks.octarine-os.nvidia-akmods`).
+- **Checks.** `.github/scripts/nvidia-smoke.sh present` inside the built image (a non-firmware package with nvidia in its
+  name, a `nvidia*.ko*` for the kernel, the one-kernel and base-kernel equality, initramfs content when `lsinitrd` exists,
+  the kargs and modprobe files, an NVIDIA SELinux module) and `... absent` on the default image (no driver packages or
+  modules). The akmods image signature is checked with the vendored `keys/ublue-os-main-cosign.pub`; that this key signs the
+  nvidia image is unverified, so a failure is a visible warning, not a silent skip.
+- **Signature policy order.** `build.sh` writes a `sigstoreSigned` rule for BOTH `ghcr.io/redcodeworks/octarine-os` and
+  `...-nvidia` into the default image (the variant inherits the file; the `registries.d` entry is per namespace and already
+  there). A machine first switches to the default image (installing the policy), then to the variant with
+  `--enforce-container-sigpolicy`; switching back works the same way.
+- **Prune.** `prune-testing.yml` also prunes the variant's repository (`PRUNE_KIND=released`: versions whose tags are only
+  dated or `latest-*` aliases, never one that carries the bare `latest`, newest builds kept).
+- **Policy exception.** NVIDIA's proprietary driver is out-of-tree software (negativo17, NVIDIA's toolkit repository, a COPR at
+  build time), accepted only in this opt-in variant; the default image stays Fedora-official packages only.
+- **Unverified.** No GPU, no boot test, the akmods kernel-tag form, the driver version, Secure Boot enrollment
+  (`ujust enroll-secure-boot-key`, from the base, enrolls Universal Blue's key; MOK password `universalblue`), SELinux module
+  detection by `semodule -l` in a build container. Tests: `tests/nvidia-variant.sh`.
 
 ## Forking
 

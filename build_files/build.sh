@@ -28,27 +28,31 @@ cp -avf "/ctx/system_files"/. /
 chmod 0440 /etc/sudoers.d/10-timestamp-timeout
 visudo -c
 
-# --- Container signature policy for this image's own registry path ---
+# --- Container signature policy for this image's registry path and its sibling ---
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
-# Everything is derived from them, so a fork only changes image-template.env and cosign.pub.
+# Everything is derived from them, so a fork only changes image-template.env and cosign.pub. The default image and
+# the NVIDIA variant (<name>-nvidia, built weekly from the same files) both get a rule for BOTH repositories, so a
+# machine on either can switch to the other with --enforce-container-sigpolicy.
 if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
     org="${IMAGE_ORG,,}"
     name="${IMAGE_NAME,,}"
-    ref="ghcr.io/${org}/${name}"
+    base_name="${name%-nvidia}"
+    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia"
     key="/etc/pki/containers/${org}-${name}.pub"
     install -Dm644 /ctx/cosign.pub "${key}"
     printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
         >"/etc/containers/registries.d/${org}-${name}.yaml"
-    python3 - "${ref}" "${key}" <<'PY'
+    python3 - "${key}" ${refs} <<'PY'
 import json
 import sys
 
-ref, key = sys.argv[1], sys.argv[2]
+key, refs = sys.argv[1], sys.argv[2:]
 path = "/etc/containers/policy.json"
 policy = json.load(open(path))
 scopes = policy["transports"]["docker"]
 catch_all = scopes.pop("", None)
-scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
+for ref in refs:
+    scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
 if catch_all is not None:
     scopes[""] = catch_all
 with open(path, "w") as f:
