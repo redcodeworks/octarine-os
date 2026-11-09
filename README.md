@@ -73,7 +73,7 @@ Added by this image:
    ujust flatpak-preinstall
    ```
 
-5. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers, and optional config, GNOME settings and GNOME extensions from `redcodeworks/dot-files`; GNOME asks you to confirm each extension):
+5. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers):
 
    ```
    ujust user-setup

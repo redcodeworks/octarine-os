@@ -17,7 +17,6 @@ export HOME="$root/home"
 mkdir -p "$HOME"
 export BREW_CASKS="$root/casks" FC_FAMILIES="$root/families"
 export USER_SETUP_FONTS_BREWFILE="$here/../system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
-export EXT_PRESENT="$root/extpresent" EXT_FAIL="$root/extfail" EXT_ERR="$root/exterr" WAYLAND_DISPLAY=wayland-test
 export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
 export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
@@ -131,40 +130,9 @@ n=$(( $(cat "$root_cnt" 2>/dev/null || echo 0) + 1 )); echo $n >"$root_cnt"
 printf 'AAAAAAAA-0000-0000-0000-%012d\n' "$n"
 F
 export root_cnt="$root/uuidcnt"
-cat >"$bin/gnome-extensions" <<'F'
-#!/bin/sh
-echo "gnome-extensions $*" >>"$LOG"
-[ "$1" = list ] && cat "$EXT_PRESENT"
-exit 0
-F
-cat >"$bin/gdbus" <<'F'
-#!/usr/bin/env bash
-echo "gdbus $*" >>"$LOG"
-u=${!#}
-if grep -qx -- "$u" "$EXT_FAIL" 2>/dev/null; then echo "('cancelled',)"; exit 0; fi
-if grep -qx -- "$u" "$EXT_ERR" 2>/dev/null; then echo "('error',)"; exit 0; fi
-echo "$u" >>"$EXT_PRESENT"
-echo "('successful',)"
-F
 cat >"$bin/fc-list" <<'F'
 #!/bin/sh
 cat "$FC_FAMILIES" 2>/dev/null
-F
-cat >"$bin/git" <<'F'
-#!/usr/bin/env bash
-echo "git $*" >>"$LOG"
-[ -n "${GIT_FAIL:-}" ] && exit 1
-if [ "$1" = clone ]; then d=${@: -1}; mkdir -p "$d/.git" "$d/config/kitty" "$d/config/niri" "$d/config/noctalia"; echo "install:" >"$d/justfile"; fi
-exit 0
-F
-cat >"$bin/just" <<'F'
-#!/usr/bin/env bash
-echo "just $*" >>"$LOG"
-for a in "$@"; do
-    if [ "$a" = --summary ]; then echo "${JUST_SUMMARY-install hint brew gnome-apply}"; fi
-    if [ "$a" = describe ]; then printf '%b' "${DESCRIBE_OUT-}"; exit "${DESCRIBE_RC:-0}"; fi
-done
-exit 0
 F
 cat >"$bin/gum" <<'F'
 #!/usr/bin/env bash
@@ -197,8 +165,7 @@ reset() {
     : >"$LOG"; : >"$INSTALLED"; : >"$GS"
     echo /bin/bash >"$SHELLF"
     echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
-    unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS DESCRIBE_OUT DESCRIBE_RC COLUMNS
-    : >"$BREW_CASKS"; : >"$FC_FAMILIES"; : >"$EXT_PRESENT"; : >"$EXT_FAIL"; : >"$EXT_ERR"
+    : >"$BREW_CASKS"; : >"$FC_FAMILIES"
 }
 gumq() { printf '%b' "$2" >"$root/gumq.$1"; }
 ugumq() { printf '%b' "$2" >"$root/ugumq.$1"; }
@@ -368,7 +335,7 @@ run '' --yes --only groups,shell
 check "only: groups ran" logged "usermod -aG"
 check "only: shell ran" logged "usermod -s"
 check "only: flatpak did not run" notlogged "flatpak override"
-check "only: brew did not run" notlogged "brew bundle"
+check "only: fonts did not run" notlogged "brew bundle"
 reset
 run '' --only nonsense
 check "only: unknown step is an error" test "$rc" = 2
@@ -376,157 +343,10 @@ reset
 run '' --with-dotfiles
 check "old --with-dotfiles flag is gone" test "$rc" = 2
 
-# ---- dot-files
-reset
-run '' --yes
-check "dotfiles: not run by default" notlogged "git clone"
-check "dotfiles: default no noted" has "skipped (default no; use --only dotfiles)"
-reset
-run '' --yes --only dotfiles
-check "dotfiles: --only --yes consents, no app chosen, nothing installed" notlogged "install preserve"
-check "dotfiles: --only --yes clones" logged "git clone"
-check "dotfiles: no app noted" has "skipped (no app chosen)"
-: >"$LOG"
-DOT_FILES_APPS=niri,noctalia run '' --yes --only dotfiles
-check "dotfiles: apps from DOT_FILES_APPS" logged "install preserve niri noctalia"
-check "dotfiles: hint printed for the chosen apps" logged "hint niri noctalia"
-check "dotfiles: second run reuses cache" notlogged "git clone"
-check "dotfiles: second run fetches" logged "fetch"
-reset
-run 'y\nn\ny\ny\n' --only dotfiles
-check "dotfiles: per-app answers build the argument list" logged "install preserve niri noctalia"
-check "dotfiles: declined app absent" notlogged "install preserve kitty"
-reset
-run 'y\nn\nn\nn\n' --only dotfiles
-check "dotfiles: all apps no copies nothing" notlogged "install preserve"
-reset
-run 'n\n' --only dotfiles
-check "dotfiles: first question default/no stops" notlogged "git clone"
-reset
-JUST_SUMMARY="install" DOT_FILES_APPS=niri run '' --yes --only dotfiles
-check "dotfiles: missing hint recipe noted" has "has no hint recipe yet"
-check "dotfiles: install still ran" logged "install preserve niri"
-reset
-JUST_SUMMARY="" DOT_FILES_APPS=niri run '' --yes --only dotfiles
-check "dotfiles: missing install recipe skips" has "has no install recipe yet"
-reset
-mv "$bin/git" "$root/git.off"
-run '' --yes --only dotfiles
-mv "$root/git.off" "$bin/git"
-check "dotfiles: git missing skipped" has "skipped (no git/just)"
-reset
-export GIT_FAIL=1; run '' --yes --only dotfiles
-check "dotfiles: clone failure exits non-zero" test "$rc" != 0
-check "dotfiles: clone failure reported" has "FAILED"
-reset
-run '' --no --only dotfiles
-check "dotfiles: --no changes nothing" notlogged "git clone"
-
-# ---- dot-files: descriptions next to the apps
-reset
-JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tScrollable-tiling Wayland compositor\nnoctalia\tShell bar and launcher\n' run 'y\nn\ny\ny\n' --only dotfiles
-check "describe: description shown next to the app" has "niri - Scrollable-tiling Wayland compositor?"
-check "describe: app without a description line stays plain" has "  kitty? [y/N]"
-check "describe: answers still build the argument list" logged "install preserve niri noctalia"
-reset
-run 'y\nn\ny\ny\n' --only dotfiles
-check "describe missing: plain list" has "  niri? [y/N]"
-check "describe missing: no error" test "$rc" = 0
-reset
-JUST_SUMMARY="install hint describe" DESCRIBE_RC=1 DESCRIBE_OUT='niri\tpartial\n' run 'y\nn\nn\nn\n' --only dotfiles
-check "describe failing: plain list, no error" has "  niri? [y/N]"
-reset
-JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tWith $(touch /tmp/x) `id` \033[31mred\033[0m end\n' run 'y\nn\nn\nn\n' --only dotfiles
-check "describe odd characters: shown literally" has 'niri - With $(touch /tmp/x) `id` [31mred[0m end?'
-check "describe odd characters: nothing executed" test ! -e /tmp/x
-reset
-long=$(printf 'word%.0s ' $(seq 1 60))
-JUST_SUMMARY="install hint describe" COLUMNS=60 DESCRIBE_OUT="niri\t${long}ENDMARK\n" run 'y\nn\nn\nn\n' --only dotfiles
-check "describe long: truncated with dots" has "..."
-check "describe long: end of the text cut off" bash -c "! grep -q ENDMARK '$root/out'"
-check "describe long: line fits the width" bash -c "! grep -E '^.{70,}niri' '$root/out'"
-
-# ---- gnome settings
-reset
-run '' --yes
-check "gnome: default no" notlogged "gnome-apply"
-reset
-run '' --yes --only gnome
-check "gnome: --only --yes applies" logged "just --justfile"
-check "gnome: gnome-apply called" logged "gnome-apply"
-reset
-run 'n\n' --only gnome
-check "gnome: n applies nothing" notlogged "gnome-apply"
-reset
-run 'p\nn\n' --only gnome
-check "gnome: p runs the dry run" logged "gnome-apply --dry-run"
-check "gnome: p then n applies nothing" test "$(grep -c 'gnome-apply' "$LOG")" = 1
-reset
-run 'y\n' --only gnome
-check "gnome: y applies" logged "gnome-apply"
-reset
-JUST_SUMMARY="install" run '' --yes --only gnome
-check "gnome: missing recipe skip" has "has no gnome-apply recipe yet"
-
-# ---- gnome extensions (installed through GNOME's D-Bus method before gnome-apply)
-reset
-run '' --yes --only gnome
-check "extensions: 13 requested through InstallRemoteExtension" test "$(grep -c 'InstallRemoteExtension' "$LOG")" = 13
-check "extensions: arcmenu requested" logged "InstallRemoteExtension arcmenu@arcmenu.com"
-check "extensions: installed before gnome-apply" bash -c "[ \$(grep -n InstallRemoteExtension '$LOG' | tail -1 | cut -d: -f1) -lt \$(grep -n gnome-apply '$LOG' | head -1 | cut -d: -f1) ]"
-check "extensions: undo printed" has "gnome-extensions uninstall arcmenu@arcmenu.com"
-: >"$LOG"
-run '' --yes --only gnome
-check "extensions: second run installs nothing" notlogged "InstallRemoteExtension"
-check "extensions: second run says already done" has "already done"
-reset
-printf 'dash-to-dock@micxgx.gmail.com\nuser-theme@gnome-shell-extensions.gcampax.github.com\n' >"$EXT_PRESENT"
-run '' --yes --only gnome
-check "extensions: present ones skipped" notlogged "InstallRemoteExtension dash-to-dock@micxgx.gmail.com"
-check "extensions: others installed" test "$(grep -c 'InstallRemoteExtension' "$LOG")" = 11
-reset
-echo caffeine@patapon.info >"$EXT_FAIL"
-run '' --yes --only gnome
-check "extensions: a declined one is reported, not an error" has "not approved: caffeine@patapon.info"
-check "extensions: declined is not a failure" test "$rc" = 0
-reset
-echo caffeine@patapon.info >"$EXT_ERR"
-run '' --yes --only gnome
-check "extensions: an error fails soft, gnome-apply still ran" logged "gnome-apply"
-check "extensions: an error exits non-zero" test "$rc" != 0
-reset
-WAYLAND_DISPLAY= DISPLAY= run '' --yes --only gnome
-check "extensions: no graphical session prints the commands" has "no graphical session"
-check "extensions: no graphical session installs nothing" notlogged "InstallRemoteExtension"
-reset
-run '' --yes
-check "extensions: not touched by default (gnome step is default no)" notlogged "InstallRemoteExtension"
-
-# ---- brew tools
-reset
-run '' --yes
-check "brew: default no (no recipe call)" notlogged "dry-run"
-reset
-run 'n\n' --only brew
-check "brew: dry run shown before asking" logged "brew --dry-run"
-check "brew: n runs only the dry run" test "$(grep -c "brew$" "$LOG")" = 0
-reset
-run '' --yes --only brew
-check "brew: --only --yes shows the dry run" logged "brew --dry-run"
-check "brew: just brew called" grep -q 'just .* brew$' "$LOG"
-reset
-mv "$bin/brew" "$root/brew.off"
-run '' --yes --only brew
-mv "$root/brew.off" "$bin/brew"
-check "brew: homebrew missing skipped" has "Homebrew is missing"
-reset
-JUST_SUMMARY="install" run '' --yes --only brew
-check "brew: missing recipe skip" has "has no brew recipe yet"
-
 # ---- fonts
 reset
 run '' --yes --only fonts
-check "fonts: --yes installs Kevin's set with brew bundle" logged "brew bundle --file"
+check "fonts: --yes installs the developer set with brew bundle" logged "brew bundle --file"
 check "fonts: no fc-cache or curl" notlogged "curl"
 check "fonts: casks recorded" grep -q font-0xproto-nerd-font "$BREW_CASKS"
 check "fonts: twelve casks" test "$(wc -l <"$BREW_CASKS")" = 12
@@ -652,13 +472,6 @@ run '' --only shell --yes
 check "gum: --only skips the checklist" notlogged "gum choose"
 reset
 export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Desktop: Config files from dot-files; chosen per app\n'
-gumq 2 'niri - Scrollable-tiling Wayland compositor\nnoctalia - Shell bar\n'
-JUST_SUMMARY="install hint describe" DESCRIBE_OUT='niri\tScrollable-tiling Wayland compositor\nnoctalia\tShell bar\n' run ''
-check "gum dotfiles: per-app checklist shows name - description" logged "niri - Scrollable-tiling Wayland compositor"
-check "gum dotfiles: chosen apps are installed" logged "install preserve niri noctalia"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
 gumq 1 'Apps: Nerd Fonts from Homebrew casks\n'
 ugumq 1 'JetBrains Mono Nerd Font only\n'
 run ''
@@ -670,20 +483,6 @@ ugumq 1 'Pick from all Nerd Font casks\n'
 gumq 2 'font-aaa-nerd-font\n'
 run ''
 check "gum fonts: pick-from-all is a checklist" logged "brew install --cask font-aaa-nerd-font"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Desktop: GNOME settings and extensions\n'
-ugumq 1 'Show the plan only (dry run)\n'
-ugumq 2 ''
-run ''
-check "gum gnome: the plan option runs the dry run" logged "gnome-apply --dry-run"
-check "gum gnome: the plan alone applies nothing" test "$(grep -c 'gnome-apply' "$LOG")" = 1
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Desktop: GNOME settings and extensions\n'
-ugumq 1 'Apply now\n'
-run ''
-check "gum gnome: apply runs gnome-apply" logged "gnome-apply"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

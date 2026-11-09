@@ -1,6 +1,6 @@
 # vim: set ft=make :
 
-# Step-by-step setup for a new user: groups, zsh, Flatpak access, fonts, tools, fish, search, dot-files, GNOME (--help for usage)
+# Step-by-step setup for a new user: groups, zsh, Flatpak access, fonts, fish terminal, GNOME search (--help for usage)
 [group('Setup')]
 [positional-arguments]
 user-setup *args:
@@ -13,13 +13,13 @@ user-setup *args:
     mode=ask
     only_list=""
     user=""
-    valid_steps=" groups shell flatpak fonts brew fish-terminal search dotfiles gnome "
+    valid_steps=" groups shell flatpak fonts fish-terminal search "
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin'\''s 12-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -64,23 +64,12 @@ user-setup *args:
         case ",$only_list," in *",$1,"*) return 0 ;; esac
         return 1
     }
-    # consent: --yes plus an explicit --only naming a default-no step counts as the answer yes
-    consent() {
-        [ -n "$only_list" ] || return 1
-        case "$cur_step" in dotfiles | gnome | brew) ;; *) return 1 ;; esac
-        case ",$only_list," in *",$cur_step,"*) return 0 ;; esac
-        return 1
-    }
-
     # ask <default y|n> <question>: sets $answer to y or n
     ask() {
         local def=$1 q=$2 reply hint="[Y/n]"
         [ "$def" = n ] && hint="[y/N]"
         case "$mode" in
-            yes)
-                if consent; then answer=y; else answer=$def; fi
-                return
-                ;;
+            yes) answer=$def; return ;;
             no) answer=n; return ;;
         esac
         printf '%s %s ' "$q" "$hint"
@@ -92,79 +81,6 @@ user-setup *args:
         esac
     }
 
-    # dot-files checkout, shared by the dotfiles, gnome and brew steps (same pattern as the gnome-themes recipe)
-    dot_ready=""
-    ddir="${XDG_CACHE_HOME:-$HOME/.cache}/dot-files/repo"
-    dot_fetch() {
-        [ "$dot_ready" = 1 ] && return 0
-        [ "$dot_ready" = 0 ] && return 1
-        local durl="${DOT_FILES_URL:-https://github.com/redcodeworks/dot-files.git}" dref="${DOT_FILES_REF:-main}"
-        if (
-            if [ -d "$ddir/.git" ]; then
-                git -C "$ddir" remote set-url origin "$durl" || exit 1
-                git -C "$ddir" fetch --quiet --tags origin || exit 1
-            else
-                mkdir -p "$(dirname "$ddir")" || exit 1
-                git clone --quiet "$durl" "$ddir" || exit 1
-            fi
-            git -C "$ddir" checkout --quiet --detach "$(git -C "$ddir" rev-parse --verify --quiet "origin/$dref" || echo "$dref")" || exit 1
-        ); then
-            dot_ready=1
-            return 0
-        fi
-        dot_ready=0
-        echo "Could not fetch github.com/redcodeworks/dot-files (network?)." >&2
-        return 1
-    }
-    dot_has() { just --justfile "$ddir/justfile" --summary 2>/dev/null | tr ' ' '\n' | grep -qx "$1"; }
-    dot_just() { env -u DOT_DEST just --justfile "$ddir/justfile" --working-directory "$ddir" "$@"; }
-    need_gj() {
-        if ! command -v git >/dev/null 2>&1 || ! command -v just >/dev/null 2>&1; then
-            echo "Skipped: git and just are needed (both ship in the image; install them if you removed them)."
-            return 1
-        fi
-    }
-    missing_recipe() { echo "Skipped: the dot-files checkout has no $1 recipe yet (update dot-files)."; }
-    # install_extensions: the GNOME extensions of the dot-files setup that are not installed yet, through GNOME's own
-    # D-Bus method (it fetches the build for the running Shell from extensions.gnome.org and asks you to confirm each one)
-    gnome_extensions="arcmenu@arcmenu.com hotedge@jonathan.jdoda.ca CoverflowAltTab@palatis.blogspot.com clipboard-indicator@tudmotu.com tilingshell@ferrarodomenico.com dash-to-dock@micxgx.gmail.com blur-my-shell@aunetx caffeine@patapon.info appindicatorsupport@rgcjonas.gmail.com auto-move-windows@gnome-shell-extensions.gcampax.github.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io user-theme@gnome-shell-extensions.gcampax.github.com"
-    install_extensions() {
-        local u have missing=() done_list=() undo="" bad=0 res
-        if ! command -v gnome-extensions >/dev/null 2>&1 || ! command -v gdbus >/dev/null 2>&1; then
-            echo "Extensions: gnome-extensions or gdbus is missing; install them with the Extension Manager app instead."
-            record "gnome: extensions" "skipped (no gnome-extensions/gdbus)"
-            return
-        fi
-        have=$(gnome-extensions list 2>/dev/null)
-        for u in $gnome_extensions; do
-            if printf '%s\n' "$have" | grep -qxF "$u"; then echo "  present: $u"; else missing+=("$u"); fi
-        done
-        if [ "${#missing[@]}" -eq 0 ]; then
-            echo "All extensions are already installed."
-            record "gnome: extensions" "already done"
-            return
-        fi
-        if [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]; then
-            echo "Extensions: no graphical session here. Run these inside your GNOME session, or use the Extension Manager app:"
-            for u in "${missing[@]}"; do
-                echo "  gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension '$u'"
-            done
-            record "gnome: extensions" "skipped (no graphical session)"
-            return
-        fi
-        echo "Installing ${#missing[@]} extension(s) from extensions.gnome.org; GNOME asks you to confirm each one."
-        for u in "${missing[@]}"; do
-            res=$(gdbus call --session --dest org.gnome.Shell.Extensions --object-path /org/gnome/Shell/Extensions --method org.gnome.Shell.Extensions.InstallRemoteExtension "$u" 2>&1)
-            case "$res" in
-                *successful*) echo "  installed: $u"; undo="$undo gnome-extensions uninstall $u;" ;;
-                *cancelled*) echo "  not approved: $u" ;;
-                *) echo "  failed: $u ($res)"; bad=1 ;;
-            esac
-        done
-        if [ "$bad" = 1 ]; then failed=1; record "gnome: extensions" "FAILED" "$undo"
-        elif [ -n "$undo" ]; then record "gnome: extensions" "applied" "$undo"
-        else record "gnome: extensions" "skipped (not approved)"; fi
-    }
     in_list() { local n=$1; shift; local i; for i in "$@"; do [ "$i" = "$n" ] && return 0; done; return 1; }
     installed() { flatpak info "$1" >/dev/null 2>&1; }
 
@@ -226,12 +142,9 @@ user-setup *args:
             "^Apps^0" \
             "flatpak^Flatpak access overrides^1" \
             "fonts^Nerd Fonts from Homebrew casks^1" \
-            "brew^Homebrew CLI tools from dot-files^0" \
             "^Desktop^0" \
             "fish-terminal^Fish terminal profile with the starship prompt^1" \
-            "search^GNOME search providers^1" \
-            "dotfiles^Config files from dot-files, chosen per app^0" \
-            "gnome^GNOME settings and extensions^0"
+            "search^GNOME search providers^1"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -429,7 +342,7 @@ user-setup *args:
         echo "Skipped: Homebrew is missing (the image installs it on first boot; rerun later)."
         record "fonts" "skipped (no brew)"
     elif [ "$mode" = no ]; then
-        echo "Plan: offer Kevin's 12-font Nerd Font set (default), JetBrains Mono Nerd Font only, a pick from all Nerd Font casks, or skip; install with Homebrew."
+        echo "Plan: offer the 12-font developer set (default), JetBrains Mono Nerd Font only, a pick from all Nerd Font casks, or skip; install with Homebrew."
         record "fonts" "planned (would ask)"
     else
         fonts_brewfile=${USER_SETUP_FONTS_BREWFILE:-/usr/share/octarine-os/homebrew/fonts.Brewfile}
@@ -437,14 +350,14 @@ user-setup *args:
         mrc=3
         if [ "$ui" = 1 ]; then
             menu_one "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts)" \
-                "1^Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque)" "2^JetBrains Mono Nerd Font only" \
+                "1^Developer set (12 Nerd Fonts, Bluefin's developer list plus Fantasque)" "2^JetBrains Mono Nerd Font only" \
                 "3^Pick from all Nerd Font casks" "4^Skip"
             mrc=$?
             case "$mrc" in 0) fonts_choice=$MENU_ONE ;; 1) fonts_choice=4 ;; esac
         fi
         if [ "$mrc" = 3 ] && { [ "$mode" = ask ] || [ "$ui" = 1 ]; }; then
             echo "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts):"
-            echo "  1) Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque) [default]"
+            echo "  1) Developer set (12 Nerd Fonts, Bluefin's developer list plus Fantasque) [default]"
             echo "  2) JetBrains Mono Nerd Font only"
             echo "  3) pick from all Nerd Font casks"
             echo "  4) skip"
@@ -508,10 +421,10 @@ user-setup *args:
                     brew list --cask "$cname" >/dev/null 2>&1 || allin=0
                 done <"$fonts_brewfile"
                 if [ "$allin" = 1 ]; then
-                    echo "Kevin's font set is already installed."
+                    echo "The developer font set is already installed."
                     record "fonts" "already done"
                 elif brew bundle --file "$fonts_brewfile"; then
-                    echo "Installed Kevin's font set."
+                    echo "Installed the developer font set."
                     record "fonts" "applied" "brew uninstall --cask ${casks[*]}"
                 else
                     echo "Failed: fonts" >&2
@@ -573,43 +486,6 @@ user-setup *args:
             else
                 record "fonts: terminal font" "skipped (no change by default)"
             fi
-        fi
-    fi
-    fi
-
-    # brew: the curated Homebrew CLI tools of dot-files (brew bundle of its Brewfile)
-    if sel brew; then
-    cur_step=brew
-    echo
-    echo "== brew (CLI tools)"
-    if ! need_gj; then
-        record "brew" "skipped (no git/just)"
-    elif ! command -v brew >/dev/null 2>&1; then
-        echo "Skipped: Homebrew is missing (the image installs it on first boot; rerun later)."
-        record "brew" "skipped (no brew)"
-    elif [ "$mode" = no ]; then
-        echo "Plan: fetch github.com/redcodeworks/dot-files, show 'just brew --dry-run' (the formula list) and ask before running 'just brew' (brew bundle of its Brewfile)."
-        record "brew" "planned (would ask)"
-    elif [ "$mode" = yes ] && ! consent; then
-        record "brew" "skipped (default no; use --only brew)"
-    elif ! dot_fetch; then
-        failed=1
-        record "brew" "FAILED"
-    elif ! dot_has brew; then
-        missing_recipe brew
-        record "brew" "skipped (recipe missing)"
-    else
-        echo "Install the Homebrew formulae of the dot-files Brewfile (code from that repository, same trust as the gnome-themes recipe). The list:"
-        dot_just brew --dry-run
-        ask n "Install these?"
-        if [ "$answer" != y ]; then
-            record "brew" "skipped (not applied)"
-        elif dot_just brew; then
-            record "brew" "applied" "brew uninstall <formula> for any you do not want (the list was shown above)"
-        else
-            echo "Failed: brew" >&2
-            failed=1
-            record "brew" "FAILED"
         fi
     fi
     fi
@@ -850,151 +726,6 @@ user-setup *args:
                     fi
                 fi
             fi
-        fi
-    fi
-    fi
-
-    # dotfiles: config files of github.com/redcodeworks/dot-files, chosen per app, installed by that repository's own
-    # installer (preserve mode keeps files you changed)
-    if sel dotfiles; then
-    cur_step=dotfiles
-    echo
-    echo "== dot-files (config files)"
-    if ! need_gj; then
-        record "dot-files" "skipped (no git/just)"
-    else
-        echo "Fetch github.com/redcodeworks/dot-files and copy config files of the apps you choose into ~/.config; files you changed are kept. Runs that repository's installer as you (code from that repository, the same trust as the gnome-themes recipe); needs the network."
-        ask n "Copy config files from dot-files?"
-        if [ "$answer" != y ]; then
-            if [ "$mode" = no ]; then record "dot-files" "planned (would ask)"
-            elif [ "$mode" = yes ]; then record "dot-files" "skipped (default no; use --only dotfiles)"
-            else record "dot-files" "skipped (not applied)"; fi
-        elif ! dot_fetch; then
-            echo "Failed: dot-files" >&2
-            failed=1
-            record "dot-files" "FAILED"
-        else
-            apps=()
-            for d in "$ddir"/config/*/; do
-                [ -d "$d" ] && apps+=("$(basename "$d")")
-            done
-            chosen=()
-            # one line per app from `just describe` (read as data; missing recipe or a failure means no descriptions)
-            declare -A app_desc=()
-            if dot_has describe; then
-                desc_out=$(dot_just describe 2>/dev/null) || desc_out=""
-                while IFS=$'\t' read -r dname dtext; do
-                    dtext=${dtext//[[:cntrl:]]/}
-                    [ -n "$dname" ] && [ -n "$dtext" ] && app_desc[${dname//[[:cntrl:]]/}]=$dtext
-                done <<<"$desc_out"
-            fi
-            if [ "$ui" = 1 ]; then
-                specs=()
-                for a in "${apps[@]}"; do
-                    label=$a
-                    if [ -n "${app_desc[$a]:-}" ]; then label="$a - ${app_desc[$a]}"; fi
-                    specs+=("$a^$label^0")
-                done
-                menu_multi "Apps to copy config files for" "${specs[@]}"
-                chosen=("${MENU_RESULT[@]}")
-            elif [ "$mode" = yes ]; then
-                apps_env=${DOT_FILES_APPS:-}
-                for a in ${apps_env//,/ }; do
-                    for b in "${apps[@]}"; do [ "$a" = "$b" ] && chosen+=("$a"); done
-                done
-            else
-                cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 80)}
-                [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
-                cur_step=dotfiles-app
-                for a in "${apps[@]}"; do
-                    label="  $a"
-                    if [ -n "${app_desc[$a]:-}" ]; then
-                        dtext=${app_desc[$a]}
-                        room=$((cols - ${#label} - 14))
-                        if [ "$room" -lt 8 ]; then room=8; fi
-                        if [ "${#dtext}" -gt "$room" ]; then dtext="${dtext:0:$((room - 3))}..."; fi
-                        label="$label - $dtext"
-                    fi
-                    ask n "$label?"
-                    [ "$answer" = y ] && chosen+=("$a")
-                done
-                cur_step=dotfiles
-            fi
-            if [ "${#chosen[@]}" -eq 0 ]; then
-                echo "No app chosen; nothing copied."
-                record "dot-files" "skipped (no app chosen)"
-            elif ! dot_has install; then
-                missing_recipe install
-                record "dot-files" "skipped (recipe missing)"
-            elif dot_just install preserve "${chosen[@]}"; then
-                if dot_has hint; then dot_just hint "${chosen[@]}"; else missing_recipe hint; fi
-                record "dot-files" "applied" "backups are in ~/.local/state/dot-files/backup/; delete the installed files by hand; remove ~/.cache/dot-files"
-            else
-                echo "Failed: dot-files (the repository's installer)" >&2
-                failed=1
-                record "dot-files" "FAILED"
-            fi
-        fi
-    fi
-    fi
-
-    # gnome: settings and extensions from dot-files (just gnome-apply)
-    if sel gnome; then
-    cur_step=gnome
-    echo
-    echo "== gnome (settings and extensions)"
-    if ! need_gj; then
-        record "gnome" "skipped (no git/just)"
-    else
-        echo "Apply the dot-files GNOME settings and extensions (just gnome-apply). This changes many GNOME settings: app grid folders, interface, shell keybindings, dock, shell theme. It first offers to install the missing GNOME extensions through GNOME's own installer (you confirm each), backs up the current dconf values, enables only installed extensions and lists the missing ones. Code from that repository; needs the network."
-        gchoice=n
-        if [ "$ui" = 1 ] && menu_ready_one; then
-            while :; do
-                menu_one "GNOME settings and extensions" "apply^Apply now" "plan^Show the plan only (dry run)" "skip^Skip"
-                case "$MENU_ONE" in
-                    apply) gchoice=y; break ;;
-                    plan)
-                        if dot_fetch && dot_has gnome-apply; then dot_just gnome-apply --dry-run; else echo "No plan available (fetch failed or recipe missing)."; fi
-                        ;;
-                    *) break ;;
-                esac
-            done
-            mode_gnome=ui
-        fi
-        case "${mode_gnome:-$mode}" in
-            ui) ;;
-            no) ;;
-            yes) consent && gchoice=y ;;
-            ask)
-                while :; do
-                    printf 'Apply? [y/N/p = show the plan only] '
-                    read -r reply || reply=""
-                    case "$reply" in
-                        [Yy]*) gchoice=y; break ;;
-                        [Pp]*)
-                            if dot_fetch && dot_has gnome-apply; then dot_just gnome-apply --dry-run; else echo "No plan available (fetch failed or recipe missing)."; fi
-                            ;;
-                        *) break ;;
-                    esac
-                done
-                ;;
-        esac
-        if [ "$gchoice" != y ]; then
-            if [ "$mode" = no ]; then record "gnome" "planned (would ask)"
-            elif [ "$mode" = yes ]; then record "gnome" "skipped (default no; use --only gnome)"
-            else record "gnome" "skipped (not applied)"; fi
-        elif ! dot_fetch; then
-            failed=1
-            record "gnome" "FAILED"
-        elif ! dot_has gnome-apply; then
-            missing_recipe gnome-apply
-            record "gnome" "skipped (recipe missing)"
-        elif install_extensions; dot_just gnome-apply; then
-            record "gnome" "applied" "the recipe backed up the previous dconf values first (see its output for the backup path); load that backup with dconf load to undo"
-        else
-            echo "Failed: gnome" >&2
-            failed=1
-            record "gnome" "FAILED"
         fi
     fi
     fi

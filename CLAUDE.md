@@ -435,19 +435,15 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   override --user --show`); defaults yes except the Steam devices (widens the sandbox) and the games directory (needs a
   path)), `fonts` (Homebrew casks only, no downloads or checksum code here: preset `system_files/usr/share/octarine-os/
   homebrew/fonts.Brewfile`, Bluefin's `fonts-dev.Brewfile` plus `font-fantasque-sans-mono-nerd-font` (12 casks), installed with `brew bundle --file`; or JetBrains
-  Mono only, or a pick from `brew search --cask nerd-font`; terminal font only on an explicit choice), `brew`
-  (`just brew [--dry-run]` of the dot-files checkout, default no), `fish-terminal` (Ptyxis profile via `gsettings`,
+  Mono only, or a pick from `brew search --cask nerd-font`; terminal font only on an explicit choice), `fish-terminal` (Ptyxis profile via `gsettings`,
   reused when one already starts fish; starship via `brew install`, hook file `~/.config/fish/conf.d/starship.fish`),
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
-  when nothing changes), `dotfiles` (default no; per-app y/n over `config/*/` of the checkout, each with its one-line description from `just describe` (tab-separated `<app><TAB><text>`, read as data, control characters stripped, cut to the terminal width; a missing recipe or a failure means no descriptions), then `just install preserve
-  <apps>` and `just hint <apps>`) and `gnome` (`just gnome-apply`, `p` runs `--dry-run`; default no; before it, `install_extensions` installs the 13 extensions of the dot-files setup that `gnome-extensions list` does not show, through the Shell D-Bus method `org.gnome.Shell.Extensions.InstallRemoteExtension`, which fetches the build for the running Shell from extensions.gnome.org and asks for confirmation per extension; no graphical session means the exact `gdbus` commands are printed; undo `gnome-extensions uninstall <uuid>`; unverified: the method on Shell 51 and that all 13 exist for it). Five of the 13 are Fedora 45 packages in the optional `misc` group of `build.sh` (appindicator 66, auto-move-windows 51.0, blur-my-shell 75, caffeine 60, dash-to-dock 110; the live user copies were slightly newer for blur-my-shell, 77, and caffeine, 61); user-theme, gsconnect and background-logo are RPM-owned in the image; arcmenu, hotedge, CoverflowAltTab, clipboard-indicator and tilingshell are not packaged and come from the D-Bus install. The dot-files
-  checkout is a shallow clone in `~/.cache/dot-files/repo` (`DOT_FILES_REF`, default `main`, same pattern as the
-  `gnome-candy` recipe), shared by the three steps; each recipe is checked with `just --summary` first and the step is
-  skipped when it is missing. `--yes` takes defaults; a default-no step runs under `--yes` only when named in `--only`
-  (`DOT_FILES_APPS` lists the apps then); `--no` prints the plan; a failed step is reported, the rest continue, exit status
+  when nothing changes). `--yes` takes defaults; `--no` prints the plan; a failed step is reported, the rest continue, exit status
   non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
-  flatpak, sudo, id, getent, usermod, gsettings, brew, git, just, fc-list).
+  flatpak, sudo, id, getent, usermod, gsettings, brew, fc-list). The dot-files steps (`dotfiles`, `brew`, `gnome` with its
+  GNOME extension installer) were removed from `user-setup` on 2026-11-09 by Kevin's decision; the dot-files repo itself and its
+  `just` recipes still exist, independent of this image.
  `gaming-setup [step...] [--yes|--no]` replaced `steam-gamescope-setup`, `steam-gamescope-reset`, `extest-build`,
   `extest-steam-setup` and `extest-steam-reset` (removed, no aliases). Steps: `steam`, `protonup`, `lutris` (Flatpaks:
   `com.valvesoftware.Steam`, `net.davidotek.pupgui2`, `net.lutris.Lutris`; installed in the user installation only when
