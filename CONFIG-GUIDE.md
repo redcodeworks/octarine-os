@@ -271,15 +271,23 @@ Recipes run through `ujust`; arguments are positional, for example `ujust toolbo
 They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
 and safeguards are in `CLAUDE.md`. What you need to use them:
 
-- **`user-setup [user] [--yes|--no|--with-dotfiles]`:** an interactive checklist. In order: join `gamemode`, `input`
-  and `libvirt`; switch the login shell to zsh when it is not (`usermod -s`, sudo; copies the skeleton zsh files when
-  you have none); a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in through
-  `~/.config/fish/conf.d/starship.fish`; the Calculator and Bazaar GNOME search providers with the Calculator first;
-  the Flatpak steps (games directory for Steam, Bottles and Lutris, Steam USB and input devices, VS Code and the
-  rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers, Gear Lever's
-  `~/Applications`). Each step is skipped when the app is not installed or the change is already in place; Enter
-  takes the default (yes, except the Steam devices and the games directory, which default to no). `--yes` takes the
-  defaults without asking, `--no` changes nothing and prints the plan. The summary lists how to undo each applied step.
+- **`user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`:** an interactive checklist, one y/n question per step,
+  in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
+  the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
+  input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
+  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 11-font set from
+  `/usr/share/octarine-os/homebrew/fonts.Brewfile` by default, JetBrains Mono only, a pick from all Nerd Font casks, or
+  skip; then optionally the Ptyxis terminal font), `brew` (CLI tools: `just brew` of the dot-files repository, default
+  no), `fish-terminal` (a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in
+  through `~/.config/fish/conf.d/starship.fish`), `search` (the Calculator, Bazaar, Characters and Clocks GNOME search
+  providers; the Calculator goes first; existing entries are merged, never replaced), `dotfiles` (config files of
+  github.com/redcodeworks/dot-files chosen per app, default no, installed with that repository's `just install preserve`,
+  which keeps files you changed) and `gnome` (`just gnome-apply`: many GNOME settings, default no; answer `p` for the
+  plan only). The dot-files, brew and gnome steps run code from that repository and need the network; they are skipped
+  when the checkout lacks the recipe. Each step is skipped when the app is not installed or the change is already in
+  place; Enter takes the default. `--yes` takes the defaults without asking (default-no steps run under `--yes` only
+  when named with `--only`; `DOT_FILES_APPS=niri,noctalia` names the apps then), `--no` changes nothing and prints the
+  plan. The summary lists how to undo each applied step.
 - **`gnome-themes <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one

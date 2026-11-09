@@ -43,12 +43,8 @@ Added by this image:
 - `ujust toolbox dev-toolbox` and `ujust toolbox gaming`, built from separate images (`fedora-toolbox`, `fedora-gaming`)
 - Optional IDE launchers and exported build tools
 
-**Branding** (`build.sh`, `system_files`)
-- `PRETTY_NAME` is `octarineOS`; ID, NAME and VERSION_ID are unchanged
-- octarineOS logo on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt)
-
 **Hardening and defaults** (`system_files`)
-- sshd: no root login, no X11 or TCP forwarding
+- sshd (off by default): no root login, no X11 or TCP forwarding; the image does not change the authentication methods (password and keyboard-interactive logins are not turned off by it)
 - sysctl: ptrace scope, `kptr_restrict`, SysRq, BBR, inotify limits, a higher `vm.max_map_count`, zram swap tuning
 - firewalld zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale port)
 - pam-u2f for sudo and polkit, 30-minute sudo timeout, a higher memlock limit for `wheel`, kernel argument `iommu=pt`
@@ -78,10 +74,13 @@ Added by this image:
    sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
    ```
 
-4. Optionally run the user-level setup, an interactive checklist for the `gamemode`, `input` and `libvirt` groups,
-   the zsh login shell, a fish terminal profile with the starship prompt, the Calculator and Bazaar search providers
-   and the Flatpak access overrides, with an optional copy of the niri and Noctalia config files from `redcodeworks/dot-files`
-   (`--yes` takes the defaults, `--no` only prints the plan, `--with-dotfiles` runs only the dot-files copy):
+4. Optionally run the user-level setup, an interactive checklist (one y/n question per step): the `gamemode`, `input`
+   and `libvirt` groups, the zsh login shell, Flatpak access overrides, Nerd Fonts from Homebrew casks (Kevin's
+   11-font set by default, the same list as Bluefin's developer fonts), Homebrew CLI tools from `redcodeworks/dot-files`,
+   a fish terminal profile with the starship prompt, the Calculator, Bazaar, Characters and Clocks search providers, a
+   per-app copy of config files from `redcodeworks/dot-files` and its GNOME settings (the last three default to no).
+   `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs just the named steps
+   (`groups`, `shell`, `flatpak`, `fonts`, `brew`, `fish-terminal`, `search`, `dotfiles`, `gnome`):
 
    ```
    ujust user-setup
@@ -145,7 +144,7 @@ Built on Universal Blue's `silverblue-main` for the current Fedora release (`ghc
 
 | Recipe | What it does |
 |---|---|
-| `ujust user-setup [user] [--yes\|--no\|--with-dotfiles]` | Interactive checklist: add the user to `gamemode`, `input` and `libvirt` (sudo), switch the login shell to zsh (sudo), a Ptyxis profile that starts fish plus the starship prompt (from Homebrew), the Calculator and Bazaar GNOME search providers (Calculator first), then Flatpak overrides for game launchers (a games directory you name), Steam USB/input devices (default no, widens the sandbox), VS Code and the Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers and Gear Lever's `~/Applications`; steps for apps that are not installed or already done are skipped, the summary lists how to undo each applied step; the optional copy of the niri and Noctalia config files from `redcodeworks/dot-files` (runs that repository's installer, default no, `--with-dotfiles` runs only it) |
+| `ujust user-setup [user] [--yes\|--no] [--only STEP,...]` | Interactive checklist, in order: `gamemode`/`input`/`libvirt` groups (sudo); login shell zsh (sudo); Flatpak overrides (a games directory you name, Steam USB/input devices (default no, widens the sandbox), VS Code and the Podman socket, Podman Desktop without the Docker socket, Chrome web-app launchers, Gear Lever's `~/Applications`); Nerd Fonts from Homebrew casks (Kevin's 11-font set by default, JetBrains Mono only, a pick from all, or skip; optionally the Ptyxis terminal font); CLI tools from the dot-files Brewfile (default no); a Ptyxis fish profile plus the starship prompt (Homebrew); the Calculator, Bazaar, Characters and Clocks GNOME search providers (Calculator first); a per-app copy of config files from `redcodeworks/dot-files` and its GNOME settings and extensions (both default no; they run that repository's installer). Steps that do not apply or are already done are skipped; the summary lists how to undo each applied step |
 | `ujust toolbox [<name> [options]]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `ujust toolbox <name> --help` shows the options; `--ide` makes IDE launchers (JetBrains icon: the one Toolbox registered, else the file in the app's `bin/`; rerunning refreshes the icon of launchers it created) |
 | `ujust gnome-themes <recipe>` | Run a recipe of [gnome-themes](https://github.com/redcodeworks/gnome-themes): themes and icons live there, not in the image |
 | `ujust steam-gamescope-setup` / `-reset` | Make Flatpak Steam and the gamescope layer work together, or undo it |

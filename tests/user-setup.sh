@@ -15,6 +15,8 @@ mkdir -p "$bin"
 export LOG="$root/log" INSTALLED="$root/installed" OVR="$root/ovr" GROUPS_OF="$root/groups" FAILAPP="$root/failapp"
 export HOME="$root/home"
 mkdir -p "$HOME"
+export BREW_CASKS="$root/casks" FC_FAMILIES="$root/families"
+export USER_SETUP_FONTS_BREWFILE="$here/../system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
 export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
 export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"
@@ -26,7 +28,7 @@ REAL_JUST=$(command -v just)
 # a PATH with only the basics, so the real ptyxis, brew, starship, git and gsettings are never seen
 sysbin="$root/sysbin"
 mkdir -p "$sysbin"
-for c in chmod bash sh env cat grep awk tr cut sed mkdir cp mv rm realpath dirname head tail sort uniq date touch ls readlink mktemp tee cmp basename wc; do
+for c in chmod wc bash sh env cat grep awk tr cut sed mkdir cp mv rm realpath dirname head tail sort uniq date touch ls readlink mktemp tee cmp basename wc; do
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 
@@ -109,7 +111,16 @@ for n in ptyxis; do printf '#!/bin/sh\necho "%s $*" >>"$LOG"\n' "$n" >"$bin/$n";
 cat >"$bin/brew" <<'F'
 #!/bin/sh
 echo "brew $*" >>"$LOG"
-printf '#!/bin/sh\n' >"$bin_dir/starship"; chmod +x "$bin_dir/starship"
+case "$1" in
+    install)
+        if [ "$2" = --cask ]; then shift 2; for c in "$@"; do echo "$c" >>"$BREW_CASKS"; done
+        else printf '#!/bin/sh\n' >"$bin_dir/starship"; chmod +x "$bin_dir/starship"; fi
+        ;;
+    list) grep -qx -- "$3" "$BREW_CASKS"; exit $? ;;
+    bundle) grep -o 'font-[a-z0-9-]*' "$3" >>"$BREW_CASKS" ;;
+    search) printf '%s\n' font-aaa-nerd-font font-bbb-nerd-font font-notnerd ;;
+esac
+exit 0
 F
 export bin_dir="$bin"
 cat >"$bin/uuidgen" <<'F'
@@ -118,16 +129,24 @@ n=$(( $(cat "$root_cnt" 2>/dev/null || echo 0) + 1 )); echo $n >"$root_cnt"
 printf 'AAAAAAAA-0000-0000-0000-%012d\n' "$n"
 F
 export root_cnt="$root/uuidcnt"
+cat >"$bin/fc-list" <<'F'
+#!/bin/sh
+cat "$FC_FAMILIES" 2>/dev/null
+F
 cat >"$bin/git" <<'F'
 #!/usr/bin/env bash
 echo "git $*" >>"$LOG"
 [ -n "${GIT_FAIL:-}" ] && exit 1
-if [ "$1" = clone ]; then d=${@: -1}; mkdir -p "$d/.git"; echo "install:" >"$d/justfile"; fi
+if [ "$1" = clone ]; then d=${@: -1}; mkdir -p "$d/.git" "$d/config/kitty" "$d/config/niri" "$d/config/noctalia"; echo "install:" >"$d/justfile"; fi
 exit 0
 F
 cat >"$bin/just" <<'F'
 #!/usr/bin/env bash
 echo "just $*" >>"$LOG"
+for a in "$@"; do
+    if [ "$a" = --summary ]; then echo "${JUST_SUMMARY-install hint brew gnome-apply}"; fi
+done
+exit 0
 F
 chmod +x "$bin"/*
 
@@ -138,7 +157,8 @@ reset() {
     : >"$LOG"; : >"$INSTALLED"; : >"$GS"
     echo /bin/bash >"$SHELLF"
     echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
-    unset GIT_FAIL
+    unset GIT_FAIL JUST_SUMMARY DOT_FILES_APPS
+    : >"$BREW_CASKS"; : >"$FC_FAMILIES"
 }
 run() { # stdin text, args...
     local input=$1
@@ -205,23 +225,13 @@ check "failure: later step still ran" logged "it.mijorus.gearlever"
 # 6. interactive: Enter takes defaults, steam devices yes, games path given
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '
-
-
-'"$root"'/games
-y
-
-
-
-
-
-'
+run "$root/games\ny\n\n\n\n\n" --only flatpak
 check "interactive: exit 0" test "$rc" = 0
 check "interactive: steam devices yes" logged "--device=usb"
 check "interactive: games path applied" logged "--filesystem=$root/games net.lutris.Lutris"
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n\n\n\n\n\n\n\n\n\n'
+run '\n\n\n\n\n\n' --only flatpak
 check "interactive: steam devices default no" notlogged "--device=usb"
 
 # 7. unknown flag is an error, unsafe games path refused
@@ -230,7 +240,7 @@ run '' --bogus
 check "unknown flag: error" test "$rc" = 2
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n\n\n/\n\n\n\n\n\n\n'
+run '/\n\n\n\n\n\n' --only flatpak
 check "games path: / refused" has "Refusing to expose"
 
 # ---- login shell
@@ -286,7 +296,7 @@ rm "$USER_SETUP_FISH"
 run '' --yes
 printf '#!/bin/sh\n' >"$USER_SETUP_FISH"; chmod +x "$USER_SETUP_FISH"
 check "fish missing: whole item skipped" has "skipped (no fish)"
-check "fish missing: no brew" notlogged "brew install"
+check "fish missing: no starship install" notlogged "brew install starship"
 reset
 rm "$bin/ptyxis"
 run '' --yes
@@ -308,35 +318,156 @@ reset
 run '' --no
 check "fish: --no changes nothing" notlogged "gsettings set"
 check "fish: --no no hook" test ! -f "$HOME/.config/fish/conf.d/starship.fish"
-check "fish: --no no brew" notlogged "brew install"
+check "fish: --no no brew" notlogged "brew install starship"
+
+# ---- --only
+reset
+run '' --yes --only groups,shell
+check "only: groups ran" logged "usermod -aG"
+check "only: shell ran" logged "usermod -s"
+check "only: flatpak did not run" notlogged "flatpak override"
+check "only: brew did not run" notlogged "brew bundle"
+reset
+run '' --only nonsense
+check "only: unknown step is an error" test "$rc" = 2
+reset
+run '' --with-dotfiles
+check "old --with-dotfiles flag is gone" test "$rc" = 2
 
 # ---- dot-files
 reset
 run '' --yes
 check "dotfiles: not run by default" notlogged "git clone"
-check "dotfiles: default no noted" has "skipped (default no"
+check "dotfiles: default no noted" has "skipped (default no; use --only dotfiles)"
 reset
-run '' --with-dotfiles
-check "dotfiles: --with-dotfiles clones" logged "git clone"
-check "dotfiles: installer called" logged "install preserve niri noctalia"
-check "dotfiles: only that step ran" notlogged "usermod"
-check "dotfiles: follow-up printed" has "config.example.kdl"
+run '' --yes --only dotfiles
+check "dotfiles: --only --yes consents, no app chosen, nothing installed" notlogged "install preserve"
+check "dotfiles: --only --yes clones" logged "git clone"
+check "dotfiles: no app noted" has "skipped (no app chosen)"
 : >"$LOG"
-run '' --with-dotfiles
+DOT_FILES_APPS=niri,noctalia run '' --yes --only dotfiles
+check "dotfiles: apps from DOT_FILES_APPS" logged "install preserve niri noctalia"
+check "dotfiles: hint printed for the chosen apps" logged "hint niri noctalia"
 check "dotfiles: second run reuses cache" notlogged "git clone"
 check "dotfiles: second run fetches" logged "fetch"
 reset
-run '\n\n\ny\n'
-check "dotfiles: interactive yes runs installer" logged "install preserve niri noctalia"
+run 'y\nn\ny\ny\n' --only dotfiles
+check "dotfiles: per-app answers build the argument list" logged "install preserve niri noctalia"
+check "dotfiles: declined app absent" notlogged "install preserve kitty"
+reset
+run 'y\nn\nn\nn\n' --only dotfiles
+check "dotfiles: all apps no copies nothing" notlogged "install preserve"
+reset
+run 'n\n' --only dotfiles
+check "dotfiles: first question default/no stops" notlogged "git clone"
+reset
+JUST_SUMMARY="install" DOT_FILES_APPS=niri run '' --yes --only dotfiles
+check "dotfiles: missing hint recipe noted" has "has no hint recipe yet"
+check "dotfiles: install still ran" logged "install preserve niri"
+reset
+JUST_SUMMARY="" DOT_FILES_APPS=niri run '' --yes --only dotfiles
+check "dotfiles: missing install recipe skips" has "has no install recipe yet"
 reset
 mv "$bin/git" "$root/git.off"
-run '' --with-dotfiles
+run '' --yes --only dotfiles
 mv "$root/git.off" "$bin/git"
 check "dotfiles: git missing skipped" has "skipped (no git/just)"
 reset
-export GIT_FAIL=1; run '' --with-dotfiles
+export GIT_FAIL=1; run '' --yes --only dotfiles
 check "dotfiles: clone failure exits non-zero" test "$rc" != 0
 check "dotfiles: clone failure reported" has "FAILED"
+reset
+run '' --no --only dotfiles
+check "dotfiles: --no changes nothing" notlogged "git clone"
+
+# ---- gnome settings
+reset
+run '' --yes
+check "gnome: default no" notlogged "gnome-apply"
+reset
+run '' --yes --only gnome
+check "gnome: --only --yes applies" logged "just --justfile"
+check "gnome: gnome-apply called" logged "gnome-apply"
+reset
+run 'n\n' --only gnome
+check "gnome: n applies nothing" notlogged "gnome-apply"
+reset
+run 'p\nn\n' --only gnome
+check "gnome: p runs the dry run" logged "gnome-apply --dry-run"
+check "gnome: p then n applies nothing" test "$(grep -c 'gnome-apply' "$LOG")" = 1
+reset
+run 'y\n' --only gnome
+check "gnome: y applies" logged "gnome-apply"
+reset
+JUST_SUMMARY="install" run '' --yes --only gnome
+check "gnome: missing recipe skip" has "has no gnome-apply recipe yet"
+
+# ---- brew tools
+reset
+run '' --yes
+check "brew: default no (no recipe call)" notlogged "dry-run"
+reset
+run 'n\n' --only brew
+check "brew: dry run shown before asking" logged "brew --dry-run"
+check "brew: n runs only the dry run" test "$(grep -c "brew$" "$LOG")" = 0
+reset
+run '' --yes --only brew
+check "brew: --only --yes shows the dry run" logged "brew --dry-run"
+check "brew: just brew called" grep -q 'just .* brew$' "$LOG"
+reset
+mv "$bin/brew" "$root/brew.off"
+run '' --yes --only brew
+mv "$root/brew.off" "$bin/brew"
+check "brew: homebrew missing skipped" has "Homebrew is missing"
+reset
+JUST_SUMMARY="install" run '' --yes --only brew
+check "brew: missing recipe skip" has "has no brew recipe yet"
+
+# ---- fonts
+reset
+run '' --yes --only fonts
+check "fonts: --yes installs Kevin's set with brew bundle" logged "brew bundle --file"
+check "fonts: no fc-cache or curl" notlogged "curl"
+check "fonts: casks recorded" grep -q font-0xproto-nerd-font "$BREW_CASKS"
+check "fonts: eleven casks" test "$(wc -l <"$BREW_CASKS")" = 11
+: >"$LOG"
+run '' --yes --only fonts
+check "fonts: second run is idempotent" notlogged "brew bundle"
+check "fonts: second run says already done" has "already done"
+reset
+run '2\n\n' --only fonts
+check "fonts: option 2 installs JetBrains Mono only" logged "brew install --cask font-jetbrains-mono-nerd-font"
+check "fonts: option 2 no bundle" notlogged "brew bundle"
+reset
+run '3\n1 font-bbb-nerd-font font-unknown-nerd-font 9\n\n' --only fonts
+check "fonts: picker installs chosen casks" logged "brew install --cask font-aaa-nerd-font font-bbb-nerd-font"
+check "fonts: picker rejects unknown name" has "Ignoring 'font-unknown-nerd-font'"
+check "fonts: picker rejects out of range number" has "Ignoring '9'"
+reset
+run '4\n' --only fonts
+check "fonts: skip" notlogged "brew install --cask"
+check "fonts: skip no bundle" notlogged "brew bundle"
+reset
+mv "$bin/brew" "$root/brew.off"
+run '' --yes --only fonts
+mv "$root/brew.off" "$bin/brew"
+check "fonts: brew missing skipped" has "skipped (no brew)"
+reset
+run '' --no --only fonts
+check "fonts: --no changes nothing" notlogged "brew bundle"
+reset
+printf 'JetBrainsMono Nerd Font\nFiraCode Nerd Font\n' >"$FC_FAMILIES"
+run '4\n1\n' --only fonts
+check "fonts: terminal font set on explicit choice" grep -q "font-name='FiraCode Nerd Font Medium 10'" "$GS"
+check "fonts: use-system-font false" grep -q 'use-system-font=false' "$GS"
+reset
+printf 'JetBrainsMono Nerd Font\n' >"$FC_FAMILIES"
+run '4\n\n' --only fonts
+check "fonts: terminal font untouched by default" notlogged "font-name"
+reset
+printf 'JetBrainsMono Nerd Font\n' >"$FC_FAMILIES"
+run '' --yes --only fonts
+check "fonts: --yes does not change the terminal font" notlogged "font-name"
 
 # ---- gnome search
 reset
@@ -368,6 +499,18 @@ reset
 printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
 run '' --no
 check "search: --no changes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
+
+# ---- search: four providers, merge with the current lists
+reset
+for id in org.gnome.Calculator org.gnome.Characters org.gnome.clocks io.github.kolunmi.Bazaar; do printf 'DesktopId=%s.desktop\n' "$id" >"$root/sp1/$id.ini"; done
+printf "org.gnome.desktop.search-providers enabled=['org.gnome.Extension-Manager.desktop', 'org.gnome.Weather.desktop']\norg.gnome.desktop.search-providers sort-order=['z1.desktop', 'org.gnome.Calculator.desktop', 'z2.desktop', 'z3.desktop']\n" >"$GS"
+run '' --yes --only search
+check "search: unrelated enabled entries kept in order" grep -q "enabled=\['org.gnome.Extension-Manager.desktop', 'org.gnome.Weather.desktop', 'org.gnome.Calculator.desktop'" "$GS"
+check "search: all four providers enabled" test "$(grep 'enabled=' "$GS" | grep -o ".desktop'" | wc -l)" = 6
+check "search: custom sort-order kept, calculator moved first" grep -q "sort-order=\['org.gnome.Calculator.desktop', 'z1.desktop', 'z2.desktop', 'z3.desktop'\]" "$GS"
+: >"$LOG"
+run '' --yes --only search
+check "search: second run writes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
