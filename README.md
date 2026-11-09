@@ -114,7 +114,7 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 | Recipe | What it does |
 |---|---|
 | `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists (`--dry-run` shows them); run it from a desktop terminal, safe to repeat |
-| `ujust user-setup` | Step-by-step checklist for a new user (see above); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
+| `ujust user-setup` | Step-by-step checklist for a new user (see above; with `gum` installed it opens a proper checklist menu); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
 | `ujust gaming-setup` | Step-by-step checklist for gaming: Steam, ProtonUp-Qt and Lutris from Flathub (verified apps only), gamescope, MangoHud and Proton-GE for Steam, an experimental extest build, generated Steam launchers (including a gamescope one at your screen's resolution), and the GameMode tuning; `ujust gaming-setup reset` undoes it |
 | `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |

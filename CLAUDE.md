@@ -284,6 +284,37 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (`dev-toolbox` has it; check the `gaming` one).
 - **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image.
 
+## Recipe conventions (ujust recipes in `60-custom.just`)
+
+- Every public recipe has `[group('...')]` (Setup, Gaming, Toolbox, Appearance, System) and ONE `#` comment line that is
+  its `ujust --list` description; usage text goes into `help`, `--help` or `-h` output of the recipe, not the comment.
+- Body: `#!/usr/bin/env bash`, `set -uo pipefail` (`-e` only where a failing step should stop). Positional arguments only
+  (`[positional-arguments]` with `*args`). Unknown option or step: usage on stderr, exit 1 (2 for option errors in the
+  checklist recipes). Fail soft inside checklists: report a failed step, go on, exit non-zero at the end.
+- Menus come from the shared helper `system_files/usr/share/octarine-os/lib/menu.sh`, sourced at the top of a recipe
+  with `menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"` plus inline no-op fallbacks if the file is
+  missing. Items are `id^text^selected` strings; an empty id is a section heading, never returned; commas in text show
+  as `;`. `menu_multi HEADER ITEM...` is a checklist with real `gum choose --no-limit` (Bluefin's `toggle-devmode` look:
+  `◉`/`○`/`▸`, `--height` min(items, rows-4), `--selected` with the exact item texts) and fills `MENU_RESULT`; Esc or
+  empty means nothing chosen, not a failure. `menu_one HEADER ITEM...` is a single choice through `ugum choose` (its fzf
+  fallback drops every `-` flag, so none are passed; the header is printed by the helper) and sets `MENU_ONE`.
+  `menu_confirm Q [y|n]` is real `gum confirm` or a plain prompt, default n; never use `ugum confirm` (its fallback
+  answers YES on Esc). `menu_ready`/`menu_ready_one` say whether gum or ugum is usable on a real terminal; return code 3
+  from `menu_multi`/`menu_one` means no handler, and the recipe falls back to its built-in prompts. Menus appear only
+  on a terminal; `--yes`, `--no`, `--only` and a named step never open one. `gum` is an optional package of the image.
+- Every selectable entry must be valid: no dividers or headings as rows in any `gum`-rendered list (gum cannot make a row
+  unselectable; the helper turns a group label into a prefix, `Account: Login shell`, and puts the key hint in the header:
+  `x` or space ticks, ENTER confirms the ticked rows, an empty result prints a hint); optional parameters (those with a
+  default) never prompt, only required ones do. Scoped menus read recipes from `just --dump --dump-format json`, never
+  from the human `just --list` (it prints group headings): public recipes only, no `default`; jq, then python3, else the
+  plain `--summary` list.
+- Scoped recipes (`gnome-candy`, `toolbox`) open a menu of their next commands when run with no arguments on a
+  terminal; explicit arguments pass straight through.
+- Every recipe gets a test in `tests/` with stubbed binaries; tests fake a terminal with `OCTARINE_MENU_FORCE_TTY=1`.
+- The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
+  `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
+  other menus. Untested on a real terminal (no tty or gum here).
+
 ## Forking
 
 Edit `image-template.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key
