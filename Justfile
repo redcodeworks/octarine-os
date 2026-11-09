@@ -111,12 +111,16 @@ build $target_image=image_name $tag=default_tag:
     # Trace the image to its base (CI exports BASE_DIGEST after pulling the base)
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
     if [[ -n "${BASE_DIGEST:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.digest=${BASE_DIGEST}"); fi
+    # The base's manifest-list digest: the scheduled run compares it with the current base to decide whether to skip the build
+    if [[ -n "${BASE_INDEX_DIGEST:-}" ]]; then LABELS+=("--label" "io.github.redcodeworks.octarine-os.base-index-digest=${BASE_INDEX_DIGEST}"); fi
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
         LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ image_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ image_name }}/tree/${GIT_SHA}")
         LABELS+=("--label" "org.opencontainers.image.version=$(.github/scripts/image-version.sh)")
+        # The full commit this image was built from (the scheduled skip check compares its content with main)
+        LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
     fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images

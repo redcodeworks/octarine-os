@@ -106,6 +106,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
@@ -163,6 +164,27 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
   or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
   hand with `dry_run` on to see the plan.
+- **Scheduled skip.** The 10:05 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
+  when nothing changed") reads the published `latest` with `skopeo inspect --config` and compares: the base image's
+  manifest-list digest now (`sha256sum` of `skopeo inspect --raw`) against the label
+  `io.github.redcodeworks.octarine-os.base-index-digest`; the git tree of main HEAD against the tree of the commit in
+  the label `org.opencontainers.image.revision` (equal content counts, so a promoted merge commit does not force a
+  rebuild); `org.opencontainers.image.created` younger than `SCHEDULED_REBUILD_MAX_AGE_DAYS` (7: the build installs RPMs
+  from live Fedora and RPM Fusion repositories, so updates arrive without a base change); and a valid cosign signature on
+  `latest`. All must hold, otherwise it builds. Every lookup that fails, an image from before the labels existed, and
+  every event but `schedule` on main (push, dispatch, `testing`, pull requests) mean build. A skip sets `build=false`
+  in the final plan decision, the build, promote and sign jobs are skipped and the aggregate `Build and push image`
+  passes (like a docs-only push) with the summary line "skipped: base, repo and age unchanged". The decision is
+  `.github/scripts/plan-skip.sh` (pure function of its environment; tests: `tests/plan-skip.sh`). The labels are set by
+  `just build` and re-passed by the rechunk. Failure modes: a stale or unavailable registry lookup builds (costs minutes,
+  never skips wrongly); a base digest label from a different lookup method would build every day (the build computes the
+  label the same way the plan does).
+- **Runners and cache.** Every job runs on the pinned `ubuntu-26.04` (build-disk also `ubuntu-26.04-arm`), not
+  `ubuntu-latest`, so the toolchain (podman, skopeo, just) changes only when this repo changes it. No layer or registry
+  cache: the image is one large `RUN build.sh` after `COPY system_files`, whose cache key changes with every commit and
+  with the daily base, so a layer cache would almost never hit, and the rechunk step rebuilds the layers anyway; the
+  scheduled skip removes the repeated identical builds instead. The three `cosign-installer` uses are the only repeated
+  step; a composite action was judged not worth it.
 - **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
   request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`

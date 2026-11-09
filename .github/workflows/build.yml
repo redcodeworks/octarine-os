@@ -25,6 +25,10 @@ env:
   # digest and records them as OCI labels.
   BASE_IMAGE: ${{ vars.BASE_IMAGE || 'ghcr.io/ublue-os/silverblue-main' }}
   FEDORA_VERSION: ${{ vars.FEDORA_VERSION || '45' }}
+  # A scheduled run skips the build while the base image, the repository content and `latest` are all unchanged, but
+  # never when `latest` is older than this many days: the build installs RPMs from live Fedora and RPM Fusion
+  # repositories, so package updates arrive without a base image change (7 = a week of staleness at most)
+  SCHEDULED_REBUILD_MAX_AGE_DAYS: '7'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -69,6 +73,45 @@ jobs:
           registry="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
           echo "image=${registry,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
+      # Scheduled refresh: skip the build when nothing changed since the published `latest` (decision rules and
+      # failure modes in .github/scripts/plan-skip.sh; any lookup that fails means build, never skip)
+      - name: Install Cosign (scheduled skip check)
+        if: github.event_name == 'schedule'
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Scheduled run, skip when nothing changed
+        id: sched
+        if: github.event_name == 'schedule'
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+        run: |
+          set +e
+          label() { jq -r --arg k "$1" '.config.Labels[$k] // empty' <<<"${cfg}"; }
+          base_now=$(skopeo inspect --raw "docker://${BASE_IMAGE}:${FEDORA_VERSION}" | sha256sum | sed 's/ .*//; s/^/sha256:/')
+          [[ "${base_now}" == sha256:???*  && "${base_now}" != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] || base_now=""
+          cfg=$(skopeo inspect --config "docker://${IMAGE}:latest" 2>/dev/null)
+          latest_base=$(label io.github.redcodeworks.octarine-os.base-index-digest)
+          revision=$(label org.opencontainers.image.revision)
+          created=$(label org.opencontainers.image.created)
+          repo_same=false
+          if [[ -n "${revision}" ]] && git cat-file -e "${revision}^{commit}" 2>/dev/null \
+              && [[ "$(git rev-parse "${revision}^{tree}")" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+            repo_same=true
+          fi
+          signed=false
+          digest=$(skopeo inspect --raw "docker://${IMAGE}:latest" 2>/dev/null | sha256sum | sed 's/ .*//')
+          if [[ -n "${cfg}" && -n "${digest}" ]] && cosign verify --key cosign.pub "${IMAGE}@sha256:${digest}" > /dev/null 2>&1; then
+            signed=true
+          fi
+          decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
+            REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
+            .github/scripts/plan-skip.sh)
+          echo "${decision}"
+          echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
+
       # Build once, promote: a merge into main whose content equals an already published and signed
       # `testing` image retags that digest to `latest` instead of rebuilding (see CLAUDE.md "Promotion")
       - name: Look for a tested testing image to promote
@@ -107,6 +150,7 @@ jobs:
         id: final
         env:
           BUILD_PLAN: ${{ steps.plan.outputs.build }}
+          SCHED_SKIP: ${{ steps.sched.outputs.skip }}
           CANDIDATE: ${{ steps.promote.outputs.promote }}
           VERIFY: ${{ steps.verify.outcome }}
         run: |
@@ -114,6 +158,7 @@ jobs:
             build=false; promote=true
           else
             build="${BUILD_PLAN}"; promote=false
+            [[ "${SCHED_SKIP}" != true ]] || build=false
             [[ "${CANDIDATE}" != true ]] || echo "::warning::Signature verification of the testing image failed: building instead of promoting"
           fi
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
@@ -227,6 +272,10 @@ jobs:
           [[ "${digest}" == sha256:* ]] || { echo "::error::Cannot determine the digest of ${base}"; exit 1; }
           echo "Base image ${base} resolved to ${BASE_IMAGE}@${digest}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
+          # digest of the manifest list, the same value the scheduled skip check computes without pulling
+          index=$(skopeo inspect --raw "docker://${base}" | sha256sum | sed 's/ .*//')
+          [[ -n "${index}" ]] || { echo "::error::Cannot determine the manifest digest of ${base}"; exit 1; }
+          echo "BASE_INDEX_DIGEST=sha256:${index}" >> "${GITHUB_ENV}"
 
       # This actually builds the container image
       - name: Build Image
@@ -488,7 +537,7 @@ jobs:
     name: Build and push image
     needs: [plan, build_push, promote, sign]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -511,7 +560,7 @@ jobs:
       always() && (
       (needs.build_push.result == 'success' && needs.build_push.outputs.publish == 'true') ||
       needs.promote.result == 'success')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     environment: signing
 
     permissions:
