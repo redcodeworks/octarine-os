@@ -275,7 +275,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
   the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
   input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
-  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 11-font set from
+  launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: Kevin's 12-font set from
   `/usr/share/octarine-os/homebrew/fonts.Brewfile` by default, JetBrains Mono only, a pick from all Nerd Font casks, or
   skip; then optionally the Ptyxis terminal font), `brew` (CLI tools: `just brew` of the dot-files repository, default
   no), `fish-terminal` (a Ptyxis profile that starts fish, made the default, plus starship from Homebrew hooked in

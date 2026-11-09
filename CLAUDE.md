@@ -378,7 +378,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   invoking user only), `flatpak` (skipped per app when missing (`flatpak info`) or the override is present (`flatpak
   override --user --show`); defaults yes except the Steam devices (widens the sandbox) and the games directory (needs a
   path)), `fonts` (Homebrew casks only, no downloads or checksum code here: preset `system_files/usr/share/octarine-os/
-  homebrew/fonts.Brewfile`, identical to Bluefin's `fonts-dev.Brewfile`, installed with `brew bundle --file`; or JetBrains
+  homebrew/fonts.Brewfile`, Bluefin's `fonts-dev.Brewfile` plus `font-fantasque-sans-mono-nerd-font` (12 casks), installed with `brew bundle --file`; or JetBrains
   Mono only, or a pick from `brew search --cask nerd-font`; terminal font only on an explicit choice), `brew`
   (`just brew [--dry-run]` of the dot-files checkout, default no), `fish-terminal` (Ptyxis profile via `gsettings`,
   reused when one already starts fish; starship via `brew install`, hook file `~/.config/fish/conf.d/starship.fish`),

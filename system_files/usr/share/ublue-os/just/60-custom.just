@@ -1,6 +1,6 @@
 # vim: set ft=make :
 
-# One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin's 11-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes
+# One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: Kevin's 12-font set by default), brew (CLI tools from dot-files), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers), dotfiles (config files of github.com/redcodeworks/dot-files, chosen per app), gnome (GNOME settings and extensions from dot-files). --yes takes every default without asking (the dot-files, brew and gnome steps default to no and run under --yes only when named with --only; steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps. DOT_FILES_REF picks the dot-files branch or tag, DOT_FILES_APPS (comma list) names the apps for dotfiles with --yes
 [positional-arguments]
 user-setup *args:
     #!/usr/bin/env bash
@@ -356,14 +356,14 @@ user-setup *args:
         echo "Skipped: Homebrew is missing (the image installs it on first boot; rerun later)."
         record "fonts" "skipped (no brew)"
     elif [ "$mode" = no ]; then
-        echo "Plan: offer Kevin's 11-font Nerd Font set (default), JetBrains Mono Nerd Font only, a pick from all Nerd Font casks, or skip; install with Homebrew."
+        echo "Plan: offer Kevin's 12-font Nerd Font set (default), JetBrains Mono Nerd Font only, a pick from all Nerd Font casks, or skip; install with Homebrew."
         record "fonts" "planned (would ask)"
     else
         fonts_brewfile=${USER_SETUP_FONTS_BREWFILE:-/usr/share/octarine-os/homebrew/fonts.Brewfile}
         fonts_choice=1
         if [ "$mode" = ask ]; then
             echo "Nerd Fonts from Homebrew casks (Homebrew checks their checksums; casks land in ~/.local/share/fonts):"
-            echo "  1) Kevin's set, 11 fonts (same list as Bluefin's developer fonts) [default]"
+            echo "  1) Kevin's set, 12 fonts (Bluefin's developer fonts plus Fantasque) [default]"
             echo "  2) JetBrains Mono Nerd Font only"
             echo "  3) pick from all Nerd Font casks"
             echo "  4) skip"
