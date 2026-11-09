@@ -6,7 +6,7 @@ A personal [bootc](https://github.com/bootc-dev/bootc) image: Fedora Silverblue 
 `silverblue-main`, with the niri compositor and Noctalia shell, libvirt, Cockpit, backup tools and a set of
 hardening and tuning defaults. It is built daily and signed with [cosign](https://github.com/sigstore/cosign).
 It makes one desktop reproducible and is shared in case parts of it are useful to you. It is one person's
-configuration with no promises: read what it changes (below) before you run it. The wider desktop setup is in
+configuration with no promises: read what it changes (the lists below) before you run it. The wider desktop setup is in
 [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 
 ## What it adds to Fedora Silverblue
@@ -55,13 +55,10 @@ Added by this image:
 - Container signature policy for this image's own registry path, so `bootc upgrade` rejects unsigned images
 - Build guard that refuses security-key registrations and private keys in `system_files`
 
-**Supply chain and CI** (`.github/workflows/build.yml`)
+**Supply chain** (`.github/workflows/build.yml`)
 - Daily build; images signed with cosign
-- Build once, promote: a merge to `main` retags the tested, signed `testing` image when its content matches
-- `testing` channel; `main` is protected and changes by pull request
-- Base image and Fedora release come from the variables `BASE_IMAGE` and `FEDORA_VERSION`; the build logs the resolved base digest
-- A newer push to `testing` cancels the older build; docs-only changes skip the heavy build
 - Smoke test of the image before it is pushed
+- Maintainer details (channels, promotion, base image variables) are in `CLAUDE.md`
 
 **`ujust` recipes** (`system_files/usr/share/ublue-os/just/60-custom.just`)
 - `add-user-groups`, `toolbox`, `gnome-themes` (themes and icons live in their own repo), Flatpak helpers for games, Steam, VS Code, Podman Desktop, Chrome web apps and Gear Lever; the full list is under "Recipes"
@@ -93,24 +90,7 @@ sudo bootc rollback                                                      # boot 
 
 ## Base image
 
-The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in
-the workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile`
-(keep them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults.
-CI and `just build` pass both values as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
-Fedora major upgrade:
-
-1. Set the variable: `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo: `gh variable delete
-   FEDORA_VERSION`), or edit the default in the workflow `env:` block and the `Containerfile` ARG on a commit.
-2. Changing a variable does not start a build: run the `Build container image` workflow on `testing` (a push to
-   `testing` or manual dispatch). The "Check the base image can be pulled" step fails early and names the tag if
-   it does not exist (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test
-   checks that `VERSION_ID` matches. The log and the OCI labels `org.opencontainers.image.base.name` and
-   `base.digest` record the resolved base.
-3. Test the `testing` build: `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
-4. Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`).
-   Then merge the pull request: promotion only retags an already tested `testing` digest, so a variable changed
-   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does
-   read the variable, so set it only when you intend the next scheduled build to use it.
+Built on Universal Blue's `silverblue-main` for the current Fedora release (`ghcr.io/ublue-os/silverblue-main:45` today).
 
 ## Recipes
 
@@ -130,39 +110,10 @@ Fedora major upgrade:
 | `ujust chrome-flatpak-webapps` | Let Flatpak Chrome install web apps as launchers |
 | `ujust gearlever-applications` | Let Gear Lever manage AppImages in `~/Applications` |
 
-## Personal choices worth reviewing
-
-These ship to everyone who uses the image as-is:
-
-- **PAM:** `pam_u2f sufficient` for sudo and polkit. With a security key enrolled, a touch alone gives root;
-  without a key the password still works. That is weaker than stock Fedora.
-- **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming,
-  GSConnect and Tailscale's UDP port.
-- **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** `iommu=pt`.
-- **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
-- **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`,
-  `cockpit.socket` and the snapper timers are installed and left off.
-- **Homebrew:** the files of Universal Blue's `ghcr.io/ublue-os/brew` image (pinned to a dated tag, signature
-  checked in CI). On first boot `brew-setup.service`
-  extracts the prefix for UID 1000, unless a prefix already exists; `brew-update.timer` is enabled and
-  `brew-upgrade.timer` is kept off (upgrades are manual). Formulae are not pinned (use `brew bundle`). Details in `CONFIG-GUIDE.md`.
-- **Packages in two tiers:** `build.sh` installs a short CRITICAL list in one transaction (the build fails when
-  one is missing, and CI checks that each has the RPM vendor `Fedora Project`) and everything else as OPTIONAL
-  groups (a failed group is retried package by package; what still cannot be installed is listed in
-  `/usr/share/octarine-os/optional-packages-missing` and shown as a CI warning, and the build goes on). Packages from
-  outside Fedora's own repositories (negativo17 codecs, RPM Fusion, COPR) may only be optional. `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
-- **Login shell for new users:** `zsh` (`SHELL=/usr/bin/zsh` in `/etc/default/useradd`, plus `/etc/skel/.zshrc`).
-  Existing accounts and root keep their shell. Risks: rolling back to an image without zsh breaks only accounts
-  created while zsh was the default; distrobox copies the host login shell, so every toolbox image a zsh user
-  enters needs zsh (`dev-toolbox` has it; check the `gaming` one).
-- **Flatpaks:** a preinstall list of apps. Themes and icons are not in the image.
-
 ## Contributing
 
-This is a personal image; see `AGENTS.md`. `main` is protected: work happens on `testing`, a pull request
-promotes it, and CI is the test. A newer push to `testing` cancels the older pending or running build
-(never on `main` or the scheduled run); a cancelled build can leave the `testing` tag unsigned until the next build finishes. Maintainer notes (design, CI, forking) are in `CLAUDE.md`.
+This is a personal image; see `AGENTS.md`. `main` is protected: work happens on `testing` and a pull request
+promotes it. Maintainer notes (design, CI, base image upgrades, forking, logo files) are in `CLAUDE.md`.
 
 ## License
 
@@ -173,12 +124,6 @@ See `LICENSE`.
 
 The logo (GDM login screen and Plymouth boot screen) is Kevin's own artwork: the square circuit-tree icon and the
 wordmark. The repo ships no third-party image.
-
-The three full-size files (`octarine-logo-{neutral,dark,light}-full.png`, 7000x1084) are the sources for every smaller size:
-resize them with Lanczos and keep the alpha channel. The uncompressed originals (about 36 MB each) are not stored in the repo
-or the image. Variants: `dark` has cream-grey "OS" letters for dark backgrounds (`octarine-logo.png`, 620x96, is the dark one, used by the GDM
-login screen and the Plymouth boot screen), `light` has dark-brown "OS" letters for light backgrounds, and `neutral` has grey "OS" letters
-that work on any background.
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.
