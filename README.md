@@ -45,7 +45,7 @@ Added by this image:
 
 **Branding** (`build.sh`, `system_files`)
 - `PRETTY_NAME` is `octarineOS`; ID, NAME and VERSION_ID are unchanged
-- Tux wordmark logo on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt)
+- octarineOS logo on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt)
 
 **Hardening and defaults** (`system_files`)
 - sshd: no root login, no X11 or TCP forwarding
@@ -171,16 +171,13 @@ See `LICENSE`.
 
 ## Credits
 
-The logo (GDM login screen and Plymouth boot screen) is Kevin's own artwork: a wordmark combined with Tux. The Tux
-part is derived from
-[Linux_mascot_tux.png](https://commons.wikimedia.org/wiki/File:Linux_mascot_tux.png) on Wikimedia Commons,
-[CC0](http://creativecommons.org/publicdomain/zero/1.0/deed.en) by OpenClipart-Vectors from Pixabay, based on Tux
-by Larry Ewing and The GIMP (credit is a courtesy, not required).
+The logo (GDM login screen and Plymouth boot screen) is Kevin's own artwork: the square circuit-tree icon and the
+wordmark. The repo ships no third-party image.
 
-The three full-size files (`octarine-logo-{neutral,dark,light}-full.png`, 7000x1280) are the sources for every smaller size:
+The three full-size files (`octarine-logo-{neutral,dark,light}-full.png`, 7000x1084) are the sources for every smaller size:
 resize them with Lanczos and keep the alpha channel. The uncompressed originals (about 36 MB each) are not stored in the repo
-or the image. Variants: `dark` has cream letters for dark backgrounds (`octarine-logo.png`, 525x96, is the dark one, used by the GDM
-login screen and the Plymouth boot screen), `light` has dark-brown letters for light backgrounds, and `neutral` has grey letters
+or the image. Variants: `dark` has cream-grey "OS" letters for dark backgrounds (`octarine-logo.png`, 620x96, is the dark one, used by the GDM
+login screen and the Plymouth boot screen), `light` has dark-brown "OS" letters for light backgrounds, and `neutral` has grey "OS" letters
 that work on any background.
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
