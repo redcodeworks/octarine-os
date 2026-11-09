@@ -136,7 +136,7 @@ bl() { rm -rf "$root/img/modules/$K/extra"; mkdir -p "$root/img/modules/$K/kerne
 mk_image "$K"; bl; printf 'bash\n' >"$RPM_LIST"
 check "smoke absent: only the stock nvidia-wmi-ec-backlight module passes" smoke absent
 mk_image "$K"; bl
-smoke present >"$root/out" 2>&1; check "smoke present: only the stock backlight module fails the module check" grep -q 'FAIL an NVIDIA kernel module exists' "$root/out"
+smoke present >"$root/smoke.out" 2>&1; check "smoke present: only the stock backlight module fails the module check" grep -q 'FAIL an NVIDIA kernel module exists' "$root/smoke.out"
 for m in nvidia nvidia-drm nvidia-modeset nvidia-uvm nvidia-peermem; do
     mk_image "$K"; rm "$root/img/modules/$K/extra/nvidia.ko.xz"; echo ko >"$root/img/modules/$K/extra/$m.ko.xz"; printf 'bash\n' >"$RPM_LIST"
     smoke absent >"$root/out" 2>&1; check "smoke absent: $m.ko.xz is caught" test $? -ne 0
