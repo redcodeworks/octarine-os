@@ -218,6 +218,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   uncompressed originals (about 36 MB each) are not stored in the repo or the image.
 - Variants: `dark` has cream-grey "OS" letters for dark backgrounds (the one used on the login and boot screens),
   `light` dark-brown "OS" letters for light backgrounds, `neutral` grey "OS" letters that work on any background.
+- Branding: `PRETTY_NAME` is `octarineOS` (ID, NAME and VERSION_ID unchanged); the logo is on the GDM login screen and the Plymouth boot screen (own `octarine` theme, initramfs rebuilt by `build.sh`).
 - Origin: a recoloured version of the Fedora Silverblue logo, wordmark set in JetBrains Mono (credits in the README); no font file is shipped, only rendered text in the PNGs.
 
 ## Defaults that deviate from stock Fedora
@@ -348,14 +349,29 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   scripts; nothing here needs sudo.
 - **Other recipes.** `ujust gnome-themes` runs a recipe of the gnome-themes repo from a fresh checkout in
   `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
-  `user-setup [user] [--yes|--no]` replaced the seven single-purpose recipes `add-user-groups`, `flatpak-games-access`,
-  `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`, `chrome-flatpak-webapps` and
-  `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; the groups step copies the
-  `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first and is the only sudo use. Each
-  Flatpak step is skipped when the app is missing (`flatpak info`) or the override is present (`flatpak override
-  --user --show`); defaults are yes except the Steam devices (widens the sandbox) and the games directory (needs a
-  path); `--yes` takes defaults, `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Tests: `tests/user-setup.sh` (fake flatpak, sudo, id, getent, usermod). The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
+  `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
+  `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
+  `chrome-flatpak-webapps` and `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; steps
+  in order: `groups` (copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first;
+  sudo), `shell` (`usermod -s /usr/bin/zsh`, second and last sudo use; skeleton zsh files copied with `cp -n` for the
+  invoking user only), `flatpak` (skipped per app when missing (`flatpak info`) or the override is present (`flatpak
+  override --user --show`); defaults yes except the Steam devices (widens the sandbox) and the games directory (needs a
+  path)), `fonts` (Homebrew casks only, no downloads or checksum code here: preset `system_files/usr/share/octarine-os/
+  homebrew/fonts.Brewfile`, identical to Bluefin's `fonts-dev.Brewfile`, installed with `brew bundle --file`; or JetBrains
+  Mono only, or a pick from `brew search --cask nerd-font`; terminal font only on an explicit choice), `brew`
+  (`just brew [--dry-run]` of the dot-files checkout, default no), `fish-terminal` (Ptyxis profile via `gsettings`,
+  reused when one already starts fish; starship via `brew install`, hook file `~/.config/fish/conf.d/starship.fish`),
+  `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
+  first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
+  when nothing changes), `dotfiles` (default no; per-app y/n over `config/*/` of the checkout, then `just install preserve
+  <apps>` and `just hint <apps>`) and `gnome` (`just gnome-apply`, `p` runs `--dry-run`; default no). The dot-files
+  checkout is a shallow clone in `~/.cache/dot-files/repo` (`DOT_FILES_REF`, default `main`, same pattern as the
+  `gnome-themes` recipe), shared by the three steps; each recipe is checked with `just --summary` first and the step is
+  skipped when it is missing. `--yes` takes defaults; a default-no step runs under `--yes` only when named in `--only`
+  (`DOT_FILES_APPS` lists the apps then); `--no` prints the plan; a failed step is reported, the rest continue, exit status
+  non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
+  flatpak, sudo, id, getent, usermod, gsettings, brew, git, just, fc-list).
+ The extest recipes build a pinned upstream commit of extest (github.com/Supreeeme/extest, by Supreeeme and
   contributors, MIT licence; credited in the recipe comment, its output and the README; no source or licence text is
   shipped) and preload the 64-bit build into Flatpak Steam.
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
