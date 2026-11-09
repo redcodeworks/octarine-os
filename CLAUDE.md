@@ -211,7 +211,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 
 ## Logo files
 
-- PNGs in `system_files/usr/share/octarine-os/logo/`: `octarine-logo.png` (620x96, the dark variant; GDM login screen
+- PNGs in `system_files/usr/share/octarine-os/logo/`: `octarine-logo.png` (465x72, the dark variant; GDM login screen
   and Plymouth watermark) and `octarine-logo-{neutral,dark,light}-{512,full}.png` (3306x512 and 7000x1084). The README
   shows the 512 files in a `<picture>` block. No mono variant.
 - The three `-full` files are the sources for every smaller size: resize with Lanczos and keep the alpha channel. The

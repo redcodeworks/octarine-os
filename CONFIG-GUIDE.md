@@ -85,7 +85,7 @@ timers are installed but not enabled. Turn on what you use.
   `bgrt` plus the spinner assets with our `watermark.png`, selected by `system_files/etc/plymouth/plymouthd.conf`.
   The initramfs is regenerated in the build (dracut, ostree module), because the boot and LUKS passphrase
   screens run from it.
-- **Size:** `octarine-logo.png` is 620x96, about 32% of a 1920 px screen and about 12% of 5120 px as the Plymouth
+- **Size:** `octarine-logo.png` is 465x72, about 24% of a 1920 px screen and about 9% of 5120 px as the Plymouth
   watermark; how GDM handles that width is unverified.
 - **Change it:** replace the PNG, push, let CI rebuild. **Hide the GDM logo:** `logo=''` in the override.
 - **Undo:** delete the override file and `plymouthd.conf` (and the theme block and dracut step in `build.sh`);
