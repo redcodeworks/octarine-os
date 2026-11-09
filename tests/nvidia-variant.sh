@@ -150,6 +150,21 @@ mk_image "$K"
 smoke present >"$root/out" 2>&1; grep -q 'FAIL the initramfs contains the nvidia modules' "$root/out"; check "smoke present: the backlight module in the initramfs does not count" test $? -eq 0
 printf '#!/usr/bin/env bash\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia-drm.ko"\n' >"$root/bin/lsinitrd"
 smoke present >"$root/out" 2>&1; check "smoke present: nvidia-drm.ko in the initramfs counts" test $? -eq 0
+# a long listing with the module first: grep -q exits early and must not turn lsinitrd's SIGPIPE into a failure
+cat >"$root/bin/lsinitrd" <<'F'
+#!/usr/bin/env bash
+echo "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia.ko.xz"
+for i in $(seq 1 20000); do echo "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/some/file-$i"; done
+F
+smoke present >"$root/out" 2>&1; check "smoke present: a long lsinitrd listing (SIGPIPE after the first match) passes" test $? -eq 0
+# an lsinitrd that prints nothing, or fails, fails the check and the diagnostics say why
+printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/lsinitrd"
+smoke present >"$root/smoke2.out" 2>&1; check "smoke present: an empty lsinitrd listing fails" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
+check "smoke present: the diagnostics show the lsinitrd exit status" grep -q 'DIAG lsinitrd exit status: 0' "$root/smoke2.out"
+printf '#!/usr/bin/env bash\necho "cpio: boom" >&2\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia.ko.xz"\nexit 3\n' >"$root/bin/lsinitrd"
+smoke present >"$root/smoke2.out" 2>&1; check "smoke present: a failing lsinitrd fails the check" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
+check "smoke present: the diagnostics keep lsinitrd's stderr and status" bash -c "grep -q 'DIAG lsinitrd exit status: 3' '$root/smoke2.out' && grep -q 'DIAG   cpio: boom' '$root/smoke2.out'"
+check "smoke present: the diagnostics list the nvidia lines and ls -l" bash -c "grep -q 'DIAG   .*extra/nvidia/nvidia.ko.xz' '$root/smoke2.out' && grep -q 'DIAG ls -l of the initramfs' '$root/smoke2.out'"
 cp "$root/lsinitrd.real" "$root/bin/lsinitrd"
 
 # ---- prune: released tags of the variant

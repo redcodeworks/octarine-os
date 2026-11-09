@@ -31,6 +31,22 @@ kargs = ["rd.driver.blacklist=nouveau", "modprobe.blacklist=nouveau", "nvidia-dr
 EOM
 
 # The boot and LUKS screens run from the initramfs, which must carry the modules (99-nvidia.conf was edited by the script)
-DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${before}" --reproducible --add ostree -f "/usr/lib/modules/${before}/initramfs.img"
-chmod 0600 "/usr/lib/modules/${before}/initramfs.img"
+img="/usr/lib/modules/${before}/initramfs.img"
+show_img() { echo "initramfs $1: $(stat -c 'size=%s mtime=%y' "${img}" 2>&1)"; }
+show_img "before dracut"
+# dracut logs "dracut-install: ERROR: installing '/root' to '/root'" and "No /dev/log" in the build container; the
+# exit status decides, not the log text: a non-zero status fails the build with the message below.
+rc=0
+DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${before}" --reproducible --add ostree -f "${img}" || rc=$?
+echo "dracut exit status: ${rc}"
+show_img "after dracut"
+[[ "${rc}" == 0 ]] || { echo "ERROR: dracut failed with status ${rc}, the initramfs is not trustworthy"; exit 1; }
+chmod 0600 "${img}"
+# The build log itself shows whether the modules landed (listing to a file: no SIGPIPE from head)
+lst=$(mktemp)
+lsinitrd_rc=0
+lsinitrd "${img}" >"${lst}" 2>&1 || lsinitrd_rc=$?
+echo "lsinitrd exit status: ${lsinitrd_rc}; nvidia entries of the new initramfs (max 20):"
+grep -i nvidia "${lst}" | head -20 || true
+rm -f "${lst}"
 echo "NVIDIA driver installed for kernel ${before}"
