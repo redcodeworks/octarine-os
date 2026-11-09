@@ -412,7 +412,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
   idempotent, and each override-changing recipe has a matching reset (`user-setup` prints the undo per applied step).
   Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-candy` needs network, git and just, and
-  without a name shows a checklist. The extest step needs `cargo` and a C linker (the host has none; the recipe uses the
+  without a name opens a checklist (everything off by default). The extest step needs `cargo` and a C linker (the host has none; the recipe uses the
   toolbox) and is not verified end to end.
 
 ## Image hygiene notes

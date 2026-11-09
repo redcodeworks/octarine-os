@@ -1280,7 +1280,7 @@ gaming-setup *args:
     done
     exit "$failed"
 
-# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-candy install-themes` or `ujust gnome-candy switch-icons Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
+# Run a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout, e.g. `ujust gnome-candy install-theme` or `ujust gnome-candy switch-icon Papirus-Dark` (no arguments lists them). Themes and icons are not part of the image. Needs network, git and just. GNOME_THEMES_REF picks a branch, tag or commit (default main)
 [positional-arguments]
 gnome-candy *args:
     #!/usr/bin/env bash

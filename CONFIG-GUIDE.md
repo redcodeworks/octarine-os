@@ -123,8 +123,8 @@ timers are installed but not enabled. Turn on what you use.
   GNOME and GTK portals.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
-  `ujust gnome-candy install-themes` fetches them from github.com/redcodeworks/gnome-themes and
-  `ujust gnome-candy install-icons` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
+  `ujust gnome-candy install-theme` fetches them from github.com/redcodeworks/gnome-themes and
+  `ujust gnome-candy install-icon` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
   Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
@@ -289,7 +289,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   when named with `--only`; `DOT_FILES_APPS=niri,noctalia` names the apps then), `--no` changes nothing and prints the
   plan. The summary lists how to undo each applied step.
 - **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
-  directory (`install-themes`, `switch-theme`, `install-icons`, `switch-icons`; no name gives a checklist).
+  directory (`install-theme`, `switch-theme`, `install-icon`, `switch-icon`; no name opens a checklist with everything off).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
   (`--help` shows the options). A box created before the brew prefix existed lacks the read-only brew mount; run
   `ujust toolbox dev-toolbox --recreate` to add it.

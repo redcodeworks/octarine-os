@@ -211,7 +211,7 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # --- end branding ---
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
-# `ujust gnome-candy install-themes` / `install-icons` (github.com/redcodeworks/gnome-themes).
+# `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).
 
 # Use a COPR Example:
 #
