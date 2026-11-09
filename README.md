@@ -136,10 +136,20 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 | `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 
+## Branching: GitLab Flow
+
+Changes move one way, downstream: a feature branch goes by pull request into `testing`, and `testing` goes by pull
+request into `main`. Think of three environments: a pull request gets a trial build (nothing is published), the
+`testing` image is where changes are tried out (the test VM follows it), and `latest` is what a real machine runs.
+Fixes always go into `testing` first and are promoted from there. Branch names look like `feat/<topic>`,
+`fix/<topic>` or `hotfix/<topic>`. The image is built twice per change, once on the pull request and once after
+the merge, and only the second build is promoted. The other projects of the same owner still commit straight to
+their `testing` branch.
+
 ## Contributing
 
-This is a personal image; see `AGENTS.md`. `main` is protected: work happens on `testing` and a pull request
-promotes it. Maintainer notes (design, CI, base image upgrades, forking, logo files) are in `CLAUDE.md`.
+This is a personal image; see `AGENTS.md`. `main` is protected: work happens on a branch that goes into `testing`,
+and a pull request promotes `testing` to `main`. Maintainer notes (design, CI, base image upgrades, forking, logo files) are in `CLAUDE.md`.
 
 ## License
 

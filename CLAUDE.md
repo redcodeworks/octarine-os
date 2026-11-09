@@ -78,6 +78,33 @@ encouraged). American English throughout.
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
 The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
+## Branching: GitLab Flow
+
+GitLab Flow, "production branch" variant (reference implementation for the owner's other repos). `testing` is the
+integration branch (GitLab's "main"); `main` is the production branch.
+
+- **Environments.** dev = the validation build on a pull request (`build.yml`, event `pull_request` into `testing`:
+  same plan, brew pin check, build, size check, smoke test, rechunk and version check; no registry login, no push,
+  no tags, no signing); UAT = the `testing` image (the `octarine-testing` VM follows it); prod = `latest` (the
+  owner's machine).
+- **Direction.** One way, downstream: feature branch -> pull request into `testing` -> pull request from `testing`
+  into `main`. Fixes go upstream first (into `testing`, then promoted).
+- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch alone builds nothing;
+  only the pull request event does.
+- **Rebase and merge everywhere** (once the owner switches the repository setting): `main` never holds commits
+  `testing` lacks, so there is no back-merge. Until then the repo allows only merge commits and `origin/main` is
+  merged (or fast-forwarded) into `testing` after each promotion.
+- **Promotion.** Pull request `testing` -> `main` (`require-testing-branch.yml` runs on pull requests into `main`
+  only, never on those into `testing`); the push to `main` retags the tested `testing` image by tree hash and signs.
+- **Hotfix rule.** Fix on a `hotfix/<topic>` branch into `testing`, then promote. If `testing` is red and prod needs
+  an emergency fix, open the pull request into `main` and cherry-pick the same fix into `testing` straight away.
+- **Pull request builds are validation only.** An image is built twice per change, once on the pull request and once
+  on merge; only the merge build is promoted. Gating: the build job's "Choose channel" step sets `publish=false`
+  for `pull_request`; "Login to GitHub Container Registry" and "Push To GHCR" need `publish == 'true'`; the `sign`
+  job runs only after a publish or a promotion, so it skips; the aggregate job `Build and push image` still runs
+  and passes. Concurrency group is workflow plus ref (one per PR), cancel-in-progress on. Test: `tests/pr-validation.sh`.
+- The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+
 ## Rules
 
 - Home- or user-level configuration (themes, icons, dotfiles) never goes in the image. It lives in its own
@@ -112,6 +139,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `.github/scripts/plan-build.sh`.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
+- `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
