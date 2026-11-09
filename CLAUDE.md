@@ -190,6 +190,55 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
   container`). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
 
+## Base image and Fedora major upgrade
+
+- The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in the
+  workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile` (keep
+  them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults. CI and
+  `just build` pass both as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
+- Upgrade steps: (1) set the variable, `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo:
+  `gh variable delete FEDORA_VERSION`), or edit the workflow default and the `Containerfile` ARG in a commit.
+  (2) Changing a variable starts no build: run the `Build container image` workflow on `testing` (a push or manual
+  dispatch). The "Check the base image can be pulled" step fails early and names the tag if it does not exist
+  (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test checks that `VERSION_ID`
+  matches; the log and the labels `org.opencontainers.image.base.name`/`base.digest` record the resolved base.
+  (3) Test the `testing` build with `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+  (4) Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`),
+  then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
+  without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
+  variable, so set it only when the next scheduled build should use it.
+
+## Logo files
+
+- PNGs in `system_files/usr/share/octarine-os/logo/`: `octarine-logo.png` (620x96, the dark variant; GDM login screen
+  and Plymouth watermark) and `octarine-logo-{neutral,dark,light}-{512,full}.png` (3306x512 and 7000x1084). The README
+  shows the 512 files in a `<picture>` block. No mono variant.
+- The three `-full` files are the sources for every smaller size: resize with Lanczos and keep the alpha channel. The
+  uncompressed originals (about 36 MB each) are not stored in the repo or the image.
+- Variants: `dark` has cream-grey "OS" letters for dark backgrounds (the one used on the login and boot screens),
+  `light` dark-brown "OS" letters for light backgrounds, `neutral` grey "OS" letters that work on any background.
+- The artwork is Kevin's own; the repo ships no third-party image.
+
+## Defaults that deviate from stock Fedora
+
+Shipped to everyone who uses the image as-is (moved here from the README's former "Personal choices" section):
+
+- **PAM:** `pam_u2f sufficient` for sudo and polkit: a security-key touch is accepted instead of the password; the
+  password still works when no key is registered; no PIN is required. Details in `CONFIG-GUIDE.md`.
+- **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
+  Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
+- **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
+- **Kernel argument:** `iommu=pt`.
+- **Size:** ROCm makes the image big (roughly 11 GB on disk). It carries no compilers; those live in the toolbox.
+- **Services:** only `pmcd`, `pmlogger` and `flatpak-preinstall` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
+  and the snapper timers are installed and left off.
+- **Homebrew:** see the Homebrew section above; formulae are not pinned (use `brew bundle`).
+- **Login shell for new users:** `zsh` (`SHELL=/usr/bin/zsh` in `/etc/default/useradd`, plus `/etc/skel/.zshrc`).
+  Existing accounts and root keep their shell. Rolling back to an image without zsh breaks only accounts created while
+  zsh was the default; distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh
+  (`dev-toolbox` has it; check the `gaming` one).
+- **Flatpaks:** a preinstall list of apps; themes and icons are not in the image.
+
 ## Forking
 
 Edit `image-template.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key

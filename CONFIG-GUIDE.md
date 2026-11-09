@@ -77,7 +77,7 @@ timers are installed but not enabled. Turn on what you use.
 - **Reinstall rules that matter:** install to the OS drive only, use UID 1000, and keep the same
   `subuid` and `subgid` range. Otherwise rootless Podman's btrfs storage ownership breaks.
 
-## Login and boot logo (Tux and wordmark)
+## Login and boot logo (icon and wordmark)
 
 - **Where:** the PNGs are in `system_files/usr/share/octarine-os/logo/` (`/usr/share/octarine-os/logo/` on the
   image). GDM reads it through `zz-octarine-login-screen.gschema.override` (sorts after gdm's own override;
@@ -85,6 +85,8 @@ timers are installed but not enabled. Turn on what you use.
   `bgrt` plus the spinner assets with our `watermark.png`, selected by `system_files/etc/plymouth/plymouthd.conf`.
   The initramfs is regenerated in the build (dracut, ostree module), because the boot and LUKS passphrase
   screens run from it.
+- **Size:** `octarine-logo.png` is 620x96, about 32% of a 1920 px screen and about 12% of 5120 px as the Plymouth
+  watermark; how GDM handles that width is unverified.
 - **Change it:** replace the PNG, push, let CI rebuild. **Hide the GDM logo:** `logo=''` in the override.
 - **Undo:** delete the override file and `plymouthd.conf` (and the theme block and dracut step in `build.sh`);
   the stock Fedora logos return. The vendor logo that `bgrt` shows comes from the UEFI firmware, not the OS.

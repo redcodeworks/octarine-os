@@ -178,7 +178,7 @@ grep -qx 'PRETTY_NAME="octarineOS"' /usr/lib/os-release
 echo "== resulting os-release"
 cat /usr/lib/os-release
 
-# --- Branding: Tux on the GDM login screen and the Plymouth boot screen ---
+# --- Branding: logo on the GDM login screen and the Plymouth boot screen ---
 # GDM: system_files ships zz-octarine-login-screen.gschema.override; compile the schemas so it takes effect.
 # glib-compile-schemas exits non-zero on a bad override (set -e fails the build).
 glib-compile-schemas /usr/share/glib-2.0/schemas
