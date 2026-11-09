@@ -9,6 +9,11 @@ It makes one desktop reproducible and is shared in case parts of it are useful t
 configuration with no promises: read what it changes (the lists below) before you run it. The wider desktop setup is in
 [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 
+## Requirements
+
+- A PC that runs Fedora Silverblue (the current release), with UEFI boot and enough disk for the image (it is large; ROCm is included).
+- An internet connection for the install and for updates.
+
 ## What it adds to Fedora Silverblue
 
 From the Universal Blue base (`ghcr.io/ublue-os/silverblue-main`), not added here: distrobox, ffmpeg and the
@@ -125,3 +130,16 @@ The wordmark is set in JetBrains Mono (SIL OFL 1.1, © The JetBrains Mono Projec
 
 The experimental extest option of `ujust gaming-setup` builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT license) from a pinned upstream commit; this repo ships none of its source.
+
+This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
+
+## About this repo
+
+This is a personal project, assisted by Claude (Anthropic's coding assistant), so please excuse the slop.
+I have only tested it on my own machine and will not actively maintain it beyond my own needs.
+
+### Fork it
+
+If you find something valuable here, you are encouraged to fork it: change the image name and organization,
+generate your own signing key, and adjust the package list and files under `system_files/` to your taste. The
+steps are in `CLAUDE.md`.

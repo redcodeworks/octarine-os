@@ -10,6 +10,14 @@ A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) bui
 `${BASE_IMAGE}:${FEDORA_VERSION}` (now `ghcr.io/ublue-os/silverblue-main:45`; see the Containerfile bullet). It exists to make one desktop reproducible. See `README.md`
 for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setup.
 
+## README policy
+
+The README is user-facing for people who just need the concise what, why and basic how to use it. It is not a place
+for notes to yourself and carries no technical implementation details (those go here). Essential sections:
+Requirements, Install/Usage, Contributing, License, Credits, and a closing disclaimer ("About this repo": personal
+project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs, forks
+encouraged). American English throughout.
+
 ## Layout
 
 - `Containerfile`: base image plus the single build step. The base is `FROM ${BASE_IMAGE}:${FEDORA_VERSION}`; the
