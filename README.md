@@ -65,28 +65,73 @@ Added by this image:
 
 ## Use it
 
+1. Install Fedora Silverblue (the current release, 45).
+2. Switch to the image and reboot:
+
+   ```
+   sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
+   ```
+
+3. Switch again with signature enforcement and reboot:
+
+   ```
+   sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
+   ```
+
+4. Optionally run the user-level setup, an interactive checklist for the `gamemode`, `input` and `libvirt` groups
+   and the Flatpak access overrides (`--yes` takes the defaults, `--no` only prints the plan):
+
+   ```
+   ujust user-setup
+   ```
+
+The first switch runs on a stock Fedora, whose container policy accepts any image, so it is unverified; you can check
+the image first with `cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest`. The image installs its
+own container signature policy (default `reject`, plus a `sigstoreSigned` rule for `ghcr.io/redcodeworks/octarine-os`),
+so the second switch makes bootc pull the image again with signature verification enforced, and from then on
+`bootc upgrade` verifies signatures. Running the enforced form on a stock Silverblue before step 2 fails with
+`containers-policy.json specifies a default of insecureAcceptAnything; refusing usage`; that is expected, because the
+policy exists only once the image is running.
+
+Pin a dated build, try the unreleased one, or roll back (on a system that has done step 3):
+
 ```
-sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>   # pin (tags are on the package page)
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:testing               # unreleased build
+sudo bootc rollback                                                                                    # boot the previous deployment
 ```
 
-Reboot, then run `ujust user-setup`: it asks, step by step, whether to join the `gamemode`, `input` and `libvirt` groups and to apply the Flatpak access overrides (`--yes` takes the defaults, `--no` only prints the plan).
+## Security key (YubiKey) for sudo and polkit
 
-To verify the signature yourself:
+sudo and polkit accept a FIDO2/U2F security-key touch instead of the password. The password keeps working when no
+key is enrolled, and no PIN is required. `pam-u2f` and `pamu2fcfg` ship in the image; the PAM files are
+`system_files/etc/pam.d/sudo` and `polkit-1`, both with `pam_u2f.so cue nouserok origin=pam://sudo appid=pam://sudo`
+as a `sufficient` rule before the normal password stack.
+
+- sudo asks for the touch only in an interactive local terminal. With no tty (scripts, non-interactive sudo) or in a
+  remote session (the file skips `pam_u2f` when the terminal shows a remote host in `who`, as with ssh) it goes
+  straight to the password, so nothing waits for a touch.
+- Polkit authentication dialogs (GNOME) accept the touch too. The prompt is "Please touch the FIDO authenticator"
+  (`cue`); `nouserok` means a user without an enrolled key just gets the password.
+
+Enrol a key (the mapping must use the same origin and appid as the PAM line): plug it in, then
 
 ```
-cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os:latest
+mkdir -p ~/.config/Yubico
+pamu2fcfg -o pam://sudo -i pam://sudo > ~/.config/Yubico/u2f_keys
 ```
 
-The image also installs a container signature policy for its registry path, so `bootc upgrade` rejects an
-unsigned or wrongly signed image.
-
-Pin a dated build, try the unreleased one, or roll back:
+and touch the key when it blinks. pam_u2f reads one line per user, so a second (backup) key goes onto the same line:
+`pamu2fcfg -o pam://sudo -i pam://sudo -n` prints only the key part (meant for appending). This joins it onto the
+existing line whatever newlines the tool prints:
 
 ```
-sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest-<date>-<sha>   # pin (tags are on the package page)
-sudo bootc switch ghcr.io/redcodeworks/octarine-os:testing               # unreleased build
-sudo bootc rollback                                                      # boot the previous deployment
+f=~/.config/Yubico/u2f_keys
+{ tr -d '\n' < "$f"; pamu2fcfg -o pam://sudo -i pam://sudo -n | tr -d '\n'; echo; } > "$f.new" && mv "$f.new" "$f"
 ```
+
+Verify: `sudo -k` then `sudo true` asks for the touch; `sudo -n true` (no tty path) says a password is required.
+Opt out by not enrolling, or delete `~/.config/Yubico/u2f_keys`; the password path stays.
 
 ## Base image
 
@@ -116,8 +161,8 @@ See `LICENSE`.
 
 ## Credits
 
-The logo (GDM login screen and Plymouth boot screen) is Kevin's own artwork: the square circuit-tree icon and the
-wordmark. The repo ships no third-party image.
+The logo is a recoloured version of the Fedora Silverblue logo; Fedora and the Fedora logo are trademarks of Red Hat, Inc.
+The wordmark is set in JetBrains Mono (SIL OFL 1.1, © The JetBrains Mono Project Authors).
 
 The experimental `ujust extest-build` recipe builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT licence) from a pinned upstream commit; this repo ships none of its source.

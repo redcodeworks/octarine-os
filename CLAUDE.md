@@ -203,7 +203,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   dispatch). The "Check the base image can be pulled" step fails early and names the tag if it does not exist
   (`skopeo list-tags docker://ghcr.io/ublue-os/silverblue-main` lists them); the smoke test checks that `VERSION_ID`
   matches; the log and the labels `org.opencontainers.image.base.name`/`base.digest` record the resolved base.
-  (3) Test the `testing` build with `sudo bootc switch ghcr.io/<owner>/<image>:testing` (or the testing VM).
+  (3) Test the `testing` build with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/<owner>/<image>:testing` (or the testing VM).
   (4) Soak about a week and keep the current deployment pinned as the rollback (`sudo ostree admin pin <index>`),
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
@@ -218,7 +218,7 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
   uncompressed originals (about 36 MB each) are not stored in the repo or the image.
 - Variants: `dark` has cream-grey "OS" letters for dark backgrounds (the one used on the login and boot screens),
   `light` dark-brown "OS" letters for light backgrounds, `neutral` grey "OS" letters that work on any background.
-- The artwork is Kevin's own; the repo ships no third-party image.
+- Origin: a recoloured version of the Fedora Silverblue logo, wordmark set in JetBrains Mono (credits in the README); no font file is shipped, only rendered text in the PNGs.
 
 ## Defaults that deviate from stock Fedora
 
