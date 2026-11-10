@@ -279,15 +279,8 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
-          : > /tmp/digests
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile "octarine-os-dx:${CHANNEL}" "${DX_IMAGE}:${tag}"
-            cat /tmp/digestfile >> /tmp/digests
-            echo >> /tmp/digests
-          done
-          # keep every distinct digest and sign each of them
-          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
-          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+          # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh "octarine-os-dx:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.

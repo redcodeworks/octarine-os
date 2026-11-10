@@ -4,7 +4,7 @@
 #   silverblue-main:beta -> octarine-os:beta   -> octarine-os-dx:beta
 # The workflow resolves the base by DIGEST (and verifies its signature) and passes it in, so the build, the labels and the
 # size and kernel checks all talk about the same base:
-#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os
+#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os (the NVIDIA developer image, octarine-os-nvidia-dx, passes ghcr.io/redcodeworks/octarine-os-nvidia)
 #   BASE_TAG     latest or beta (only names the channel in the labels; the digest decides)
 #   BASE_DIGEST  sha256:... of that tag when the build started (empty only for a bare local `podman build`)
 ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
@@ -28,6 +28,8 @@ FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
 # os-release IMAGE_VERSION of this build (beta channel: `beta-` prefix, set by the workflow), written by dx.sh
 ARG IMAGE_VERSION
+# os-release IMAGE_ID: octarine-os-dx, or octarine-os-nvidia-dx when the base is the NVIDIA variant (same layer, same packages)
+ARG DX_IMAGE_ID=octarine-os-dx
 
 # The shared list through a bind mount, then the extras, in dx.sh (which also keeps the kernel unchanged)
 RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \

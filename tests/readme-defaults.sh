@@ -55,7 +55,7 @@ names_only_real_recipes() {
 check "the README names no recipe that does not exist (enroll-secure-boot-key is the base's)" names_only_real_recipes
 
 # ---- variants: the image names in the table exist in the repo
-for img in octarine-os octarine-os-nvidia octarine-os-dx; do
+for img in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
     check "README has the URL of $img" grep -qF "ghcr.io/redcodeworks/$img:latest" "$readme"
 done
 check "the nvidia and dx variants have their own build files" test -f "$repo/variants/nvidia/nvidia.sh" -a -f "$repo/variants/dx/dx.sh"

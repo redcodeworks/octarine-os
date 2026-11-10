@@ -50,14 +50,15 @@ test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
 # Everything is derived from them, so a fork only changes image-template.env and cosign.pub. The default image and
 # the NVIDIA variant (<name>-nvidia, built weekly from the same files) and the developer image (<name>-dx, built from
-# the published default image) all get a rule for ALL THREE repositories, so a machine on any of them can switch to
-# another with --enforce-container-sigpolicy.
+# the published default image) and the NVIDIA developer image (<name>-nvidia-dx, the dx layer on the NVIDIA variant) all
+# get a rule for ALL FOUR repositories, so a machine on any of them can switch to another with
+# --enforce-container-sigpolicy. A machine can switch to a repository only once it has booted an image that carries its rule.
 if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
     org="${IMAGE_ORG,,}"
     name="${IMAGE_NAME,,}"
-    base_name="${name%-nvidia}"
-    base_name="${base_name%-dx}"
-    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx"
+    base_name="${name%-dx}"
+    base_name="${base_name%-nvidia}"
+    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx ghcr.io/${org}/${base_name}-nvidia-dx"
     key="/etc/pki/containers/${org}-${name}.pub"
     install -Dm644 /ctx/cosign.pub "${key}"
     printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \

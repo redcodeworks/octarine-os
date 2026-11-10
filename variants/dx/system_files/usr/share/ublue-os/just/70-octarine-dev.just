@@ -1,6 +1,6 @@
 # vim: set ft=make :
 
-# Developer setup (dx image only): libvirt, Homebrew tools, VS Code, JetBrains, Rust, Java, Node, Python (--help)
+# Developer setup (dx image only): libvirt, Homebrew tools, VS Code, JetBrains, Rust, Java, Node, Python, CUDA toolbox (--help)
 [group('Developer')]
 [positional-arguments]
 dev *args:
@@ -12,7 +12,8 @@ dev *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     only_list=""
-    valid_steps=" libvirt tools vscode jetbrains rust java node python "
+    cuda_image=""
+    valid_steps=" libvirt tools vscode jetbrains rust java node python cuda "
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
@@ -20,7 +21,7 @@ dev *args:
         case "$a" in
             help | --help | -h)
                 cat <<'HELP'
-    Developer setup for the octarineOS dx image, a checklist of steps. `ujust dev [--yes|--no] [--only STEP[,STEP...]]`.
+    Developer setup for the octarineOS dx image, a checklist of steps. `ujust dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]`.
     On a terminal, `ujust dev` alone opens a checklist; nothing runs that you did not tick.
     Steps, in order:
       libvirt    use the system libvirt: join the libvirt group (sudo, once; takes effect at your next login), default URI
@@ -37,6 +38,15 @@ dev *args:
                  21 and 25 with 21 as the default
       node       fnm from Homebrew, the latest Node LTS as the default, and cached shell integration files
       python     uv-managed Python 3.12, 3.13 and 3.14 (never the system Python)
+      cuda       only on a machine with an NVIDIA driver: a rootless distrobox named cuda with the NVIDIA CUDA toolkit inside
+                 (Fedora 44 container, NVIDIA's fedora44 repository, cuda-toolkit and gcc15-c++, NVCC_CCBIN=g++-15 and PATH in
+                 /etc/profile.d/cuda.sh of the container). The GPU is passed in through CDI (--device nvidia.com/gpu=all), which
+                 needs the host's CDI spec (nvidia-ctk cdi generate, or the nvidia-cdi-refresh units); the toolkit is never
+                 installed on the host. --image IMAGE (for example docker.io/nvidia/cuda:<version>-devel-<distro>) uses that
+                 image instead and installs nothing in it. Check it with: distrobox enter cuda -- nvidia-smi, and
+                 distrobox enter cuda -- bash -lc 'nvcc --version'. If a CUDA program cannot find libcuda.so.1 inside the
+                 container, check 'ldconfig -p | grep libcuda' there (a known gap of distrobox's own --nvidia option on
+                 Fedora Atomic, which this step does not use); none of this is verified on a real GPU yet
     --yes takes every default without asking (the libvirt step needs sudo, so it runs under --yes only when named with
     --only libvirt), --no only prints the plan, --only runs the named steps. Every step prints how to undo it. Existing
     files that differ are never replaced silently: you see a diff, the default is keep, and a replacement saves
@@ -52,7 +62,13 @@ dev *args:
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no or --only STEP[,STEP...])" >&2; exit 2 ;;
+            --image)
+                i=$((i + 1))
+                cuda_image=${args[$i]:-}
+                [ -n "$cuda_image" ] || { echo "--image needs an image name" >&2; exit 2; }
+                ;;
+            --image=*) cuda_image=${a#--image=} ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...] or --image IMAGE)" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
@@ -65,6 +81,7 @@ dev *args:
             esac
         done
     fi
+    if [ -n "$cuda_image" ] && ! [[ "$cuda_image" =~ ^[A-Za-z0-9][A-Za-z0-9._:/@-]*$ ]]; then echo "Not an image name: $cuda_image" >&2; exit 2; fi
     if [ "$(id -u)" = 0 ]; then echo "Run this as your own user, not as root." >&2; exit 1; fi
 
     cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
@@ -794,11 +811,118 @@ dev *args:
         fi
     }
 
+    # ---- step: cuda (a rootless distrobox with the CUDA toolkit; only where an NVIDIA driver exists)
+    nvidia_present() {
+        if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then return 0; fi
+        [ -d "${DEV_NVIDIA_SYSFS:-/sys/module/nvidia}" ]
+    }
+    cdi_spec_present() {
+        local d f
+        for d in ${DEV_CDI_DIRS:-/var/run/cdi /etc/cdi}; do
+            for f in nvidia.yaml nvidia.json; do [ -s "$d/$f" ] && return 0; done
+        done
+        return 1
+    }
+    cuda_exists() { distrobox list 2>/dev/null | awk -F'|' 'NR > 1 { gsub(/ /, "", $2); if ($2 == "cuda") f = 1 } END { exit !f }'; }
+    # in_cuda <shell script>: run it inside the container (stdin is not passed on: it belongs to the questions above)
+    in_cuda() { distrobox enter --name cuda --no-tty -- sh -c "$1" </dev/null; }
+    step_cuda() {
+        local img=${cuda_image:-${DEV_CUDA_IMAGE:-registry.fedoraproject.org/fedora-toolbox:44}} custom=0 exists=0 nvcc_ok=0 prof_ok=0 undo repo_url profile_cmd install_cmd repo_cmd
+        local create_cmd
+        echo
+        echo "== cuda"
+        echo "Creates a rootless distrobox named cuda with the NVIDIA CUDA toolkit inside, because the toolkit is not in the image (its license does not allow shipping it) and never goes on the host. The GPU reaches the container through CDI (--device nvidia.com/gpu=all), not through distrobox's own --nvidia option. Only for a machine with an NVIDIA driver."
+        undo="distrobox rm --force cuda   (deletes the container and the toolkit inside it; the host is untouched)"
+        [ -z "$cuda_image" ] || custom=1
+        if ! nvidia_present; then
+            echo "  No NVIDIA driver on this machine (nvidia-smi does not run and the nvidia kernel module is not loaded); nothing to do."
+            record cuda "skipped (no NVIDIA driver on this machine)"
+            return
+        fi
+        if ! command -v distrobox >/dev/null 2>&1; then echo "FAILED: distrobox is not installed (it ships with the image)." >&2; fail_step cuda; return; fi
+        repo_url="${DEV_CUDA_REPO_URL:-https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo}"
+        create_cmd=(distrobox create --yes --name cuda --image "$img" --additional-flags "--device nvidia.com/gpu=all")
+        repo_cmd="grep -qs 'developer.download.nvidia.com/compute/cuda' /etc/yum.repos.d/*.repo || sudo curl -fsSL $repo_url -o /etc/yum.repos.d/cuda-fedora44.repo"
+        install_cmd="sudo dnf5 -y install cuda-toolkit gcc15-c++"
+        profile_cmd="printf '%s\n' '# octarineOS (ujust dev --only cuda)' 'export PATH=/usr/local/cuda/bin:\$PATH' '# safety pin for CUDA 13.3 (GCC 15 ok, 16 not); CUDA 13.5 accepts GCC 16, so this line can go' 'export NVCC_CCBIN=g++-15' | sudo tee /etc/profile.d/cuda.sh >/dev/null"
+        if ! cdi_spec_present; then
+            echo "  The host has no NVIDIA CDI spec (nvidia.yaml in /var/run/cdi or /etc/cdi), so the container cannot get the GPU." >&2
+            echo "  The image's nvidia-cdi-refresh units write it to /var/run/cdi at boot: reboot, or start nvidia-cdi-refresh.service as root." >&2
+            echo "  Otherwise generate it once with root (a security-key touch; this recipe never runs it):  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" >&2
+            if [ "$mode" = no ]; then record cuda planned; return; fi
+            echo "  Then re-run: ujust dev --only cuda" >&2
+            fail_step cuda
+            return
+        fi
+        cuda_exists && exists=1
+        if [ "$exists" = 1 ]; then
+            in_cuda 'test -x /usr/local/cuda/bin/nvcc || command -v nvcc >/dev/null 2>&1' && nvcc_ok=1
+            in_cuda 'test -f /etc/profile.d/cuda.sh' && prof_ok=1
+            if [ "$nvcc_ok" = 1 ] && { [ "$custom" = 1 ] || [ "$prof_ok" = 1 ]; }; then
+                echo "  The container cuda exists and has the toolkit (already done)."
+                echo "  Check it:  distrobox enter cuda -- nvidia-smi   and   distrobox enter cuda -- bash -lc 'nvcc --version'"
+                [ "$custom" = 0 ] || echo "  (--image only applies when the container is created; remove it first with: distrobox rm --force cuda)"
+                record cuda "already done"
+                return
+            fi
+        fi
+        if [ "$mode" = no ]; then
+            [ "$exists" = 1 ] || echo "  Plan: ${create_cmd[*]}"
+            if [ "$custom" = 1 ]; then
+                echo "  Plan: nothing is installed in $img (it is expected to carry the toolkit)."
+            else
+                [ "$nvcc_ok" = 1 ] || echo "  Plan: in the container, add NVIDIA's fedora44 CUDA repository ($repo_url) and run: $install_cmd"
+                [ "$prof_ok" = 1 ] || echo "  Plan: in the container, write /etc/profile.d/cuda.sh (PATH and NVCC_CCBIN=g++-15)"
+            fi
+            record cuda planned
+            return
+        fi
+        gate cuda || return
+        if [ "$exists" = 0 ]; then
+            echo "  ${create_cmd[*]}"
+            if ! retry "${create_cmd[@]}" </dev/null; then
+                echo "FAILED: could not create the container. Re-run: ujust dev --only cuda" >&2
+                fail_step cuda
+                return
+            fi
+        fi
+        if [ "$custom" = 0 ]; then
+            if [ "$nvcc_ok" = 0 ]; then
+                echo "  In the container: add NVIDIA's fedora44 CUDA repository, install cuda-toolkit and gcc15-c++ (large download)"
+                if ! retry in_cuda "$repo_cmd" || ! retry in_cuda "$install_cmd"; then
+                    echo "FAILED: the toolkit install did not finish. Re-run: ujust dev --only cuda (the container is kept; finished parts are skipped)" >&2
+                    failed=1
+                    record cuda FAILED "$undo"
+                    return
+                fi
+            fi
+            if [ "$prof_ok" = 0 ] && ! in_cuda "$profile_cmd"; then
+                echo "FAILED: could not write /etc/profile.d/cuda.sh in the container. Re-run: ujust dev --only cuda" >&2
+                failed=1
+                record cuda FAILED "$undo"
+                return
+            fi
+        else
+            if ! in_cuda 'test -x /usr/local/cuda/bin/nvcc || command -v nvcc >/dev/null 2>&1'; then
+                echo "  Note: no nvcc found in $img (a base or runtime flavor has none); use a -devel image."
+                notes+=("cuda: $img has no nvcc; the container is there, but it is not a toolkit")
+            fi
+        fi
+        if in_cuda 'nvidia-smi -L'; then
+            echo "  nvidia-smi works inside the container."
+        else
+            echo "  Note: nvidia-smi did not run inside the container; the GPU path is unverified (check the CDI spec and 'ldconfig -p | grep libcuda' in it)."
+            notes+=("cuda: nvidia-smi did not run inside the container; see ujust dev --help for the libcuda note")
+        fi
+        echo "  Check it:  distrobox enter cuda -- nvidia-smi   and   distrobox enter cuda -- bash -lc 'nvcc --version'"
+        record cuda applied "$undo"
+    }
+
     # Terminal with gum: a checklist of steps up front (nothing is ticked: you choose); the chosen steps are not asked
     # "Apply?" again, but replacing a different existing file is still its own question (default keep).
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
         menu_title "octarineOS developer setup"
-        menu_multi "Developer setup: choose the steps (only libvirt uses sudo; nothing existing is replaced without asking)" \
+        menu_items=(
             "libvirt^System libvirt: group access and default network (sudo)^0" \
             "tools^Homebrew developer tools in groups you pick^0" \
             "vscode^Visual Studio Code Flatpak (community build, not verified)^0" \
@@ -807,6 +931,11 @@ dev *args:
             "java^Java: SDKMAN from the Homebrew tap and Zulu 8 to 25^0" \
             "node^Node: fnm and the latest LTS with cached shell integration^0" \
             "python^Python 3.12 to 3.14 from uv^0"
+        )
+        if nvidia_present; then
+            menu_items+=("cuda^CUDA toolkit in a rootless distrobox (needs an NVIDIA driver)^0")
+        fi
+        menu_multi "Developer setup: choose the steps (only libvirt uses sudo; nothing existing is replaced without asking)" "${menu_items[@]}"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -822,6 +951,7 @@ dev *args:
     sel java && step_java
     sel node && step_node
     sel python && step_python
+    sel cuda && step_cuda
 
     echo
     echo "== Summary (mode: $mode)"

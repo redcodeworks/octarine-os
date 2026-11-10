@@ -44,11 +44,12 @@ policy_run() { # image name
         | sed -e "s#/etc/#$t/etc/#g" -e "s#/ctx/cosign.pub#$here/cosign.pub#g" >"$t/block.sh"
     IMAGE_ORG=redcodeworks IMAGE_NAME="$1" bash -e "$t/block.sh" >"$root/out" 2>&1
 }
-for n in octarine-os octarine-os-nvidia octarine-os-dx; do
+for n in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
     policy_run "$n"
     check "policy ($n image): rule for the default repository" grep -q '"ghcr.io/redcodeworks/octarine-os"' "$root/pol-$n/etc/containers/policy.json"
     check "policy ($n image): rule for the NVIDIA repository" grep -q '"ghcr.io/redcodeworks/octarine-os-nvidia"' "$root/pol-$n/etc/containers/policy.json"
     check "policy ($n image): rule for the dx repository" grep -q '"ghcr.io/redcodeworks/octarine-os-dx"' "$root/pol-$n/etc/containers/policy.json"
+    check "policy ($n image): rule for the NVIDIA dx repository" grep -q '"ghcr.io/redcodeworks/octarine-os-nvidia-dx"' "$root/pol-$n/etc/containers/policy.json"
     check "policy ($n image): the catch-all stays last" python3 -c "import json,sys; d=json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']; assert list(d)[-1]==''"
     check "policy ($n image): sigstore attachments enabled for the namespace" grep -q 'use-sigstore-attachments: true' "$root"/pol-$n/etc/containers/registries.d/*.yaml
 done
@@ -113,11 +114,29 @@ mk_image() { # kernel dir name
 }
 smoke() { # mode
     PATH="$root/bin:$PATH" MODULES_DIR="$root/img/modules" KARGS_FILE="$root/img/kargs/00-nvidia.toml" \
-        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" OS_RELEASE="$root/img/os-release" BASE_KERNEL="$K" "$here/.github/scripts/nvidia-smoke.sh" "$1"
+        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" OS_RELEASE="$root/img/os-release" BASE_KERNEL="$K" LOCAL_DIR="$root/img/local" "$here/.github/scripts/nvidia-smoke.sh" "$1"
 }
 K=$k
 mk_image "$K"
 check "smoke present: a complete variant passes" smoke present
+# the NVIDIA developer image (octarine-os-nvidia-dx): the same checks with another IMAGE_ID, and never a CUDA toolkit
+mk_image "$K"; mkdir -p "$root/img/local"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os-nvidia-dx"/' "$root/img/os-release"
+EXPECT_IMAGE_ID=octarine-os-nvidia-dx smoke present >"$root/sm.out" 2>&1; check "smoke present: the nvidia-dx image passes with EXPECT_IMAGE_ID=octarine-os-nvidia-dx" test $? -eq 0
+smoke present >"$root/sm.out" 2>&1; check "smoke present: the nvidia-dx IMAGE_ID fails without EXPECT_IMAGE_ID (the variant expects its own)" test $? -ne 0
+mk_image "$K"; mkdir -p "$root/img/local"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os-nvidia"/' "$root/img/os-release"
+EXPECT_IMAGE_ID=octarine-os-nvidia-dx smoke present >"$root/sm.out" 2>&1; check "smoke present: the plain variant fails when nvidia-dx is expected" test $? -ne 0
+mk_image "$K"; mkdir -p "$root/img/local"; printf 'nvidia-driver\nnvidia-driver-cuda\nnvidia-driver-cuda-libs\nnvidia-container-toolkit\n' >"$RPM_LIST"
+smoke present >"$root/sm.out" 2>&1; check "smoke present: the driver's own CUDA userspace and the container toolkit are not a CUDA toolkit" test $? -eq 0
+check "smoke present: CDI pieces are reported (informational)" grep -q 'INFO package nvidia-container-toolkit installed' "$root/sm.out"
+for pkg in cuda-toolkit-13-5 cuda-nvcc-13-5 cuda-compiler-13-5 nvidia-cuda-toolkit; do
+    mk_image "$K"; mkdir -p "$root/img/local"; printf 'kmod-nvidia-%s\nnvidia-driver\n%s\n' "$K" "$pkg" >"$RPM_LIST"
+    smoke present >"$root/sm.out" 2>&1; check "smoke present: the CUDA toolkit package $pkg fails" bash -c "[ $? -ne 0 ] && grep -q 'FAIL no CUDA toolkit package' '$root/sm.out'"
+done
+mk_image "$K"; mkdir -p "$root/img/local/cuda-13.5"
+smoke present >"$root/sm.out" 2>&1; check "smoke present: a /usr/local/cuda* directory fails" bash -c "[ $? -ne 0 ] && grep -q 'FAIL no /usr/local/cuda' '$root/sm.out'"
+mk_image "$K"; mkdir -p "$root/img/local"; printf '#!/bin/sh\n' >"$root/bin/nvcc"; chmod +x "$root/bin/nvcc"
+smoke present >"$root/sm.out" 2>&1; rc=$?; rm -f "$root/bin/nvcc"; check "smoke present: an nvcc on PATH fails" test $rc -ne 0
+mk_image "$K"; mkdir -p "$root/img/local"
 mk_image "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: the default image's IMAGE_ID fails" test $? -ne 0
 mk_image "$K"; sed -i '/^IMAGE_VERSION=/d' "$root/img/os-release"

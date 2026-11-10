@@ -102,6 +102,10 @@ check "a pinned dated tag falls back to latest" has "Target:  ghcr.io/redcodewor
 run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" nvidia --no
 check "a digest suffix on the running image is ignored" has "Target:  ghcr.io/redcodeworks/octarine-os-nvidia:latest"
 check "switching to nvidia mentions the Secure Boot key" has "enroll-secure-boot-key"
+FAKE_PUBLISHED="$pub_all octarine-os-nvidia-dx:latest" run "$base" nvidia-dx --no
+check "switching to nvidia-dx mentions the Secure Boot key and the signature-policy hint" bash -c "grep -q 'enroll-secure-boot-key' '$root/out' && grep -q 'signature-policy error' '$root/out' && grep -q 'Would run: sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest' '$root/out'"
+FAKE_PUBLISHED="$pub_all octarine-os-nvidia-dx:latest" run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest" dx --no
+check "a running nvidia-dx is recognized as the current image" has "Current: ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest"
 
 run "$dx" dx latest --yes
 check "already on the target: nothing to do" has "Already on dx (latest)."

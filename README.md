@@ -60,10 +60,10 @@ Added by this image:
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager), tracing tools, the `iommu=pt` kernel argument, and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+| NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 
 The default and dx images also have a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base
-that shows early what the next Fedora release would break. It is not tested for daily use. The NVIDIA image has only `latest`,
-and there is no combined NVIDIA and dx image yet.
+that shows early what the next Fedora release would break. It is not tested for daily use. The NVIDIA images have only `latest`.
 
 ## Install
 
@@ -109,12 +109,12 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, launchers and GameMode tuning |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
-| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia) or channel (latest, beta, testing); `--list` shows what exists |
+| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia, nvidia-dx) or channel (latest, beta, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
-| `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node and Python |
+| `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |
 
 ## Contributing
 

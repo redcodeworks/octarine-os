@@ -200,6 +200,7 @@ jobs:
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
             check "signature policy also covers the NVIDIA variant repository" "grep -q $REF-nvidia /etc/containers/policy.json"
             check "signature policy also covers the dx variant repository" "grep -q $REF-dx /etc/containers/policy.json"
+            check "signature policy also covers the NVIDIA dx repository" "grep -q $REF-nvidia-dx /etc/containers/policy.json"
             check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
             check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
             check "sudoers valid" "visudo -c"
@@ -296,15 +297,8 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
-          : > /tmp/digests
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
-            cat /tmp/digestfile >> /tmp/digests
-            echo >> /tmp/digests
-          done
-          # the tags can end up with different manifest digests: keep every distinct one and sign each
-          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
-          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+          # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}
 
   sign:
     name: Sign and verify beta image

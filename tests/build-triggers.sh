@@ -50,7 +50,7 @@ w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
 gate = "steps.channel.outputs.publish == 'true'"
 for s in w["jobs"]["build_push"]["steps"]:
     text = str(s.get("uses", "")) + " " + str(s.get("run", ""))
-    risky = "login-action" in text or "podman push" in text or "cosign sign" in text or "skopeo copy" in text
+    risky = "login-action" in text or "push-tags.sh" in text or "cosign sign" in text or "skopeo copy" in text
     if risky:
         assert s.get("if") == gate, (s.get("name"), s.get("if"))
 assert {"Login to GitHub Container Registry", "Push To GHCR"} <= {s["name"] for s in w["jobs"]["build_push"]["steps"]}
