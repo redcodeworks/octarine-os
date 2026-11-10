@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily upgrade of all distrobox containers (off until enabled with ujust toggle-updates)
+Documentation=man:distrobox-upgrade(1)
+
+[Timer]
+OnBootSec=15min
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

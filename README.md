@@ -109,6 +109,9 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
 | `ujust switch-image [image] [channel]` | Switches between the default, dx, nvidia and nvidia-dx images and the latest, beta and testing channels |
+| `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
+| `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
+| `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node and Python |
 
