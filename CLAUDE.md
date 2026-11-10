@@ -670,6 +670,25 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   equals stable. Policy: the existing rule for the `octarine-os` path covers every tag. Prune: `PRUNE_KIND=beta KEEP=3` in
   `prune-testing.yml` keeps the newest three `beta-*` builds and any version holding `beta`. Test: `tests/beta-channel.sh`.
 
+## `ujust switch-image`
+
+- One recipe in `60-custom.just` switches between the images (`default` = `octarine-os`, `dx` = `octarine-os-dx`, `nvidia` =
+  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `beta`, `testing`. It replaces the
+  base image's `toggle-nvk` (Universal Blue's `40-nvidia.just`), which derived names by string substitution
+  (`octarine-os-dx-nvidia-open` does not exist) and rebased without enforcing the signature policy; our `40-nvidia.just`
+  overrides that file and keeps a `toggle-nvk` that only points to `switch-image`.
+- The running image comes from `rpm-ostree status -b --json` (transport prefix and digest stripped), the registry from the
+  running image's own reference (so forks work; a foreign image falls back to `ghcr.io/redcodeworks`). With only an image it
+  keeps the current channel, `latest` when the tag is pinned. Availability is checked with `skopeo inspect --raw` before
+  anything runs: a missing manifest is "not published", a network failure is reported separately and never treated as
+  missing. The switch is `sudo bootc switch --enforce-container-sigpolicy <ref>`, the form the README documents.
+  `--list` probes all twelve combinations in parallel; `--yes` skips the question, `--no` prints the plan.
+- Which combinations exist is not hard-coded: today `nvidia` has no `beta` or `testing` tag and `nvidia-dx` has no image at all.
+  Publishing `octarine-os-nvidia-dx` later needs, besides the build: the new repository in the signature policy that
+  `build_files/build.sh` generates (`IMAGE_ORG`/`IMAGE_NAME`; `tests/nvidia-variant.sh` checks the policy for each
+  repository) or `--enforce-container-sigpolicy` will refuse it, and a row in the Variants table. The recipe needs no change.
+- Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
+
 ## NVIDIA variant (`octarine-os-nvidia`)
 
 - User-facing note (formerly in the README): run the default install steps first, then `bootc switch --enforce-container-sigpolicy

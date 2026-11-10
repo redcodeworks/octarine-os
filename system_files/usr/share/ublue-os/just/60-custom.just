@@ -1895,6 +1895,151 @@ gnome-candy *args:
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
+# Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, beta, testing)
+[group('Setup')]
+[positional-arguments]
+switch-image *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    mode=ask
+    list=0
+    image=""
+    channel=""
+    for a in "$@"; do
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--list]`. Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --list) list=1 ;;
+            default | dx | nvidia | nvidia-dx) image=$a ;;
+            latest | beta | testing) channel=$a ;;
+            -*) echo "Unknown option: $a (use --yes, --no or --list)" >&2; exit 2 ;;
+            *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, beta, testing)" >&2; exit 2 ;;
+        esac
+    done
+    name_of() {
+        case "$1" in
+            default) echo octarine-os ;;
+            dx) echo octarine-os-dx ;;
+            nvidia) echo octarine-os-nvidia ;;
+            nvidia-dx) echo octarine-os-nvidia-dx ;;
+        esac
+    }
+    # The running image, from the booted deployment: transport prefix and digest stripped
+    cur_ref=${OCTARINE_SWITCH_CURRENT_REF:-}
+    if [ -z "$cur_ref" ]; then
+        cur_ref=$(rpm-ostree status -b --json 2>/dev/null | jq -r '.deployments[0]."container-image-reference" // empty' 2>/dev/null)
+    fi
+    cur=$(printf '%s' "$cur_ref" | sed -E 's#^ostree[a-z-]*:##; s#^docker://##; s#@sha256:[0-9a-f]+$##')
+    cur_image=other
+    cur_channel=""
+    registry=ghcr.io/redcodeworks
+    if [ -n "$cur" ]; then
+        name_tag=${cur##*/}
+        cur_name=${name_tag%%:*}
+        cur_tag=latest
+        case "$name_tag" in *:*) cur_tag=${name_tag#*:} ;; esac
+        for k in default dx nvidia nvidia-dx; do
+            if [ "$cur_name" = "$(name_of "$k")" ]; then cur_image=$k; registry=${cur%/*}; fi
+        done
+        case "$cur_tag" in latest | beta | testing) cur_channel=$cur_tag ;; esac
+    fi
+    # probe IMAGE CHANNEL: 0 published, 1 not published, 2 registry unreachable
+    probe() {
+        local err rc
+        err=$(timeout 25 skopeo inspect --raw "docker://$registry/$(name_of "$1"):$2" 2>&1 >/dev/null)
+        rc=$?
+        if [ "$rc" = 0 ]; then return 0; fi
+        case "$err" in
+            *"manifest unknown"* | *"name unknown"* | *"not found"* | *"requested access"* | *"denied"* | *"404"*) return 1 ;;
+        esac
+        return 2
+    }
+    if [ -n "$cur" ]; then
+        echo "Current: $cur"
+    else
+        echo "Current: unknown (rpm-ostree reports no container image)"
+    fi
+    if [ "$list" = 1 ]; then
+        tmp=$(mktemp -d)
+        trap 'rm -rf -- "$tmp"' EXIT
+        for k in default dx nvidia nvidia-dx; do
+            for c in latest beta testing; do
+                (probe "$k" "$c"; echo $? >"$tmp/$k.$c") &
+            done
+        done
+        wait
+        printf '%-12s %-18s %-18s %-18s\n' IMAGE latest beta testing
+        for k in default dx nvidia nvidia-dx; do
+            row=$(printf '%-12s' "$k")
+            for c in latest beta testing; do
+                case "$(cat "$tmp/$k.$c" 2>/dev/null)" in 0) s=published ;; 1) s="not published" ;; *) s=unknown ;; esac
+                if [ "$k" = "$cur_image" ] && [ "$c" = "$cur_channel" ]; then s="$s (current)"; fi
+                row+=$(printf ' %-18s' "$s")
+            done
+            printf '%s\n' "$row"
+        done
+        exit 0
+    fi
+    if [ -z "$image" ]; then
+        if menu_ready_one; then
+            menu_one "Which image?" \
+                "default^default: the base image" \
+                "dx^dx: developer tools, compilers and virtualization" \
+                "nvidia^nvidia: proprietary NVIDIA driver" \
+                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen." >&2; exit 1; }
+            image=$MENU_ONE
+        else
+            echo "Name an image: default, dx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
+            exit 2
+        fi
+    fi
+    if [ -z "$channel" ]; then
+        if [ -n "$cur_channel" ] && { [ "$mode" != ask ] || ! menu_ready_one; }; then
+            channel=$cur_channel
+        elif menu_ready_one; then
+            menu_one "Which channel?" \
+                "latest^latest: tested daily build (recommended)" \
+                "beta^beta: built on the next Fedora base, not tested for daily use" \
+                "testing^testing: unreleased builds" || { echo "No channel chosen." >&2; exit 1; }
+            channel=$MENU_ONE
+        else
+            channel=latest
+        fi
+    fi
+    ref="$registry/$(name_of "$image"):$channel"
+    if [ "$image" = "$cur_image" ] && [ "$channel" = "$cur_channel" ]; then
+        echo "Already on $image ($channel)."
+        exit 0
+    fi
+    echo "Target:  $ref"
+    probe "$image" "$channel"
+    case $? in
+        0) ;;
+        1) echo "$ref is not published (yet). Run 'ujust switch-image --list' to see what is." >&2; exit 1 ;;
+        *) echo "Could not reach the registry to check $ref. Check the network and try again." >&2; exit 1 ;;
+    esac
+    case "$image" in
+        nvidia | nvidia-dx) echo "With Secure Boot, run 'ujust enroll-secure-boot-key' first if you have not enrolled the key." ;;
+    esac
+    case "$channel" in
+        beta | testing) echo "The $channel channel is not tested for daily use." ;;
+    esac
+    cmd=(sudo bootc switch --enforce-container-sigpolicy "$ref")
+    if [ "$mode" = no ]; then
+        echo "Would run: ${cmd[*]}"
+        exit 0
+    fi
+    if [ "$mode" = ask ]; then
+        menu_confirm "Switch to $image ($channel)?" n || { echo "Left as it is."; exit 0; }
+    fi
+    "${cmd[@]}" || { echo "bootc switch failed; nothing changed." >&2; exit 1; }
+    echo "Switched. Reboot to use $image ($channel); 'sudo bootc rollback' goes back to the previous deployment."
+
 [group('Toolbox')]
 [positional-arguments]
 toolbox *args:
