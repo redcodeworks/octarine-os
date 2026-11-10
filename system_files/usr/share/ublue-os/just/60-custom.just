@@ -1259,13 +1259,46 @@ niri-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     only_list=""
-    valid_steps=" niri portals polkit "
+    valid_steps=" niri portals polkit keybinds "
+    kb_layout=""
+    kb_switch=""
+    kb_move=""
+    kb_other=""
+    kb_flags=0
+    no_wizard=0
+    # kb_set <option> <value>: validate a keybind wizard option (exit 2 on a bad name)
+    kb_set() {
+        local opt=$1 val=$2
+        case "$opt" in
+            --keybinds)
+                case "$val" in standard | compact | hhkb) kb_layout=$val ;; *) echo "Unknown layout: $val (use standard, compact or hhkb)" >&2; exit 2 ;; esac
+                ;;
+            --switch-mod | --move-mod | --other-mod)
+                case "$val" in
+                    ctrl-alt | ctrl-super | meh | hypr) ;;
+                    super) [ "$opt" = --other-mod ] || { echo "Unknown modifier for $opt: super (use ctrl-alt, ctrl-super, meh or hypr; super is only for --other-mod)" >&2; exit 2; } ;;
+                    *) echo "Unknown modifier for $opt: $val (use ctrl-alt, ctrl-super, meh, hypr or, for --other-mod only, super)" >&2; exit 2 ;;
+                esac
+                case "$opt" in --switch-mod) kb_switch=$val ;; --move-mod) kb_move=$val ;; *) kb_other=$val ;; esac
+                ;;
+        esac
+        kb_flags=1
+    }
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step. `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step. `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed), keybinds (EXPERIMENTAL keybind wizard, never part of the default run: you keep niri'\''s default key bindings unless you start it). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept, the keybind wizard is not started), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'
+            printf '%s\n' 'Keybind wizard (experimental): the layouts and generated files may change between image versions. It validates the result with `niri validate` and restores the previous files on failure, and you can always return to niri'\''s defaults by putting include "40-binds.kdl" back in ~/.config/niri/config.kdl. Questions: the keyboard layout (Standard keys always, plus Compact = vim-style hjkl, or HHKB; the two extras exclude each other), the modifier for switching (focus) columns and workspaces, the modifier for moving them (must differ from the switching one) and the modifier for other actions. Modifiers: ctrl-alt (default for switching), ctrl-super (default for moving), meh (Ctrl+Alt+Shift), hypr (Ctrl+Alt+Shift+Super) and, for other actions only, super (default). MEH and HYPR need keys mapped in your keyboard firmware (a custom QMK mapping); most keyboards do not have them, so they are never preselected. It writes 40-binds-standard.kdl and 41-binds-compact.kdl or 41-binds-hhkb.kdl into ~/.config/niri/ and replaces the include "40-binds.kdl" line of config.kdl. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M] [--move-mod M] [--other-mod M]`; --no-wizard keeps the defaults; unknown names and the same modifier for switching and moving exit 2.'
+            exit 0 ;;
+            --keybinds | --switch-mod | --move-mod | --other-mod)
+                i=$((i + 1))
+                [ -n "${args[$i]:-}" ] || { echo "$a needs a value" >&2; exit 2; }
+                kb_set "$a" "${args[$i]}"
+                ;;
+            --keybinds=* | --switch-mod=* | --move-mod=* | --other-mod=*) kb_set "${a%%=*}" "${a#*=}" ;;
+            --no-wizard) no_wizard=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -1274,11 +1307,22 @@ niri-setup *args:
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no or --only STEP[,STEP...])" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...], or the keybind wizard options --keybinds, --switch-mod, --move-mod, --other-mod, --no-wizard)" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
     done
+    if [ "$no_wizard" = 1 ] && [ "$kb_flags" = 1 ]; then echo "--no-wizard cannot be combined with the keybind wizard options" >&2; exit 2; fi
+    # Defaults: switching ctrl-alt, moving ctrl-super, other actions super; the first two move to the next free one when
+    # the other is taken. The same modifier for switching and moving is refused.
+    if [ -z "$kb_switch" ]; then kb_switch=ctrl-alt; [ "$kb_move" = ctrl-alt ] && kb_switch=ctrl-super; fi
+    if [ -z "$kb_move" ]; then kb_move=ctrl-super; [ "$kb_switch" = ctrl-super ] && kb_move=ctrl-alt; fi
+    [ -n "$kb_layout" ] || kb_layout=standard
+    [ -n "$kb_other" ] || kb_other=super
+    if [ "$kb_switch" = "$kb_move" ]; then
+        echo "The same modifier ($kb_switch) cannot be used for switching and for moving: pick two different ones (--switch-mod and --move-mod)." >&2
+        exit 2
+    fi
     if [ -n "$only_list" ]; then
         for s in ${only_list//,/ }; do
             case "$valid_steps" in
@@ -1401,6 +1445,224 @@ niri-setup *args:
         record "$step" "already done"
     }
 
+    # ---- keybind wizard (experimental)
+    kb_mod_string() {
+        case "$1" in
+            ctrl-alt) echo "Ctrl+Alt" ;;
+            ctrl-super) echo "Ctrl+Super" ;;
+            meh) echo "Ctrl+Alt+Shift" ;;
+            hypr) echo "Ctrl+Alt+Shift+Super" ;;
+            super) echo "Mod" ;;
+        esac
+    }
+    kb_qmk_note="needs these keys mapped in your keyboard firmware (a custom QMK mapping); most keyboards do not have them"
+    # kb_mod_items <default id> <with super 0|1>: fills kb_items (id^text^), MEH and HYPR carry the note, never the default
+    kb_mod_items() {
+        local def=$1 id txt ids="ctrl-alt ctrl-super meh hypr"
+        [ "$2" = 1 ] && ids="super ctrl-alt ctrl-super meh hypr"
+        kb_items=()
+        for id in $ids; do
+            case "$id" in
+                ctrl-alt) txt="Ctrl+Alt" ;;
+                ctrl-super) txt="Ctrl+Super" ;;
+                super) txt="Super" ;;
+                meh) txt="MEH (Ctrl+Alt+Shift): $kb_qmk_note" ;;
+                hypr) txt="HYPR (Ctrl+Alt+Shift+Super): $kb_qmk_note" ;;
+            esac
+            [ "$id" = "$def" ] && txt="$txt (default)"
+            kb_items+=("$id^$txt^")
+        done
+    }
+    # kb_pick <header> <default id> <item>...: sets $kb_picked; returns 1 when the choice was cancelled (Esc)
+    kb_pick() {
+        local header=$1 def=$2 spec id txt n reply rc
+        shift 2
+        kb_picked=""
+        if menu_ready_one; then
+            menu_one "$header" "$@"
+            rc=$?
+            if [ "$rc" = 0 ]; then kb_picked=$MENU_ONE; return 0; fi
+            if [ "$rc" != 3 ]; then return 1; fi
+        fi
+        while true; do
+            echo "$header"
+            n=0
+            for spec in "$@"; do
+                n=$((n + 1))
+                IFS='^' read -r id txt _ <<<"$spec"
+                printf '  %d) %s\n' "$n" "$txt"
+            done
+            printf 'Choose 1-%d (Enter = the default): ' "$n"
+            if ! read -r reply; then kb_picked=$def; return 0; fi
+            if [ -z "$reply" ]; then kb_picked=$def; return 0; fi
+            if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 1 ] && [ "$reply" -le "$n" ]; then
+                n=0
+                for spec in "$@"; do
+                    n=$((n + 1))
+                    IFS='^' read -r id txt _ <<<"$spec"
+                    [ "$n" = "$reply" ] && { kb_picked=$id; return 0; }
+                done
+            fi
+            echo "Not a valid choice: $reply"
+        done
+    }
+    # kb_wizard: the four questions; sets kb_layout, kb_switch, kb_move, kb_other; returns 1 when cancelled
+    kb_wizard() {
+        kb_pick "Keyboard layout (the Standard keys are always included)" standard \
+            "standard^Standard keyboard (arrows, PageUp, PageDown, Home, End) (default)^" \
+            "compact^Compact keyboard (adds vim-style hjkl)^" \
+            "hhkb^HHKB layout^" || return 1
+        kb_layout=$kb_picked
+        kb_mod_items ctrl-alt 0
+        kb_pick "Modifier for SWITCHING columns and workspaces (focus)" ctrl-alt "${kb_items[@]}" || return 1
+        kb_switch=$kb_picked
+        local def=ctrl-super
+        [ "$kb_switch" = ctrl-super ] && def=ctrl-alt
+        while true; do
+            kb_mod_items "$def" 0
+            kb_pick "Modifier for MOVING columns, windows and columns to other workspaces" "$def" "${kb_items[@]}" || return 1
+            kb_move=$kb_picked
+            [ "$kb_move" != "$kb_switch" ] && break
+            echo "The same modifier cannot be used for switching and for moving: $kb_switch is taken. Pick a different one."
+        done
+        kb_mod_items super 1
+        kb_pick "Modifier for OTHER actions (terminal, close window, fullscreen, maximize, overview and the rest)" super "${kb_items[@]}" || return 1
+        kb_other=$kb_picked
+        return 0
+    }
+    # kb_apply: render the templates, write the files, switch the include lines, validate, restore on failure
+    kb_apply() {
+        local tdir=$share_src/keybinds conf="$cfg/niri/config.kdl" tmp snap dest name f n r
+        local files=("standard") dests=() labels=() bks=() newconf any_kept=0 matched std
+        [ "$kb_layout" = standard ] || files+=("$kb_layout")
+        echo "Layout: $kb_layout; switching: $(kb_mod_string "$kb_switch"); moving: $(kb_mod_string "$kb_move"); other actions: $(kb_mod_string "$kb_other")."
+        for f in "${files[@]}"; do
+            if [ ! -f "$tdir/$f.kdl.in" ]; then
+                echo "  template $tdir/$f.kdl.in is missing" >&2
+                failed=1
+                record "keybinds" FAILED
+                return
+            fi
+        done
+        if [ ! -f "$conf" ]; then
+            echo "Skipped: $conf does not exist; run ujust niri-setup --only niri first, so there is a config.kdl to include the key bindings from."
+            record "keybinds" "skipped (no config.kdl yet)"
+            return
+        fi
+        tmp=$(mktemp -d) || { failed=1; record "keybinds" FAILED; return; }
+        snap=$tmp/snap
+        mkdir -p "$snap"
+        for f in "${files[@]}"; do
+            case "$f" in standard) name=40-binds-standard.kdl ;; *) name=41-binds-$f.kdl ;; esac
+            sed -e "s|@SWITCH@|$(kb_mod_string "$kb_switch")|g" -e "s|@MOVE@|$(kb_mod_string "$kb_move")|g" \
+                -e "s|@OTHER@|$(kb_mod_string "$kb_other")|g" "$tdir/$f.kdl.in" >"$tmp/$name"
+            dests+=("$cfg/niri/$name")
+            labels+=("$name")
+        done
+        for dest in "${dests[@]}" "$conf"; do
+            if [ -f "$dest" ]; then cp -p -- "$dest" "$snap/$(basename "$dest")"; else : >"$snap/$(basename "$dest").absent"; fi
+        done
+        for n in "${!dests[@]}"; do
+            place "${labels[$n]}" "$tmp/${labels[$n]}" "${dests[$n]}"
+            file_results+=("$place_result")
+            [ -n "$place_backup" ] && bks+=("$place_backup")
+            [ "$place_result" = kept ] && any_kept=1
+            if [ "$place_result" = failed ]; then
+                echo "  Nothing else was changed." >&2
+                failed=1
+                record "keybinds" FAILED
+                rm -rf -- "$tmp"
+                return
+            fi
+        done
+        if [ "$any_kept" = 1 ]; then
+            echo "  You kept a different generated file, so config.kdl was not changed. Re-run and answer y to replace it."
+        else
+            # config.kdl: the line of the plain binds (or of an earlier wizard run) becomes the generated includes
+            newconf=$tmp/config.kdl.new
+            awk -v extra="$([ "$kb_layout" = standard ] && echo "" || echo "41-binds-$kb_layout.kdl")" '
+                function emit() { print "include \"40-binds-standard.kdl\""; if (extra != "") print "include \"" extra "\"" }
+                /^[[:space:]]*include[[:space:]]+"(40-binds\.kdl|40-binds-standard\.kdl|41-binds-(compact|hhkb)\.kdl)"[[:space:]]*$/ {
+                    if (!done) { emit(); done = 1 }
+                    next
+                }
+                { print }
+                END { if (!done) exit 3 }' "$conf" >"$newconf"
+            matched=$?
+            std=1
+            if [ "$matched" != 0 ]; then
+                std=0
+                awk -v extra="$([ "$kb_layout" = standard ] && echo "" || echo "41-binds-$kb_layout.kdl")" '
+                    function emit() { print "include \"40-binds-standard.kdl\""; if (extra != "") print "include \"" extra "\"" }
+                    /^[[:space:]]*include[[:space:]]+"50-noctalia\.kdl"/ && !done { emit(); done = 1 }
+                    { print }
+                    END { if (!done) emit() }' "$conf" >"$newconf"
+            fi
+            if cmp -s "$conf" "$newconf"; then
+                echo "  config.kdl: the include lines are already right (already done)."
+                file_results+=("already")
+            else
+                echo "  config.kdl: the include line change (- now, + new):"
+                diff -u "$conf" "$newconf" | sed 's/^/    /'
+                answer=y
+                if [ "$std" = 0 ]; then
+                    echo "  Your config.kdl does not have the standard include list, so the new lines would be added by guess."
+                    ask n "  Apply this change to $conf?"
+                fi
+                if [ "$answer" = y ]; then
+                    dest="$conf.bak-$(date +%Y%m%d-%H%M%S)"
+                    n=0
+                    while [ -e "$dest" ]; do n=$((n + 1)); dest="$conf.bak-$(date +%Y%m%d-%H%M%S)-$n"; done
+                    if cp -p -- "$conf" "$dest" && cp -- "$newconf" "$conf"; then
+                        bks+=("$dest")
+                        echo "  config.kdl: updated (your previous file is saved as $dest)."
+                        file_results+=("applied")
+                    else
+                        echo "  config.kdl: could not be updated" >&2
+                        file_results+=("failed")
+                    fi
+                else
+                    echo "  Kept your $conf. To use the generated parts add these lines to it, before the include of 50-noctalia.kdl:"
+                    echo "    include \"40-binds-standard.kdl\""
+                    [ "$kb_layout" = standard ] || echo "    include \"41-binds-$kb_layout.kdl\""
+                    file_results+=("kept")
+                fi
+            fi
+        fi
+        for r in "${file_results[@]}"; do
+            if [ "$r" = failed ]; then
+                failed=1
+                record "keybinds" FAILED
+                rm -rf -- "$tmp"
+                return
+            fi
+        done
+        if [[ " ${file_results[*]} " == *" applied "* ]]; then
+            if command -v niri >/dev/null 2>&1; then
+                if niri validate -c "$conf" >"$tmp/validate.out" 2>&1; then
+                    echo "  niri validate: $conf is valid."
+                else
+                    echo "  niri validate rejected the result:" >&2
+                    sed 's/^/    /' "$tmp/validate.out" >&2
+                    for dest in "${dests[@]}" "$conf"; do
+                        name=$(basename "$dest")
+                        if [ -f "$snap/$name" ]; then cp -p -- "$snap/$name" "$dest"; else rm -f -- "$dest"; fi
+                    done
+                    for f in "${bks[@]}"; do rm -f -- "$f"; done
+                    echo "  The previous files were restored; nothing was changed." >&2
+                    failed=1
+                    record "keybinds" FAILED
+                    rm -rf -- "$tmp"
+                    return
+                fi
+            else
+                echo "  niri is not installed here: validation was skipped."
+            fi
+        fi
+        rm -rf -- "$tmp"
+        finish_step keybinds "put include \"40-binds.kdl\" back in ${cfg}/niri/config.kdl instead of the 40-binds-*.kdl and 41-binds-*.kdl lines (or restore the .bak-* files); delete the generated 40-binds-standard.kdl and 41-binds-*.kdl if you do not want them"
+    }
+
     # Terminal with gum: a checklist of steps up front; the chosen steps are not asked "Apply?" again, but replacing an
     # existing different file is still its own question (default keep).
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
@@ -1408,7 +1670,8 @@ niri-setup *args:
         menu_multi "Niri setup: choose the steps (no sudo; nothing existing is replaced without asking)" \
             "niri^Niri config files in ~/.config/niri^1" \
             "portals^Portal config with the oo7 secret portal^1" \
-            "polkit^Noctalia polkit agent drop-in^1"
+            "polkit^Noctalia polkit agent drop-in^1" \
+            "keybinds^Keybind wizard (experimental)^$kb_flags"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -1442,6 +1705,40 @@ niri-setup *args:
                 finish_step niri "delete the copied files in ${cfg}/niri/ (or restore a .bak-* file); with no config.kdl niri falls back to /etc/niri/config.kdl"
             fi
         fi
+    fi
+
+    if sel keybinds; then
+        echo
+        echo "== keybinds"
+        echo "Keybind wizard (experimental): writes ${cfg}/niri/40-binds-standard.kdl (plus 41-binds-compact.kdl or 41-binds-hhkb.kdl) and swaps the include \"40-binds.kdl\" line of config.kdl for them. Without it you keep niri's default key bindings."
+        file_results=()
+        kb_run=0
+        if [ "$no_wizard" = 1 ]; then
+            echo "Skipped (--no-wizard): niri's default key bindings (40-binds.kdl) stay."
+            record "keybinds" "skipped (wizard not started)"
+        elif [ "$mode" = no ]; then
+            echo "Plan: would ask 'Start the keybind wizard (experimental)?' (default no)."
+            record "keybinds" "planned (would ask)"
+        elif [ "$kb_flags" = 1 ]; then
+            echo "Notice: the keybind wizard is experimental; the layouts and generated files may change between image versions. The result is checked with niri validate and the previous files are restored on failure."
+            kb_run=1
+        elif [ "$mode" = yes ]; then
+            echo "Skipped: --yes alone does not start the keybind wizard (it is experimental). Use --keybinds standard|compact|hhkb to run it without questions."
+            record "keybinds" "skipped (wizard not started)"
+        else
+            echo "Notice: the keybind wizard is experimental. The layouts and generated files may change between image versions; the result is checked with niri validate and the previous files are restored on failure, and you can always go back to niri's defaults (include \"40-binds.kdl\" in config.kdl)."
+            ask n "Start the keybind wizard (experimental)?"
+            if [ "$answer" != y ]; then
+                echo "Not started: niri's default key bindings stay."
+                record "keybinds" "skipped (wizard not started)"
+            elif kb_wizard; then
+                kb_run=1
+            else
+                echo "Wizard cancelled; nothing changed."
+                record "keybinds" "skipped (wizard cancelled)"
+            fi
+        fi
+        if [ "$kb_run" = 1 ]; then kb_apply; fi
     fi
 
     if sel portals; then
@@ -1497,6 +1794,7 @@ niri-setup *args:
             case "${names[$i]}" in
                 niri) echo "niri: reloads included config files live, no restart needed (a syntax error is shown in a notification)." ;;
                 portals) echo "portals: applies at your next login." ;;
+                keybinds) echo "keybinds: niri reloads the generated key bindings live (the wizard is experimental: the layouts may change between image versions)." ;;
                 polkit) echo "polkit: restart Noctalia (or log in again) for the drop-in to take effect." ;;
             esac
         fi
