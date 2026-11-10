@@ -220,6 +220,14 @@ jobs:
             check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/watermark.png /usr/share/octarine-os/logo/octarine-logo.png"
             check "plymouth theme selected" "grep -qx Theme=octarine /etc/plymouth/plymouthd.conf"
             check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
+            check "dconf profile lists the distro database" "grep -qx system-db:distro /etc/dconf/profile/user"
+            check "dconf keyfile of the image shipped" "grep -q ^enabled-extensions= /etc/dconf/db/distro.d/90-octarine-os"
+            check "dconf distro database is newer than our keyfile (dconf update ran)" "test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os"
+            check "dconf distro database holds our hot corner default" "grep -aq enable-hot-corners /etc/dconf/db/distro"
+            for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
+              check "fish accepts $f" "fish --no-execute $f"
+            done
+            check "gamemode defaults file shipped" "grep -qx renice=10 /etc/gamemode.ini"
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '

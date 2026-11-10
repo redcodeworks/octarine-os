@@ -28,6 +28,12 @@ cp -avf "/ctx/system_files"/. /
 chmod 0440 /etc/sudoers.d/10-timestamp-timeout
 visudo -c
 
+# System-wide GNOME defaults: compile the keyfiles in /etc/dconf/db/*.d (ours is distro.d/90-octarine-os) into the binary
+# databases dconf reads. /etc/dconf/profile/user already lists system-db:distro after the user database, so a user's
+# own setting always wins. A bad keyfile makes dconf exit non-zero and fails the build (set -e).
+dconf update
+test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os
+
 # --- Container signature policy for this image's registry path and its sibling ---
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
 # Everything is derived from them, so a fork only changes image-template.env and cosign.pub. The default image and
