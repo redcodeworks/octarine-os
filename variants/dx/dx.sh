@@ -20,8 +20,21 @@ dnf5 -y install --setopt=strict=1 "${extras[@]}"
 dnf5 clean all
 rm -rf /var/cache/libdnf5 /var/cache/dnf /var/log/dnf5.log* /var/log/dnf.log* /root/.cache 2>/dev/null || true
 
-# dx-only files (the VS Code Flatpak preinstall list)
+# dx-only files (the VS Code Flatpak preinstall list, the `ujust dev` recipe file, the sdk wrapper, the cargo PATH snippet)
 cp -avf /ctx/system_files/. /
+
+# `ujust dev` exists only in this image: ublue-os-just's /usr/share/ublue-os/justfile imports every file of its own package
+# plus the optional 60-custom.just, so the dx-only recipe file is imported by a line appended here (not in the default image)
+ujust_main=/usr/share/ublue-os/justfile
+dev_import='import? "/usr/share/ublue-os/just/70-octarine-dev.just"'
+test -f "${ujust_main}"
+test -s /usr/share/ublue-os/just/70-octarine-dev.just
+if ! grep -qxF "${dev_import}" "${ujust_main}"; then
+    [[ -z "$(tail -c1 "${ujust_main}")" ]] || echo >> "${ujust_main}"
+    echo "${dev_import}" >> "${ujust_main}"
+fi
+grep -qxF "${dev_import}" "${ujust_main}"
+chmod 0755 /usr/bin/sdk
 
 # Docker-compatible API socket for developer tools (rootful); the default image already enables the user one globally
 systemctl enable podman.socket

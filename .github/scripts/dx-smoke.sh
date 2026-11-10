@@ -5,7 +5,7 @@
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the dx image must carry exactly that one kernel).
 # IMAGE_CHANNEL (latest or beta, default latest: beta images carry a `beta-` IMAGE_VERSION).
-# For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR.
+# For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, BIN_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the
 # pipeline fails: the NVIDIA initramfs check was red for that reason). Output goes to a variable or a file first.
@@ -17,6 +17,8 @@ preinstall_dir="${PREINSTALL_DIR:-/usr/share/flatpak/preinstall.d}"
 policy_file="${POLICY_FILE:-/etc/containers/policy.json}"
 os_release="${OS_RELEASE:-/etc/os-release}"
 share_dir="${SHARE_DIR:-/usr/share}"
+etc_dir="${ETC_DIR:-/etc}"
+bin_dir="${BIN_DIR:-/usr/bin}"
 case "${IMAGE_CHANNEL:-latest}" in
     beta) version_re='beta-[0-9]{8}-[0-9a-f]{7,}' ;;
     *) version_re='[0-9]{8}-[0-9a-f]{7,}' ;;
@@ -29,6 +31,8 @@ kernels() { local d; for d in "${modules_dir}"/*/; do [ -d "${d}" ] && basename 
 kernel_count() { local k; k=$(kernels); if [ -z "${k}" ]; then echo 0; else grep -c . <<<"${k}"; fi; }
 one_kernel() { [ "$(kernel_count)" = 1 ]; }
 kernel_is_base() { local k; k=$(kernels); [ -n "${BASE_KERNEL:-}" ] && [ "${k}" = "${BASE_KERNEL}" ]; }
+# ujust --summary prints the recipe names on one line; capture first, never pipe into grep -q (pipefail)
+lists_dev() { local o; o=$(ujust --summary 2>&1) || return 1; o=${o//$'\n'/ }; [[ " ${o} " == *" dev "* ]]; }
 has_text() { # file, fixed text
     [ -r "$1" ] && grep -qF -- "$2" "$1"
 }
@@ -56,6 +60,14 @@ check "virtqemud.service present" "test -e ${unit_dir}/virtqemud.service"
 for p in libvirt cockpit-machines virtiofsd swtpm edk2-ovmf; do
     check "package ${p}" "rpm -q ${p}"
 done
+
+echo "== developer menu (ujust dev) and its files"
+check "ujust lists the dev recipe" "lists_dev"
+check "the dev recipe file is shipped" "test -s ${share_dir}/ublue-os/just/70-octarine-dev.just"
+check "the ujust main justfile imports the dev recipe file" "has_text ${share_dir}/ublue-os/justfile '70-octarine-dev.just'"
+check "the sdk wrapper is executable" "test -x ${bin_dir}/sdk"
+check "the cargo PATH snippet for sh exists and parses" "test -s ${etc_dir}/profile.d/octarine-dx-cargo.sh && sh -n ${etc_dir}/profile.d/octarine-dx-cargo.sh"
+check "the fish rustup snippet adds ~/.cargo/bin" "has_text ${share_dir}/fish/vendor_conf.d/octarine-os-30-rustup.fish 'fish_add_path'"
 
 echo "== tracing and developer extras (informational)"
 for p in bcc bpftrace trace-cmd numactl git-subtree git-svn ydotool cascadia-code-fonts; do

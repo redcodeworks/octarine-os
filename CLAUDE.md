@@ -176,6 +176,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
+- `tests/dev-setup.sh` tests `ujust dev` (dx only), the sdk wrapper, the fnm and cargo shell snippets and the dx-only wiring (see "Developer menu").
 - `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup").
 - `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
@@ -365,9 +366,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (`dev-toolbox` has it; check the `gaming` one).
 - **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image.
 
-## Recipe conventions (ujust recipes in `60-custom.just`)
+## Recipe conventions (ujust recipes in `60-custom.just`, and `70-octarine-dev.just` in the dx image)
 
-- Every public recipe has `[group('...')]` (Setup, Gaming, Toolbox, Appearance, System) and ONE `#` comment line that is
+- Every public recipe has `[group('...')]` (Setup, Gaming, Toolbox, Appearance, System; Developer in the dx image) and ONE `#` comment line that is
   its `ujust --list` description; usage text goes into `help`, `--help` or `-h` output of the recipe, not the comment.
 - Body: `#!/usr/bin/env bash`, `set -uo pipefail` (`-e` only where a failing step should stop). Positional arguments only
   (`[positional-arguments]` with `*args`). Unknown option or step: usage on stderr, exit 1 (2 for option errors in the
@@ -664,6 +665,75 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main`. The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
+
+## Developer menu (`ujust dev`, dx image only)
+
+- **Wiring.** The recipe is `variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just` (group Developer, one recipe `dev`).
+  ublue-os-just's `/usr/share/ublue-os/justfile` imports the files of its own package plus only the OPTIONAL `60-custom.just`
+  (`import?`), so a new file there is not seen by itself: `variants/dx/dx.sh` copies the dx `system_files`, then appends the line
+  `import? "/usr/share/ublue-os/just/70-octarine-dev.just"` to that justfile (idempotent, newline-safe, asserted with `grep -qxF`).
+  The default image has neither the file nor the line; `tests/dev-setup.sh` asserts that and runs the import block of `dx.sh`.
+  Other dx-only files: `variants/dx/system_files/usr/bin/sdk` (the SDKMAN wrapper, see below) and
+  `variants/dx/system_files/etc/profile.d/octarine-dx-cargo.sh`. The smoke test (`dx-smoke.sh`, env hooks `ETC_DIR`, `BIN_DIR`) checks that
+  `ujust --summary` lists `dev`, the recipe file, the import line, the wrapper and the profile snippet.
+- **Shape.** Follows the recipe skill: `help`/`--help`/`-h`, `--yes`, `--no` (plan only), `--only STEP[,STEP]`, the shared checklist
+  (`menu_multi`, NOTHING preselected, because nothing may run that was not ticked) with plain y/n prompts as the fallback,
+  summary with undo lines, option errors exit 2, fail-soft steps, exit 1 when any failed. `retry` runs a network command up to three times
+  (`DEV_RETRIES`, `DEV_RETRY_WAIT` seconds). Existing different files go through `place` (diff, default keep, timestamped backup).
+  A root user is refused. `--yes` without `--only libvirt` skips the libvirt step because it needs sudo (never an unprompted sudo).
+- **Steps (ids in order) and what they do.**
+  - `libvirt`: system libvirt. One `sudo sh -c '...'` built from only what is missing, run once and never retried; on failure the exact
+    command is printed. It copies the `libvirt` line from `/usr/lib/group` into `/etc/group` first when needed (Atomic keeps it only
+    there, same as `user-setup`), `usermod -aG libvirt`, `systemctl enable --now` for the missing ones of `virtqemud.socket`,
+    `virtnetworkd.socket`, `virtstoraged.socket`. The user file `~/.config/libvirt/libvirt.conf` gets `uri_default = "qemu:///system"` (`place`).
+    The default network is checked with `virsh -c qemu:///system` only once the group is in the session (`id -nG`), else a note says to log in
+    again and re-run: `net-autostart default`, or `net-define` from `/usr/share/libvirt/networks/default.xml`, autostart, start when missing.
+  - `tools`: second checklist of groups on a terminal (all preselected), per-group y/n without gum, all under `--yes`; one `brew install` per
+    formula (retried), installed ones skipped, a failed package is listed with `ujust dev --only tools` and does not stop the rest.
+    Groups: Editor `helix`; Python `ruff ty sqlfluff`; Web `prettier typescript-language-server vscode-langservers-extracted yaml-language-server marksman`;
+    Java `jdtls google-java-format`; Lua `lua-language-server stylua`; TOML `taplo`; SQL `sql-language-server`; GitHub `gh` (no login).
+    Debuggers were considered and not added: gdb is an image package and the IDEs bring their own.
+  - `vscode`: `flatpak install --user -y flathub com.visualstudio.code` (adds the flathub remote to the user installation when missing), with the
+    note "community-maintained build, not verified on Flathub".
+  - `jetbrains`: official cask `brew install --cask jetbrains-toolbox` (supports Linux since Oct 2026, `auto_updates`, so brew upgrade does not touch it);
+    the older ublue tap cask `jetbrains-toolbox-linux` is uninstalled first when present (default yes, the state in `$HOME` stays). The official cask only
+    links the binary, so the step writes `~/.local/share/applications/jetbrains-toolbox.desktop` (`Exec=<brew prefix>/bin/jetbrains-toolbox %u`, the stable
+    path, never the versioned Caskroom path; marked `X-Octarine-Generated=ujust dev`; validated with `desktop-file-validate` when present) and copies a
+    `*toolbox*.png` found under the cask's Caskroom directory to `~/.local/share/icons/hicolor/256x256/apps/jetbrains-toolbox.png`; no PNG found means a note, not a failure.
+  - `rust`: `~/.cargo/bin/rustup` present means "already set up" (shows `rustup show active-toolchain`), else `rustup-init -y --profile default --no-modify-path`;
+    then `rustup component add rust-analyzer rust-src` for the missing ones. PATH without rc edits: `/etc/profile.d/octarine-dx-cargo.sh` (dx only; appends
+    `~/.cargo/bin` to the END of PATH when it exists, idempotent) and the fish snippet, which is the existing default-image `octarine-os-30-rustup.fish`, extended
+    (sources `~/.cargo/env.fish` when present, else `fish_add_path --global --append ~/.cargo/bin` when the directory exists; harmless in the default image).
+  - `java`: SDKMAN through the OFFICIAL TAP, never a `curl | bash`: `brew install sdkman/tap/sdkman-cli` (the formula installs the pinned release zip with sha256
+    pins under `$(brew --prefix sdkman-cli)/libexec`; `brew install --help` of Homebrew 7.0.13 has no trust option, the fully qualified name is what the brief used) and
+    `brew pin sdkman/tap/sdkman-cli` (undo `brew unpin`). `sdkman-init.sh` hard-sets `SDKMAN_CANDIDATES_DIR=$SDKMAN_DIR/candidates`, so the JDKs would live inside the keg
+    and be lost on a brew upgrade or cleanup: the real directory is `~/.sdkman/candidates` and the keg's `libexec/candidates` is a symlink to it. The wrapper `/usr/bin/sdk`
+    re-checks that on every call (a formula upgrade recreates an empty directory; anything found there is MERGED into `~/.sdkman/candidates`, never deleted; a name present on
+    both sides leaves both and warns). The wrapper runs SDKMAN in a bash subshell (`sdkman-init.sh` defines `sdk` as a function and is not written for `set -u`); it
+    picks `~/.sdkman` when its `bin/sdkman-init.sh` exists (an installation made by SDKMAN's own script: used as it is, never migrated, the tap is not installed beside it),
+    else the tap's libexec. `sdk --octarine-relink` only does the symlink check and prints the SDKMAN_DIR (the recipe uses it and never depends on a user's own `~/.local/bin/sdk`,
+    which wins on PATH on the owner's machine). Then Zulu: `sdk list java` is parsed by the last `|` column (identifier ending in `-zulu`, `.fx` and `crac` builds excluded), the newest per
+    major of 8, 11, 17, 21, 25 by `sort -V`, skipped when a `^MAJOR[.+-]*-zulu` directory exists; `sdk install java ID` gets `n` on stdin (declines SDKMAN's default question), then
+    `sdk default java <21>`. Test hooks: `OCTARINE_SDK_WRAPPER`, `SDK_HOME_DIR`, `OCTARINE_BREW_PREFIX`.
+  - `node`: fnm (not nvm: nvm.sh costs several hundred milliseconds to source, upstream does not support Homebrew installs of nvm, Volta is unmaintained). `brew install fnm`,
+    `fnm install --lts`, `fnm default lts-latest` (`fnm default` is a shorthand for `fnm alias VERSION default`; `--lts` and `lts-latest` are from fnm's docs; the exact alias
+    handling was not run here). Shell files written with `place` into `~/.config/octarine-os/`: `fnm.sh` (bash and zsh) and `fnm.fish`; each caches `fnm env --use-on-cd --shell <sh>`
+    under `${XDG_CACHE_HOME:-~/.cache}/octarine-os/shell/fnm.<shell>`, regenerates it only when the fnm binary is newer than the cache (`-nt`, builtin) or when
+    `FNM_MULTISHELL_PATH` no longer exists (fnm keeps a per-shell directory, possibly on a tmpfs cleaned at reboot), and sources it. A consequence: every shell shares the
+    cached multishell path, so `fnm use` in one shell is seen by the others (unverified in practice). The step prints the one guarded `source` line per shell and offers to append
+    it to an existing `~/.zshrc`, `~/.bashrc` or `~/.config/fish/config.fish` (diff, timestamped backup, default keep, so `--yes` never edits them). It does not depend on `ujust shell-setup`.
+    An existing `~/.nvm` is untouched (fnm keeps versions in `~/.local/share/fnm`; `.nvmrc` works).
+  - `python`: `uv python install 3.12 3.13 3.14` for the missing ones; installed means a `cpython-<v>.` line of `uv python list --only-installed` whose path is under
+    `UV_PYTHON_INSTALL_DIR` or `~/.local/share/uv/python` (a system Python does not count), then the list is printed. `DEV_PYTHONS` is a test hook.
+- **Facts used.** The dx image carries `fuse-libs` (the Toolbox AppImage), Homebrew is on PATH for bash, zsh and fish, the VS Code Flatpak is NOT verified on Flathub (chosen knowingly),
+  Fedora's `rustup` RPM ships only `rustup-init`. `rustup-init` writes `~/.cargo/env` and `env.fish` even with `--no-modify-path` (it only skips rc edits).
+- **Tests.** `tests/dev-setup.sh`: stub brew, flatpak, rustup, rustup-init, fnm, uv, virsh, systemctl, sudo, id, getent, gum and the sdk wrapper on a restricted PATH, temp HOME;
+  covers fresh, already done, partial, a failed package, retries, missing brew, `--only`, `--yes` (no sudo), `--no`, the menu entries, the generated files, the real wrapper
+  (tap mode, symlink re-creation, merge, conflict), the fnm cache creation and reuse in bash, zsh and fish, the profile and fish snippets, and the dx-only placement.
+- **Unverified (needs a real machine).** A real `brew install` of every formula and the cask, `flatpak install` of the VS Code build, `sudo usermod` and the socket
+  enablement, `sdkman/tap/sdkman-cli` install and the symlink under a real brew upgrade, real `sdk list java` output (the parser was written against the documented table),
+  fnm's `lts-latest` alias, the icon file inside the real cask, the cached `fnm env` behavior across reboots, the libvirt default network on a real host, `ujust` seeing the
+  import line after a real dx build.
 
 ## Forking
 
