@@ -1,0 +1,20 @@
+// octarineOS niri configuration. This file only lists the parts; each part is a small file next to it.
+// niri uses /etc/niri/config.kdl when you have no ~/.config/niri/config.kdl; `ujust niri-setup` copies these files into
+// ~/.config/niri/ so you can edit them. To drop a part, delete (or comment out) its include line. Paths are relative to
+// this file, so the list works in both places. Later includes override earlier ones; your own settings go below the list.
+// The parts follow niri's default configuration (GPL-3.0-or-later); the reference is
+// https://niri-wm.github.io/niri/Configuration:-Introduction
+
+include "10-environment.kdl"
+include "20-input.kdl"
+include "30-layout.kdl"
+include "40-binds.kdl"
+include "50-noctalia.kdl"
+include "60-window-rules.kdl"
+
+// Monitors are machine specific and are not set here. Find the connector names with `niri msg outputs`, then add one
+// block per monitor below this line, for example:
+// output "DP-1" {
+//     mode "2560x1440@144.000"
+//     scale 1.0
+// }

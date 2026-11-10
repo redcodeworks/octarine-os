@@ -97,6 +97,18 @@ The image sets a few system-wide defaults for tools it ships. Your own settings 
 
 The files live under `/etc` (`dconf/db/distro.d`, `gamemode.ini`) and `/usr/share/fish`.
 
+## Niri session
+
+If you use the niri session, run `ujust niri-setup` once. It is a checklist with three steps, needs no sudo and asks before it replaces anything:
+
+- **niri:** copies the image's niri configuration into `~/.config/niri/` (`config.kdl`, which only lists the parts, plus one small file each for environment, input, layout, key bindings, the Noctalia shell and window rules). The copies are yours to edit. niri reloads them live.
+- **portals:** creates `~/.config/xdg-desktop-portal/niri-portals.conf` so apps in the niri session use the same secret store as the rest of the desktop. It applies at your next login.
+- **polkit:** creates `~/.config/noctalia/10-octarine-os.toml`, which turns on Noctalia's authentication agent; niri has none, so without it admin prompts fail. Restart Noctalia afterwards. Skipped when Noctalia is not installed.
+
+Without a niri configuration of your own, niri already falls back to the same shipped files. To drop the shipped key bindings, delete the `include "40-binds.kdl"` line from your `~/.config/niri/config.kdl`; deleting any other include line drops that part. A file you already have is never replaced silently: you see the differences and the default is to keep it; replacing saves a `.bak-<date>-<time>` copy first.
+
+To undo, delete the files the recipe created (it prints them); niri then uses the shipped fallback again.
+
 ## Beta channel
 
 A weekly build on top of Universal Blue's beta base is published as `ghcr.io/redcodeworks/octarine-os:beta`. It shows early whether a coming Fedora
@@ -176,6 +188,7 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 | `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists (`--dry-run` shows them); run it from a desktop terminal, safe to repeat |
 | `ujust user-setup` | Step-by-step checklist for a new user (see above; with `gum` installed it opens a proper checklist menu); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
 | `ujust gaming-setup` | Step-by-step checklist for gaming: Steam, ProtonUp-Qt and Lutris from Flathub (verified apps only), gamescope, MangoHud and Proton-GE for Steam, an experimental extest build, generated Steam launchers (including a gamescope one at your screen's resolution), and the GameMode tuning; `ujust gaming-setup reset` undoes it |
+| `ujust niri-setup` | Sets up a niri session in your home directory: editable niri config files, the portal file and the Noctalia polkit drop-in (see Niri session); never replaces a different file without asking; `--yes`, `--no`, `--only STEP[,STEP]` |
 | `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 
@@ -194,6 +207,8 @@ See `LICENSE`.
 
 The logo is a recolored version of the Fedora Silverblue logo; Fedora and the Fedora logo are trademarks of Red Hat, Inc.
 The wordmark is set in JetBrains Mono (SIL OFL 1.1, © The JetBrains Mono Project Authors).
+
+The shipped niri key bindings and defaults follow niri's own default configuration (GPL-3.0-or-later, by the niri authors).
 
 The experimental extest option of `ujust gaming-setup` builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
 and contributors (MIT license) from a pinned upstream commit; this repo ships none of its source.
