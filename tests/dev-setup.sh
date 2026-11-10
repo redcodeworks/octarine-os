@@ -192,7 +192,7 @@ case "$1" in
             *"test -f /etc/profile.d/cuda.sh"*) [ -f "$STATE/cuda-profile" ]; exit $? ;;
             *"nvcc"*) [ -f "$STATE/cuda-toolkit" ]; exit $? ;;
             *"dnf5 -y install"*) flagged install && exit 1; : >"$STATE/cuda-toolkit" ;;
-            *addrepo*) flagged repo && exit 1; : >"$STATE/cuda-repo" ;;
+            *cuda-fedora44.repo*) flagged repo && exit 1; : >"$STATE/cuda-repo" ;;
             *"nvidia-smi"*) [ -f "$STATE/fail-smi" ] && exit 1; echo "GPU 0: Stub" ;;
         esac
         exit 0
@@ -386,7 +386,7 @@ check "fresh --yes: fnm.sh and fnm.fish written" bash -c "[ -s '$HOME/.config/oc
 check "fresh --yes: uv installs the three Pythons" bash -c "grep -qx 'uv python install 3.12 3.13 3.14' '$LOG' && grep -q 'cpython-3.14' '$root/out'"
 check "fresh --yes: every attempted step applied, exit 0" bash -c "[ $rc = 0 ] && for s in tools vscode jetbrains rust java node python; do grep -qE \"^\$s +applied\" '$root/out' || exit 1; done"
 check "fresh --yes: an undo line per applied step" bash -c "for s in tools vscode jetbrains rust java node python; do grep -q \"^  \$s: \" '$root/out' || exit 1; done"
-check "fresh --yes: the SDKMAN installer URL is nowhere in the recipe" bash -c "! grep -qi 'get.sdkman.io\\|curl' '$justfile'"
+check "fresh --yes: the SDKMAN installer URL and any curl piped to a shell are nowhere in the recipe" bash -c "! grep -qiE 'get.sdkman.io|curl[^|]*\\|[[:space:]]*(ba)?sh' '$justfile'"
 check "fresh --yes: no rc file was touched (none existed, none created)" bash -c "[ ! -e '$HOME/.zshrc' ] && [ ! -e '$HOME/.bashrc' ] && [ ! -e '$HOME/.config/fish/config.fish' ]"
 
 # ---- already done: second run changes nothing
@@ -744,7 +744,7 @@ check "cuda without a driver: says so, creates nothing, exit 0" bash -c "[ $rc =
 cuda_world
 run '' --yes --only cuda
 check "cuda fresh: container created with the CDI device and the Fedora 44 toolbox image, not --nvidia" bash -c "[ $rc = 0 ] && grep -qx 'distrobox create --yes --name cuda --image registry.fedoraproject.org/fedora-toolbox:44 --additional-flags --device nvidia.com/gpu=all' '$LOG' && ! grep -q -- '--nvidia' '$LOG'"
-check "cuda fresh: fedora44 repo added, cuda-toolkit and gcc15-c++ installed, profile.d written, in that order" bash -c "a=\$(grep -n 'addrepo' '$LOG' | head -1 | cut -d: -f1); b=\$(grep -n 'dnf5 -y install cuda-toolkit gcc15-c++' '$LOG' | head -1 | cut -d: -f1); c=\$(grep -n 'tee /etc/profile.d/cuda.sh' '$LOG' | head -1 | cut -d: -f1); [ -n \"\$a\" ] && [ \"\$a\" -lt \"\$b\" ] && [ \"\$b\" -lt \"\$c\" ] && grep -q 'fedora44/x86_64' '$LOG' && grep -q 'NVCC_CCBIN=g++-15' '$LOG'"
+check "cuda fresh: fedora44 repo added, cuda-toolkit and gcc15-c++ installed, profile.d written, in that order" bash -c "a=\$(grep -n 'cuda-fedora44.repo' '$LOG' | head -1 | cut -d: -f1); b=\$(grep -n 'dnf5 -y install cuda-toolkit gcc15-c++' '$LOG' | head -1 | cut -d: -f1); c=\$(grep -n 'tee /etc/profile.d/cuda.sh' '$LOG' | head -1 | cut -d: -f1); [ -n \"\$a\" ] && [ \"\$a\" -lt \"\$b\" ] && [ \"\$b\" -lt \"\$c\" ] && grep -q 'fedora44/x86_64' '$LOG' && grep -q 'NVCC_CCBIN=g++-15' '$LOG'"
 check "cuda fresh: applied, undo line, check commands, never touches the host (no sudo, no brew, no rpm-ostree)" bash -c "grep -qE '^cuda +applied' '$root/out' && grep -q 'distrobox rm --force cuda' '$root/out' && grep -q 'nvcc --version' '$root/out' && grep -q 'distrobox enter cuda -- nvidia-smi' '$root/out' && ! grep -qE '^(sudo|brew|rpm-ostree)' '$LOG'"
 : >"$LOG"
 run '' --yes --only cuda
@@ -766,7 +766,7 @@ run '' --yes --only cuda
 check "cuda: a container that cannot be created: three tries, FAILED, exit 1, nothing installed" bash -c "[ $rc = 1 ] && [ \$(grep -c '^distrobox create' '$LOG') = 3 ] && ! grep -q 'dnf5' '$LOG' && grep -qE '^cuda +FAILED' '$root/out'"
 cuda_world; rm -rf "$root/cdi"
 run '' --yes --only cuda
-check "cuda: no host CDI spec: stops with the exact root command (not run), exit 1, no container" bash -c "[ $rc = 1 ] && grep -q 'sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml' '$root/out' && ! grep -qE '^(sudo|distrobox create)' '$LOG' && grep -qE '^cuda +FAILED' '$root/out'"
+check "cuda: no host CDI spec: stops with the exact root command (not run), exit 1, no container" bash -c "[ $rc = 1 ] && grep -q 'sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml' '$root/out' && grep -q 'reboot, or start nvidia-cdi-refresh.service' '$root/out' && ! grep -qE '^(sudo|distrobox create)' '$LOG' && grep -qE '^cuda +FAILED' '$root/out'"
 cuda_world
 run '' --yes --only cuda --image docker.io/nvidia/cuda:13.0.0-devel-ubuntu24.04
 check "cuda --image: that image is used and nothing is installed in it" bash -c "grep -q 'distrobox create --yes --name cuda --image docker.io/nvidia/cuda:13.0.0-devel-ubuntu24.04 ' '$LOG' && ! grep -q 'dnf5' '$LOG' && ! grep -q 'tee /etc/profile.d' '$LOG'"

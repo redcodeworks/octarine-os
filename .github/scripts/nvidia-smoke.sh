@@ -84,6 +84,9 @@ case "${mode}" in
         for p in nvidia-container-toolkit nvidia-container-toolkit-base; do
             if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO package ${p} installed"; else echo "INFO package ${p} NOT installed (needed for CDI)"; fi
         done
+        for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
+            if systemctl is-enabled "${u}" >/dev/null 2>&1; then echo "INFO ${u} enabled"; else echo "WARNING ${u} not enabled (CDI spec is not regenerated at boot; unverified)"; fi
+        done
         if command -v nvidia-ctk >/dev/null 2>&1; then echo "INFO nvidia-ctk present"; else echo "INFO nvidia-ctk NOT present (needed for CDI)"; fi
         ;;
     absent)
