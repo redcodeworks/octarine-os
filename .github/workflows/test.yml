@@ -29,7 +29,7 @@ jobs:
           for attempt in 1 2 3; do
             dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
               just jq fish zsh niri git python3 python3-pyyaml shellcheck gawk dconf bash-completion \
-              findutils diffutils which tar gzip zstd curl ca-certificates && exit 0
+              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils && exit 0
             echo "::warning::dnf install failed (attempt ${attempt}); retrying in 20 s"
             sleep 20
           done
@@ -39,16 +39,24 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Mark the workspace as safe for git
-        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+      # The container runs as root, but recipes and tests check that they are not run as root (no session bus), so
+      # everything after the install runs as an ordinary user, like on the desktop.
+      - name: Create the ordinary user the checks run as
+        run: |
+          useradd --create-home ci
+          git config --system --add safe.directory "${GITHUB_WORKSPACE}"
+          chown -R ci: "${GITHUB_WORKSPACE}"
 
       - name: Install the pinned just
         uses: ./.github/actions/setup-tool
         with:
           tool: just
 
+      - name: Make the pinned just usable by that user
+        run: install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
+
       - name: just check
-        run: just check
+        run: runuser -u ci -- just check
 
       - name: bash -n on every script
         run: |
@@ -61,16 +69,18 @@ jobs:
           exit "$fail"
 
       - name: Run every tests/*.sh
+        shell: runuser -u ci -- bash -e {0}
         run: |
           start=$(date +%s)
           pass=0; failed=()
           for t in tests/*.sh; do
             s=$(date +%s)
-            if bash "$t" >"/tmp/$(basename "$t").log" 2>&1; then
+            log=$(mktemp)
+            if bash "$t" >"$log" 2>&1; then
               pass=$((pass + 1)); echo "PASS ${t} ($(( $(date +%s) - s )) s)"
             else
               failed+=("$t"); echo "FAIL ${t} ($(( $(date +%s) - s )) s)"
-              sed 's/^/     /' "/tmp/$(basename "$t").log"
+              sed 's/^/     /' "$log"
             fi
           done
           echo "Summary: ${pass} passed, ${#failed[@]} failed, $(( $(date +%s) - start )) s in total"

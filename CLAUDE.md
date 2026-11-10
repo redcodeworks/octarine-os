@@ -123,7 +123,7 @@ Two jobs, with these exact names because they become required checks:
 - `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
   `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
   glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
-  skopeo, cosign, brew and the network, so none is skipped in CI. A new test script needs no workflow change.
+  skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
 Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
