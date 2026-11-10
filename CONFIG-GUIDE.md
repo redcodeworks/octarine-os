@@ -283,6 +283,12 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   replaced). Each step is skipped when the app is not installed or the change is already in place; Enter takes the
   default. `--yes` takes the defaults without asking, `--no` changes nothing and prints the plan. The summary lists how
   to undo each applied step.
+- **`dev [--yes|--no] [--only STEP[,STEP...]]` (dx image only):** a checklist of developer setup steps: `libvirt` (system
+  libvirt; the one `sudo` command), `tools` (Homebrew developer tools in groups), `vscode` (Flathub, not verified),
+  `jetbrains` (official Homebrew cask plus a launcher), `rust` (rustup, rust-analyzer, rust-src), `java` (SDKMAN from the
+  Homebrew tap, Zulu 8, 11, 17, 21, 25), `node` (fnm and the latest LTS) and `python` (uv-managed 3.12 to 3.14). Nothing
+  runs that you did not tick; `--yes` takes the defaults (and skips the `sudo` step unless you name it with
+  `--only libvirt`), `--no` prints the plan. Each step prints its undo line.
 - **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
   directory (`install-theme`, `switch-theme`, `install-icon`, `switch-icon`; no name opens a checklist with everything off).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one

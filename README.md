@@ -147,6 +147,27 @@ Visual Studio Code comes as a Flatpak (`ujust flatpak-preinstall` lists and inst
 Flathub, which Flathub does not mark as verified; it is not Microsoft's own package, so install it only if you are fine with that.
 The dx image is for my own use and is not tested beyond my machine.
 
+### Developer menu (dx image)
+
+`ujust dev` exists only in the developer image. On a terminal it opens a checklist of steps; nothing runs that you did not tick.
+`--yes` takes the defaults, `--no` only prints the plan, and `--only STEP[,STEP]` runs the named steps. Every step prints what it does and
+how to undo it, does nothing when it is already done, never replaces one of your files without showing a diff first (the default is keep),
+and retries downloads that fail. A failed step is reported with the command to run it again.
+
+| Step | What it sets up |
+|---|---|
+| `libvirt` | The system libvirt: you join the `libvirt` group (the only use of `sudo`, one security-key touch, effective at your next login), `qemu:///system` becomes the default for `virsh`, the daemon sockets are enabled and the default network autostarts |
+| `tools` | Homebrew developer tools in groups you pick: Editor (`helix`), Python (`ruff`, `ty`, `sqlfluff`), Web (`prettier`, `typescript-language-server`, `vscode-langservers-extracted`, `yaml-language-server`, `marksman`), Java (`jdtls`, `google-java-format`), Lua (`lua-language-server`, `stylua`), TOML (`taplo`), SQL (`sql-language-server`) and GitHub (`gh`, installed only, no login) |
+| `vscode` | Visual Studio Code from Flathub, the community-maintained build that Flathub does not verify |
+| `jetbrains` | JetBrains Toolbox from the official Homebrew cask, with a launcher and icon in your home directory (it replaces the older `jetbrains-toolbox-linux` cask if you have it; the Toolbox updates itself) |
+| `rust` | rustup with the default profile, plus `rust-analyzer` and `rust-src`; `~/.cargo/bin` reaches your `PATH` in bash, zsh and fish without any change to your shell files |
+| `java` | SDKMAN from the official Homebrew tap, then Azul Zulu 8, 11, 17, 21 and 25 with 21 as the default; the JDKs stay in `~/.sdkman/candidates`, so upgrading the formula cannot lose them |
+| `node` | `fnm` from Homebrew and the latest Node LTS as the default, plus two small files that start `fnm` in your shell quickly; you are shown one line to add to your shell startup file and asked before it is appended |
+| `python` | uv-managed Python 3.12, 3.13 and 3.14 (never the system Python) |
+
+SDKMAN is installed from its Homebrew formula only, never from a downloaded script. To undo a step, use the line printed in its summary
+(for example `brew uninstall <tool>`, `flatpak uninstall com.visualstudio.code`, `rustup self uninstall`, `uv python uninstall 3.12`).
+
 ## Which image is this?
 
 Every image identifies itself with `IMAGE_ID` and `IMAGE_VERSION` in `/etc/os-release`; the display name stays `octarineOS`. Read them with:
@@ -189,6 +210,7 @@ Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config
 | `ujust user-setup` | Step-by-step checklist for a new user (see above; with `gum` installed it opens a proper checklist menu); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
 | `ujust gaming-setup` | Step-by-step checklist for gaming: Steam, ProtonUp-Qt and Lutris from Flathub (verified apps only), gamescope, MangoHud and Proton-GE for Steam, an experimental extest build, generated Steam launchers (including a gamescope one at your screen's resolution), and the GameMode tuning; `ujust gaming-setup reset` undoes it |
 | `ujust niri-setup` | Sets up a niri session in your home directory: editable niri config files, the portal file and the Noctalia polkit drop-in (see Niri session); never replaces a different file without asking; `--yes`, `--no`, `--only STEP[,STEP]` |
+| `ujust dev` | Developer image only: a checklist for libvirt, Homebrew developer tools, VS Code, JetBrains Toolbox, Rust, Java, Node and Python (see Developer image); `--yes`, `--no`, `--only STEP[,STEP]` |
 | `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 
