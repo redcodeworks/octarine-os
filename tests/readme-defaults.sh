@@ -37,7 +37,7 @@ check "the Variants table has exactly the three images" bash -c "awk '/^## Varia
 
 # ---- recipes: every public recipe of the shipped recipe files is listed, marked DX only where dx-only
 recipes() { grep -hE '^[a-z][a-z0-9-]* (\*args)?:$' "$@" | sed -E 's/ .*//; s/:$//'; }
-default_recipes=$(recipes "$repo/system_files/usr/share/ublue-os/just/60-custom.just")
+default_recipes=$(recipes "$repo/system_files/usr/share/ublue-os/just/60-custom.just" "$repo/system_files/usr/share/ublue-os/just/10-update.just")
 dx_recipes=$(recipes "$repo"/variants/dx/system_files/usr/share/ublue-os/just/*.just)
 check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$dx_recipes\" = dev ]"
 for r in $default_recipes; do

@@ -125,6 +125,9 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "org.opencontainers.image.version=$(.github/scripts/image-version.sh)")
         # The full commit this image was built from (the scheduled skip check compares its content with main)
         LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
+        # The hash of the files that make the default image (not docs, not the dx-only files): a push whose hash is equal
+        # needs no new image, see .github/scripts/inputs-hash.sh
+        LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(.github/scripts/inputs-hash.sh vanilla)")
     fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images

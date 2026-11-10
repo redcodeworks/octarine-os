@@ -1,0 +1,9 @@
+[Unit]
+Description=Upgrade all distrobox containers
+Documentation=man:distrobox-upgrade(1)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/distrobox upgrade --all

@@ -4,7 +4,7 @@ name: Prune testing images
 # GHCR has no retention policy, so old `testing` builds are removed here. Keeps the newest builds,
 # deletes older ones together with their cosign signatures, and never touches anything tagged
 # latest*; a second pass keeps only the newest three `beta-*` builds (and whatever carries `beta`); the developer image
-# package (octarine-os-dx) keeps the newest three dated builds per channel (`latest-*`, `beta-*`). Scheduled runs only delete once the repository variable PRUNE_ENABLED is "true"; until
+# package (octarine-os-dx) keeps the newest KEEP testing builds and the newest three dated builds per channel (`latest-*`, `beta-*`). Scheduled runs only delete once the repository variable PRUNE_ENABLED is "true"; until
 # then they are dry runs. Start it by hand with dry_run on to see the plan first.
 on:
   schedule:
@@ -80,6 +80,9 @@ jobs:
           # never a version that holds the bare latest or beta tag
           export API_BASE="${scope}/packages/container/${image}-dx"
           if gh api "${API_BASE}" > /dev/null 2>&1; then
+            # the dx testing builds (`testing`, `testing-<sha>`): the same rule and count as the default package
+            echo "Package ${API_BASE}, testing builds, keep ${KEEP}, dry run: ${DRY_RUN}"
+            gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-testing.py
             echo "Package ${API_BASE}, keep 3 per channel, dry run: ${DRY_RUN}"
             gh api --paginate "${API_BASE}/versions?per_page=100" | PRUNE_KIND=dx KEEP=3 python3 .github/scripts/prune-testing.py
           else

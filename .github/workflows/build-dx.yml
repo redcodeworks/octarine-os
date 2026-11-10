@@ -1,20 +1,25 @@
 ---
 name: Build dx image
 # The developer image (ghcr.io/<owner>/octarine-os-dx): the published default image plus the developer toolchain of the
-# owner's dev-toolbox, in two channels that follow the default image's own:
-#   silverblue-main:45   -> octarine-os:latest -> octarine-os-dx:latest   (after "Build container image")
-#   silverblue-main:beta -> octarine-os:beta   -> octarine-os-dx:beta     (after "Build beta image")
-# It never runs on pushes or pull requests. It starts when one of those two workflows finishes on `main` (workflow_run,
-# which always runs the workflow file of the default branch, so nothing here can be tried from `testing`) or by manual
-# dispatch on `main`. A plan job resolves the base `octarine-os:<channel>` digest, verifies its signature and ends green
-# with "base unchanged, nothing to build" when the published dx image of that channel was built from the same base digest
-# and the same variants/dx tree (and no force was asked). Tags: `<channel>` and `<channel>-<date>-<sha>`, signed with the
-# repository key in the `signing` environment. Design in CLAUDE.md ("dx image").
+# owner's dev-toolbox, in three channels that follow the default image's own:
+#   octarine-os:testing  -> octarine-os-dx:testing   (after "Build container image" on `testing`)
+#   octarine-os:latest   -> octarine-os-dx:latest    (after "Build container image" on `main`: promotes the tested testing
+#                                                     image when base digest and dx inputs match, else builds)
+#   octarine-os:beta     -> octarine-os-dx:beta      (after "Build beta image" on `main`)
+# It never runs on pushes or pull requests. It starts when one of those workflows finishes (workflow_run, which always
+# runs the workflow file of the default branch, so nothing here can be tried from `testing` before the first promotion)
+# or by manual dispatch on `main` (latest or beta). The plan job (.github/scripts/plan-dx.sh) resolves the base digest,
+# verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
+# dx-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and
+# `testing-<sha>`), signed with the repository key in the `signing` environment. The aggregate job `Build dx and push
+# image` is the one result of a run; for a run on `testing` it also posts a commit status of the same name on the tested
+# commit (a workflow_run check run is attached to main's tip, not to the commit the pull request shows). Design in
+# CLAUDE.md ("dx image").
 on:
   workflow_run:
     workflows: ["Build container image", "Build beta image"]
     types: [completed]
-    branches: [main]
+    branches: [main, testing]
   workflow_dispatch:
     inputs:
       channel:
@@ -30,13 +35,13 @@ on:
         default: false
 
 env:
-  # latest after the default build, beta after the beta build; a dispatch names it
-  CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || 'latest') }}
+  # testing after a build of `testing`, beta after the beta build, latest after the default build of `main`; a dispatch names it
+  CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest')) }}
   FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
 
 # One group per channel; a run that is already building is never cancelled (a newer trigger waits, only one can wait)
 concurrency:
-  group: build-dx-${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || 'latest') }}
+  group: build-dx-${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest')) }}
   cancel-in-progress: false
 
 permissions:
@@ -45,27 +50,38 @@ permissions:
 jobs:
   plan:
     name: Plan the dx build
-    # `main` only, and for workflow_run only a successful scheduled, push or dispatched build of main (never a pull request)
+    # The workflow file of `main` only. For workflow_run: a successful scheduled, push or dispatched build, never a pull
+    # request, of `main` (either build) or of `testing` (the default build only: there is no beta channel on testing)
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
       contains(fromJSON('["schedule","push","workflow_dispatch"]'), github.event.workflow_run.event) &&
-      github.event.workflow_run.head_branch == 'main'))
+      (github.event.workflow_run.head_branch == 'main' ||
+      (github.event.workflow_run.head_branch == 'testing' && github.event.workflow_run.name == 'Build container image'))))
     runs-on: ubuntu-26.04
 
     outputs:
       build: ${{ steps.plan.outputs.build }}
+      promote: ${{ steps.plan.outputs.promote }}
       channel: ${{ steps.plan.outputs.channel }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
       base_digest: ${{ steps.plan.outputs.base_digest }}
+      dx_inputs: ${{ steps.plan.outputs.dx_inputs }}
+      source_tag: ${{ steps.plan.outputs.source_tag }}
+      source_digest: ${{ steps.plan.outputs.source_digest }}
 
     permissions:
       contents: read
       packages: read
 
     steps:
+      # The commit the triggering build ran for (for a dispatch: main's tip); history for the promotion search
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
 
       # Reads of a package that is not public yet need the token; harmless when it is public
       - name: Login to GitHub Container Registry
@@ -80,46 +96,9 @@ jobs:
         with:
           tool: cosign
 
-      - name: Resolve the base, verify it and compare with the published dx image
+      - name: Resolve the base, verify it, compare with the published dx image, look for a tested one
         id: plan
-        run: |
-          set -euo pipefail
-          [[ "${CHANNEL}" =~ ^(latest|beta)$ ]] || { echo "::error::Unknown channel '${CHANNEL}' (latest or beta)"; exit 1; }
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          base="ghcr.io/${owner}/octarine-os"
-          dx="ghcr.io/${owner}/octarine-os-dx"
-          tmp=$(mktemp)
-          skopeo inspect --raw "docker://${base}:${CHANNEL}" > "${tmp}"
-          [[ -s "${tmp}" ]] || { echo "::error::Cannot read ${base}:${CHANNEL}"; exit 1; }
-          digest="sha256:$(sha256sum "${tmp}" | sed 's/ .*//')"
-          # the base must carry our signature before anything is built on it
-          cosign verify --key cosign.pub "${base}@${digest}" > /dev/null
-          echo "Base image ${base}:${CHANNEL} = ${digest} (signature valid)"
-
-          tree=$(git rev-parse HEAD:variants/dx)
-          cfg=$(skopeo inspect --config "docker://${dx}:${CHANNEL}" 2>/dev/null) || cfg=""
-          labels=${cfg:-"{}"}
-          current=$(jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty' <<<"${labels}")
-          current_tree=$(jq -r '.config.Labels["io.github.redcodeworks.octarine-os.dx-tree"] // empty' <<<"${labels}")
-          build=true
-          if [[ -z "${cfg}" ]]; then
-            echo "No published ${dx}:${CHANNEL} yet (or it cannot be read): building"
-          elif [[ "${FORCE}" == "true" ]]; then
-            echo "Forced: building although the base is ${current:-unknown}"
-          elif [[ "${current}" != "${digest}" ]]; then
-            echo "The published dx image was built from ${current:-an unknown base}, the base is now ${digest}: building"
-          elif [[ "${current_tree}" != "${tree}" ]]; then
-            echo "variants/dx changed since the published dx image (${current_tree:-no tree label} -> ${tree}): building"
-          else
-            build=false
-            echo "::notice::base unchanged, nothing to build (${CHANNEL}: ${digest})"
-            echo "dx ${CHANNEL}: base unchanged, nothing to build (${digest})" >> "${GITHUB_STEP_SUMMARY}"
-          fi
-          {
-            echo "build=${build}"
-            echo "channel=${CHANNEL}"
-            echo "base_digest=${digest}"
-          } >> "${GITHUB_OUTPUT}"
+        run: .github/scripts/plan-dx.sh
 
   build:
     name: Build dx image
@@ -138,11 +117,15 @@ jobs:
 
     env:
       BASE_DIGEST: ${{ needs.plan.outputs.base_digest }}
+      BASE_TAG: ${{ needs.plan.outputs.base_tag }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
+      DX_INPUTS: ${{ needs.plan.outputs.dx_inputs }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
@@ -188,7 +171,7 @@ jobs:
           set -euo pipefail
           [[ "${BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::The plan job gave no base digest"; exit 1; }
           cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
-          echo "Base image ${BASE_IMAGE}:${CHANNEL} = ${BASE_DIGEST} (signature valid)"
+          echo "Base image ${BASE_IMAGE}:${BASE_TAG} = ${BASE_DIGEST} (signature valid)"
           podman pull "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
           kernel=$(podman run --rm "${BASE_IMAGE}@${BASE_DIGEST}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
           echo "Kernel of the base image: ${kernel}"
@@ -207,10 +190,11 @@ jobs:
           [[ "${CHANNEL}" != beta ]] || os_version="beta-${version}"
           podman build -f variants/dx/Containerfile \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
-            --build-arg "BASE_TAG=${CHANNEL}" \
+            --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
             --build-arg "IMAGE_VERSION=${os_version}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
+            --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \
             --unsetlabel org.opencontainers.image.maintainer \
             --unsetlabel org.opencontainers.image.authors \
             --unsetlabel io.artifacthub.package.maintainers \
@@ -224,9 +208,10 @@ jobs:
             --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --label "org.opencontainers.image.url=https://github.com/${GITHUB_REPOSITORY}/tree/${sha:0:7}" \
             --label "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
-            --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${CHANNEL}" \
+            --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${BASE_TAG}" \
             --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
             --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
+            --label "io.github.redcodeworks.octarine-os.dx-inputs=${DX_INPUTS}" \
             --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
             --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
             --label "io.artifacthub.package.deprecated=false" \
@@ -235,7 +220,7 @@ jobs:
             --label "io.artifacthub.package.logo-url=${IMAGE_LOGO_URL}" \
             --label "io.artifacthub.package.prerelease=false" \
             --tag "octarine-os-dx:${CHANNEL}" .
-          echo "Built octarine-os-dx:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST}"
+          echo "Built octarine-os-dx:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST} (${BASE_TAG}), dx inputs ${DX_INPUTS}"
 
       - name: Check image size
         env:
@@ -274,11 +259,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Only `<channel>` and `<channel>-<date>-<sha>` are pushed
+      # Only `<channel>` and `<channel>-<date>-<sha>` are pushed; the testing channel pushes `testing` and `testing-<sha>`
+      # (the tag the promotion search and the prune rule look for)
       - name: Tags
         id: tags
         run: |
-          alias_tags="${CHANNEL}-$(date +%Y%m%d)-$(git rev-parse --short HEAD) ${CHANNEL}"
+          sha=$(git rev-parse --short=7 HEAD)
+          if [[ "${CHANNEL}" == testing ]]; then
+            alias_tags="testing-${sha} testing"
+          else
+            alias_tags="${CHANNEL}-$(date +%Y%m%d)-${sha} ${CHANNEL}"
+          fi
           echo "Tags: ${alias_tags}"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 
@@ -298,9 +289,69 @@ jobs:
           digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
           echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
 
+  # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
+  # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
+  promote:
+    name: Promote tested dx image
+    needs: plan
+    if: needs.plan.outputs.promote == 'true'
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image: ${{ steps.tags.outputs.image }}
+      digests: ${{ needs.plan.outputs.source_digest }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name and tags
+        id: tags
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/octarine-os-dx" >> "${GITHUB_OUTPUT}"
+          alias_tags="latest-$(date +%Y%m%d)-$(git rev-parse --short=7 HEAD) latest"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retag the tested digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/octarine-os-dx
+          SOURCE_TAG: ${{ needs.plan.outputs.source_tag }}
+          SOURCE_DIGEST: ${{ needs.plan.outputs.source_digest }}
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          IMAGE="${IMAGE,,}"
+          export IMAGE
+          lookup=.github/scripts/registry-digest.sh
+          now=$("${lookup}" "${SOURCE_TAG}")
+          [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
+          for tag in ${ALIAS_TAGS}; do
+            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            after=$("${lookup}" "${tag}")
+            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
+            echo "promoted ${tag} -> ${after}"
+          done
+
   sign:
     name: Sign and verify dx image
-    needs: build
+    needs: [build, promote]
+    if: always() && (needs.build.result == 'success' || needs.promote.result == 'success')
     runs-on: ubuntu-26.04
     environment: signing
 
@@ -311,6 +362,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -324,7 +377,21 @@ jobs:
         with:
           tool: cosign
 
+      # Promote path: the digest was signed when the testing image was published; check it, never sign it again
+      - name: Verify the digest that was promoted is signed
+        if: needs.promote.result == 'success'
+        env:
+          IMAGE: ${{ needs.promote.outputs.image }}
+          DIGESTS: ${{ needs.promote.outputs.digests }}
+        run: |
+          set -euo pipefail
+          for digest in ${DIGESTS}; do
+            cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            echo "signed: ${digest}"
+          done
+
       - name: Sign every pushed digest
+        if: needs.build.result == 'success'
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
@@ -340,11 +407,55 @@ jobs:
 
       - name: Verify every pushed tag is signed
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
-          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags }}
+          IMAGE: ${{ needs.build.outputs.image || needs.promote.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags || needs.promote.outputs.alias_tags }}
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
             cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
+
+  # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the dx
+  # image was built, promoted or legitimately skipped (base and dx inputs unchanged). For a run on `testing` it also posts
+  # a commit status of the same name on the tested commit: a workflow_run check run is attached to main's tip, so the
+  # status is what a pull request into main can require. A plan that was skipped (a failed or cancelled build, the beta
+  # build on testing) posts nothing, so the pull request keeps waiting.
+  dx_result:
+    name: Build dx and push image
+    needs: [plan, build, promote, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the dx result
+        id: result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD_WANTED: ${{ needs.plan.outputs.build }}
+          PROMOTE_WANTED: ${{ needs.plan.outputs.promote }}
+          BUILD: ${{ needs.build.result }}
+          PROMOTE: ${{ needs.promote.result }}
+          SIGN: ${{ needs.sign.result }}
+        run: .github/scripts/aggregate-dx.sh
+
+      - name: Post the result as a commit status on the tested commit
+        if: always() && needs.plan.result != 'skipped' && github.event.workflow_run.head_branch == 'testing'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          OUTCOME: ${{ steps.result.outcome }}
+        run: |
+          set -euo pipefail
+          state=failure; text="dx image build, promotion or check failed"
+          if [[ "${OUTCOME}" == success ]]; then state=success; text="dx image built, promoted or unchanged"; fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state="${state}" -f context="Build dx and push image" -f description="${text}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

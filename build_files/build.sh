@@ -21,6 +21,13 @@ if [[ -n "$forbidden" ]]; then
     exit 1
 fi
 
+# Base recipe files that our own file of the same name wraps: keep the base copy as <name>-base.just. Our file imports it and
+# overrides single recipes (between two imported files the FIRST import wins, so a later file could not override them).
+# A missing base file fails the build, which is the signal that the base changed its layout.
+for f in 10-update 30-distrobox; do
+    mv "/usr/share/ublue-os/just/${f}.just" "/usr/share/ublue-os/just/${f}-base.just"
+done
+
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 

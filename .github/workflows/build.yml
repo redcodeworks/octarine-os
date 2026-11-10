@@ -5,7 +5,9 @@ name: Build container image
 # path filter) so the required "Build and push image" check always exists for the commit being promoted:
 # the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
 # aggregate job named "Build and push image" then passes without it. There is no pull_request trigger: a dev branch
-# is checked by test.yml, the image is built when the change is merged into `testing`. A manual dispatch from any
+# is checked by test.yml, the image is built when the change is merged into `testing`. A push whose default-image inputs
+# (inputs-hash.sh: everything but docs and the dx-only files) equal those of an already published, signed `testing`
+# image builds nothing (a dx-only change), and on `main` promotes by the same rule. A manual dispatch from any
 # other branch (`gh workflow run build.yml --ref <branch>`) builds as validation only: nothing is pushed or signed.
 on:
   schedule:
@@ -44,8 +46,8 @@ jobs:
     outputs:
       build: ${{ steps.final.outputs.build }}
       promote: ${{ steps.final.outputs.promote }}
-      source_tag: ${{ steps.promote.outputs.source_tag }}
-      source_digest: ${{ steps.promote.outputs.source_digest }}
+      source_tag: ${{ steps.promote.outputs.source_tag || steps.reuse.outputs.source_tag }}
+      source_digest: ${{ steps.promote.outputs.source_digest || steps.reuse.outputs.source_digest }}
       image: ${{ steps.names.outputs.image }}
       brew_pin_changed: ${{ steps.brewpin.outputs.changed }}
     steps:
@@ -111,8 +113,9 @@ jobs:
           revision=$(label org.opencontainers.image.revision)
           created=$(label org.opencontainers.image.created)
           repo_same=false
+          # equal default-image inputs count as the same repository (docs-only and dx-only changes do not rebuild it)
           if [[ -n "${revision}" ]] && git cat-file -e "${revision}^{commit}" 2>/dev/null \
-              && [[ "$(git rev-parse "${revision}^{tree}")" == "$(git rev-parse 'HEAD^{tree}')" ]]; then
+              && [[ "$(.github/scripts/inputs-hash.sh vanilla "${revision}")" == "$(.github/scripts/inputs-hash.sh vanilla HEAD)" ]]; then
             repo_same=true
           fi
           signed=false
@@ -142,24 +145,46 @@ jobs:
         run: |
           .github/scripts/plan-promote.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
 
+      # A push to testing whose default-image inputs equal those of a published testing image (a dx-only change) needs no
+      # build: the plan ends green and the aggregate check passes (see CLAUDE.md "dx image" and plan-vanilla-reuse.sh)
+      - name: Look for an identical default-image build on testing
+        id: reuse
+        if: steps.plan.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/testing'
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}
+          REGISTRY_LOOKUP: ${{ github.workspace }}/.github/scripts/registry-digest.sh
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          AFTER: ${{ github.sha }}
+        run: |
+          .github/scripts/plan-vanilla-reuse.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
+
       - name: Set up cosign
-        if: steps.promote.outputs.promote == 'true'
+        if: steps.promote.outputs.promote == 'true' || steps.reuse.outputs.reuse == 'true'
         uses: ./.github/actions/setup-tool
         with:
           tool: cosign
 
       # The signature belongs to the digest and exists from the testing publish; without a valid one the
       # normal build and sign runs instead
-      - name: Verify the signature of the image to promote
+      - name: Verify the signature of the image to promote or reuse
         id: verify
-        if: steps.promote.outputs.promote == 'true'
+        if: steps.promote.outputs.promote == 'true' || steps.reuse.outputs.reuse == 'true'
         continue-on-error: true
         env:
           IMAGE: ${{ steps.names.outputs.image }}
-          DIGEST: ${{ steps.promote.outputs.source_digest }}
+          DIGEST: ${{ steps.promote.outputs.source_digest || steps.reuse.outputs.source_digest }}
+          REUSE_INPUTS: ${{ steps.reuse.outputs.inputs }}
+          REUSE: ${{ steps.reuse.outputs.reuse }}
         run: |
+          set -euo pipefail
           cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
           echo "signature of ${DIGEST} is valid"
+          # a reused image must not carry a different inputs label (an image from before the label has none: the commit decides)
+          if [[ "${REUSE}" == true ]]; then
+            have=$(skopeo inspect --config "docker://${IMAGE}@${DIGEST}" | jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty')
+            [[ -z "${have}" || "${have}" == "${REUSE_INPUTS}" ]] || { echo "::error::${DIGEST} carries vanilla-inputs ${have}, this commit has ${REUSE_INPUTS}"; exit 1; }
+          fi
 
       - name: Final decision
         id: final
@@ -167,11 +192,16 @@ jobs:
           BUILD_PLAN: ${{ steps.plan.outputs.build }}
           SCHED_SKIP: ${{ steps.sched.outputs.skip }}
           CANDIDATE: ${{ steps.promote.outputs.promote }}
+          REUSE: ${{ steps.reuse.outputs.reuse }}
           VERIFY: ${{ steps.verify.outcome }}
         run: |
           if [[ "${CANDIDATE}" == true && "${VERIFY}" == success ]]; then
             build=false; promote=true
+          elif [[ "${REUSE}" == true && "${VERIFY}" == success ]]; then
+            build=false; promote=false
+            echo "default-image inputs unchanged, nothing to build" | tee -a "${GITHUB_STEP_SUMMARY}"
           else
+            [[ "${REUSE}" != true ]] || echo "::warning::The image of the same default-image inputs failed verification: building instead"
             build="${BUILD_PLAN}"; promote=false
             [[ "${SCHED_SKIP}" != true ]] || build=false
             [[ "${CANDIDATE}" != true ]] || echo "::warning::Signature verification of the testing image failed: building instead of promoting"

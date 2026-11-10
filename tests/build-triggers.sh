@@ -100,5 +100,42 @@ assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "b
 assert len(set(crons.values())) == len(crons)
 PY
 
+check "build.yml: the reuse step runs only for a push to testing whose plan wants a build, and feeds the verify and final steps" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+plan = {s.get("name"): s for s in w["jobs"]["plan"]["steps"]}
+r = plan["Look for an identical default-image build on testing"]
+assert r["id"] == "reuse"
+assert r["if"] == "steps.plan.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/testing'", r["if"]
+assert "plan-vanilla-reuse.sh" in r["run"]
+v = plan["Verify the signature of the image to promote or reuse"]
+assert "steps.reuse.outputs.reuse == 'true'" in v["if"] and "steps.promote.outputs.promote == 'true'" in v["if"]
+assert "vanilla-inputs" in v["run"]
+assert w["jobs"]["plan"]["outputs"]["source_digest"] == "${{ steps.promote.outputs.source_digest || steps.reuse.outputs.source_digest }}"
+PY
+check "build.yml: the final decision of the plan: promote, reuse (nothing to build), build, never skip on a failed verification" bash -s -- "$here" "$root" <<'SH'
+python3 - "$1" "$2" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+run = {s.get("name"): s for s in w["jobs"]["plan"]["steps"]}["Final decision"]["run"]
+open(sys.argv[2] + "/final-step.sh", "w").write(run)
+PY
+f="$2/final-step.sh"
+root=$2
+t() { local want=$1; shift; got=$(rm -f "$root/o"; BUILD_PLAN=$1 SCHED_SKIP=$2 CANDIDATE=$3 REUSE=$4 VERIFY=$5 GITHUB_OUTPUT="$root/o" GITHUB_STEP_SUMMARY="$root/sum" bash "$f" >/dev/null 2>&1 </dev/null; echo "$(sed -n 's/^build=//p' "$root/o") $(sed -n 's/^promote=//p' "$root/o")"); [ "$got" = "$want" ] || { echo "$*: got '$got' want '$want'"; exit 1; }; }
+t "false true"  true "" true  ""    success   # promote, verified
+t "true false"  true "" true  ""    failure   # promote candidate, verification failed: build
+t "false false" true "" ""    true  success   # dx-only change on testing: reused image verified, nothing to build
+t "true false"  true "" ""    true  failure   # reused image failed verification: build
+t "true false"  true "" ""    ""    skipped   # vanilla change: build
+t "false false" false "" ""   ""    skipped   # docs-only: plan said no
+t "false false" true true ""  ""    skipped   # scheduled skip
+SH
+check "Justfile: the build labels the image with the vanilla_inputs hash, the scheduled skip compares vanilla_inputs" bash -c "
+  grep -q 'io.github.redcodeworks.octarine-os.vanilla-inputs=\$(.github/scripts/inputs-hash.sh vanilla)' '$here/Justfile'
+  grep -q 'inputs-hash.sh vanilla \"\${revision}\"' '$here/.github/workflows/build.yml'"
+check "build.yml: promotion of main uses plan-promote.sh, which compares vanilla_inputs (a dx-only testing tip promotes the default image)" bash -c "
+  grep -q 'plan-promote.sh' '$here/.github/workflows/build.yml' && grep -q 'vanilla_inputs' '$here/.github/scripts/plan-promote.sh' && ! grep -q 'docs_only_between' '$here/.github/scripts/plan-promote.sh'"
+
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
