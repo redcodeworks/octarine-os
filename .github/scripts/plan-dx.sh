@@ -3,7 +3,11 @@
 # and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
 # Environment: CHANNEL (latest, beta or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
-# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx). Tools: git, skopeo, cosign, jq.
+# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx),
+# PROMOTE_FROM_TESTING (default true; false skips the search for a tested testing image: the NVIDIA developer image has no
+# testing channel). Tools: git, skopeo, cosign, jq.
+# The NVIDIA developer image (build-nvidia-dx.yml) runs this with CHANNEL=latest BASE_NAME=octarine-os-nvidia
+# DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false: it skips when the NVIDIA base digest and the dx inputs are unchanged.
 #
 # Base: octarine-os:<channel> for latest and beta, resolved to the digest of its raw manifest and verified with
 # cosign.pub before anything is built on it. The testing channel does NOT use the floating `testing` tag: it takes the
@@ -34,7 +38,7 @@ channel="${CHANNEL:?CHANNEL}"
 force="${FORCE:-false}"
 : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER}"
 owner="${GITHUB_REPOSITORY_OWNER,,}"
-# The image names are parameters (a later octarine-os-nvidia-dx would set BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx)
+# The image names are parameters (octarine-os-nvidia-dx sets BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx)
 base="ghcr.io/${owner}/${BASE_NAME:-octarine-os}"
 dx="ghcr.io/${owner}/${DX_NAME:-octarine-os-dx}"
 base_tag="${channel}"
@@ -102,7 +106,7 @@ else
         [[ "${cur_inputs}" == "${inputs}" ]] || echo "The dx inputs changed since the published dx image (${cur_inputs} -> ${inputs})"
     fi
     decision="building"
-    if [[ "${channel}" == latest ]]; then
+    if [[ "${channel}" == latest && "${PROMOTE_FROM_TESTING:-true}" == true ]]; then
         max=${MAX_WALK:-60}
         tags="testing"
         for c in $(git rev-list --max-count="${max}" HEAD); do tags+=" testing-$(git rev-parse --short=7 "${c}")"; done

@@ -1,0 +1,349 @@
+---
+name: Build NVIDIA dx image
+# The NVIDIA developer image (ghcr.io/<owner>/octarine-os-nvidia-dx): the SAME dx layer as octarine-os-dx (variants/dx, one
+# shared package list, ROCm included, no CUDA toolkit) on top of the NVIDIA variant octarine-os-nvidia instead of octarine-os.
+# The variant has only a `latest` channel (weekly, Sunday 12:00 UTC, main only), so this image has only `latest` and the
+# dated tags: it starts when "Build NVIDIA variant" finishes on `main` (workflow_run, which always runs the workflow file of
+# the default branch) or by manual dispatch on `main`; it never runs on pushes, pull requests or `testing`. The plan job
+# (.github/scripts/plan-dx.sh with BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false) skips
+# when the NVIDIA base digest and the dx inputs are unchanged. A separate workflow, not a matrix of build-dx.yml: that one
+# posts the required check `Build dx and push image` and its trigger and result logic must not change. THIS workflow never
+# posts that context (its result job has another name and posts no commit status), so it can neither satisfy nor block a
+# promotion pull request. Keep the build and sign steps in line with build-dx.yml. Design in CLAUDE.md ("NVIDIA dx image").
+on:
+  workflow_run:
+    workflows: ["Build NVIDIA variant"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Build even when the base digest and the dx inputs are unchanged"
+        type: boolean
+        default: false
+
+env:
+  CHANNEL: latest
+  FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
+
+# A run that is already building is never cancelled (a newer trigger waits, only one can wait)
+concurrency:
+  group: build-nvidia-dx
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the nvidia-dx build
+    # The workflow file of `main` only: a dispatch, or a successful scheduled or dispatched NVIDIA build of `main`
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event) &&
+      github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-26.04
+
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      channel: ${{ steps.plan.outputs.channel }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
+      base_digest: ${{ steps.plan.outputs.base_digest }}
+      dx_inputs: ${{ steps.plan.outputs.dx_inputs }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      # The commit the triggering build ran for (for a dispatch: main's tip)
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      # Reads of a package that is not public yet need the token; harmless when it is public
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the NVIDIA base, verify it, compare with the published nvidia-dx image
+        id: plan
+        env:
+          BASE_NAME: octarine-os-nvidia
+          DX_NAME: octarine-os-nvidia-dx
+          PROMOTE_FROM_TESTING: "false"
+        run: .github/scripts/plan-dx.sh
+
+  build:
+    name: Build nvidia-dx image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-26.04
+
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push.outputs.digests }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      BASE_DIGEST: ${{ needs.plan.outputs.base_digest }}
+      BASE_TAG: ${{ needs.plan.outputs.base_tag }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      DX_INPUTS: ${{ needs.plan.outputs.dx_inputs }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Check Just Syntax
+        run: |
+          just check
+
+      - name: Image names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "BASE_IMAGE=ghcr.io/${owner}/octarine-os-nvidia" >> "${GITHUB_ENV}"
+          echo "DX_IMAGE=ghcr.io/${owner}/octarine-os-nvidia-dx" >> "${GITHUB_ENV}"
+          echo "image=ghcr.io/${owner}/octarine-os-nvidia-dx" >> "${GITHUB_OUTPUT}"
+
+      # The shared developer package list is pinned by digest in the Containerfile: format check, then the signature
+      - name: Check the dev-packages pin
+        run: |
+          set -euo pipefail
+          tag=$(sed -n 's/^ARG DEV_PACKAGES_TAG=//p' variants/dx/Containerfile)
+          digest=$(sed -n 's/^ARG DEV_PACKAGES_DIGEST=//p' variants/dx/Containerfile)
+          [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "::error::DEV_PACKAGES_TAG missing or not latest or latest-YYYYMMDD-<sha> in variants/dx/Containerfile"; exit 1; }
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::DEV_PACKAGES_DIGEST missing or not sha256:<64 hex> in variants/dx/Containerfile"; exit 1; }
+          ref="ghcr.io/redcodeworks/dev-packages@${digest}"
+          cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null
+          echo "dev-packages pinned: ${tag} ${ref} (signature valid)"
+          echo "DEV_PACKAGES_REF=${ref}" >> "${GITHUB_ENV}"
+
+      # The digest comes from the plan job (octarine-os-nvidia:latest); verify it again here, then pull it and read its kernel
+      - name: Verify and pull the base image, read its kernel
+        run: |
+          set -euo pipefail
+          [[ "${BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::The plan job gave no base digest"; exit 1; }
+          cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
+          echo "Base image ${BASE_IMAGE}:${BASE_TAG} = ${BASE_DIGEST} (signature valid)"
+          podman pull "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
+          kernel=$(podman run --rm "${BASE_IMAGE}@${BASE_DIGEST}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
+          echo "Kernel of the base image: ${kernel}"
+          echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
+
+      # The same label set as `just build`, set explicitly (nothing about the base's maintainers is inherited); the labels
+      # that describe the base image's own build are unset, the rechunk step passes the rest on
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          set -a; . ./image-template.env; set +a
+          version=$(.github/scripts/image-version.sh)
+          sha=$(git rev-parse HEAD)
+          podman build -f variants/dx/Containerfile \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "BASE_TAG=${BASE_TAG}" \
+            --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
+            --build-arg "IMAGE_VERSION=${version}" \
+            --build-arg "DX_IMAGE_ID=octarine-os-nvidia-dx" \
+            --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
+            --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \
+            --unsetlabel org.opencontainers.image.maintainer \
+            --unsetlabel org.opencontainers.image.authors \
+            --unsetlabel io.artifacthub.package.maintainers \
+            --label "org.opencontainers.image.title=octarine-os-nvidia-dx" \
+            --label "org.opencontainers.image.description=octarineOS with the proprietary NVIDIA driver and the developer toolchain of dev-toolbox, VM tooling and tracing tools (NVIDIA developer image, built weekly from the NVIDIA variant; no CUDA toolkit, ujust dev installs it in a distrobox)" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --label "org.opencontainers.image.vendor=${REPO_ORGANIZATION}" \
+            --label "org.opencontainers.image.revision=${sha}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.url=https://github.com/${GITHUB_REPOSITORY}/tree/${sha:0:7}" \
+            --label "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${BASE_TAG}" \
+            --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
+            --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
+            --label "io.github.redcodeworks.octarine-os.dx-inputs=${DX_INPUTS}" \
+            --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
+            --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "io.artifacthub.package.deprecated=false" \
+            --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},developer" \
+            --label "io.artifacthub.package.license=Apache-2.0" \
+            --label "io.artifacthub.package.logo-url=${IMAGE_LOGO_URL}" \
+            --label "io.artifacthub.package.prerelease=false" \
+            --tag "octarine-os-nvidia-dx:${CHANNEL}" .
+          echo "Built octarine-os-nvidia-dx:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST} (${BASE_TAG}), dx inputs ${DX_INPUTS}"
+
+      - name: Check image size
+        env:
+          MAX_IMAGE_GIB: 15
+        run: |
+          size=$(podman image inspect "octarine-os-nvidia-dx:${CHANNEL}" --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"
+          if (( size > MAX_IMAGE_GIB * 1024 * 1024 * 1024 )); then
+            echo "::error::The image is larger than ${MAX_IMAGE_GIB} GiB; check what was added"
+            exit 1
+          fi
+
+      # Anything missing fails the build before anything is pushed: the dx checks and the NVIDIA checks (driver, kernel
+      # module, initramfs, and no CUDA toolkit anywhere in the image)
+      - name: Smoke test the image (dx checks)
+        run: |
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
+            -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" "octarine-os-nvidia-dx:${CHANNEL}" bash /smoke.sh
+
+      - name: Smoke test the image (NVIDIA checks)
+        run: |
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
+            -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" "octarine-os-nvidia-dx:${CHANNEL}" bash /smoke.sh present
+
+      - name: Rechunk with rpm-ostree
+        run: |
+          just ostree-rechunk octarine-os-nvidia-dx "${CHANNEL}"
+
+      - name: Check the version is channel-neutral
+        run: |
+          # the labels plus os-release IMAGE_VERSION of the rechunked image
+          {
+            podman image inspect "octarine-os-nvidia-dx:${CHANNEL}" \
+              | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
+            podman run --rm "octarine-os-nvidia-dx:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
+          } | BETA=false .github/scripts/check-version-neutral.sh
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tags the NVIDIA variant publishes on main (there is no testing channel)
+      - name: Tags
+        id: tags
+        run: |
+          date=$(date +%Y%m%d)
+          sha=$(git rev-parse --short HEAD)
+          alias_tags="latest-${sha} latest-${date}-${sha} ${date}-${sha} ${date} latest latest-${date}"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh "octarine-os-nvidia-dx:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
+
+  sign:
+    name: Sign and verify nvidia-dx image
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Sign every pushed digest
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGESTS: ${{ needs.build.outputs.digests }}
+        run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+          # old bundle format, as in build.yml (https://github.com/containers/container-libs/issues/388)
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+          done
+
+      - name: Verify every pushed tag is signed
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done
+
+  # The one result of a run (plan -> build -> sign -> this); always runs. Green when the image was built and signed or
+  # legitimately skipped (NVIDIA base digest and dx inputs unchanged). It is NOT named `Build dx and push image` and posts no
+  # commit status: that context belongs to build-dx.yml and is a required check on main.
+  nvidia_dx_result:
+    name: NVIDIA dx build result
+    needs: [plan, build, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check the result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD_WANTED: ${{ needs.plan.outputs.build }}
+          PROMOTE_WANTED: "false"
+          BUILD: ${{ needs.build.result }}
+          PROMOTE: skipped
+          SIGN: ${{ needs.sign.result }}
+        run: .github/scripts/aggregate-dx.sh

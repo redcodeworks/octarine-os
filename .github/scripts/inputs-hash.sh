@@ -15,13 +15,14 @@ set -euo pipefail
 # shellcheck source=docs-only.sh
 source "$(dirname "${BASH_SOURCE[0]}")/docs-only.sh"
 
-# The dx-only paths: the variant directory, the dx workflow and its scripts, the dx smoke and plan tests, the key the
+# The dx-only paths: the variant directory, the dx workflow (and the NVIDIA dx one, which builds the same layer) and its scripts, the dx smoke and plan tests, the key the
 # dev-packages pin is verified with. Everything else (Containerfile, build_files, system_files, Justfile, the other
 # workflows and scripts) belongs to the default image: a change there rebuilds it, and then dx follows its new digest.
 is_dx_only() {
     case "$1" in
         variants/dx/* | .github/workflows/build-dx.yml | .github/scripts/dx-smoke.sh | .github/scripts/plan-dx.sh) return 0 ;;
         .github/scripts/aggregate-dx.sh | keys/redcodeworks-toolbox-cosign.pub) return 0 ;;
+        .github/workflows/build-nvidia-dx.yml | tests/nvidia-dx-image.sh) return 0 ;;
         tests/dx-image.sh | tests/dev-setup.sh | tests/plan-dx.sh) return 0 ;;
         *) return 1 ;;
     esac

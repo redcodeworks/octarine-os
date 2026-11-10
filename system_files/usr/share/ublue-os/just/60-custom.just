@@ -2025,6 +2025,9 @@ switch-image *args:
     case "$image" in
         nvidia | nvidia-dx) echo "With Secure Boot, run 'ujust enroll-secure-boot-key' first if you have not enrolled the key." ;;
     esac
+    case "$image" in
+        nvidia-dx) echo "If bootc refuses with a signature-policy error, update to the newest image of your current line, reboot, and run this again (this image's signature rule only exists on images built after it was added)." ;;
+    esac
     case "$channel" in
         beta | testing) echo "The $channel channel is not tested for daily use." ;;
     esac
