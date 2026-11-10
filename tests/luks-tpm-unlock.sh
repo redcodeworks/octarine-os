@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for `ujust luks-tpm-unlock` (60-custom.just), the aliases that keep the base image's two LUKS recipe names working
-# (15-luks.just) and the recipes the image hides from `ujust --list` (30-distrobox.just, 50-akmods.just).
+# Tests for `ujust luks-tpm-unlock` (60-custom.just) and the recipes the image hides from `ujust --list` (30-distrobox.just,
+# 50-akmods.just). 15-luks.just is empty on purpose (the base's two LUKS recipes are gone).
 # Nothing real changes: sudo, lsblk, cryptsetup and systemd-cryptenroll are fakes; the LUKS state comes from FAKE_TPM
 # (devices that already have a TPM2 key). Needs: bash, just. Run: tests/luks-tpm-unlock.sh
 set -uo pipefail
@@ -51,7 +51,7 @@ EOF2
 cat >"$root/fakebin/systemd-cryptenroll" <<'EOF2'
 #!/bin/bash
 echo "cryptenroll $*" >>"$LOG"
-[ "${FAKE_ENROLL_FAIL:-}" = 1 ] && [[ "$*" != *--wipe-slot* ]] && exit 1
+[ "${FAKE_ENROLL_FAIL:-}" = 1 ] && [[ "$*" == *--tpm2-device* ]] && exit 1
 exit 0
 EOF2
 chmod +x "$root/fakebin/"*
@@ -98,8 +98,9 @@ check "enrolling the data volume gives no initramfs tip" hasnt "initramfs"
 run enroll "$data_uuid" --pin --yes
 check "a UUID selects the device; --pin passes through" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --tpm2-with-pin=yes /dev/nvme1n1"
 FAKE_TPM="/dev/nvme1n1" run enroll /dev/nvme1n1 --yes
-check "re-enrolling wipes the old TPM2 key first" bash -c "grep -n 'cryptenroll' '$LOG' | head -2 | grep -q 'wipe-slot=tpm2 /dev/nvme1n1'"
-check "re-enrolling then enrolls again" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 /dev/nvme1n1"
+check "re-enrolling is one call: enroll the new TPM2 key and wipe the old slot (the tool wipes only after the enrollment succeeded)" bash -c "[ \$(grep -c '^cryptenroll' '$LOG') = 1 ] && grep -q 'cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --wipe-slot=tpm2 /dev/nvme1n1' '$LOG'"
+FAKE_TPM="/dev/nvme1n1" FAKE_ENROLL_FAIL=1 run enroll /dev/nvme1n1 --yes
+check "a failed re-enrollment never runs a separate wipe" bash -c "[ $rc = 1 ] && [ \$(grep -c '^cryptenroll' '$LOG') = 1 ] && ! grep -q 'cryptenroll --wipe-slot=tpm2 ' '$LOG'"
 run enroll /dev/nvme0n1p3 /dev/nvme1n1 --yes
 check "two devices are enrolled in one go" bash -c "grep -q 'pcrs=7+14 /dev/nvme0n1p3' '$LOG' && grep -q 'pcrs=7+14 /dev/nvme1n1' '$LOG'"
 check "enrolling the root volume prints the initramfs tip and the reboot hint" bash -c "grep -q 'tpm2-tss' '$root/out' && grep -q 'Reboot' '$root/out'"
@@ -128,16 +129,31 @@ check "a failed enrollment exits 1 and says the passphrase still works" bash -c 
 FAKE_NO_LUKS=1 run enroll
 check "no LUKS devices: say so and exit 0" bash -c "[ $rc = 0 ] && grep -q 'No LUKS devices found' '$root/out'"
 
-# ---- the base image's recipe names keep working through aliases
-cat >"$root/Justfile" <<EOF2
-set allow-duplicate-recipes := true
-import "$justdir/15-luks.just"
-import "$justfile"
+# ---- the base image's two LUKS recipe names are gone (15-luks.just is empty); the assembled check is tests/just-recipes.sh
+check "15-luks.just defines no alias or recipe" bash -c "! grep -qE '^(alias |[a-z@\\[])' '$justdir/15-luks.just'"
+
+# ---- Esc leaves everything as it is: exit 0 and no cryptenroll. A fake ugum/gum that returns nothing is Esc; a terminal is faked.
+cat >"$root/fakebin/ugum" <<'EOF2'
+#!/bin/bash
+exit 130
 EOF2
-PATH="$root/fakebin:$PATH" just --justfile "$root/Justfile" setup-luks-tpm-unlock --help >"$root/out" 2>&1 </dev/null; rc=$?
-check "setup-luks-tpm-unlock is an alias of luks-tpm-unlock" bash -c "[ $rc = 0 ] && grep -q 'TPM unlock\\|unlock LUKS' '$root/out'"
-PATH="$root/fakebin:$PATH" just --justfile "$root/Justfile" remove-luks-tpm-unlock --help >"$root/out" 2>&1 </dev/null; rc=$?
-check "remove-luks-tpm-unlock is an alias of luks-tpm-unlock" bash -c "[ $rc = 0 ] && grep -q 'remove' '$root/out'"
+cat >"$root/fakebin/gum" <<'EOF2'
+#!/bin/bash
+exit 130
+EOF2
+chmod +x "$root/fakebin/ugum" "$root/fakebin/gum"
+escrun() {
+    : >"$LOG"
+    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_LUKS_CMDLINE="$root/cmdline" OCTARINE_LUKS_CPUINFO="$root/cpu-intel" \
+        just --justfile "$justfile" luks-tpm-unlock "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+escrun
+check "Esc at the action menu exits 0 and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'nothing changed' '$root/out' && ! grep -q cryptenroll '$LOG'"
+escrun enroll
+check "Esc (nothing ticked) at the device checklist exits 0 and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Nothing selected' '$root/out' && ! grep -q cryptenroll '$LOG'"
+escrun remove
+check "Esc at the remove checklist exits 0 and changes nothing" bash -c "[ $rc = 0 ] && ! grep -q cryptenroll '$LOG'"
 
 # ---- hidden recipes: private, so not listed, but still defined; the rest of the base file comes through
 mkdir -p "$root/hide"

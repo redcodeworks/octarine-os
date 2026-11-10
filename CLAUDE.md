@@ -33,7 +33,10 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   Fedora major upgrade: set the variable (the owner runs `gh variable set FEDORA_VERSION --body 46`; undo
   `gh variable delete`), run the build workflow on `testing` (changing a variable starts no build), `bootc switch`
   to the `testing` image, soak about a week, keep a deployment pinned, then merge; promotion only retags a tested digest.
-- `build_files/build.sh`: guard against secrets in `system_files`, copy `system_files`, generate the
+- `build_files/build.sh`: guard against secrets in `system_files`, rename the base recipe files `10-update.just` and
+  `30-distrobox.just` to `*-base.just` (our files of the same names import them; a missing one fails the build), copy
+  `system_files` (which overwrites the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just` with ours), fail if a
+  `toggle-nvk` recipe is still installed, generate the
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
@@ -149,7 +152,10 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   (PAM, sysctl, firewalld, `/etc` defaults) are fine in `system_files/`.
 - Podman only; no Docker daemon.
 - `sshd`, `tailscaled`, `cockpit.socket`, the snapper timers and `mcelog` stay off by default.
-  Leave `rpm-ostreed-automatic.timer` alone.
+  The image enables staged automatic updates by default: the base image's `ublue-os-update-services` enables
+  `rpm-ostreed-automatic.timer` and ships `/etc/rpm-ostreed.conf` with `AutomaticUpdatePolicy=stage` (our `build.sh` adds
+  nothing; the smoke test checks both). Image changes must not disable or alter that default. `ujust toggle-updates` is the
+  user's own switch for it, one source among the others, and `ujust update` follows that switch.
 - Never put security key registrations (`u2f_keys`), private keys or `.env` files in `system_files/`;
   the build guard and gitleaks hook both reject them.
 - `just` takes positional arguments only. Recipe text changes must pass `just --fmt --check`.
@@ -192,6 +198,10 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
+- `tests/just-recipes.sh` tests the image's just files assembled like the base `justfile` (parses, new recipes listed, removed
+  base recipes absent, every public recipe has a description); `tests/switch-image.sh`, `tests/update-services.sh` and
+  `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`
+  (Esc, the single-call re-enroll, the image-off line).
 - `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
   three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (default image without both, dx with the karg).
 - The default image carries no compilers or build tools (the dx image does); the toolbox the definition describes is
@@ -423,7 +433,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh (`dev-toolbox` has it; check the `gaming` one).
 - **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image. Virtual machines: the default image preinstalls GNOME Boxes (`gnome.preinstall`; its `org.gnome.Boxes.Extension.OsinfoDb` extension has no `no-autodownload` in the app's metadata, so Flatpak pulls it with the app and no entry is needed; unverified on a fresh install) and no virt-manager Flatpak (removed 2026-11-10); the dx image has virt-manager only as the RPM (`variants/dx/packages/extras.txt`) and no Flatpak copy.
 
-## Recipe conventions (ujust recipes in `60-custom.just`, and `70-octarine-dev.just` in the dx image)
+## Recipe conventions (ujust recipes in `60-custom.just` and `10-update.just`, and `70-octarine-dev.just` in the dx image)
 
 - Every public recipe has `[group('...')]` (Setup, Gaming, Toolbox, Appearance, System; Developer in the dx image) and ONE `#` comment line that is
   its `ujust --list` description; usage text goes into `help`, `--help` or `-h` output of the recipe, not the comment.
@@ -453,6 +463,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Scoped recipes (`gnome-candy`, `toolbox`) open a menu of their next commands when run with no arguments on a
   terminal; explicit arguments pass straight through.
 - Every recipe gets a test in `tests/` with stubbed binaries; tests fake a terminal with `OCTARINE_MENU_FORCE_TTY=1`.
+  Esc at any menu or an empty checklist exits 0 with "nothing changed" (tested for `switch-image` and `luks-tpm-unlock` with a
+  fake `ugum`/`gum` that returns nothing). No aliases when a recipe is renamed or merged (the two LUKS names are gone).
+- The `#` description must sit directly above the `[group(...)]` line of its recipe: a recipe inserted between them leaves
+  the other recipe without a description (`toolbox` lost its once). `tests/just-recipes.sh` assembles the image's just files
+  like the base `justfile` does and fails on any public recipe without a description.
 - The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
@@ -680,6 +695,15 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (`10-update.just`, `30-distrobox.just`) `import`s it and redefines single recipes (a missing base file fails the build, the
   signal that the base changed its layout); (3) a new recipe name. Aliases of the base (`upgrade`, `auto-update`) keep
   working because they resolve after all imports.
+- **Our files that stand in for base files (hub-facing, recorded 2026-11-09).** `10-update.just`, `15-luks.just`,
+  `30-distrobox.just`, `40-nvidia.just` and `50-akmods.just` under `system_files/usr/share/ublue-os/just/` are OUR files, not
+  the base's. On the image the base's `10-update.just` and `30-distrobox.just` are renamed `10-update-base.just` and
+  `30-distrobox-base.just` (build.sh) and imported by ours; the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just`
+  are overwritten by ours (not renamed, so nothing of them survives): `15-luks.just` and `40-nvidia.just` are empty on
+  purpose (the base's `setup-luks-tpm-unlock`, `remove-luks-tpm-unlock` and `toggle-nvk` are gone, no aliases, no stub),
+  `50-akmods.just` keeps `configure-broadcom-wl` as `[private]`. The base package builds `/usr/share/ublue-os/justfile`
+  with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
+  versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, `configure-broadcom-wl` in
   `50-akmods.just` (no Broadcom hardware or module). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
@@ -707,11 +731,14 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 ## `ujust luks-tpm-unlock`
 
 - One recipe in `60-custom.just` replaces the base's `setup-luks-tpm-unlock` and `remove-luks-tpm-unlock` (which handled the
-  root device only, from `rd.luks.uuid`): `15-luks.just` keeps both names as aliases. It lists every `crypto_LUKS` device
+  root device only, from `rd.luks.uuid`): `15-luks.just` is empty and both names are gone (no aliases). It lists every `crypto_LUKS` device
   (`lsblk`), reads the TPM2 token state with `sudo cryptsetup luksDump`, asks enroll or remove and then a checklist of
   devices (preticked: unenrolled ones for enroll, enrolled ones for remove), or takes `enroll|remove DEVICE...` (path or
-  UUID). Enroll wipes an existing TPM2 slot first, then `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14` (default:
-  Secure Boot state plus the MOK list; `--pcrs=7` binds Secure Boot only, `--pin` adds a PIN); remove is `--wipe-slot=tpm2` only, passphrases are never touched.
+  UUID). Enroll is ONE `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14` call (default:
+  Secure Boot state plus the MOK list; `--pcrs=7` binds Secure Boot only, `--pin` adds a PIN); a re-enroll adds `--wipe-slot=tpm2` to that same call, because systemd-cryptenroll(1) (systemd 262 in
+  this image) says: "in combination with any of the enrollment options ... the enrollment is completed first, and only when
+  successful the wipe operation executed -- and the newly added slot is always excluded from the wiping", so a cancelled or
+  failed enrollment keeps the old key; remove is `--wipe-slot=tpm2` only, passphrases are never touched.
 - Decisions: PCR 7+14 by default (the owner chose it 2026-11-09, as the base helper did; the owner's old script used 7 only; a MOK change
   (`mokutil --import` or `--delete`) or a Secure Boot change breaks the auto-unlock until re-enrolled, the passphrase still works);
   the base helper's AMD faulTPM warning is kept and needs a yes; the root-volume initramfs step of the base helper is a
@@ -724,7 +751,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `beta`, `testing`. It replaces the
   base image's `toggle-nvk` (Universal Blue's `40-nvidia.just`), which derived names by string substitution
   (`octarine-os-dx-nvidia-open` does not exist) and rebased without enforcing the signature policy; our `40-nvidia.just`
-  overrides that file and keeps a `toggle-nvk` that only points to `switch-image`.
+  overwrites that file and is empty, so `toggle-nvk` is gone (build.sh fails if a `toggle-nvk` recipe is still installed, the
+  smoke test checks the assembled `justfile`; `tests/just-recipes.sh`). Open, low priority: the recipe hard-codes the
+  `octarine-os*` image names, so on a fork it only works for forks that keep them (the registry is taken from the running image).
 - The running image comes from `rpm-ostree status -b --json` (transport prefix and digest stripped), the registry from the
   running image's own reference (so forks work; a foreign image falls back to `ghcr.io/redcodeworks`). With only an image it
   keeps the current channel, `latest` when the tag is pinned. Availability is checked with `skopeo inspect --raw` before

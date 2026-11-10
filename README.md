@@ -51,7 +51,7 @@ Added by this image:
 - Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning
 - Firewall zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale)
 - Security-key (YubiKey) touch for sudo and polkit (the password still works without a key); 30-minute sudo timeout
-- Images are signed; `bootc upgrade` refuses unsigned ones after step 3 below
+- Images are signed; after the second switch (Install, step 3) the system refuses unsigned updates
 
 ## Variants
 
@@ -61,8 +61,9 @@ Added by this image:
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager), tracing tools, the `iommu=pt` kernel argument, and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 
-Each image also has a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base that shows early
-what the next Fedora release would break. It is not tested for daily use.
+The default and dx images also have a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base
+that shows early what the next Fedora release would break. It is not tested for daily use. The NVIDIA image has only `latest`,
+and there is no combined NVIDIA and dx image yet.
 
 ## Install
 
@@ -108,7 +109,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, launchers and GameMode tuning |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
-| `ujust switch-image [image] [channel]` | Switches between the default, dx, nvidia and nvidia-dx images and the latest, beta and testing channels |
+| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia) or channel (latest, beta, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
