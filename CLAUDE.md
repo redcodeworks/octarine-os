@@ -149,6 +149,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
+- `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
@@ -369,6 +370,64 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
+
+## System defaults (dconf, fish, GameMode)
+
+- **Selection rule** for everything taken from the owner's public dot-files repo (`redcodeworks/dot-files`, read with
+  `gh api repos/redcodeworks/dot-files/contents/<path>?ref=main --jq .content | base64 -d`), decided file by file and
+  entry by entry; when in doubt EXCLUDE and list it in the pull request table. INCLUDE only what is sensible for any user of the image
+  and needs nothing personal. EXCLUDE: visual themes and colors (Gruvbox Material, shell theme, icon, cursor, font
+  choices), the keyboard model (MEH and HYPR), workspace names and window rules, an app-grid layout built around the
+  owner's apps, editor choice, personal paths and host names, anything tied to one machine or GPU, anything needing
+  software the image does not ship (unless guarded), settings for extensions the image does not ship.
+- **Paths.** dconf: `system_files/etc/dconf/db/distro.d/90-octarine-os` (a keyfile; group headers are dconf paths; no
+  locks), compiled by `dconf update` in `build.sh` right after `system_files` is copied (a bad keyfile fails the build;
+  `test distro -nt keyfile` follows). `/etc/dconf/profile/user` in the base is `user-db:user`, `system-db:local`,
+  `system-db:site`, `system-db:distro`, so the user's own value wins and our file only fills `distro`; the package
+  `authselect` already puts `distro.d/20-authselect` there. A key set in the `distro` database REPLACES the
+  schema default, it does not merge: `org.gnome.shell enabled-extensions` has the packaged default
+  `['background-logo@fedorahosted.org']` (Fedora's schema override), so our list starts with it. Extensions are enabled only when
+  the image ships them as RPMs (AppIndicator, GSConnect); a uuid that is not installed is ignored by GNOME Shell.
+  fish: `system_files/usr/share/fish/vendor_conf.d/octarine-os-NN-*.fish` (snippets) and
+  `vendor_functions.d/<name>.fish` (functions); `/etc/fish/config.fish` is never touched. fish loads a user file of the same
+  name from `~/.config/fish/conf.d/` (or `functions/`) INSTEAD of the vendor file, so an empty file disables a snippet.
+  Every snippet must be safe in a non-interactive shell (`status is-interactive` or a pure PATH/guarded source) and
+  every helper guarded with `command -q <tool>`. `fish_add_path --global` fills `fish_user_paths`, which fish puts in front of PATH after startup
+  (and it skips directories that do not exist). The base already ships `ublue-brew.fish` (brew shellenv), so no brew snippet is added.
+  GameMode: `system_files/etc/gamemode.ini` holds only `renice=10`; the machine-specific tuning (amd-pstate governor,
+  tuned profile) is the `ujust gaming-setup gamemode` source `usr/share/octarine-os/gamemode.ini`, installed into
+  `~/.config/gamemode.ini` (the user file overrides per key).
+- **Decisions (dot-files -> image).**
+
+  | Source | Entry | Decision | Reason |
+  |---|---|---|---|
+  | `20-interface.dconf` | `enable-hot-corners=false` | included | neutral behavior, one key, easy to undo |
+  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from gnome-themes |
+  | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
+  | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
+  | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
+  | | caffeine, blur-my-shell, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, blur-my-shell and the dock are visual, caffeine adds a panel icon, user-theme is useless without a theme) |
+  | | arcmenu, hotedge, coverflow, clipboard-indicator, tiling shell | excluded | not shipped |
+  | `10-app-folders.dconf` | folder layout | excluded | layout taste, replaces GNOME's own default folders (category-based, so a candidate if the owner wants it) |
+  | `31-shell-keybindings`, `42-tiling-shell`, `43-arcmenu` | all | excluded | shortcut model, extensions not shipped |
+  | `40-dash-to-dock`, `41-auto-move-windows`, `50-shell-theme` | all | excluded | look, owner's app list, Gruvbox shell theme |
+  | `10-dotfiles-brew.fish` | brew shellenv | excluded | the base ships `ublue-brew.fish` |
+  | `20-dotfiles-editor.fish` | helix as EDITOR | excluded | editor choice |
+  | `30-dotfiles-env.fish` | `~/.local/bin` on PATH | included | neutral |
+  | `40-dotfiles-steam-ld-preload.fish` | overlay LD_PRELOAD fix | included | generic, interactive only |
+  | `45-dotfiles-rustup.fish` | cargo env | included | guarded by the file existing |
+  | `50-dotfiles-interactive.fish` | colors, aliases, eza and fzf aliases | excluded | Gruvbox colors, personal aliases (`cp -i`, `lt` ...), tools not shipped |
+  | `60-dotfiles-fzf-colors.fish` | fzf colors | excluded | colors, fzf not shipped |
+  | `functions/fish_greeting.fish` | fastfetch greeting | excluded | personal fastfetch file path |
+  | `functions/y.fish` | yazi wrapper | included | guarded with `command -q yazi` |
+  | `gamemode.example.ini` | `renice=10` | included | generic |
+  | | `desiredgov=powersave`, `[custom]` tuned profile | excluded from `/etc` | AMD amd-pstate specific and needs tuned; stays in the `gaming-setup` user file |
+
+- **Refreshing a default from dot-files.** Read the dot-files file, apply the selection rule again, edit the shipped file
+  by hand (nothing is generated), run `tests/system-defaults.sh`. The image never copies dot-files wholesale.
+- Tests: `tests/system-defaults.sh` (placement and modes, `dconf compile`, `fish --no-execute`, snippet behavior in a temp HOME,
+  INI parse, build step, smoke checks in `build.yml` and `build-beta.yml`, and a grep that no excluded category is shipped).
+  Not verified in CI or here: a real boot reading the compiled database, fish loading the vendor snippets in a session.
 
 ## Image identity (`IMAGE_ID`, `IMAGE_VERSION`) and the fastfetch default
 

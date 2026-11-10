@@ -87,6 +87,16 @@ sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os
 sudo bootc rollback                                                                                    # boot the previous deployment
 ```
 
+## Defaults
+
+The image sets a few system-wide defaults for tools it ships. Your own settings in your home directory always win, and nothing is locked.
+
+- **GNOME:** hot corners off, and the tray-icon (AppIndicator) and GSConnect extensions on. Change any of it in Settings or Extensions; `gsettings reset <schema> <key>` returns to the image default.
+- **fish:** `~/.local/bin` on the path, the rustup and cargo environment when rustup is installed, a fix for the noisy "wrong ELF class" message in a terminal launched from Steam, and a `y` command that opens the yazi file manager and follows it to the folder you quit in. To turn one off, create an empty file with the same name in `~/.config/fish/conf.d/` (for `y`, in `~/.config/fish/functions/`).
+- **GameMode:** a higher scheduling priority for games (it needs your user in the `gamemode` group, which `ujust user-setup` adds). `ujust gaming-setup` can add more tuning to your own `~/.config/gamemode.ini`.
+
+The files live under `/etc` (`dconf/db/distro.d`, `gamemode.ini`) and `/usr/share/fish`.
+
 ## Beta channel
 
 A weekly build on top of Universal Blue's beta base is published as `ghcr.io/redcodeworks/octarine-os:beta`. It shows early whether a coming Fedora
