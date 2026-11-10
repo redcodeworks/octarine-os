@@ -37,7 +37,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
-- `.github/workflows/`: `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
+- `.github/workflows/`: `build-dx.yml` (the dx image, see "Input hashes and dx on testing"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -176,7 +176,8 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `.github/scripts/plan-build.sh`.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
-- `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
+- `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign) and `aggregate-dx.sh`.
+- `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
 - `tests/dev-setup.sh` tests `ujust dev` (dx only), the sdk wrapper, the fnm and cargo shell snippets and the dx-only wiring (see "Developer menu").
@@ -283,10 +284,10 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **Promotion (build once, promote).** A merge into `main` retags the already tested and signed `testing`
   image as `latest` instead of rebuilding. Off unless the repository variable `PROMOTE_ENABLED` is `true`
   (the owner sets it; the workflow never does). `plan-promote.sh` (tests: `tests/plan-promote.sh`, with a fake
-  registry lookup) promotes only when the push is to `main`, the commit is a merge (two parents), every file
-  differing between `HEAD^2` (the testing tip) and `HEAD` is docs-only, and walking first-parent history back
-  from `HEAD^2` reaches a commit C with a published `testing-<short sha>` tag without crossing a non-docs
-  change (so a docs-only testing tip, which has no image of its own, promotes the image of the commit behind
+  registry lookup) promotes only when the push is to `main`, the commit is a merge (two parents), `vanilla_inputs`
+  (see "Input hashes and dx on testing") of `HEAD^2` (the testing tip) and of `HEAD` are equal, and walking first-parent history back
+  from `HEAD^2` reaches a commit C with a published `testing-<short sha>` tag without crossing a commit whose
+  `vanilla_inputs` differ (so a docs-only or dx-only testing tip, which has no image of its own, promotes the image of the commit behind
   it). The plan job then verifies the digest against `cosign.pub`; if that fails it falls back to the normal
   build and sign. The `promote` job copies the manifest with `skopeo copy --all --preserve-digests` (skopeo is
   preinstalled on the runners) to every tag `just generate-build-tags` emits for `latest` (`latest`,
@@ -307,6 +308,55 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
   `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
   container`). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
+
+## Input hashes and dx on testing
+
+- **Two hashes, one script.** `.github/scripts/inputs-hash.sh` (tests: `tests/inputs-hash.sh`) hashes the sorted
+  `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
+  dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`, `.github/workflows/build-dx.yml`,
+  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx}.sh`.
+  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`). A new dx-only file must be
+  added to `is_dx_only` (its test checks that each listed path exists); a file in neither group is a default-image input.
+  Why hashes and not a `paths:` filter: a path filter on `build.yml` would leave the required check `Build and push image`
+  missing on a dx-only commit and block the promotion pull request.
+- **Default image (`build.yml`).** Still runs on every push, and the `plan` job decides. `just build` labels the image
+  `io.github.redcodeworks.octarine-os.vanilla-inputs` (inside the clean-tree block, next to `revision`; the rechunk passes it on; the dx
+  build unsets it). On a push to `testing` the step `Look for an identical default-image build on testing`
+  (`plan-vanilla-reuse.sh`) walks first-parent history back from the commit to the nearest one with a published `testing-<short sha>`
+  tag; if its `vanilla_inputs` equal the commit's (and the signature verifies, and the image's label, when present, is equal), the plan ends with
+  `build=false promote=false`, "default-image inputs unchanged, nothing to build", the aggregate `Build and push image` passes
+  (sign skipped, as for a docs-only push) and the `testing` tag stays on the earlier image. A commit between them that changes
+  `vanilla_inputs` stops the walk (build). Images from before the label have none: the commit decides. The scheduled skip compares
+  `vanilla_inputs` of the `latest` revision with HEAD instead of the git tree, so a dx-only change does not rebuild `latest` the next day.
+- **dx on testing (`build-dx.yml`).** `workflow_run` of "Build container image" now fires for `main` and `testing`
+  (`branches: [main, testing]`; the beta build only counts for `main`). Channels: `testing` (after a testing build; base
+  `octarine-os:testing`; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build), `beta`
+  (main only, dispatch or after the beta build; unchanged). Every checkout uses `workflow_run.head_sha` (a dispatch: main's tip).
+  `.github/scripts/plan-dx.sh` (tests: `tests/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
+  `org.opencontainers.image.base.digest` and `io.github.redcodeworks.octarine-os.dx-inputs` (new; `dx-tree` is still written but no longer compared):
+  skip only when BOTH equal the current base digest (raw manifest digest of the verified `octarine-os:<channel>`) and `dx_inputs` of the
+  commit; on `latest` otherwise look for a promotable testing image (candidates `testing`, then `testing-<sha7>` of the newest 60 commits of
+  HEAD; both labels must equal the current ones and the signature must verify) and retag it (job `promote`: `skopeo copy --all --preserve-digests`
+  to `latest` and `latest-<date>-<sha7>`, digest compared before and after; the `sign` job verifies, it does not sign again);
+  else build. After a vanilla promote the base digest of `latest` equals the tested digest, which is what makes the labels match.
+  Force always builds. Decision table (build / promote / skip), testing: nothing published or any label differs or force = build, both equal = skip;
+  latest: both equal = skip, a matching tested testing image = promote, else build; beta: both equal = skip, else build.
+  Change combinations on `testing`: dx-only = vanilla `reuse` (no vanilla build), dx builds; vanilla-only = vanilla builds, the new base digest
+  makes dx build; both = both; nothing/docs-only = vanilla skips, dx skips (labels equal); first run = both build.
+- **The dx result check.** The aggregate job `Build dx and push image` (`aggregate-dx.sh`, tested in `tests/plan-dx.sh`) is green when dx was
+  built and signed, promoted and verified, or legitimately skipped; it passes without a signal when the plan was skipped (a failed or
+  cancelled vanilla run, the beta build on testing). A `workflow_run` run is attached to main's tip (`GITHUB_SHA` is the default branch's), NOT to the
+  commit a pull request shows, so a required check from that job could never be satisfied on the promotion PR. For a run on `testing` the job therefore also
+  posts a commit status named `Build dx and push image` on `workflow_run.head_sha` (`statuses: write`, `gh api repos/.../statuses/<sha>`); it posts `failure`
+  when the result check fails and nothing when the plan was skipped, so the pull request keeps waiting. The ruleset for `main` can require that
+  status context (any source; it is not a check run of the Actions app).
+- **Prune.** `prune-testing.yml` now runs the generic testing pass on the `-dx` package too (same keep count as the default package; `testing-*` only versions,
+  promoted versions carrying `latest*` are never candidates) next to the dx per-channel pass.
+- **Cannot run before the first promotion.** `workflow_run` and `workflow_dispatch` use the workflow file of the default branch, so the new
+  `build-dx.yml` (testing trigger, promote job, status) first runs after this change is promoted to `main`; the first `testing` push after that
+  builds dx for the first time on testing. Until then the only checks are the stub tests and `bash -n`/YAML parses. Also unverified: the status
+  post (permissions), `actions/checkout` of a `head_sha` that is not on the default branch, the GHCR package being readable by the plan, and the promote retag of a dx
+  manifest.
 
 ## Base image and Fedora major upgrade
 
@@ -702,9 +752,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (the toolbox repository's cosign key, ECDSA) and only then edits the two ARG lines, recording the dated
   `latest-<date>-<sha>` tag that has the same digest. CI checks the pin's format and verifies the signature on every build.
   `tests/dx-image.sh` covers the recipe with fake skopeo and cosign.
-- **Workflow rules (`build-dx.yml`).** Triggers: `workflow_run` of "Build container image" and "Build beta image" (`completed`,
-  `branches: [main]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
-  or a feature branch and the first run happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The
+- **Workflow rules (`build-dx.yml`).** Since 2026-11-10 dx also builds on `testing` and promotes on `main`; the flow, the plan decision table, the
+  input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/plan-dx.sh`. The text below
+  describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: `workflow_run` of "Build container image" and "Build beta image" (`completed`,
+  `branches: [main, testing]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
+  or a feature branch and the first run of a changed file happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The
   plan job runs only when `github.ref == refs/heads/main` and (a dispatch, or the triggering run concluded `success`, its event
   is `schedule`, `push` or `workflow_dispatch`, and its `head_branch` is `main`; never a pull request). Channel: `beta` after
   the beta build, `latest` after the default build, the input on dispatch. Plan: resolves
@@ -746,7 +798,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
-  exists on `main`. The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
+  exists on `main` (for the testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 
 ## Developer menu (`ujust dev`, dx image only)
 

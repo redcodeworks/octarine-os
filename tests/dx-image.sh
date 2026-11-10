@@ -25,36 +25,39 @@ for name, job in w["jobs"].items():
             r = subprocess.run(["bash", "-n"], input=s["run"], text=True, capture_output=True)
             assert r.returncode == 0, (name, s.get("name"), r.stderr)
 PY
-check "workflow: triggers are workflow_run (both builds, completed, main) and dispatch only; no schedule, push or pull request" python3 - "$wf" <<'PY'
+check "workflow: triggers are workflow_run (both builds, completed, main and testing) and dispatch only; no schedule, push, pull request or feature branch" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 on = w.get(True) or w.get("on")
 assert set(on) == {"workflow_run", "workflow_dispatch"}, set(on)
 wr = on["workflow_run"]
 assert wr["workflows"] == ["Build container image", "Build beta image"], wr
-assert wr["types"] == ["completed"] and wr["branches"] == ["main"], wr
+assert wr["types"] == ["completed"] and wr["branches"] == ["main", "testing"], wr
 inp = on["workflow_dispatch"]["inputs"]
 assert set(inp) == {"channel", "force"}, inp
 assert inp["channel"]["options"] == ["latest", "beta"] and inp["channel"]["default"] == "latest"
 assert inp["force"]["type"] == "boolean" and inp["force"]["default"] is False
 PY
 check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml' && grep -qx 'name: Build beta image' '$here/.github/workflows/build-beta.yml'"
-check "workflow: the plan job builds only on main, after a successful schedule/push/dispatch run of main, never a pull request" python3 - "$wf" <<'PY'
+check "workflow: the plan job runs from main's file, after a successful schedule/push/dispatch run of main or of testing (testing: the default build only), never a pull request" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 cond = " ".join(w["jobs"]["plan"]["if"].split())
 for part in ("github.ref == 'refs/heads/main'", "github.event.workflow_run.conclusion == 'success'",
              "contains(fromJSON('[\"schedule\",\"push\",\"workflow_dispatch\"]'), github.event.workflow_run.event)",
-             "github.event.workflow_run.head_branch == 'main'", "github.event_name == 'workflow_dispatch'"):
+             "github.event.workflow_run.head_branch == 'main'", "github.event_name == 'workflow_dispatch'",
+             "(github.event.workflow_run.head_branch == 'testing' && github.event.workflow_run.name == 'Build container image')"):
     assert part in cond, (part, cond)
 assert "pull_request" not in cond
 assert w["jobs"]["build"]["needs"] == "plan" and w["jobs"]["build"]["if"] == "needs.plan.outputs.build == 'true'"
-assert w["jobs"]["sign"]["needs"] == "build"
+assert w["jobs"]["promote"]["needs"] == "plan" and w["jobs"]["promote"]["if"] == "needs.plan.outputs.promote == 'true'"
+assert w["jobs"]["sign"]["needs"] == ["build", "promote"]
+assert "feat" not in cond and "refs/heads/testing" not in cond
 PY
-check "workflow: the channel is beta after the beta build, latest after the default build, the input on dispatch" python3 - "$wf" <<'PY'
+check "workflow: the channel is testing after a build of testing, beta after the beta build, latest after the default build of main, the input on dispatch" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-expect = "github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || 'latest')"
+expect = "github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest'))"
 assert expect in w["env"]["CHANNEL"], w["env"]
 assert w["env"]["FORCE"].startswith("${{ github.event_name == 'workflow_dispatch' && inputs.force")
 assert w["concurrency"]["group"] == "build-dx-${{ " + expect + " }}", w["concurrency"]
@@ -62,32 +65,38 @@ assert w["concurrency"]["cancel-in-progress"] is False
 # the build and the later jobs take the channel from the plan job
 assert w["jobs"]["build"]["env"]["CHANNEL"] == "${{ needs.plan.outputs.channel }}"
 assert w["jobs"]["build"]["env"]["BASE_DIGEST"] == "${{ needs.plan.outputs.base_digest }}"
+assert w["jobs"]["build"]["env"]["BASE_TAG"] == "${{ needs.plan.outputs.base_tag }}"
+assert w["jobs"]["build"]["env"]["DX_INPUTS"] == "${{ needs.plan.outputs.dx_inputs }}"
 PY
 check "workflow: least privilege per job, signing in the signing environment, plan only reads packages" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert w["permissions"] == {"contents": "read"}
 assert w["jobs"]["plan"]["permissions"] == {"contents": "read", "packages": "read"}
-for n in ("build", "sign"):
+for n in ("build", "promote", "sign"):
     assert w["jobs"][n]["permissions"] == {"contents": "read", "packages": "write"}, n
+assert w["jobs"]["dx_result"]["permissions"] == {"contents": "read", "statuses": "write"}
+assert "environment" not in w["jobs"]["promote"] and "environment" not in w["jobs"]["dx_result"]
 assert w["jobs"]["sign"]["environment"] == "signing"
 assert "environment" not in w["jobs"]["build"] and "environment" not in w["jobs"]["plan"]
 PY
 check "workflow: every third-party action is pinned by SHA with a version comment" python3 - "$wf" <<'PY'
 import re, sys
 for line in open(sys.argv[1]):
-    m = re.search(r"uses:\s*(\S+)", line)
+    m = re.search(r"^\s*(?:- )?uses:\s*(\S+)", line)
     if m and not m.group(1).startswith("./"):
         ref = m.group(1).split("@", 1)[1]
         assert re.fullmatch(r"[0-9a-f]{40}", ref), line
         if "ublue-os/remove-unwanted-software" not in line:  # the other workflows pin this one without a comment too
             assert re.search(r"#\s*v\d", line), line
 PY
-check "workflow: pushes exactly <channel> and <channel>-<date>-<sha> (one push line, nothing else)" bash -c "
+check "workflow: pushes <channel> and <channel>-<date>-<sha> (testing: testing and testing-<sha>), one push line, nothing else" bash -c "
   [ \$(grep -c 'podman push' '$wf') = 1 ]
-  grep -q 'alias_tags=\"\${CHANNEL}-\$(date +%Y%m%d)-\$(git rev-parse --short HEAD) \${CHANNEL}\"' '$wf'
+  grep -q 'alias_tags=\"\${CHANNEL}-\$(date +%Y%m%d)-\${sha} \${CHANNEL}\"' '$wf'
+  grep -q 'alias_tags=\"testing-\${sha} testing\"' '$wf'
+  grep -q 'sha=\$(git rev-parse --short=7 HEAD)' '$wf'
   grep -q 'podman push --digestfile=/tmp/digestfile \"octarine-os-dx:\${CHANNEL}\" \"\${DX_IMAGE}:\${tag}\"' '$wf'
-  ! grep -qE 'generate-build-tags|tag-images|:testing' '$wf'"
+  ! grep -qE 'generate-build-tags|tag-images' '$wf'"
 check "workflow: every pushed digest is signed and both pushed tags are verified with cosign.pub" bash -c "
   grep -q 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY \"\${IMAGE}@\${digest}\"' '$wf'
   grep -q 'for digest in \${DIGESTS}' '$wf'
@@ -97,7 +106,8 @@ check "workflow: the base is verified (plan and build), the dev-packages pin is 
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 text = lambda j: "\n".join(s.get("run", "") for s in w["jobs"][j]["steps"])
-assert 'cosign verify --key cosign.pub "${base}@${digest}"' in text("plan")
+assert w["jobs"]["plan"]["steps"][-1]["run"].strip() == ".github/scripts/plan-dx.sh"
+assert 'cosign verify --key cosign.pub "${base}@${digest}"' in open(sys.argv[1].rsplit("/workflows/", 1)[0] + "/scripts/plan-dx.sh").read()
 assert 'cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}"' in text("build")
 assert 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}"' in text("build")
 names = [s.get("name") for s in w["jobs"]["build"]["steps"]]
@@ -114,60 +124,34 @@ check "workflow: the build is by digest and has explicit labels (base name and d
   for l in title description source licenses vendor revision version created url documentation base.name base.digest; do grep -q -- \"--label \\\"org.opencontainers.image.\$l=\" '$wf' || { echo missing \$l; exit 1; }; done
   grep -q -- '--unsetlabel org.opencontainers.image.maintainer' '$wf'
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.base-index-digest' '$wf'
-  grep -q 'io.github.redcodeworks.octarine-os.dx-tree=' '$wf'"
+  grep -q 'io.github.redcodeworks.octarine-os.dx-tree=' '$wf' && grep -q 'io.github.redcodeworks.octarine-os.dx-inputs=\${DX_INPUTS}' '$wf'
+  grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs' '$wf'"
 check "the other workflows do not mention the dx workflow, and the default build does not build dx" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml' '$here/.github/workflows/build-nvidia.yml'"
 
-# ---- the plan step, run with stub skopeo, cosign and git
-plan_script="$root/plan.sh"
-python3 - "$wf" "$plan_script" <<'PY'
+# ---- the plan: the decision table is tested in tests/plan-dx.sh (stub skopeo and cosign, temporary repository)
+check "plan: tests/plan-dx.sh passes (skip, promote, build per channel and the aggregate result)" bash "$here/tests/plan-dx.sh"
+check "workflow: the aggregate job is named 'Build dx and push image', always runs, needs plan, build, promote and sign, and posts the commit status of the same name only for testing" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-step = next(s for s in w["jobs"]["plan"]["steps"] if s.get("id") == "plan")
-open(sys.argv[2], "w").write(step["run"])
+j = w["jobs"]["dx_result"]
+assert j["name"] == "Build dx and push image" and j["if"] == "always()", j
+assert j["needs"] == ["plan", "build", "promote", "sign"], j["needs"]
+post = next(s for s in j["steps"] if "commit status" in s.get("name", ""))
+assert "github.event.workflow_run.head_branch == 'testing'" in post["if"] and "needs.plan.result != 'skipped'" in post["if"], post["if"]
+assert 'context="Build dx and push image"' in post["run"]
+assert any(s.get("run") == ".github/scripts/aggregate-dx.sh" for s in j["steps"])
 PY
-mkdir -p "$root/pbin" "$root/repo/variants/dx"
-echo x >"$root/repo/variants/dx/f"
-(cd "$root/repo" && git init -q . && git add -A && git -c user.email=t@t -c user.name=t commit -qm t)
-cat >"$root/pbin/skopeo" <<'F'
-#!/usr/bin/env bash
-echo "skopeo $*" >>"$PLOG"
-ref="${@: -1}"
-case "$1 $2" in
-    "inspect --raw") printf 'manifest of %s' "${ref}" ;;
-    "inspect --config") [[ -n "${DX_CONFIG:-}" ]] && { printf '%s' "${DX_CONFIG}"; exit 0; }; exit 1 ;;
-esac
-F
-cat >"$root/pbin/cosign" <<'F'
-#!/usr/bin/env bash
-echo "cosign $*" >>"$PLOG"
-exit "${COSIGN_RC:-0}"
-F
-chmod +x "$root/pbin"/*
-export PLOG="$root/plog"
-plan() { # channel, force; DX_CONFIG from the caller
-    : >"$PLOG"; : >"$root/gh_out"; : >"$root/gh_sum"
-    (cd "$root/repo" && PATH="$root/pbin:$PATH" CHANNEL="$1" FORCE="${2:-false}" GITHUB_REPOSITORY_OWNER=redcodeworks \
-        GITHUB_OUTPUT="$root/gh_out" GITHUB_STEP_SUMMARY="$root/gh_sum" bash -e "$plan_script")
-}
-want=$(printf 'manifest of docker://ghcr.io/redcodeworks/octarine-os:latest' | sha256sum | sed 's/ .*//')
-tree=$(cd "$root/repo" && git rev-parse HEAD:variants/dx)
-cfg() { printf '{"config":{"Labels":{"org.opencontainers.image.base.digest":"%s","io.github.redcodeworks.octarine-os.dx-tree":"%s"}}}' "$1" "$2"; }
-unset DX_CONFIG
-plan latest >"$root/out" 2>&1; check "plan: no published dx image builds" grep -qx build=true "$root/gh_out"
-check "plan: the base digest is that of the raw manifest, the channel is passed on" grep -qx "base_digest=sha256:${want}" "$root/gh_out"
-check "plan: the base signature was verified by digest with cosign.pub" grep -q "cosign verify --key cosign.pub ghcr.io/redcodeworks/octarine-os@sha256:${want}" "$PLOG"
-export DX_CONFIG; DX_CONFIG=$(cfg "sha256:${want}" "${tree}")
-plan latest >"$root/plan.out" 2>&1; check "plan: same base digest and same variants/dx tree ends green without a build" grep -qx build=false "$root/gh_out"
-check "plan: the notice says base unchanged, nothing to build" grep -q 'base unchanged, nothing to build' "$root/plan.out"
-plan latest true >"$root/out" 2>&1; check "plan: force builds although nothing changed" grep -qx build=true "$root/gh_out"
-DX_CONFIG=$(cfg "sha256:$(printf 'a%.0s' {1..64})" "${tree}")
-plan latest >"$root/out" 2>&1; check "plan: a different base digest builds" grep -qx build=true "$root/gh_out"
-DX_CONFIG=$(cfg "sha256:${want}" "0000000")
-plan latest >"$root/out" 2>&1; check "plan: a changed variants/dx tree builds" grep -qx build=true "$root/gh_out"
-DX_CONFIG=$(cfg "sha256:${want}" "${tree}")
-plan beta >"$root/out" 2>&1; check "plan: the beta channel reads octarine-os:beta" grep -q 'inspect --raw docker://ghcr.io/redcodeworks/octarine-os:beta' "$PLOG"
-COSIGN_RC=1 plan latest >"$root/out" 2>&1; check "plan: an unsigned base fails the job" test $? -ne 0
-plan sideways >"$root/out" 2>&1; check "plan: an unknown channel fails the job" test $? -ne 0
+check "workflow: every checkout takes the commit the triggering build ran for (head_sha), the plan with full history" python3 - "$wf" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1]))
+ref = "${{ github.event.workflow_run.head_sha || github.sha }}"
+for n in ("plan", "build", "promote", "sign"):
+    co = w["jobs"][n]["steps"][0]
+    assert co["uses"].startswith("actions/checkout@") and co["with"]["ref"] == ref, (n, co)
+assert w["jobs"]["plan"]["steps"][0]["with"]["fetch-depth"] == 0
+PY
+check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and after" bash -c "
+  grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'after=\$(\"\${lookup}\" \"\${tag}\")' '$wf'"
 
 # ---- Containerfile, scripts and package lists
 cf="$here/variants/dx/Containerfile"
@@ -372,6 +356,29 @@ print(json.dumps(vs))'; }
 out=$(sigv | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
 check "prune dx: the signature of a deleted image is deleted with it" grep -q 'DELETE sig   id=950 ' <<<"$out"
 check "prune dx: dry run is the default" bash -c "echo '[]' | env -u DRY_RUN PRUNE_KIND=dx python3 -I '$prune' | grep -q 'Nothing to prune'"
+check "prune workflow also prunes the dx testing builds (the generic testing pass on the -dx package, keep \$KEEP)" python3 - "$here" <<'PY'
+import re, sys
+t = open(sys.argv[1] + "/.github/workflows/prune-testing.yml").read()
+i = t.index('API_BASE="${scope}/packages/container/${image}-dx"')
+tail = t[i:]
+assert re.search(r'gh api --paginate "\$\{API_BASE\}/versions\?per_page=100" \| python3 \.github/scripts/prune-testing\.py', tail), tail
+assert 'keep ${KEEP}' in tail
+PY
+dx_tj() { cat <<EOJ
+[
+ {"id":1,"name":"sha256:$(printf 'a%.0s' {1..64})","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["testing-1111111"]}}},
+ {"id":2,"name":"sha256:$(printf 'b%.0s' {1..64})","created_at":"2026-01-02T00:00:00Z","metadata":{"container":{"tags":["testing-2222222","testing"]}}},
+ {"id":3,"name":"sha256:$(printf 'c%.0s' {1..64})","created_at":"2026-01-03T00:00:00Z","metadata":{"container":{"tags":["testing-3333333","latest","latest-20260103-3333333"]}}},
+ {"id":4,"name":"sha256:$(printf 'd%.0s' {1..64})","created_at":"2026-01-04T00:00:00Z","metadata":{"container":{"tags":["latest-20260104-4444444"]}}},
+ {"id":5,"name":"sha256:$(printf 'e%.0s' {1..64})","created_at":"2026-01-05T00:00:00Z","metadata":{"container":{"tags":["testing-5555555","testing"]}}}
+]
+EOJ
+}
+out=$(dx_tj | KEEP=1 DRY_RUN=true python3 -I "$prune" 2>&1)
+check "prune dx testing: an old testing build is deleted, the newest kept" bash -c "grep -q 'DELETE image id=1 ' <<<'$out' && ! grep -qE 'DELETE image id=5 ' <<<'$out'"
+check "prune dx testing: a promoted version (testing and latest tags) and dated latest builds are never deleted" bash -c "! grep -qE 'DELETE image id=(3|4) ' <<<'$out'"
+out=$(dx_tj | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
+check "prune dx: the dx kind leaves testing-shaped tags alone" bash -c "! grep -qE 'DELETE image id=(1|2|3|5) ' <<<'$out'"
 check "prune workflow passes the dx kind with keep 3 for the -dx package only" bash -c "grep -q 'PRUNE_KIND=dx KEEP=3' '$here/.github/workflows/prune-testing.yml' && grep -q 'packages/container/\${image}-dx' '$here/.github/workflows/prune-testing.yml'"
 check "the other prune kinds ignore dx-shaped tags" bash -c "dxj 5 5 | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I '$prune' | grep -q 'DELETE image id=[12]0[1-5] ' && exit 1 || exit 0"
 

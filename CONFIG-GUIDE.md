@@ -103,6 +103,10 @@ timers are installed but not enabled. Turn on what you use.
 - zsh is installed but not the default: `ujust user-setup` (step `shell`) switches your login shell to it and copies
   `/etc/skel/.zshrc`. Distrobox copies the host login shell, so toolbox images need zsh too for a zsh user
   (`gaming` unchecked).
+- CI, dx image: the developer image (`octarine-os-dx`) is built after the default image on `testing` (tags `testing`,
+  `testing-<sha>`) and promoted to `latest` on `main` when its base digest and dx inputs match, instead of being rebuilt.
+  A change that touches only the dx files does not rebuild the default image, and a docs-only change builds nothing.
+  The result of the dx run is the status `Build dx and push image` on the commit; details in `CLAUDE.md`.
 - CI: a newer push to `testing` (or a PR) cancels the older build; `main` and the scheduled run never are. A cancelled
   build can leave the `testing` tag unsigned until the next build finishes.
 
