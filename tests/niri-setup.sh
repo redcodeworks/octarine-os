@@ -287,7 +287,7 @@ if command -v niri >/dev/null 2>&1; then
     check "niri validate: all $((1 << n)) include combinations in a copied directory" test "$allok" = 1
     check "niri validate: the shipped /etc/niri set as it is" bash -c "niri validate -c '$etc_niri/config.kdl' >/dev/null 2>&1"
     check "niri validate: each part alone (including a part without the others)" bash -c "for f in '$etc_niri'/[0-9][0-9]-*.kdl; do niri validate -c \$f >/dev/null 2>&1 || exit 1; done"
-    check "niri validate: the copy that niri-setup makes (against the shipped sources)" bash -c "cd '$root' && rm -rf real && mkdir real; mkdir -p '$root/shipped/niri' && cp '$etc_niri'/*.kdl '$root/shipped/niri/' && cp '$share'/* '$root/shipped/' && PATH='$bin:$sysbin' HOME='$root/real' OCTARINE_NIRI_SETUP_SRC='$root/shipped' '$REAL_JUST' --justfile '$justfile' --working-directory '$root' niri-setup --yes --only niri >/dev/null 2>&1 && niri validate -c '$root/real/.config/niri/config.kdl' >/dev/null 2>&1 && cmp '$etc_niri/40-binds.kdl' '$root/real/.config/niri/40-binds.kdl'"
+    check "niri validate: the copy that niri-setup makes (against the shipped sources)" bash -c "cd '$root' && rm -rf real && mkdir real; mkdir -p '$root/shipped/niri' && cp '$etc_niri'/*.kdl '$root/shipped/niri/' && cp -r '$share'/* '$root/shipped/' && PATH='$bin:$sysbin' HOME='$root/real' OCTARINE_NIRI_SETUP_SRC='$root/shipped' '$REAL_JUST' --justfile '$justfile' --working-directory '$root' niri-setup --yes --only niri >/dev/null 2>&1 && niri validate -c '$root/real/.config/niri/config.kdl' >/dev/null 2>&1 && cmp '$etc_niri/40-binds.kdl' '$root/real/.config/niri/40-binds.kdl'"
 else
     echo "skip niri validate (niri is not installed here)"
 fi

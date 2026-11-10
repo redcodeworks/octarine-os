@@ -329,8 +329,17 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   the PATH line, optionally the extest library, and undoes the gamemode file when unchanged). Installed Flatpaks stay.
 - **`niri-setup [--yes|--no] [--only STEP[,STEP...]]`:** a checklist for the niri session. Steps: `niri` (copies
   `/etc/niri/*.kdl` into `~/.config/niri/`), `portals` (`~/.config/xdg-desktop-portal/niri-portals.conf`, with the Secret
-  portal set to oo7) and `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
-  Noctalia). A file that exists and differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+  portal set to oo7), `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
+  Noctalia) and `keybinds` (the EXPERIMENTAL keybind wizard, never part of the default run). A file that exists and
+  differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+- **Keybind wizard (experimental):** without it you keep niri's default key bindings. It asks for a layout (Standard keys
+  always, plus Compact with vim-style hjkl or HHKB, which exclude each other) and the modifiers for switching, moving and
+  other actions (Ctrl+Alt, Ctrl+Super, MEH, HYPR; Super for other actions too). MEH and HYPR need keys mapped in the
+  keyboard firmware (a custom QMK mapping), so they are never preselected. Switching and moving must use different
+  modifiers. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M]
+  [--move-mod M] [--other-mod M]`. It writes `40-binds-standard.kdl` (and `41-binds-compact.kdl` or `41-binds-hhkb.kdl`),
+  swaps the `include "40-binds.kdl"` line of `config.kdl` for them, checks the result with `niri validate` and restores the
+  previous files on failure. The layouts and generated files may change between image versions.
 
 Ideas for more, each a candidate for its own recipe:
 
