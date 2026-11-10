@@ -37,11 +37,11 @@ after=$(kernel_of)
 test "$(ls /usr/lib/modules | wc -l)" = 1
 [[ "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: kernel module directory changed"; exit 1; }
 
-# CDI (how a container gets the GPU, also what `ujust dev --only cuda` in the dx image uses): the driver install is expected to
-# bring nvidia-container-toolkit; when it did not, try the base package once. Failing is only a warning (the repository may not
-# be enabled here); the smoke test reports what is installed. The refresh units regenerate the CDI spec on boot and driver
-# changes (toolkit 1.18 and later); they are enabled only when they exist. UNVERIFIED on Fedora 45.
-if ! rpm -q nvidia-container-toolkit-base >/dev/null 2>&1; then
+# CDI (how a container gets the GPU, also what `ujust dev --only cuda` in the dx image uses): the akmods nvidia-install.sh
+# above installs the full nvidia-container-toolkit and enables nvidia-cdi-refresh.service/.path (per the ublue-os/akmods
+# sources, read 2026-11-10; the spec is written to /var/run/cdi/nvidia.yaml at boot). This is only a guarded fallback for when
+# neither toolkit package is there: try the base package once (a warning on failure). The units are enabled when they exist.
+if ! rpm -q nvidia-container-toolkit >/dev/null 2>&1 && ! rpm -q nvidia-container-toolkit-base >/dev/null 2>&1; then
     dnf5 -y install nvidia-container-toolkit-base || echo "WARNING: nvidia-container-toolkit-base is not installed; CDI needs it (nvidia-ctk cdi generate)"
 fi
 for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do

@@ -842,13 +842,13 @@ dev *args:
         if ! command -v distrobox >/dev/null 2>&1; then echo "FAILED: distrobox is not installed (it ships with the image)." >&2; fail_step cuda; return; fi
         repo_url="${DEV_CUDA_REPO_URL:-https://developer.download.nvidia.com/compute/cuda/repos/fedora44/x86_64/cuda-fedora44.repo}"
         create_cmd=(distrobox create --yes --name cuda --image "$img" --additional-flags "--device nvidia.com/gpu=all")
-        repo_cmd="grep -qs 'developer.download.nvidia.com/compute/cuda' /etc/yum.repos.d/*.repo || sudo dnf5 -y config-manager addrepo --from-repofile=$repo_url"
+        repo_cmd="grep -qs 'developer.download.nvidia.com/compute/cuda' /etc/yum.repos.d/*.repo || sudo curl -fsSL $repo_url -o /etc/yum.repos.d/cuda-fedora44.repo"
         install_cmd="sudo dnf5 -y install cuda-toolkit gcc15-c++"
-        profile_cmd="printf '%s\n' '# octarineOS (ujust dev --only cuda)' 'export PATH=/usr/local/cuda/bin:\$PATH' 'export NVCC_CCBIN=g++-15' | sudo tee /etc/profile.d/cuda.sh >/dev/null"
+        profile_cmd="printf '%s\n' '# octarineOS (ujust dev --only cuda)' 'export PATH=/usr/local/cuda/bin:\$PATH' '# safety pin for CUDA 13.3 (GCC 15 ok, 16 not); CUDA 13.5 accepts GCC 16, so this line can go' 'export NVCC_CCBIN=g++-15' | sudo tee /etc/profile.d/cuda.sh >/dev/null"
         if ! cdi_spec_present; then
             echo "  The host has no NVIDIA CDI spec (nvidia.yaml in /var/run/cdi or /etc/cdi), so the container cannot get the GPU." >&2
-            echo "  Generate it once with root (a security-key touch; this recipe never runs it):  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" >&2
-            echo "  or, if the image has the refresh units, enable them as root: systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service" >&2
+            echo "  The image's nvidia-cdi-refresh units write it to /var/run/cdi at boot: reboot, or start nvidia-cdi-refresh.service as root." >&2
+            echo "  Otherwise generate it once with root (a security-key touch; this recipe never runs it):  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml" >&2
             if [ "$mode" = no ]; then record cuda planned; return; fi
             echo "  Then re-run: ujust dev --only cuda" >&2
             fail_step cuda
