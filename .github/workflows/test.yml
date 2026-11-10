@@ -2,7 +2,7 @@ name: Test
 
 # The fast lane: every push to a dev branch runs the quick checks (just check, bash -n, tests/*.sh) and a secret scan.
 # No pull_request trigger: the push check run is reported on the commit, so the pull request sees it and nothing runs
-# twice. The image build is build.yml (testing and main).
+# twice. The image build is build.yml (testing and main pushes).
 on:
   push:
     branches-ignore:

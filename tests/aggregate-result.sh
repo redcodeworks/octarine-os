@@ -8,7 +8,7 @@ t() { # name want plan bw pw publish build promote sign
     PLAN=$3 BUILD_WANTED=$4 PROMOTE_WANTED=$5 PUBLISH=$6 BUILD=$7 PROMOTE=$8 SIGN=$9 "${script}" >/dev/null 2>&1 || rc=$?
     if { [[ $2 == pass && $rc == 0 ]] || [[ $2 == fail && $rc != 0 ]]; }; then echo "PASS $1"; else echo "FAIL $1 (rc=${rc})"; fail=1; fi
 }
-t "pull request build, nothing published" pass success true false false success skipped skipped
+t "validation build (dispatch from a dev branch), nothing published" pass success true false false success skipped skipped
 t "testing/main build published and signed" pass success true false true success skipped success
 t "published but sign failed" fail success true false true success skipped failure
 t "published but sign cancelled" fail success true false true success skipped cancelled

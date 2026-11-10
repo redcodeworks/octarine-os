@@ -4,12 +4,12 @@
 #   plan-build.sh <event> [<before> [<after>]]
 #
 # <event>           github.event_name
-# <before>/<after>  the commit range to diff: github.event.before and github.sha for pushes, the pull
-#                   request base and head commits for pull requests (after defaults to HEAD)
+# <before>/<after>  the commit range to diff: github.event.before and github.sha for pushes (after
+#                   defaults to HEAD)
 #
 # Rules:
 #   schedule, workflow_dispatch   always build
-#   push, pull_request            build unless every changed file in <before>..<after> is docs-only
+#   push                          build unless every changed file in <before>..<after> is docs-only
 #                                 (see is_docs); an empty, all-zero or unknown <before> (new branch,
 #                                 force push) or an empty diff builds
 # The workflow keeps the required check names by always running an aggregate job; it never uses a
@@ -25,7 +25,7 @@ before="${2-}"
 after="${3:-HEAD}"
 
 case "${event}" in
-    push | pull_request) ;;
+    push) ;;
     schedule | workflow_dispatch) echo true; exit 0 ;;
     *) echo "unknown event '${event}'" >&2; exit 1 ;;
 esac

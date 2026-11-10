@@ -73,11 +73,12 @@ assert re.fullmatch(r"\d+\.\d+\.\d+", inst["env"]["GITLEAKS_VERSION"])
 assert re.fullmatch(r"[0-9a-f]{64}", inst["env"]["GITLEAKS_SHA256"])
 assert "--retry" in inst["run"] and "sha256sum -c" in inst["run"]
 PY
-check "build.yml: untouched by this change (still has its pull_request trigger; no diff against origin/testing when available)" bash -c '
-  cd "$1" && grep -q "pull_request:" .github/workflows/build.yml || exit 1
-  if git rev-parse -q --verify refs/remotes/origin/testing >/dev/null && ! git diff --quiet origin/testing...HEAD -- . 2>/dev/null; then
-    base=$(git merge-base origin/testing HEAD) && [ -z "$(git diff --name-only "$base" HEAD -- .github/workflows/build.yml)" ] || { echo "build.yml differs from the merge base"; exit 1; }
-  fi' _ "$here"
+check "build.yml: no pull_request trigger (the image builds only on testing and main pushes, schedule, dispatch)" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+on = w.get(True) or w.get("on")
+assert "pull_request" not in on and "pull_request_target" not in on, set(on)
+PY
 
 echo
 echo "${pass} passed, ${failn} failed"
