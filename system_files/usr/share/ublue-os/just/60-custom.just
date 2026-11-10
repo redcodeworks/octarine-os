@@ -197,7 +197,7 @@ user-setup *args:
 
     if sel shell; then
     cur_step=shell
-    # 1b. login shell. New accounts get zsh from /etc/default/useradd; an account made before the rebase keeps its shell.
+    # 1b. login shell. zsh is opt-in: /etc/default/useradd keeps the packaged default, so this step is how a user gets zsh.
     # chsh is not installed on this image, so usermod -s does the change.
     echo
     echo "== login-shell"

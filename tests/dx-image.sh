@@ -241,7 +241,7 @@ smoke="$here/.github/scripts/dx-smoke.sh"
 check "smoke: bash syntax, no producer-pipe-into-grep -q (pipefail)" bash -c "bash -n '$smoke' && ! grep -v '^[[:space:]]*#' '$smoke' | grep -nE '\\|[[:space:]]*grep -q'"
 sb="$root/sb"
 mk_world() { # kernel dir name; rebuilds the stub world: a passing dx image
-    rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/sys" "$sb/modules/$1" "$sb/units" "$sb/pre" "$sb/share/ublue-os/just" "$sb/share/octarine-os/lib" "$sb/share/ublue-os/distrobox" "$sb/etc/profile.d" "$sb/usr-bin" "$sb/share/fish/vendor_conf.d"
+    rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/sys" "$sb/modules/$1" "$sb/units" "$sb/pre" "$sb/share/ublue-os/just" "$sb/share/octarine-os/lib" "$sb/share/ublue-os/distrobox" "$sb/etc/profile.d" "$sb/etc/default" "$sb/lib/bootc/kargs.d" "$sb/usr-bin" "$sb/share/fish/vendor_conf.d"
     for c in bash sh grep sed ls basename tr sort head cat python3 dirname; do p=$(command -v "$c") && ln -sf "$p" "$sb/sys/$c"; done
     for c in gcc g++ clang cmake ninja meson gdb pkgconf uv rustup-init fish qemu-kvm virt-manager virt-viewer virt-install visudo; do printf '#!/bin/sh\nexit 0\n' >"$sb/bin/$c"; done
     printf '#!/bin/sh\necho "dev niri-setup user-setup"\n' >"$sb/bin/ujust"
@@ -269,6 +269,7 @@ F
     printf '[Flatpak Preinstall com.visualstudio.code]\nBranch=stable\n' >"$sb/pre/dx.preinstall"
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
+    echo 'kargs = ["iommu=pt"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
@@ -277,7 +278,7 @@ F
 }
 smoke_run() { # BASE_KERNEL
     PATH="$sb/bin:$sb/sys" RPM_LIST="$sb/rpms" MODULES_DIR="$sb/modules" UNIT_DIR="$sb/units" PREINSTALL_DIR="$sb/pre" \
-        POLICY_FILE="$sb/policy.json" OS_RELEASE="$sb/os-release" SHARE_DIR="$sb/share" ETC_DIR="$sb/etc" BIN_DIR="$sb/usr-bin" BASE_KERNEL="$1" \
+        POLICY_FILE="$sb/policy.json" OS_RELEASE="$sb/os-release" SHARE_DIR="$sb/share" ETC_DIR="$sb/etc" BIN_DIR="$sb/usr-bin" LIB_DIR="$sb/lib" BASE_KERNEL="$1" \
         bash "$smoke" >"$root/smoke.out" 2>&1
 }
 K=7.2.15-300.fc45.x86_64
@@ -305,6 +306,9 @@ mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/octarine-os-dx":\[\]##' "$sb/pol
 mk_world "$K"; printf '#!/bin/sh\necho "niri-setup user-setup"\n' >"$sb/bin/ujust"; smoke_run "$K"; check "smoke: ujust must list the dev recipe" test $? -ne 0
 mk_world "$K"; rm "$sb/share/ublue-os/just/70-octarine-dev.just"; smoke_run "$K"; check "smoke: the dev recipe file is required" test $? -ne 0
 mk_world "$K"; : >"$sb/share/ublue-os/justfile"; smoke_run "$K"; check "smoke: the justfile import of the dev recipe file is required" test $? -ne 0
+mk_world "$K"; rm "$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: the dx image must carry the iommu=pt karg" test $? -ne 0
+mk_world "$K"; echo 'kargs = ["quiet"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: the karg file must contain iommu=pt" test $? -ne 0
+mk_world "$K"; sed -i 's#^SHELL=.*#SHELL=/usr/bin/zsh#' "$sb/etc/default/useradd"; smoke_run "$K"; check "smoke: zsh as the default shell of new users fails" test $? -ne 0
 mk_world "$K"; rm "$sb/usr-bin/sdk"; smoke_run "$K"; check "smoke: the sdk wrapper is required" test $? -ne 0
 mk_world "$K"; rm "$sb/etc/profile.d/octarine-dx-cargo.sh"; smoke_run "$K"; check "smoke: the cargo profile snippet is required" test $? -ne 0
 mk_world "$K"; SYSTEMCTL_FAIL=podman.socket smoke_run "$K"; check "smoke: a disabled podman.socket fails" test $? -ne 0

@@ -5,7 +5,7 @@
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the dx image must carry exactly that one kernel).
 # IMAGE_CHANNEL (latest or beta, default latest: beta images carry a `beta-` IMAGE_VERSION).
-# For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, BIN_DIR.
+# For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, BIN_DIR, LIB_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the
 # pipeline fails: the NVIDIA initramfs check was red for that reason). Output goes to a variable or a file first.
@@ -19,6 +19,7 @@ os_release="${OS_RELEASE:-/etc/os-release}"
 share_dir="${SHARE_DIR:-/usr/share}"
 etc_dir="${ETC_DIR:-/etc}"
 bin_dir="${BIN_DIR:-/usr/bin}"
+lib_dir="${LIB_DIR:-/usr/lib}"
 case "${IMAGE_CHANNEL:-latest}" in
     beta) version_re='beta-[0-9]{8}-[0-9a-f]{7,}' ;;
     *) version_re='[0-9]{8}-[0-9a-f]{7,}' ;;
@@ -74,6 +75,9 @@ for p in bcc bpftrace trace-cmd numactl git-subtree git-svn ydotool cascadia-cod
     if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO extra package ${p} installed"; else echo "INFO extra package ${p} NOT installed"; fi
 done
 
+echo "== kernel argument (dx only)"
+check "iommu=pt karg file is shipped" "has_text ${lib_dir}/bootc/kargs.d/10-iommu.toml 'iommu=pt'"
+
 echo "== services and Flatpak"
 check "podman.socket enabled" "systemctl is-enabled podman.socket"
 check "VS Code is in the dx preinstall list" "has_text ${preinstall_dir}/dx.preinstall '[Flatpak Preinstall com.visualstudio.code]'"
@@ -95,6 +99,7 @@ for r in octarine-os octarine-os-nvidia octarine-os-dx; do
     check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
 done
 check "sudoers valid" "visudo -c"
+check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd SHELL=/usr/bin/zsh"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
 check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"

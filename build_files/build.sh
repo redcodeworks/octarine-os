@@ -96,8 +96,8 @@ fi
 # naming the package. Optional packages are exempt.
 #
 # fish is optional: nothing in the image depends on it and it is never a login shell (bash stays the login
-# shell; new users get zsh). A user who configures their own terminal to start fish needs it installed,
-# which is their own setting.
+# shell; zsh is installed but opt-in: `ujust user-setup` offers it). A user who configures their own terminal to
+# start fish needs it installed, which is their own setting.
 
 # Packages can be installed from any enabled yum repo on the image.
 # RPMfusion repos are available by default in ublue main images
@@ -116,11 +116,9 @@ dnf5 install -y \
     pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale \
     gnome-shell-extension-user-theme borgbackup steam-devices zsh
 
-# Default login shell for NEW users is zsh (existing accounts and root keep theirs). Patch the packaged
-# /etc/default/useradd instead of shipping a copy, so its other defaults follow the shadow-utils package;
-# /etc of an ostree image is merged three-way on upgrade, so an unmodified-on-the-machine file follows the image.
-sed -i 's|^SHELL=.*|SHELL=/usr/bin/zsh|' /etc/default/useradd
-grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd
+# zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
+# is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
+if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
 grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
 
 # OPTIONAL: one group per transaction. Format: "<group name>:<space separated packages>".
