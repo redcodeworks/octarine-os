@@ -35,7 +35,7 @@ fi
 check "the default workflow never builds the variant" bash -c "! grep -q 'build-nvidia\|octarine-os-nvidia:' '$here/.github/workflows/build.yml' || ! grep -q 'variants/nvidia' '$here/.github/workflows/build.yml'"
 check "the default Containerfile and build.sh stay free of the NVIDIA install" bash -c "! grep -q 'nvidia-install' '$here/Containerfile' '$here/build_files/build.sh'"
 
-# ---- signature policy: both repositories, from either image name
+# ---- signature policy: all three repositories (default, NVIDIA, dx), from any of the image names
 policy_run() { # image name
     local t="$root/pol-$1"
     mkdir -p "$t/etc/containers/registries.d" "$t/etc/pki/containers"
@@ -44,10 +44,11 @@ policy_run() { # image name
         | sed -e "s#/etc/#$t/etc/#g" -e "s#/ctx/cosign.pub#$here/cosign.pub#g" >"$t/block.sh"
     IMAGE_ORG=redcodeworks IMAGE_NAME="$1" bash -e "$t/block.sh" >"$root/out" 2>&1
 }
-for n in octarine-os octarine-os-nvidia; do
+for n in octarine-os octarine-os-nvidia octarine-os-dx; do
     policy_run "$n"
     check "policy ($n image): rule for the default repository" grep -q '"ghcr.io/redcodeworks/octarine-os"' "$root/pol-$n/etc/containers/policy.json"
     check "policy ($n image): rule for the NVIDIA repository" grep -q '"ghcr.io/redcodeworks/octarine-os-nvidia"' "$root/pol-$n/etc/containers/policy.json"
+    check "policy ($n image): rule for the dx repository" grep -q '"ghcr.io/redcodeworks/octarine-os-dx"' "$root/pol-$n/etc/containers/policy.json"
     check "policy ($n image): the catch-all stays last" python3 -c "import json,sys; d=json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']; assert list(d)[-1]==''"
     check "policy ($n image): sigstore attachments enabled for the namespace" grep -q 'use-sigstore-attachments: true' "$root"/pol-$n/etc/containers/registries.d/*.yaml
 done
@@ -150,6 +151,21 @@ mk_image "$K"
 smoke present >"$root/out" 2>&1; grep -q 'FAIL the initramfs contains the nvidia modules' "$root/out"; check "smoke present: the backlight module in the initramfs does not count" test $? -eq 0
 printf '#!/usr/bin/env bash\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia-drm.ko"\n' >"$root/bin/lsinitrd"
 smoke present >"$root/out" 2>&1; check "smoke present: nvidia-drm.ko in the initramfs counts" test $? -eq 0
+# a long listing with the module first: grep -q exits early and must not turn lsinitrd's SIGPIPE into a failure
+cat >"$root/bin/lsinitrd" <<'F'
+#!/usr/bin/env bash
+echo "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia.ko.xz"
+for i in $(seq 1 20000); do echo "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/some/file-$i"; done
+F
+smoke present >"$root/out" 2>&1; check "smoke present: a long lsinitrd listing (SIGPIPE after the first match) passes" test $? -eq 0
+# an lsinitrd that prints nothing, or fails, fails the check and the diagnostics say why
+printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/lsinitrd"
+smoke present >"$root/smoke2.out" 2>&1; check "smoke present: an empty lsinitrd listing fails" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
+check "smoke present: the diagnostics show the lsinitrd exit status" grep -q 'DIAG lsinitrd exit status: 0' "$root/smoke2.out"
+printf '#!/usr/bin/env bash\necho "cpio: boom" >&2\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia.ko.xz"\nexit 3\n' >"$root/bin/lsinitrd"
+smoke present >"$root/smoke2.out" 2>&1; check "smoke present: a failing lsinitrd fails the check" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
+check "smoke present: the diagnostics keep lsinitrd's stderr and status" bash -c "grep -q 'DIAG lsinitrd exit status: 3' '$root/smoke2.out' && grep -q 'DIAG   cpio: boom' '$root/smoke2.out'"
+check "smoke present: the diagnostics list the nvidia lines and ls -l" bash -c "grep -q 'DIAG   .*extra/nvidia/nvidia.ko.xz' '$root/smoke2.out' && grep -q 'DIAG ls -l of the initramfs' '$root/smoke2.out'"
 cp "$root/lsinitrd.real" "$root/bin/lsinitrd"
 
 # ---- prune: released tags of the variant

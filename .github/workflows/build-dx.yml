@@ -1,0 +1,343 @@
+---
+name: Build dx image
+# The developer image (ghcr.io/<owner>/octarine-os-dx): the published default image plus the developer toolchain of the
+# owner's dev-toolbox, in two channels that follow the default image's own:
+#   silverblue-main:45   -> octarine-os:latest -> octarine-os-dx:latest   (after "Build container image")
+#   silverblue-main:beta -> octarine-os:beta   -> octarine-os-dx:beta     (after "Build beta image")
+# It never runs on pushes or pull requests. It starts when one of those two workflows finishes on `main` (workflow_run,
+# which always runs the workflow file of the default branch, so nothing here can be tried from `testing`) or by manual
+# dispatch on `main`. A plan job resolves the base `octarine-os:<channel>` digest, verifies its signature and ends green
+# with "base unchanged, nothing to build" when the published dx image of that channel was built from the same base digest
+# and the same variants/dx tree (and no force was asked). Tags: `<channel>` and `<channel>-<date>-<sha>`, signed with the
+# repository key in the `signing` environment. Design in CLAUDE.md ("dx image").
+on:
+  workflow_run:
+    workflows: ["Build container image", "Build beta image"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel to build"
+        type: choice
+        options:
+          - latest
+          - beta
+        default: latest
+      force:
+        description: "Build even when the base digest is unchanged"
+        type: boolean
+        default: false
+
+env:
+  # latest after the default build, beta after the beta build; a dispatch names it
+  CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || 'latest') }}
+  FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
+
+# One group per channel; a run that is already building is never cancelled (a newer trigger waits, only one can wait)
+concurrency:
+  group: build-dx-${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || 'latest') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the dx build
+    # `main` only, and for workflow_run only a successful scheduled, push or dispatched build of main (never a pull request)
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      contains(fromJSON('["schedule","push","workflow_dispatch"]'), github.event.workflow_run.event) &&
+      github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-26.04
+
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      channel: ${{ steps.plan.outputs.channel }}
+      base_digest: ${{ steps.plan.outputs.base_digest }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Reads of a package that is not public yet need the token; harmless when it is public
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the base, verify it and compare with the published dx image
+        id: plan
+        run: |
+          set -euo pipefail
+          [[ "${CHANNEL}" =~ ^(latest|beta)$ ]] || { echo "::error::Unknown channel '${CHANNEL}' (latest or beta)"; exit 1; }
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          base="ghcr.io/${owner}/octarine-os"
+          dx="ghcr.io/${owner}/octarine-os-dx"
+          tmp=$(mktemp)
+          skopeo inspect --raw "docker://${base}:${CHANNEL}" > "${tmp}"
+          [[ -s "${tmp}" ]] || { echo "::error::Cannot read ${base}:${CHANNEL}"; exit 1; }
+          digest="sha256:$(sha256sum "${tmp}" | sed 's/ .*//')"
+          # the base must carry our signature before anything is built on it
+          cosign verify --key cosign.pub "${base}@${digest}" > /dev/null
+          echo "Base image ${base}:${CHANNEL} = ${digest} (signature valid)"
+
+          tree=$(git rev-parse HEAD:variants/dx)
+          cfg=$(skopeo inspect --config "docker://${dx}:${CHANNEL}" 2>/dev/null) || cfg=""
+          labels=${cfg:-"{}"}
+          current=$(jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty' <<<"${labels}")
+          current_tree=$(jq -r '.config.Labels["io.github.redcodeworks.octarine-os.dx-tree"] // empty' <<<"${labels}")
+          build=true
+          if [[ -z "${cfg}" ]]; then
+            echo "No published ${dx}:${CHANNEL} yet (or it cannot be read): building"
+          elif [[ "${FORCE}" == "true" ]]; then
+            echo "Forced: building although the base is ${current:-unknown}"
+          elif [[ "${current}" != "${digest}" ]]; then
+            echo "The published dx image was built from ${current:-an unknown base}, the base is now ${digest}: building"
+          elif [[ "${current_tree}" != "${tree}" ]]; then
+            echo "variants/dx changed since the published dx image (${current_tree:-no tree label} -> ${tree}): building"
+          else
+            build=false
+            echo "::notice::base unchanged, nothing to build (${CHANNEL}: ${digest})"
+            echo "dx ${CHANNEL}: base unchanged, nothing to build (${digest})" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          {
+            echo "build=${build}"
+            echo "channel=${CHANNEL}"
+            echo "base_digest=${digest}"
+          } >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build dx image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-26.04
+
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push.outputs.digests }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      BASE_DIGEST: ${{ needs.plan.outputs.base_digest }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Maximize build space
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Check Just Syntax
+        run: |
+          just check
+
+      - name: Image names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "BASE_IMAGE=ghcr.io/${owner}/octarine-os" >> "${GITHUB_ENV}"
+          echo "DX_IMAGE=ghcr.io/${owner}/octarine-os-dx" >> "${GITHUB_ENV}"
+          echo "image=ghcr.io/${owner}/octarine-os-dx" >> "${GITHUB_OUTPUT}"
+
+      # The shared developer package list is pinned by digest in the Containerfile: format check, then the signature
+      - name: Check the dev-packages pin
+        run: |
+          set -euo pipefail
+          tag=$(sed -n 's/^ARG DEV_PACKAGES_TAG=//p' variants/dx/Containerfile)
+          digest=$(sed -n 's/^ARG DEV_PACKAGES_DIGEST=//p' variants/dx/Containerfile)
+          [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "::error::DEV_PACKAGES_TAG missing or not latest or latest-YYYYMMDD-<sha> in variants/dx/Containerfile"; exit 1; }
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::DEV_PACKAGES_DIGEST missing or not sha256:<64 hex> in variants/dx/Containerfile"; exit 1; }
+          ref="ghcr.io/redcodeworks/dev-packages@${digest}"
+          cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null
+          echo "dev-packages pinned: ${tag} ${ref} (signature valid)"
+          echo "DEV_PACKAGES_REF=${ref}" >> "${GITHUB_ENV}"
+
+      # The digest comes from the plan job; verify it again here, then pull it and read its kernel
+      - name: Verify and pull the base image, read its kernel
+        run: |
+          set -euo pipefail
+          [[ "${BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::The plan job gave no base digest"; exit 1; }
+          cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
+          echo "Base image ${BASE_IMAGE}:${CHANNEL} = ${BASE_DIGEST} (signature valid)"
+          podman pull "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
+          kernel=$(podman run --rm "${BASE_IMAGE}@${BASE_DIGEST}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
+          echo "Kernel of the base image: ${kernel}"
+          echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
+
+      # The same label set as `just build`, set explicitly (nothing about the base's maintainers is inherited); the labels
+      # that describe the base image's own build are unset, the rechunk step passes the rest on
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          set -a; . ./image-template.env; set +a
+          version=$(.github/scripts/image-version.sh)
+          sha=$(git rev-parse HEAD)
+          podman build -f variants/dx/Containerfile \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "BASE_TAG=${CHANNEL}" \
+            --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
+            --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
+            --unsetlabel org.opencontainers.image.maintainer \
+            --unsetlabel org.opencontainers.image.authors \
+            --unsetlabel io.artifacthub.package.maintainers \
+            --label "org.opencontainers.image.title=octarine-os-dx" \
+            --label "org.opencontainers.image.description=octarineOS with the developer toolchain of dev-toolbox, VM tooling and tracing tools (developer image, ${CHANNEL} channel)" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --label "org.opencontainers.image.vendor=${REPO_ORGANIZATION}" \
+            --label "org.opencontainers.image.revision=${sha}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.url=https://github.com/${GITHUB_REPOSITORY}/tree/${sha:0:7}" \
+            --label "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${CHANNEL}" \
+            --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
+            --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
+            --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
+            --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "io.artifacthub.package.deprecated=false" \
+            --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},developer" \
+            --label "io.artifacthub.package.license=Apache-2.0" \
+            --label "io.artifacthub.package.logo-url=${IMAGE_LOGO_URL}" \
+            --label "io.artifacthub.package.prerelease=false" \
+            --tag "octarine-os-dx:${CHANNEL}" .
+          echo "Built octarine-os-dx:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST}"
+
+      - name: Check image size
+        env:
+          MAX_IMAGE_GIB: 15
+        run: |
+          size=$(podman image inspect "octarine-os-dx:${CHANNEL}" --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"
+          if (( size > MAX_IMAGE_GIB * 1024 * 1024 * 1024 )); then
+            echo "::error::The image is larger than ${MAX_IMAGE_GIB} GiB; check what was added"
+            exit 1
+          fi
+
+      # Anything missing fails the build before anything is pushed
+      - name: Smoke test the image
+        run: |
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
+            "octarine-os-dx:${CHANNEL}" bash /smoke.sh
+
+      - name: Rechunk with rpm-ostree
+        run: |
+          just ostree-rechunk octarine-os-dx "${CHANNEL}"
+
+      - name: Check the version is channel-neutral
+        run: |
+          podman image inspect "octarine-os-dx:${CHANNEL}" \
+            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
+            | .github/scripts/check-version-neutral.sh
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only `<channel>` and `<channel>-<date>-<sha>` are pushed
+      - name: Tags
+        id: tags
+        run: |
+          alias_tags="${CHANNEL}-$(date +%Y%m%d)-$(git rev-parse --short HEAD) ${CHANNEL}"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          : > /tmp/digests
+          for tag in ${ALIAS_TAGS}; do
+            podman push --digestfile=/tmp/digestfile "octarine-os-dx:${CHANNEL}" "${DX_IMAGE}:${tag}"
+            cat /tmp/digestfile >> /tmp/digests
+            echo >> /tmp/digests
+          done
+          # keep every distinct digest and sign each of them
+          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
+          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+
+  sign:
+    name: Sign and verify dx image
+    needs: build
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Sign every pushed digest
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGESTS: ${{ needs.build.outputs.digests }}
+        run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+          # old bundle format, as in build.yml (https://github.com/containers/container-libs/issues/388)
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+          done
+
+      - name: Verify every pushed tag is signed
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done
