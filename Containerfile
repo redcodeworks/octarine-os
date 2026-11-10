@@ -25,6 +25,8 @@ FROM ${BASE_IMAGE}:${FEDORA_VERSION}
 # Passed in by `just build` from image-template.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
 ARG IMAGE_NAME
+# The build's channel-neutral version (beta builds: `beta-` prefix), written to os-release IMAGE_VERSION by build.sh
+ARG IMAGE_VERSION
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:stable
 # FROM ghcr.io/ublue-os/bazzite:testing

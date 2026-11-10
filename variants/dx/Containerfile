@@ -26,6 +26,9 @@ COPY variants/dx/system_files /system_files
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
+# os-release IMAGE_VERSION of this build (beta channel: `beta-` prefix, set by the workflow), written by dx.sh
+ARG IMAGE_VERSION
+
 # The shared list through a bind mount, then the extras, in dx.sh (which also keeps the kernel unchanged)
 RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \
     --mount=type=bind,from=ctx,source=/,target=/ctx \

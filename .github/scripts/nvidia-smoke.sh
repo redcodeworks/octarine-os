@@ -5,7 +5,7 @@
 #   nvidia-smoke.sh absent    the default image: no NVIDIA driver packages or kernel modules
 #
 # Environment: BASE_KERNEL (present: the kernel release of the base image, which must be unchanged), and for tests
-# MODULES_DIR, KARGS_FILE, MODPROBE_FILE. Package names are not hard-coded: any installed package with "nvidia" in its
+# MODULES_DIR, KARGS_FILE, MODPROBE_FILE, OS_RELEASE. Package names are not hard-coded: any installed package with "nvidia" in its
 # name counts as the driver, except the firmware package (nvidia-gpu-firmware ships with Fedora's linux-firmware).
 set -uo pipefail
 
@@ -13,6 +13,7 @@ mode="${1:?present or absent}"
 modules_dir="${MODULES_DIR:-/usr/lib/modules}"
 kargs_file="${KARGS_FILE:-/usr/lib/bootc/kargs.d/00-nvidia.toml}"
 modprobe_file="${MODPROBE_FILE:-/usr/lib/modprobe.d/00-nouveau-blacklist.conf}"
+os_release="${OS_RELEASE:-/etc/os-release}"
 fail=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
@@ -67,6 +68,9 @@ case "${mode}" in
         check "kernel arguments file blacklists nouveau and sets modeset" "grep -q nvidia-drm.modeset=1 '${kargs_file}' && grep -q rd.driver.blacklist=nouveau '${kargs_file}'"
         check "nouveau is blacklisted for modprobe" "grep -qx 'blacklist nouveau' '${modprobe_file}'"
         check "the NVIDIA SELinux module is installed" "semodule -l | grep -qi nvidia"
+        check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
+        check "image id" "grep -qx 'IMAGE_ID=\"octarine-os-nvidia\"' '${os_release}'"
+        check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
         ;;
     absent)
         check "no NVIDIA driver package in the default image" "! nvidia_pkgs | grep -q ."
