@@ -229,7 +229,7 @@ jobs:
             done
             check "gamemode defaults file shipped" "grep -qx renice=10 /etc/gamemode.ini"
             check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl"
-            check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml"
+            check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml && test -s /usr/share/octarine-os/niri-setup/keybinds/standard.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/compact.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/hhkb.kdl.in"
             check "niri accepts the shipped config when niri is installed" "! command -v niri || niri validate -c /etc/niri/config.kdl"
             check "niri-setup recipe exists" "grep -q ^niri-setup /usr/share/ublue-os/just/60-custom.just"
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
