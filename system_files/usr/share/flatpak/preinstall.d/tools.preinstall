@@ -1,6 +1,3 @@
-[Flatpak Preinstall org.virt_manager.virt-manager]
-Branch=stable
-
 [Flatpak Preinstall com.borgbase.Vorta]
 Branch=stable
 

@@ -371,7 +371,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   step of `ujust user-setup` (`usermod -s`, copies `/etc/skel/.zshrc` when the user has no zsh files); `shell-setup` is planned
   to replace that step. Accounts created while zsh was the default keep it; rolling back to an image without zsh breaks them.
   Distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh (`dev-toolbox` has it; check the `gaming` one).
-- **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image.
+- **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image. Virtual machines: the default image preinstalls GNOME Boxes (`gnome.preinstall`; its `org.gnome.Boxes.Extension.OsinfoDb` extension has no `no-autodownload` in the app's metadata, so Flatpak pulls it with the app and no entry is needed; unverified on a fresh install) and no virt-manager Flatpak (removed 2026-11-10); the dx image has virt-manager only as the RPM (`variants/dx/packages/extras.txt`) and no Flatpak copy.
 
 ## Recipe conventions (ujust recipes in `60-custom.just`, and `70-octarine-dev.just` in the dx image)
 
@@ -621,7 +621,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
   `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`, ROCm userspace), VM tooling,
-  tracing tools and a few extras; the VS Code Flatpak is preinstalled through the preinstall list. Opt-in, for the owner's own
+  tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
 - **Lineage (two channels).**
@@ -637,8 +637,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `variants/dx/dx.sh` (runs the shared installer, then the extras, copies `variants/dx/system_files/`, enables
   `podman.socket` (rootful; the default image already enables the user one globally) and asserts the kernel is unchanged and
   the only one), `variants/dx/packages/extras.txt` (grouped list, one strict `dnf5 install`),
-  `variants/dx/system_files/usr/share/flatpak/preinstall.d/dx.preinstall` (VS Code; `ujust flatpak-preinstall` reads every
-  `*.preinstall` in that directory, so a dx-only drop-in needs no recipe change), `.github/workflows/build-dx.yml`,
+  `.github/workflows/build-dx.yml` (the dx-only `dx.preinstall` was removed 2026-11-10 and `variants/dx/system_files/usr/share/flatpak`
+  with it; a dx-only Flatpak drop-in would need no recipe change, `ujust flatpak-preinstall` reads every `*.preinstall` there),
   `.github/scripts/dx-smoke.sh`, `tests/dx-image.sh`.
 - **The shared package list (digest pin).** `ghcr.io/redcodeworks/dev-packages` is a signed FROM scratch image from the
   fedora-toolbox repository (`/dev.txt`, `/install.sh`, `/README`; `dev-toolbox` installs the same list). The Containerfile pins it by
@@ -670,7 +670,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.
 - **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, fish, the rustup package and `rustup-init` (the RPM ships only that; no `rustup` command),
   `glib2-devel`, `openssl-devel`, virt-manager, virt-viewer, qemu-kvm, the libvirtd and virtqemud units, `podman.socket`,
-  the VS Code preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
+  no VS Code or virt-manager Flatpak in any preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
   (os-release, the three policy rules, sudoers, brew, recipes, removed packages). It prints `DIAG` lines on failure. Under
   `pipefail` it never pipes a producer into `grep -q` (the lesson of the NVIDIA initramfs check).
 - **Signature policy.** `build.sh` writes a `sigstoreSigned` rule for `octarine-os`, `octarine-os-nvidia` and `octarine-os-dx` into
@@ -686,7 +686,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `octarine-os:beta`. The README table and the `ujust dev` text say what `dev` sets up; the step table lived in the README and is now in
   "Developer menu" below.
 - **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
-  (Microsoft is only listed as developer). The owner chose it knowingly; the preinstall file and the README say so.
+  (Microsoft is only listed as developer). The owner chose it knowingly; it is installed only by the `vscode` step of `ujust dev` (which says so), never preinstalled.
 - **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
   other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
   and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).

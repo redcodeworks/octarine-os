@@ -2,7 +2,7 @@
 # variants/dx/Containerfile). One name per line, blank lines and #-comments ignored; installed in ONE strict
 # `dnf5 install` (a name that does not exist on the base's Fedora release fails the build). Fedora's own repositories only.
 # Not included on purpose: incus, incus-agent, lxc, podman-machine, p7zip (gone on Fedora 45), Docker CE and VS Code RPMs
-# (outside repositories; VS Code is a Flatpak, see system_files/usr/share/flatpak/preinstall.d/dx.preinstall).
+# (outside repositories; VS Code is a Flatpak that `ujust dev` installs on request).
 
 # --- VM hosting ---
 # The default image ships these today; they are listed here so dx stays self-sufficient when the default image

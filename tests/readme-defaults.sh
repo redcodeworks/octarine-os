@@ -60,7 +60,7 @@ for img in octarine-os octarine-os-nvidia octarine-os-dx; do
 done
 check "the nvidia and dx variants have their own build files" test -f "$repo/variants/nvidia/nvidia.sh" -a -f "$repo/variants/dx/dx.sh"
 check "the README says dx has the iommu=pt karg and the file is in the dx tree" bash -c "grep -q 'iommu=pt' '$readme' && grep -qx 'kargs = \[\"iommu=pt\"\]' '$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml'"
-check "the README says the VS Code build is not verified by Flathub (as dx.preinstall does)" bash -c "grep -q 'not verified by Flathub' '$readme' && grep -q 'Not verified' '$repo/variants/dx/system_files/usr/share/flatpak/preinstall.d/dx.preinstall'"
+check "the README does not say VS Code or virt-manager is preinstalled" bash -c "! grep -qiE 'Visual Studio Code preinstalled|virt-manager, Vorta' '$readme'"
 
 # ---- iommu=pt: dx only
 check "the default image tree ships no kargs.d file with iommu" bash -c "! grep -rqs iommu '$repo/system_files/usr/lib/bootc'"

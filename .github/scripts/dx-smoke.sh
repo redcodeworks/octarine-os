@@ -80,7 +80,7 @@ check "iommu=pt karg file is shipped" "has_text ${lib_dir}/bootc/kargs.d/10-iomm
 
 echo "== services and Flatpak"
 check "podman.socket enabled" "systemctl is-enabled podman.socket"
-check "VS Code is in the dx preinstall list" "has_text ${preinstall_dir}/dx.preinstall '[Flatpak Preinstall com.visualstudio.code]'"
+check "no VS Code and no virt-manager Flatpak in any preinstall list (ujust dev installs VS Code on request; virt-manager is the RPM)" "! grep -rqE 'visualstudio|virt_manager' ${preinstall_dir}"
 check "the default Flatpak lists are still there" "test -s ${preinstall_dir}/gnome.preinstall && has_text ${preinstall_dir}/tools.preinstall '[Flatpak Preinstall io.github.kolunmi.Bazaar]'"
 
 echo "== kernel"
