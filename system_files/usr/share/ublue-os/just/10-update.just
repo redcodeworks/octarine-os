@@ -139,6 +139,9 @@ update *args:
         elif [ "$all" = 1 ]; then run_list+=("$id")
         elif us_on "$id"; then run_list+=("$id"); fi
     done
+    if [ "$(us_state image)" = disabled ] && ! in_list image "${run_list[@]}"; then
+        echo "Image updates are switched off (ujust toggle-updates turns them on); the image is not updated now."
+    fi
     if [ "${#run_list[@]}" -eq 0 ]; then
         echo "No update source is switched on. Turn some on with 'ujust toggle-updates', or name one: ujust update flatpak"
         exit 0

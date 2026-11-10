@@ -131,6 +131,13 @@ check "update skips brew when it is off" notlogged "brew "
 check "update tells the user to reboot after staging an image" has "needs a reboot"
 FAKE_ENABLED="" run update
 check "with nothing switched on it says so and runs nothing" bash -c "[ $rc = 0 ] && grep -q 'No update source is switched on' '$root/out' && [ ! -s '$LOG' ]"
+check "with image updates off it prints one clear line about it" bash -c "[ \$(grep -c 'Image updates are switched off' '$root/out') = 1 ]"
+FAKE_ENABLED="flatpak-system-update.timer" run update
+check "image off while other sources run: the same single line, flatpak still runs" bash -c "[ \$(grep -c 'Image updates are switched off' '$root/out') = 1 ] && grep -q 'flatpak update' '$LOG'"
+FAKE_ENABLED="rpm-ostreed-automatic.timer" run update
+check "image on: no such line" bash -c "! grep -q 'Image updates are switched off' '$root/out'"
+FAKE_ENABLED="" run update image --no
+check "naming image while it is off: no such line" bash -c "! grep -q 'Image updates are switched off' '$root/out'"
 FAKE_ENABLED="" run update --all
 check "--all runs every source" bash -c "grep -q 'bootc upgrade' '$LOG' && grep -q 'flatpak update' '$LOG' && grep -q 'distrobox upgrade --all' '$LOG' && grep -q 'brew update' '$LOG' && grep -q 'brew upgrade' '$LOG'"
 FAKE_ENABLED="$all_on" run update distrobox

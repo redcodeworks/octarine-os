@@ -31,6 +31,11 @@ done
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
+# Our 15-luks.just, 40-nvidia.just and 50-akmods.just overwrite the base files of the same name (only 10-update and
+# 30-distrobox are renamed and imported). The base's toggle-nvk (builds image names that do not exist, rebases without the
+# signature policy) lived in 40-nvidia.just: it must be gone.
+if grep -rqE '^toggle-nvk' /usr/share/ublue-os/just/; then echo "ERROR: the base toggle-nvk recipe is still installed"; exit 1; fi
+
 # sudo ignores sudoers.d files that are not mode 0440; git does not track modes
 chmod 0440 /etc/sudoers.d/10-timestamp-timeout
 visudo -c
@@ -121,7 +126,7 @@ fi
 # CRITICAL (keep in step with the smoke test in .github/workflows/build.yml):
 dnf5 install -y \
     pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
