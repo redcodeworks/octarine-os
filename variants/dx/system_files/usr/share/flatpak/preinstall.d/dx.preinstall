@@ -1,7 +1,0 @@
-# Extra Flatpak apps of the dx image (octarine-os-dx), listed next to the default image's lists; `ujust flatpak-preinstall`
-# installs every *.preinstall file in this directory.
-#
-# Visual Studio Code is NOT a verified Flathub app: it is community-maintained and Microsoft is only listed as the
-# developer (Flathub's API reports "Not verified"). The owner chose it knowingly for the dx image.
-[Flatpak Preinstall com.visualstudio.code]
-Branch=stable

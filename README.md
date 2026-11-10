@@ -30,7 +30,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
-- Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, virt-manager, Vorta, Flatseal, Bazaar
+- Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
 **Removed from the base**
 - gnome-software (Bazaar is the software center; firmware updates still work)
@@ -59,7 +59,7 @@ Added by this image:
 |---|---|---|
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
-| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager), tracing tools, the `iommu=pt` kernel argument, Visual Studio Code preinstalled (the community-maintained Flathub build, not verified by Flathub) and `ujust dev`. Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager), tracing tools, the `iommu=pt` kernel argument, and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 
 Each image also has a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base that shows early
 what the next Fedora release would break. It is not tested for daily use.

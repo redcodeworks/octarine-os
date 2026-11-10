@@ -40,7 +40,7 @@ Everything system-level that used to be hand-layered now lives in this repo:
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, a container
   signature policy for the image itself. The `iommu=pt` kernel argument ships only in the dx image.
-- **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
+- **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta,
   Flatseal, Extension Manager and Bazaar (the software center; gnome-software is removed, firmware
   updates stay available through `fwupdmgr`).
 - **Build checks:** every build runs a smoke test before it is pushed and signed.
