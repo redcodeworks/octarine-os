@@ -144,7 +144,7 @@ EOF2
 chmod +x "$root/fakebin/ugum" "$root/fakebin/gum"
 escrun() {
     : >"$LOG"
-    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_LUKS_CMDLINE="$root/cmdline" OCTARINE_LUKS_CPUINFO="$root/cpu-intel" \
+    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_LUKS_CMDLINE="$root/cmdline" OCTARINE_LUKS_CPUINFO="$root/cpu-intel" \
         just --justfile "$justfile" luks-tpm-unlock "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }

@@ -138,7 +138,7 @@ EOF2
 chmod +x "$root/fakebin/ugum"
 escrun() {
     : >"$LOG"
-    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" \
+    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" \
         just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }
