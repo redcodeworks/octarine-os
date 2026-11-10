@@ -104,6 +104,27 @@ A variant with the proprietary NVIDIA driver is built weekly as `ghcr.io/redcode
 `sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-nvidia:latest` and reboot. With Secure Boot on, enroll the key with
 `ujust enroll-secure-boot-key`. It is for NVIDIA GPUs only and is not supported by the owner, who does not use it.
 
+## Developer image
+
+The default image has no compilers or build tools: development happens in a toolbox (`ujust toolbox dev-toolbox`). If you would
+rather have the toolchain on the host itself, a developer image is published as `ghcr.io/redcodeworks/octarine-os-dx`. It is the
+default image plus the developer packages of the dev-toolbox image (compilers, `-devel` libraries, debuggers, `uv`, `rustup`,
+`fish`), virtual machine tools (libvirt, QEMU, virt-manager, virt-viewer), tracing and performance tools (bcc, bpftrace, sysprof)
+and a few developer extras. It is rebuilt whenever the image it is based on changes, and it comes in two channels that follow the
+default image's: `latest` (after `octarine-os:latest`) and `beta` (after `octarine-os:beta`). Until Universal Blue moves its beta
+base to the next Fedora release, `beta` is the same Fedora release as `latest`. It is larger than the default image.
+
+Update to the newest default image first (it carries the signature policy for this repository), then switch, and go back the same way:
+
+```
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest
+sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest   # undo
+```
+
+Visual Studio Code comes as a Flatpak (`ujust flatpak-preinstall` lists and installs it). It is the community-maintained build on
+Flathub, which Flathub does not mark as verified; it is not Microsoft's own package, so install it only if you are fine with that.
+The dx image is for my own use and is not tested beyond my machine.
+
 ## Security key (YubiKey) for sudo and polkit
 
 With a security key enrolled, sudo and polkit password prompts accept a touch of the key instead of the password, in interactive sessions. Without an enrolled key the password works as usual.

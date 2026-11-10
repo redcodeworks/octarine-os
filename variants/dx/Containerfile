@@ -1,0 +1,36 @@
+# The developer image of octarineOS (published as octarine-os-dx, see CLAUDE.md "dx image"): the published default
+# image (or its beta channel) plus the developer toolchain of the owner's dev-toolbox. Two channels follow the lineage
+#   silverblue-main:45   -> octarine-os:latest -> octarine-os-dx:latest
+#   silverblue-main:beta -> octarine-os:beta   -> octarine-os-dx:beta
+# The workflow resolves the base by DIGEST (and verifies its signature) and passes it in, so the build, the labels and the
+# size and kernel checks all talk about the same base:
+#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os
+#   BASE_TAG     latest or beta (only names the channel in the labels; the digest decides)
+#   BASE_DIGEST  sha256:... of that tag when the build started (empty only for a bare local `podman build`)
+ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
+ARG BASE_TAG=latest
+ARG BASE_DIGEST=
+
+# The shared developer package list: a tiny signed FROM scratch image (/dev.txt, /install.sh, /README) built from the
+# fedora-toolbox repository, pinned by DIGEST. The tag is for humans. Bump both with `just dev-packages-bump [tag]`, which
+# resolves the digest, verifies it with cosign against keys/redcodeworks-toolbox-cosign.pub and writes both lines; CI checks
+# the format and the signature on every build.
+ARG DEV_PACKAGES_TAG=latest-20261109-0969783
+ARG DEV_PACKAGES_DIGEST=sha256:011daff3e22d1155890ce9e8612a21a6a1223574e390ae1794e6c04c3433d640
+FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
+
+FROM scratch AS ctx
+COPY variants/dx/dx.sh /dx.sh
+COPY variants/dx/packages/extras.txt /extras.txt
+COPY variants/dx/system_files /system_files
+
+FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
+
+# The shared list through a bind mount, then the extras, in dx.sh (which also keeps the kernel unchanged)
+RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    /ctx/dx.sh
+
+RUN bootc container lint

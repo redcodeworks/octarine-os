@@ -146,6 +146,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   `.github/scripts/plan-build.sh`.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
+- `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
@@ -200,7 +201,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   every distinct pushed digest with cosign (old bundle format, `--use-signing-config=false`) and verifies
   each tag against `cosign.pub`. Pull request builds never reach it. `build.sh` generates the container
   signature policy (a `sigstoreSigned` scope for `ghcr.io/<org>/<image>`, a `registries.d` entry, the key under
-  `/etc/pki/containers`) from `IMAGE_ORG`, `IMAGE_NAME` and `cosign.pub`, keeping the catch-all last.
+  `/etc/pki/containers`) from `IMAGE_ORG`, `IMAGE_NAME` and `cosign.pub`, keeping the catch-all last (rules for the default, `-nvidia` and `-dx` repositories).
   `just build` passes `IMAGE_NAME=${target_image##*/}` so a `localhost/` prefix does not leak into it.
 - **Pruning.** `prune-testing.yml` runs weekly from `main`: it keeps the newest 10 `testing` builds, deletes
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
@@ -413,8 +414,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   the kargs and modprobe files, an NVIDIA SELinux module) and `... absent` on the default image (no driver packages or
   modules). The akmods image signature is checked with the vendored `keys/ublue-os-main-cosign.pub`; that this key signs the
   nvidia image is unverified, so a failure is a visible warning, not a silent skip.
-- **Signature policy order.** `build.sh` writes a `sigstoreSigned` rule for BOTH `ghcr.io/redcodeworks/octarine-os` and
-  `...-nvidia` into the default image (the variant inherits the file; the `registries.d` entry is per namespace and already
+- **Signature policy order.** `build.sh` writes a `sigstoreSigned` rule for `ghcr.io/redcodeworks/octarine-os`,
+  `...-nvidia` and `...-dx` into the default image (the variant inherits the file; the `registries.d` entry is per namespace and already
   there). A machine first switches to the default image (installing the policy), then to the variant with
   `--enforce-container-sigpolicy`; switching back works the same way.
 - **Prune.** `prune-testing.yml` also prunes the variant's repository (`PRUNE_KIND=released`: versions whose tags are only
@@ -424,6 +425,78 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Unverified.** No GPU, no boot test, the akmods kernel-tag form, the driver version, Secure Boot enrollment
   (`ujust enroll-secure-boot-key`, from the base, enrolls Universal Blue's key; MOK password `universalblue`), SELinux module
   detection by `semodule -l` in a build container. Tests: `tests/nvidia-variant.sh`.
+
+## dx image (`octarine-os-dx`)
+
+- **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
+  `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`, ROCm userspace), VM tooling,
+  tracing tools and a few extras; the VS Code Flatpak is preinstalled through the preinstall list. Opt-in, for the owner's own
+  use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
+  set, `tests/dx-image.sh` asserts that.
+- **Lineage (two channels).**
+
+  | Base | Default image | dx image |
+  |---|---|---|
+  | `ghcr.io/ublue-os/silverblue-main:45` | `octarine-os:latest` | `octarine-os-dx:latest` |
+  | `ghcr.io/ublue-os/silverblue-main:beta` | `octarine-os:beta` | `octarine-os-dx:beta` |
+
+  The beta channel is a duplicate of latest until Universal Blue moves its `beta` tag to Fedora 46; that is expected.
+- **Files.** `variants/dx/Containerfile` (ARGs `BASE_IMAGE`, `BASE_TAG`, `BASE_DIGEST`; `FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}`,
+  so the workflow's digest wins and a bare local `podman build` still works; the `devpkgs` stage; `bootc container lint`),
+  `variants/dx/dx.sh` (runs the shared installer, then the extras, copies `variants/dx/system_files/`, enables
+  `podman.socket` (rootful; the default image already enables the user one globally) and asserts the kernel is unchanged and
+  the only one), `variants/dx/packages/extras.txt` (grouped list, one strict `dnf5 install`),
+  `variants/dx/system_files/usr/share/flatpak/preinstall.d/dx.preinstall` (VS Code; `ujust flatpak-preinstall` reads every
+  `*.preinstall` in that directory, so a dx-only drop-in needs no recipe change), `.github/workflows/build-dx.yml`,
+  `.github/scripts/dx-smoke.sh`, `tests/dx-image.sh`.
+- **The shared package list (digest pin).** `ghcr.io/redcodeworks/dev-packages` is a signed FROM scratch image from the
+  fedora-toolbox repository (`/dev.txt`, `/install.sh`, `/README`; `dev-toolbox` installs the same list). The Containerfile pins it by
+  digest (`ARG DEV_PACKAGES_TAG` for humans, `ARG DEV_PACKAGES_DIGEST` decides) and installs it with
+  `RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages` (inside `dx.sh`: `bash /dev-packages/install.sh`; it needs
+  dnf5 and root, runs one strict install, cleans the dnf caches; `EXCLUDE="a b"` drops entries; `a|b` alternatives, `@group`
+  and `#` comments are its syntax). **Bump it** with `just dev-packages-bump [tag]` (default `latest`): it takes the digest of
+  the raw manifest with `skopeo inspect --raw`, verifies the signature with `keys/redcodeworks-toolbox-cosign.pub`
+  (the toolbox repository's cosign key, ECDSA) and only then edits the two ARG lines, recording the dated
+  `latest-<date>-<sha>` tag that has the same digest. CI checks the pin's format and verifies the signature on every build.
+  `tests/dx-image.sh` covers the recipe with fake skopeo and cosign.
+- **Workflow rules (`build-dx.yml`).** Triggers: `workflow_run` of "Build container image" and "Build beta image" (`completed`,
+  `branches: [main]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
+  or a feature branch and the first run happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The
+  plan job runs only when `github.ref == refs/heads/main` and (a dispatch, or the triggering run concluded `success`, its event
+  is `schedule`, `push` or `workflow_dispatch`, and its `head_branch` is `main`; never a pull request). Channel: `beta` after
+  the beta build, `latest` after the default build, the input on dispatch. Plan: resolves
+  `octarine-os:<channel>` to a digest (sha256 of the raw manifest), verifies it with `cosign.pub`, reads the published
+  `octarine-os-dx:<channel>` labels and ends green with the notice "base unchanged, nothing to build" when its
+  `org.opencontainers.image.base.digest` equals the digest AND its `io.github.redcodeworks.octarine-os.dx-tree` label equals
+  `git rev-parse HEAD:variants/dx` (so a change to the dx files, for example a bumped pin, also rebuilds; the base digest
+  alone would wait for the next base change) and no force; a missing, unreadable or unlabelled image builds. The plan job logs
+  in with `packages: read` because a new GHCR package is private until the owner makes it public. Build: setup tools, the pin
+  check and signature verification, base verified again by digest and pulled, kernel of the base read, `podman build` with
+  explicit labels (the `just build` set plus `base.name`/`base.digest`, `dx-tree` and `dev-packages`; inherited maintainer
+  labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just ostree-rechunk`, the
+  channel-neutral version check, push of `<channel>` and `<channel>-<date>-<sha>`. Sign job (`signing` environment): signs
+  every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: one group per channel,
+  `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.
+- **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, fish, the rustup package and `rustup-init` (the RPM ships only that; no `rustup` command),
+  `glib2-devel`, `openssl-devel`, virt-manager, virt-viewer, qemu-kvm, the libvirtd and virtqemud units, `podman.socket`,
+  the VS Code preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
+  (os-release, the three policy rules, sudoers, brew, recipes, removed packages). It prints `DIAG` lines on failure. Under
+  `pipefail` it never pipes a producer into `grep -q` (the lesson of the NVIDIA initramfs check).
+- **Signature policy.** `build.sh` writes a `sigstoreSigned` rule for `octarine-os`, `octarine-os-nvidia` and `octarine-os-dx` into
+  the default image (strips `-nvidia` and `-dx` from `IMAGE_NAME`); the dx image inherits it. A machine therefore switches to
+  the dx image only after it runs a default image built with the rule (update first, then
+  `bootc switch --enforce-container-sigpolicy`). Asserted in `tests/nvidia-variant.sh` and `tests/dx-image.sh`, and in the smoke tests of
+  `build.yml` and `build-beta.yml`.
+- **Prune.** `prune-testing.yml` also prunes the `octarine-os-dx` package with `PRUNE_KIND=dx KEEP=3`: per channel the newest
+  three dated builds (`latest-<date>-<sha>`, `beta-<date>-<sha>`) stay, never a version holding the bare `latest` or `beta`
+  tag, any version with another tag is not a candidate, signatures of deleted images go with them.
+- **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
+  (Microsoft is only listed as developer). The owner chose it knowingly; the preinstall file and the README say so.
+- **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
+  and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
+- **Unverified until promotion.** The real build (no PR build exercises `variants/dx`: `build.yml` validates the default
+  image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
+  exists on `main`. The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 
 ## Forking
 

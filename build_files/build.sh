@@ -31,13 +31,15 @@ visudo -c
 # --- Container signature policy for this image's registry path and its sibling ---
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
 # Everything is derived from them, so a fork only changes image-template.env and cosign.pub. The default image and
-# the NVIDIA variant (<name>-nvidia, built weekly from the same files) both get a rule for BOTH repositories, so a
-# machine on either can switch to the other with --enforce-container-sigpolicy.
+# the NVIDIA variant (<name>-nvidia, built weekly from the same files) and the developer image (<name>-dx, built from
+# the published default image) all get a rule for ALL THREE repositories, so a machine on any of them can switch to
+# another with --enforce-container-sigpolicy.
 if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
     org="${IMAGE_ORG,,}"
     name="${IMAGE_NAME,,}"
     base_name="${name%-nvidia}"
-    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia"
+    base_name="${base_name%-dx}"
+    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx"
     key="/etc/pki/containers/${org}-${name}.pub"
     install -Dm644 /ctx/cosign.pub "${key}"
     printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
