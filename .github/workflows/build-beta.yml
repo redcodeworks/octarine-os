@@ -179,7 +179,7 @@ jobs:
             done
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
-            check "new users default to zsh" "grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
+            check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
             check "zsh login files source /etc/profile (brew.sh relies on it)" "grep -q /etc/profile /etc/zprofile"
             check "skel zshrc" "test -s /etc/skel/.zshrc"
             check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
@@ -206,7 +206,7 @@ jobs:
             check "sudo timestamp_timeout is 30 (minutes, not seconds)" "grep -qx \"Defaults timestamp_timeout=30\" /etc/sudoers.d/10-timestamp-timeout"
             check "sudoers fragment valid" "visudo -c -f /etc/sudoers.d/10-timestamp-timeout"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
-            check "iommu karg file" "test -f /usr/lib/bootc/kargs.d/10-iommu.toml"
+            check "no iommu karg file (only the dx image carries it)" "! test -e /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
             check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
             check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"

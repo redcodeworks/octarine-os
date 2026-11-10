@@ -4,17 +4,16 @@
 
 A personal [bootc](https://github.com/bootc-dev/bootc) image: Fedora Silverblue on top of Universal Blue's
 `silverblue-main`, with the niri compositor and Noctalia shell, libvirt, Cockpit, backup tools and a set of
-hardening and tuning defaults. It is built daily and signed.
-It makes one desktop reproducible and is shared in case parts of it are useful to you. It is one person's
-configuration with no promises: read what it changes (the lists below) before you run it. The wider desktop setup is in
-[`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
+hardening and tuning defaults. It is built daily and signed. It makes one desktop reproducible and is shared in case
+parts of it are useful to you. It is one person's configuration with no promises: read what it changes before you run it.
+The wider desktop setup is in [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 
 ## Requirements
 
-- A PC that runs Fedora Silverblue (the current release), with UEFI boot and enough disk for the image.
+- A PC that runs Fedora Silverblue (the current release, 45), with UEFI boot and enough disk for the image.
 - An internet connection for the install and for updates.
 
-## What it adds to Fedora Silverblue
+## Highlights
 
 From the Universal Blue base (`ghcr.io/ublue-os/silverblue-main`), not added here: distrobox, ffmpeg and the
 multimedia codecs, security-key support, `ujust` and its recipes, and automatic update staging.
@@ -23,7 +22,7 @@ Added by this image:
 
 **Desktop and apps**
 - niri compositor and Noctalia shell (optional)
-- zsh as the login shell for new users
+- zsh installed (opt-in as your login shell, see `ujust user-setup`)
 - Backup tools: snapper, btrfs-assistant, borgbackup, restic, rclone
 - Virtualization: libvirt, qemu-kvm, libguestfs and virt-v2v
 - Cockpit and its host modules (off by default)
@@ -35,24 +34,37 @@ Added by this image:
 
 **Removed from the base**
 - gnome-software (Bazaar is the software center; firmware updates still work)
-- The Firefox RPM (the Flatpak replaces it) and `toolbox`
-- Compilers and build tools stay out of the host; they live in the toolbox
+- The Firefox RPM (the Flatpak replaces it) and `toolbox` (distrobox replaces it)
+
+**Compilers and build tools**
+- The default image has none (neither does the base). The dx variant adds them (see Variants).
 
 **Homebrew**
 - Installed on first boot; formulae update automatically, upgrades are manual
 
-**Toolboxes**
-- `ujust toolbox dev-toolbox` and `ujust toolbox gaming`
-- Optional IDE launchers and exported build tools
+**Distrobox**
+- `ujust toolbox` creates and manages distrobox containers from definitions the image ships (`dev-toolbox`, `gaming`)
+- Other recipes set up the owner's own configuration in your home directory (see Recipes)
 
 **Hardening and defaults**
 - sshd (off by default): no root login, no X11 or TCP forwarding; password and keyboard-interactive logins are not turned off
-- Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning, `iommu=pt`
+- Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning
 - Firewall zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale)
-- Security-key (YubiKey) touch for sudo and polkit, see below; 30-minute sudo timeout
+- Security-key (YubiKey) touch for sudo and polkit (the password still works without a key); 30-minute sudo timeout
 - Images are signed; `bootc upgrade` refuses unsigned ones after step 3 below
 
-## Use it
+## Variants
+
+| Image | Description | URL |
+|---|---|---|
+| default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
+| NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
+| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager), tracing tools, the `iommu=pt` kernel argument, Visual Studio Code preinstalled (the community-maintained Flathub build, not verified by Flathub) and `ujust dev`. Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+
+Each image also has a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base that shows early
+what the next Fedora release would break. It is not tested for daily use.
+
+## Install
 
 1. Install Fedora Silverblue (the current release, 45).
 2. Switch to the image (this is the first install of it), then reboot:
@@ -73,11 +85,9 @@ Added by this image:
    ujust flatpak-preinstall
    ```
 
-5. Optionally run the user setup, a checklist that asks before each step (groups, zsh login shell, Flatpak access, Nerd Fonts, a fish terminal profile with the starship prompt, GNOME search providers):
+5. Optionally run `ujust user-setup`, then the other recipes below.
 
-   ```
-   ujust user-setup
-   ```
+For a variant, run the steps above first, then switch with the same enforced command and the variant's URL from the table.
 
 Pin a dated build, try the unreleased one, or roll back:
 
@@ -87,138 +97,23 @@ sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os
 sudo bootc rollback                                                                                    # boot the previous deployment
 ```
 
-## Defaults
-
-The image sets a few system-wide defaults for tools it ships. Your own settings in your home directory always win, and nothing is locked.
-
-- **GNOME:** hot corners off, and the tray-icon (AppIndicator) and GSConnect extensions on. Change any of it in Settings or Extensions; `gsettings reset <schema> <key>` returns to the image default.
-- **fish:** `~/.local/bin` on the path, the rustup and cargo environment when rustup is installed, a fix for the noisy "wrong ELF class" message in a terminal launched from Steam, and a `y` command that opens the yazi file manager and follows it to the folder you quit in. To turn one off, create an empty file with the same name in `~/.config/fish/conf.d/` (for `y`, in `~/.config/fish/functions/`).
-- **GameMode:** a higher scheduling priority for games (it needs your user in the `gamemode` group, which `ujust user-setup` adds). `ujust gaming-setup` can add more tuning to your own `~/.config/gamemode.ini`.
-
-The files live under `/etc` (`dconf/db/distro.d`, `gamemode.ini`) and `/usr/share/fish`.
-
-## Niri session
-
-If you use the niri session, run `ujust niri-setup` once. It is a checklist with three steps, needs no sudo and asks before it replaces anything:
-
-- **niri:** copies the image's niri configuration into `~/.config/niri/` (`config.kdl`, which only lists the parts, plus one small file each for environment, input, layout, key bindings, the Noctalia shell and window rules). The copies are yours to edit. niri reloads them live.
-- **portals:** creates `~/.config/xdg-desktop-portal/niri-portals.conf` so apps in the niri session use the same secret store as the rest of the desktop. It applies at your next login.
-- **polkit:** creates `~/.config/noctalia/10-octarine-os.toml`, which turns on Noctalia's authentication agent; niri has none, so without it admin prompts fail. Restart Noctalia afterwards. Skipped when Noctalia is not installed.
-
-Without a niri configuration of your own, niri already falls back to the same shipped files. To drop the shipped key bindings, delete the `include "40-binds.kdl"` line from your `~/.config/niri/config.kdl`; deleting any other include line drops that part. A file you already have is never replaced silently: you see the differences and the default is to keep it; replacing saves a `.bak-<date>-<time>` copy first.
-
-To undo, delete the files the recipe created (it prints them); niri then uses the shipped fallback again.
-
-## Beta channel
-
-A weekly build on top of Universal Blue's beta base is published as `ghcr.io/redcodeworks/octarine-os:beta`. It shows early whether a coming Fedora
-release would break the image; until Universal Blue starts a new beta it is the same Fedora release as `latest`. It has not been tested for daily use.
-Try it, and go back:
-
-```
-sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta
-sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest   # undo
-```
-
-## NVIDIA graphics
-
-A variant with the proprietary NVIDIA driver is built weekly as `ghcr.io/redcodeworks/octarine-os-nvidia`. Run the steps above first, then
-`sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-nvidia:latest` and reboot. With Secure Boot on, enroll the key with
-`ujust enroll-secure-boot-key`. It is for NVIDIA GPUs only and is not supported by the owner, who does not use it.
-
-## Developer image
-
-The default image has no compilers or build tools: development happens in a toolbox (`ujust toolbox dev-toolbox`). If you would
-rather have the toolchain on the host itself, a developer image is published as `ghcr.io/redcodeworks/octarine-os-dx`. It is the
-default image plus the developer packages of the dev-toolbox image (compilers, `-devel` libraries, debuggers, `uv`, `rustup`,
-`fish`), virtual machine tools (libvirt, QEMU, virt-manager, virt-viewer), tracing and performance tools (bcc, bpftrace, sysprof)
-and a few developer extras. It is rebuilt whenever the image it is based on changes, and it comes in two channels that follow the
-default image's: `latest` (after `octarine-os:latest`) and `beta` (after `octarine-os:beta`). Until Universal Blue moves its beta
-base to the next Fedora release, `beta` is the same Fedora release as `latest`. It is larger than the default image.
-
-Update to the newest default image first (it carries the signature policy for this repository), then switch, and go back the same way:
-
-```
-sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest
-sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest   # undo
-```
-
-Visual Studio Code comes as a Flatpak (`ujust flatpak-preinstall` lists and installs it). It is the community-maintained build on
-Flathub, which Flathub does not mark as verified; it is not Microsoft's own package, so install it only if you are fine with that.
-The dx image is for my own use and is not tested beyond my machine.
-
-### Developer menu (dx image)
-
-`ujust dev` exists only in the developer image. On a terminal it opens a checklist of steps; nothing runs that you did not tick.
-`--yes` takes the defaults, `--no` only prints the plan, and `--only STEP[,STEP]` runs the named steps. Every step prints what it does and
-how to undo it, does nothing when it is already done, never replaces one of your files without showing a diff first (the default is keep),
-and retries downloads that fail. A failed step is reported with the command to run it again.
-
-| Step | What it sets up |
-|---|---|
-| `libvirt` | The system libvirt: you join the `libvirt` group (the only use of `sudo`, one security-key touch, effective at your next login), `qemu:///system` becomes the default for `virsh`, the daemon sockets are enabled and the default network autostarts |
-| `tools` | Homebrew developer tools in groups you pick: Editor (`helix`), Python (`ruff`, `ty`, `sqlfluff`), Web (`prettier`, `typescript-language-server`, `vscode-langservers-extracted`, `yaml-language-server`, `marksman`), Java (`jdtls`, `google-java-format`), Lua (`lua-language-server`, `stylua`), TOML (`taplo`), SQL (`sql-language-server`) and GitHub (`gh`, installed only, no login) |
-| `vscode` | Visual Studio Code from Flathub, the community-maintained build that Flathub does not verify |
-| `jetbrains` | JetBrains Toolbox from the official Homebrew cask, with a launcher and icon in your home directory (it replaces the older `jetbrains-toolbox-linux` cask if you have it; the Toolbox updates itself) |
-| `rust` | rustup with the default profile, plus `rust-analyzer` and `rust-src`; `~/.cargo/bin` reaches your `PATH` in bash, zsh and fish without any change to your shell files |
-| `java` | SDKMAN from the official Homebrew tap, then Azul Zulu 8, 11, 17, 21 and 25 with 21 as the default; the JDKs stay in `~/.sdkman/candidates`, so upgrading the formula cannot lose them |
-| `node` | `fnm` from Homebrew and the latest Node LTS as the default, plus two small files that start `fnm` in your shell quickly; you are shown one line to add to your shell startup file and asked before it is appended |
-| `python` | uv-managed Python 3.12, 3.13 and 3.14 (never the system Python) |
-
-SDKMAN is installed from its Homebrew formula only, never from a downloaded script. To undo a step, use the line printed in its summary
-(for example `brew uninstall <tool>`, `flatpak uninstall com.visualstudio.code`, `rustup self uninstall`, `uv python uninstall 3.12`).
-
-## Which image is this?
-
-Every image identifies itself with `IMAGE_ID` and `IMAGE_VERSION` in `/etc/os-release`; the display name stays `octarineOS`. Read them with:
-
-```
-grep IMAGE_ /etc/os-release
-```
-
-`IMAGE_ID` is `octarine-os`, `octarine-os-dx` or `octarine-os-nvidia`, and `IMAGE_VERSION` is the build's date and commit (for example
-`20261109-084e321`; builds of the beta channel start with `beta-`). A default fastfetch configuration that shows this line is included;
-fastfetch itself is not part of the image (`brew install fastfetch`), and a configuration in `~/.config/fastfetch/` takes priority.
-
-## Security key (YubiKey) for sudo and polkit
-
-With a security key enrolled, sudo and polkit password prompts accept a touch of the key instead of the password, in interactive sessions. Without an enrolled key the password works as usual.
-
-Enroll a key:
-
-```
-mkdir -p ~/.config/Yubico
-pamu2fcfg -o pam://sudo -i pam://sudo > ~/.config/Yubico/u2f_keys
-```
-
-Touch the key when it blinks. To add a second (backup) key to the same line:
-
-```
-f=~/.config/Yubico/u2f_keys
-{ tr -d '\n' < "$f"; pamu2fcfg -o pam://sudo -i pam://sudo -n | tr -d '\n'; echo; } > "$f.new" && mv "$f.new" "$f"
-```
-
-Check: `sudo -k` then `sudo true` asks for the touch. To undo, delete `~/.config/Yubico/u2f_keys`.
-
 ## Recipes
 
-`ujust --list` shows them all.
+Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 
 | Recipe | What it does |
 |---|---|
-| `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists (`--dry-run` shows them); run it from a desktop terminal, safe to repeat |
-| `ujust user-setup` | Step-by-step checklist for a new user (see above; with `gum` installed it opens a proper checklist menu); `--yes` takes the defaults, `--no` only prints the plan, `--only STEP[,STEP]` runs named steps |
-| `ujust gaming-setup` | Step-by-step checklist for gaming: Steam, ProtonUp-Qt and Lutris from Flathub (verified apps only), gamescope, MangoHud and Proton-GE for Steam, an experimental extest build, generated Steam launchers (including a gamescope one at your screen's resolution), and the GameMode tuning; `ujust gaming-setup reset` undoes it |
-| `ujust niri-setup` | Sets up a niri session in your home directory: editable niri config files, the portal file and the Noctalia polkit drop-in (see Niri session); never replaces a different file without asking; `--yes`, `--no`, `--only STEP[,STEP]` |
-| `ujust dev` | Developer image only: a checklist for libvirt, Homebrew developer tools, VS Code, JetBrains Toolbox, Rust, Java, Node and Python (see Developer image); `--yes`, `--no`, `--only STEP[,STEP]` |
-| `ujust toolbox [<name>]` | List the toolboxes, or create and manage one (`ujust toolbox dev-toolbox`, `ujust toolbox gaming`); `--help` shows the options |
+| `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists |
+| `ujust user-setup` | Checklist for a new user: groups, login shell (zsh is opt-in), Flatpak access, fonts, a fish terminal profile, GNOME search providers |
+| `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, launchers and GameMode tuning |
+| `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
+| `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
+| `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node and Python |
 
 ## Contributing
 
-This is a personal image; see `AGENTS.md`. Work happens on a branch (`feat/<topic>`, `fix/<topic>`) that goes by
-pull request into `testing`, and a pull request promotes `testing` to `main`. Maintainer notes (branching, CI, base
-image upgrades, forking, logo files) are in `CLAUDE.md`.
+This is a personal image; see `AGENTS.md`. Fork it rather than sending changes here.
 
 ## License
 
