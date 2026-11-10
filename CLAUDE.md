@@ -149,6 +149,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
+- `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup").
 - `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
@@ -428,6 +429,51 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Tests: `tests/system-defaults.sh` (placement and modes, `dconf compile`, `fish --no-execute`, snippet behavior in a temp HOME,
   INI parse, build step, smoke checks in `build.yml` and `build-beta.yml`, and a grep that no excluded category is shipped).
   Not verified in CI or here: a real boot reading the compiled database, fish loading the vendor snippets in a session.
+
+## niri setup (`ujust niri-setup`)
+
+- **Design (Kevin).** The image ships niri configuration SOURCE files in `/etc/niri/*.kdl`; `ujust niri-setup` copies them into
+  the user's `~/.config/niri/` (user-owned copies) and brings in the portal and polkit configuration. Nothing applies without the
+  recipe, except that `/etc/niri/config.kdl` is also niri's own fallback.
+- **niri facts (26.04, from its docs under `/usr/share/doc/niri/wiki/`).** niri loads `$NIRI_CONFIG`/`--config`, else
+  `$XDG_CONFIG_HOME/niri/config.kdl`, else the fallback `/etc/niri/config.kdl`; it never merges the two; with neither it writes the
+  user file from its built-in default. `include "file.kdl"` works at the top level (relative to the including file, absolute,
+  `~/` since 26.04, `optional=true` since 26.04); includes are positional (later overrides earlier), most sections merge, repeating
+  sections (`window-rule`, `output`, `workspace`) append; a bind repeated in a later include replaces the earlier one (validated:
+  `niri validate` accepts it). `niri validate -c <file>` checks a file. niri's default is `/usr/share/doc/niri/default-config.kdl`.
+- **Layout of `system_files/etc/niri/`.** `config.kdl` (only relative `include` lines and a comment on outputs; no monitors are
+  shipped), `10-environment.kdl` (`QT_QPA_PLATFORMTHEME gtk3`), `20-input.kdl` (niri's default input: localed keyboard layout,
+  numlock, touchpad tap and natural scroll), `30-layout.kdl` (niri's default layout and screenshot path), `40-binds.kdl` (niri's
+  default key bindings with `Mod+T` = `alacritty`, the terminal the image ships and niri's own default (Kevin 2026-11-10: not ghostty,
+  which the image does not ship); no launcher or lock bind; media and brightness keys guarded with `command -v`), `50-noctalia.kdl`
+  (`spawn-at-startup "noctalia"`, the documented way for Noctalia v5, Fedora package `noctalia`; launcher, control center, settings,
+  window switcher and volume/brightness binds through `noctalia msg ...`, replacing the plain ones of the binds part), `60-window-rules.kdl`
+  (niri's two default rules). No second polkit agent is started anywhere. The parts derive from niri's default config
+  (GPL-3.0-or-later; credited in the README). Deleting an include line drops a part; the files are listed in the order they must stay.
+- **Selection rule applied to dot-files `config/niri`** (same rule as "System defaults"): excluded the MEH/HYPR binds
+  (`41-binds-meh-hyper`), the app-folder binds (`42-binds-apps`: ghostty, yazi, helix, personal folders), workspace names and routing
+  (`20-workspaces`, `51-workspace-routing`), the window rules (`50-window-rules`: opacity and blur for ghostty, Steam, personal apps),
+  Gruvbox colors, struts, gaps and column presets of `31-layout`, input taste of `30-inputs` (scroll factor, clickfinger, drag-lock),
+  gestures (`32-gestures`), `PROTON_ENABLE_HDR` and the Adwaita cursor of `10-environment`, and from `60-noctalia` the corner radius, global
+  blur, transparent workspace background, backdrop layer rule, floating settings window and the `honor-xdg-activation-with-invalid-serial`
+  debug flag (it weakens focus-steal protection). Included: `QT_QPA_PLATFORMTHEME`, `spawn-at-startup "noctalia"` and the Noctalia binds.
+- **Other two sources** (in `system_files/usr/share/octarine-os/niri-setup/`, never in `/etc`): `niri-portals.conf` (the packaged
+  `/usr/share/xdg-desktop-portal/niri-portals.conf` has `default=gnome;gtk;`, Access and Notification `gtk`, Secret `gnome-keyring`; the
+  image ships oo7-daemon/oo7-portal AND gnome-keyring, and `org.freedesktop.secrets` is aliased to `oo7-daemon.service`, so on niri the
+  packaged file selects gnome-keyring while oo7 owns the service; the user file keeps the packaged lines and sets
+  `org.freedesktop.impl.portal.Secret=oo7-portal;`; a user file replaces the packaged one entirely) and `10-octarine-os.toml`
+  (Noctalia v5.4.1 has no system-wide config layer: built-in defaults, then every `*.toml` in the user's config directory sorted and merged,
+  then `~/.local/state/noctalia/settings.toml`; `10-` sorts before the user's `config.toml`, so the user wins; content `[shell]
+  polkit_agent = true` plus the explanatory comment). No `/etc` override for portals or Noctalia exists, and `user-setup` has no polkit step.
+- **Recipe.** Group Setup; steps `niri`, `portals`, `polkit`; `--yes`, `--no` (plan only), `--only STEP[,STEP]`, `help`; the shared
+  checklist helper (a step chosen in it is not asked "Apply?" again); each file is idempotent (identical = "already done"), a different
+  existing file shows a diff, the replace question defaults to keep (also under `--yes` and with no answer to read) and a yes saves
+  `<file>.bak-YYYYMMDD-HHMMSS` first; the `polkit` step skips without `noctalia` on PATH; a failed step is FAILED with its re-run command, exit 1;
+  option errors exit 2; no sudo. Test hook: `OCTARINE_NIRI_SETUP_SRC` (a tree with `niri/*.kdl`, `niri-portals.conf`, `10-octarine-os.toml`).
+  Test: `tests/niri-setup.sh` (fake gum, ugum, noctalia, sudo, temp HOME; `niri validate` of every include combination when niri exists; a guard
+  that `ghostty` and `ptyxis` appear in no shipped niri file). The smoke checks in `build.yml` and `build-beta.yml` look for the files.
+- **Unverified.** niri and Noctalia reading the copied files in a session, Noctalia's `msg` subcommand names (taken from the owner's dot-files),
+  the portal actually attaching oo7, `alacritty` on a booted image.
 
 ## Image identity (`IMAGE_ID`, `IMAGE_VERSION`) and the fastfetch default
 

@@ -307,6 +307,10 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   refresh rate), `gamemode` (installs the tuning from `/usr/share/octarine-os/gamemode.ini` as
   `~/.config/gamemode.ini`, never silently over a different file) and `reset` (removes the generated launchers and
   the PATH line, optionally the extest library, and undoes the gamemode file when unchanged). Installed Flatpaks stay.
+- **`niri-setup [--yes|--no] [--only STEP[,STEP...]]`:** a checklist for the niri session. Steps: `niri` (copies
+  `/etc/niri/*.kdl` into `~/.config/niri/`), `portals` (`~/.config/xdg-desktop-portal/niri-portals.conf`, with the Secret
+  portal set to oo7) and `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
+  Noctalia). A file that exists and differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
 
 Ideas for more, each a candidate for its own recipe:
 

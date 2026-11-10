@@ -1,0 +1,14 @@
+// Window rules from niri's default configuration. Find an app's id with `niri msg windows`.
+// Reference: https://niri-wm.github.io/niri/Configuration:-Window-Rules
+
+// WezTerm needs an empty default width because of its initial configure bug.
+window-rule {
+    match app-id=r#"^org\.wezfurlong\.wezterm$"#
+    default-column-width {}
+}
+
+// Firefox picture-in-picture floats (host app-id "firefox", Flatpak "org.mozilla.firefox").
+window-rule {
+    match app-id=r#"firefox$"# title="^Picture-in-Picture$"
+    open-floating true
+}

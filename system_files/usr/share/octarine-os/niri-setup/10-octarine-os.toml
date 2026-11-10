@@ -1,0 +1,4 @@
+# Added by `ujust niri-setup`: Noctalia's built-in polkit authentication agent is off by default; niri has no agent of
+# its own, so without this privileged prompts fail in a niri session. Do not run another polkit agent beside it.
+[shell]
+polkit_agent = true
