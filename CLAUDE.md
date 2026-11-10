@@ -477,7 +477,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   channel-neutral version check, push of `<channel>` and `<channel>-<date>-<sha>`. Sign job (`signing` environment): signs
   every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: one group per channel,
   `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.
-- **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, rustup, fish,
+- **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, fish, the rustup package and `rustup-init` (the RPM ships only that; no `rustup` command),
   `glib2-devel`, `openssl-devel`, virt-manager, virt-viewer, qemu-kvm, the libvirtd and virtqemud units, `podman.socket`,
   the VS Code preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
   (os-release, the three policy rules, sudoers, brew, recipes, removed packages). It prints `DIAG` lines on failure. Under

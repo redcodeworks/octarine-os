@@ -29,9 +29,12 @@ has_text() { # file, fixed text
 }
 
 echo "== developer toolchain (the shared list from the dev-packages image)"
-for c in gcc g++ clang cmake ninja meson gdb pkgconf uv rustup fish; do
+for c in gcc g++ clang cmake ninja meson gdb pkgconf uv fish; do
     check "command ${c}" "have ${c}"
 done
+# Fedora's rustup RPM ships rustup-init only; the `rustup` command appears after a user runs rustup-init
+check "package rustup" "rpm -q rustup"
+check "command rustup-init" "have rustup-init"
 for p in glib2-devel openssl-devel; do
     check "package ${p}" "rpm -q ${p}"
 done

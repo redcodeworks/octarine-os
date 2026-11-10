@@ -243,7 +243,7 @@ sb="$root/sb"
 mk_world() { # kernel dir name; rebuilds the stub world: a passing dx image
     rm -rf "$sb"; mkdir -p "$sb/bin" "$sb/sys" "$sb/modules/$1" "$sb/units" "$sb/pre" "$sb/share/ublue-os/just" "$sb/share/octarine-os/lib" "$sb/share/ublue-os/distrobox"
     for c in bash grep sed ls basename tr sort head cat python3 dirname; do p=$(command -v "$c") && ln -sf "$p" "$sb/sys/$c"; done
-    for c in gcc g++ clang cmake ninja meson gdb pkgconf uv rustup fish qemu-kvm virt-manager virt-viewer virt-install visudo; do printf '#!/bin/sh\nexit 0\n' >"$sb/bin/$c"; done
+    for c in gcc g++ clang cmake ninja meson gdb pkgconf uv rustup-init fish qemu-kvm virt-manager virt-viewer virt-install visudo; do printf '#!/bin/sh\nexit 0\n' >"$sb/bin/$c"; done
     cat >"$sb/bin/rpm" <<'F'
 #!/usr/bin/env bash
 # rpm -q NAME: ok when NAME is in $RPM_LIST; rpm -qa [glob]: print the list
@@ -269,7 +269,7 @@ F
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\n' >"$sb/os-release"
     echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"":[]}}}' >"$sb/policy.json"
-    printf '%s\n' libvirt qemu-kvm cockpit-machines virtiofsd swtpm edk2-ovmf glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
+    printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virtiofsd swtpm edk2-ovmf glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
 }
 smoke_run() { # BASE_KERNEL
     PATH="$sb/bin:$sb/sys" RPM_LIST="$sb/rpms" MODULES_DIR="$sb/modules" UNIT_DIR="$sb/units" PREINSTALL_DIR="$sb/pre" \
@@ -284,7 +284,10 @@ check "smoke: failure prints diagnostics (kernels, missing packages, units)" bas
 mk_world "$K"; smoke_run "$K"; check "smoke: a passing run prints no diagnostics" bash -c "! grep -q DIAG '$root/smoke.out'"
 mk_world "$K"; rm "$sb/bin/virt-manager"; smoke_run "$K"; check "smoke: no virt-manager fails" test $? -ne 0
 mk_world "$K"; rm "$sb/bin/virt-viewer"; smoke_run "$K"; check "smoke: no virt-viewer fails" test $? -ne 0
-mk_world "$K"; rm "$sb/bin/uv" "$sb/bin/rustup"; smoke_run "$K"; check "smoke: no uv or rustup fails" test $? -ne 0
+mk_world "$K"; rm "$sb/bin/uv"; smoke_run "$K"; check "smoke: no uv fails" test $? -ne 0
+mk_world "$K"; rm "$sb/bin/rustup-init"; smoke_run "$K"; check "smoke: no rustup-init fails" test $? -ne 0
+mk_world "$K"; grep -vx rustup "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: no rustup package fails" test $? -ne 0
+mk_world "$K"; smoke_run "$K"; check "smoke: a rustup command is not required (only rustup-init)" bash -c "! grep -q 'command rustup\$' '$root/smoke.out' && grep -q 'PASS command rustup-init' '$root/smoke.out'"
 mk_world "$K"; grep -vx glib2-devel "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing -devel package fails" test $? -ne 0
 mk_world "$K"; rm "$sb/units/virtqemud.service"; smoke_run "$K"; check "smoke: a missing virtqemud unit fails" test $? -ne 0
 mk_world "$K"; rm "$sb/units/libvirtd.service"; smoke_run "$K"; check "smoke: a missing libvirtd unit fails" test $? -ne 0
