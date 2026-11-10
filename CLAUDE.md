@@ -147,6 +147,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
+- `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
@@ -368,6 +369,40 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The `gnome-candy` menu is built from the JSON dump of the checkout (name - comment, ordered by group then name);
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
+
+## Image identity (`IMAGE_ID`, `IMAGE_VERSION`) and the fastfetch default
+
+- `PRETTY_NAME` stays `octarineOS` in EVERY image (default, beta, nvidia, dx); `NAME`, `ID`, `VERSION_ID`, `VARIANT_ID` are
+  untouched. The image identity goes only into `IMAGE_ID` and `IMAGE_VERSION` of `/usr/lib/os-release` (`/etc/os-release` is a
+  symlink), written as quoted lines by `set_os_release_field` (replace the line if it exists, append otherwise; the same
+  function is in `build_files/build.sh`, `variants/nvidia/nvidia.sh` and `variants/dx/dx.sh`, and `OS_RELEASE_FILE` is a test-only
+  override of the path).
+- Field values:
+
+  | Image | `IMAGE_ID` | `IMAGE_VERSION` | Set in |
+  |---|---|---|---|
+  | `octarine-os` (`latest`, `testing`, PR builds) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
+  | `octarine-os:beta` | `octarine-os` | `beta-<YYYYMMDD>-<short sha>` | `build.sh` |
+  | `octarine-os-nvidia` | `octarine-os-nvidia` | its own build's `<YYYYMMDD>-<short sha>` | `nvidia.sh` |
+  | `octarine-os-dx` (`latest`) | `octarine-os-dx` | its own build's version | `dx.sh` |
+  | `octarine-os-dx:beta` | `octarine-os-dx` | `beta-` plus its own build's version | `dx.sh` |
+
+- The version string is `.github/scripts/image-version.sh`, the same string as the `org.opencontainers.image.version` label (the
+  label never carries the `beta-` prefix). It reaches the build as the build argument `IMAGE_VERSION` (`just build` adds
+  `${IMAGE_VERSION_PREFIX}` in front: the beta workflow sets `IMAGE_VERSION_PREFIX: beta-` in its `env:`; the nvidia and dx
+  workflows pass `--build-arg IMAGE_VERSION`, dx adds `beta-` for its beta channel). The variants override both fields with
+  their OWN build's version, never the base's. A promoted image (testing to `latest`) is a retag of the tested digest, so it keeps
+  exactly the fields it was built with: that is why the version names no channel.
+- Checks: the smoke tests of `build.yml` and `build-beta.yml` (env `VERSION_RE`), `dx-smoke.sh` (env `IMAGE_CHANNEL`) and
+  `nvidia-smoke.sh present` assert `PRETTY_NAME="octarineOS"`, the right `IMAGE_ID` and the `IMAGE_VERSION` format
+  (`[0-9]{8}-[0-9a-f]{7,}`, with `beta-` for beta builds). `check-version-neutral.sh` also reads the image's os-release
+  `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`, no `beta` in a stable image, and
+  with `BETA=true` it must start with `beta-`. Tests: `tests/image-version.sh`, `beta-channel.sh`, `dx-image.sh`, `nvidia-variant.sh`.
+- fastfetch is NOT in the image and stays a Homebrew install (owner's rule); only a default configuration ships:
+  `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
+  so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
+  they are missing, and `n/a` elsewhere. Test: `tests/fastfetch-default.sh` (strips the `//` lines, then `jq`). Never add fastfetch to
+  `build.sh` or a Brewfile.
 
 ## Beta channel (`octarine-os:beta`)
 

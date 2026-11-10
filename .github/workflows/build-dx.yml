@@ -202,10 +202,14 @@ jobs:
           set -a; . ./image-template.env; set +a
           version=$(.github/scripts/image-version.sh)
           sha=$(git rev-parse HEAD)
+          # os-release IMAGE_VERSION: this build's version, `beta-` prefixed on the beta channel (never promoted)
+          os_version="${version}"
+          [[ "${CHANNEL}" != beta ]] || os_version="beta-${version}"
           podman build -f variants/dx/Containerfile \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${CHANNEL}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
+            --build-arg "IMAGE_VERSION=${os_version}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
             --unsetlabel org.opencontainers.image.maintainer \
             --unsetlabel org.opencontainers.image.authors \
@@ -247,7 +251,7 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the image
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
             "octarine-os-dx:${CHANNEL}" bash /smoke.sh
 
       - name: Rechunk with rpm-ostree
@@ -256,9 +260,12 @@ jobs:
 
       - name: Check the version is channel-neutral
         run: |
-          podman image inspect "octarine-os-dx:${CHANNEL}" \
-            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
-            | .github/scripts/check-version-neutral.sh
+          # the labels plus os-release IMAGE_VERSION of the rechunked image (a beta build's must start with beta-)
+          {
+            podman image inspect "octarine-os-dx:${CHANNEL}" \
+              | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
+            podman run --rm "octarine-os-dx:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
+          } | BETA=$([[ "${CHANNEL}" == beta ]] && echo true || echo false) .github/scripts/check-version-neutral.sh
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

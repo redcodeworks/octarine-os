@@ -1,0 +1,47 @@
+{
+    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+    // Default fastfetch configuration of this image. fastfetch is not preinstalled (install it with `brew install fastfetch`);
+    // a file in ~/.config/fastfetch/ takes priority over this one.
+    "logo": {
+        "source": "Fedora-Silverblue"
+    },
+    "display": {
+        "separator": "  "
+    },
+    "modules": [
+        {
+            "type": "command",
+            "key": " ",
+            // distrobox bind-mounts the host's /etc/hostname into its containers, so `hostname` reports the host name;
+            // CONTAINER_ID (set by distrobox-enter) says where we really are.
+            "text": "printf '%s@%s' \"$USER\" \"${CONTAINER_ID:-$(hostname)}\"",
+            "format": "{result}"
+        },
+        // {pretty-name} is PRETTY_NAME from /etc/os-release and drops the trailing architecture the default format adds.
+        { "type": "os", "format": "{pretty-name}" },
+        "kernel",
+        // The image this system runs: IMAGE_ID and IMAGE_VERSION from /etc/os-release, set by the image builds. Where they
+        // are missing the booted rpm-ostree deployment is shown ("octarine-os:latest 20261109-084e321"), and "n/a" where
+        // neither exists (a toolbox container), so the line count stays fixed.
+        {
+            "type": "command",
+            "key": "Image",
+            "text": "( . /etc/os-release 2>/dev/null; if [ -n \"$IMAGE_ID\" ]; then printf '%s %s' \"$IMAGE_ID\" \"$IMAGE_VERSION\"; elif command -v rpm-ostree >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && r=$(rpm-ostree status --json 2>/dev/null | jq -r '.deployments[]|select(.booted)|\"\\((.\"container-image-reference\"|sub(\"^.*/\";\"\"))) \\(.version)\"' 2>/dev/null) && [ -n \"$r\" ]; then printf '%s' \"$r\"; else printf 'n/a'; fi )",
+            "format": "{result}"
+        },
+        "cpu",
+        // integrated GPU hidden: the discrete GPU is the one that matters
+        { "type": "gpu", "hideType": "integrated" },
+        "de",
+        "lm",
+        "memory",
+        "swap",
+        // root is a read-only composefs on this image; /var is the writable filesystem that fills up
+        { "type": "disk", "folders": "/var" },
+        "uptime",
+        "break",
+        // colour grid: two rows (normal, bright) of the terminal palette
+        { "type": "colors", "symbol": "block", "paddingLeft": 2, "block": { "range": [0, 7] } },
+        { "type": "colors", "symbol": "block", "paddingLeft": 2, "block": { "range": [8, 15] } }
+    ]
+}

@@ -267,7 +267,7 @@ F
     printf '[Flatpak Preinstall org.gnome.Example]\nBranch=stable\n' >"$sb/pre/gnome.preinstall"
     printf '[Flatpak Preinstall com.visualstudio.code]\nBranch=stable\n' >"$sb/pre/dx.preinstall"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
-    printf 'ID=fedora\nPRETTY_NAME="octarineOS"\n' >"$sb/os-release"
+    printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
     echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"":[]}}}' >"$sb/policy.json"
     printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virtiofsd swtpm edk2-ovmf glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
 }
@@ -301,6 +301,17 @@ mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/octarine-os-dx":\[\]##' "$sb/pol
 mk_world "$K"; SYSTEMCTL_FAIL=podman.socket smoke_run "$K"; check "smoke: a disabled podman.socket fails" test $? -ne 0
 mk_world "$K"; echo firefox >>"$sb/rpms"; smoke_run "$K"; check "smoke: firefox must stay removed" test $? -ne 0
 mk_world "$K"; PKGCONF_RC=1 smoke_run "$K"; check "smoke: pkgconf not finding glib-2.0 and openssl fails" test $? -ne 0
+mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release"; smoke_run "$K"; check "smoke: the default image's IMAGE_ID fails" test $? -ne 0
+mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
+mk_world "$K"; sed -i '/^IMAGE_VERSION=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_VERSION fails" test $? -ne 0
+OS_IMAGE_VERSION=latest-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a channel word in a stable IMAGE_VERSION fails" test $? -ne 0
+OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION fails on the latest channel" test $? -ne 0
+OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION passes on the beta channel" test $? -eq 0
+mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: an unprefixed IMAGE_VERSION fails on the beta channel" test $? -ne 0
+check "workflow: the dx build passes IMAGE_VERSION (beta- prefixed on beta), the smoke test gets the channel, the neutral check knows beta" bash -c "
+  grep -q 'os_version=\"beta-\${version}\"' '$wf' && grep -q 'IMAGE_VERSION=\${os_version}' '$wf'
+  grep -q 'IMAGE_CHANNEL=\"\${CHANNEL}\"' '$wf' && grep -q 'BETA=\$' '$wf'
+  grep -q '^ARG IMAGE_VERSION' '$here/variants/dx/Containerfile' && grep -q 'set_os_release_field IMAGE_ID octarine-os-dx' '$here/variants/dx/dx.sh'"
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0
 

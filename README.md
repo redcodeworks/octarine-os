@@ -125,6 +125,18 @@ Visual Studio Code comes as a Flatpak (`ujust flatpak-preinstall` lists and inst
 Flathub, which Flathub does not mark as verified; it is not Microsoft's own package, so install it only if you are fine with that.
 The dx image is for my own use and is not tested beyond my machine.
 
+## Which image is this?
+
+Every image identifies itself with `IMAGE_ID` and `IMAGE_VERSION` in `/etc/os-release`; the display name stays `octarineOS`. Read them with:
+
+```
+grep IMAGE_ /etc/os-release
+```
+
+`IMAGE_ID` is `octarine-os`, `octarine-os-dx` or `octarine-os-nvidia`, and `IMAGE_VERSION` is the build's date and commit (for example
+`20261109-084e321`; builds of the beta channel start with `beta-`). A default fastfetch configuration that shows this line is included;
+fastfetch itself is not part of the image (`brew install fastfetch`), and a configuration in `~/.config/fastfetch/` takes priority.
+
 ## Security key (YubiKey) for sudo and polkit
 
 With a security key enrolled, sudo and polkit password prompts accept a touch of the key instead of the password, in interactive sessions. Without an enrolled key the password works as usual.

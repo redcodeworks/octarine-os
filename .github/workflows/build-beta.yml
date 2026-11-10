@@ -20,6 +20,8 @@ env:
   BASE_IMAGE: ghcr.io/ublue-os/silverblue-main
   FEDORA_VERSION: beta
   DEFAULT_TAG: beta
+  # os-release IMAGE_VERSION of this channel is beta-<date>-<sha>: the beta image is never promoted (`just build` reads this)
+  IMAGE_VERSION_PREFIX: beta-
 
 concurrency:
   group: ${{ github.workflow }}
@@ -133,7 +135,7 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
+          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" -e VERSION_RE='beta-[0-9]{8}-[0-9a-f]{7,}' "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
             fail=0
             check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
@@ -191,6 +193,8 @@ jobs:
             for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
             check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
             check "pretty name" "grep -qx \"PRETTY_NAME=\\\"octarineOS\\\"\" /etc/os-release"
+            check "image id" "grep -qx \"IMAGE_ID=\\\"octarine-os\\\"\" /etc/os-release"
+            check "image version format" "grep -qE \"^IMAGE_VERSION=\\\"\$VERSION_RE\\\"\\\$\" /etc/os-release"
 
             check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
             check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
@@ -229,9 +233,12 @@ jobs:
 
       - name: Check the version is channel-neutral
         run: |
-          podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
-            | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"' \
-            | .github/scripts/check-version-neutral.sh
+          # the labels plus os-release IMAGE_VERSION of the rechunked image (a beta build's must start with beta-)
+          {
+            podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
+              | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
+            podman run --rm "${IMAGE_NAME}:${DEFAULT_TAG}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
+          } | BETA=true .github/scripts/check-version-neutral.sh
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

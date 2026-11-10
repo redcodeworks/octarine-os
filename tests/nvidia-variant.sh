@@ -109,14 +109,27 @@ mk_image() { # kernel dir name
     printf 'blacklist nouveau\noptions nouveau modeset=0\n' >"$root/img/modprobe/00-nouveau-blacklist.conf"
     printf 'kmod-nvidia-%s\nnvidia-driver\nnvidia-gpu-firmware\n' "$1" >"$RPM_LIST"
     echo nvidia-container >"$SEMODULES"
+    printf 'PRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-nvidia"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$root/img/os-release"
 }
 smoke() { # mode
     PATH="$root/bin:$PATH" MODULES_DIR="$root/img/modules" KARGS_FILE="$root/img/kargs/00-nvidia.toml" \
-        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" BASE_KERNEL="$K" "$here/.github/scripts/nvidia-smoke.sh" "$1"
+        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" OS_RELEASE="$root/img/os-release" BASE_KERNEL="$K" "$here/.github/scripts/nvidia-smoke.sh" "$1"
 }
 K=$k
 mk_image "$K"
 check "smoke present: a complete variant passes" smoke present
+mk_image "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$root/img/os-release"
+smoke present >"$root/out" 2>&1; check "smoke present: the default image's IMAGE_ID fails" test $? -ne 0
+mk_image "$K"; sed -i '/^IMAGE_VERSION=/d' "$root/img/os-release"
+smoke present >"$root/out" 2>&1; check "smoke present: a missing IMAGE_VERSION fails" test $? -ne 0
+OS_IMAGE_VERSION=beta-20261110-abc1234 mk_image "$K"
+smoke present >"$root/out" 2>&1; check "smoke present: a beta- IMAGE_VERSION fails (the variant is never beta)" test $? -ne 0
+mk_image "$K"; sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="other"/' "$root/img/os-release"
+smoke present >"$root/out" 2>&1; check "smoke present: a changed PRETTY_NAME fails" test $? -ne 0
+check "variant: the Containerfile takes IMAGE_VERSION, the workflow passes it, nvidia.sh sets both fields" bash -c "
+  grep -q '^ARG IMAGE_VERSION' '$here/variants/nvidia/Containerfile'
+  grep -q 'IMAGE_VERSION=\${version}' '$here/.github/workflows/build-nvidia.yml'
+  grep -q 'set_os_release_field IMAGE_ID octarine-os-nvidia' '$here/variants/nvidia/nvidia.sh' && grep -q 'set_os_release_field IMAGE_VERSION' '$here/variants/nvidia/nvidia.sh'"
 mk_image "$K"; rm "$root/img/modules/$K/extra/nvidia.ko.xz"
 smoke present >"$root/out" 2>&1; check "smoke present: no kernel module fails" test $? -ne 0
 mk_image "$K"; printf 'nvidia-gpu-firmware\n' >"$RPM_LIST"

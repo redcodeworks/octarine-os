@@ -180,6 +180,24 @@ fi
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="octarineOS"/' /usr/lib/os-release
 grep -qx 'PRETTY_NAME="octarineOS"' /usr/lib/os-release
+
+# Image identity: IMAGE_ID and IMAGE_VERSION (the fields os-release(5) defines for this). The version is the build's own
+# channel-neutral one (<YYYYMMDD>-<short sha>, passed in by `just build`), the same string as the OCI version label; the
+# beta channel build gets a `beta-` prefix because it is never promoted. A promoted image (testing -> latest) is the same
+# image, so it keeps exactly these fields.
+set_os_release_field() { # key value: replace the line when it exists, append it otherwise
+    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
+    if grep -q "^${key}=" "${file}"; then
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+    else
+        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
+        echo "${key}=\"${value}\"" >> "${file}"
+    fi
+    grep -qx "${key}=\"${value}\"" "${file}"
+}
+set_os_release_field IMAGE_ID octarine-os
+set_os_release_field IMAGE_VERSION "${IMAGE_VERSION:-unknown}"
+bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os ]]'
 echo "== resulting os-release"
 cat /usr/lib/os-release
 
