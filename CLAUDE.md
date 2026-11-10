@@ -183,6 +183,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.
+- `tests/nvidia-dx-image.sh` tests the NVIDIA dx workflow (triggers, guards, no required-check context, the shared dx layer, both smoke tests, tags, signing), the `DX_IMAGE_ID` part of `dx.sh`, the CDI part of `nvidia.sh` and the dx-only input list; the plan decision for it is in `tests/plan-dx.sh`.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
@@ -248,7 +249,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   every distinct pushed digest with cosign (old bundle format, `--use-signing-config=false`) and verifies
   each tag against `cosign.pub`. Pull request builds never reach it. `build.sh` generates the container
   signature policy (a `sigstoreSigned` scope for `ghcr.io/<org>/<image>`, a `registries.d` entry, the key under
-  `/etc/pki/containers`) from `IMAGE_ORG`, `IMAGE_NAME` and `cosign.pub`, keeping the catch-all last (rules for the default, `-nvidia` and `-dx` repositories).
+  `/etc/pki/containers`) from `IMAGE_ORG`, `IMAGE_NAME` and `cosign.pub`, keeping the catch-all last (rules for the default, `-nvidia`, `-dx` and `-nvidia-dx` repositories).
   `just build` passes `IMAGE_NAME=${target_image##*/}` so a `localhost/` prefix does not leak into it.
 - **Pruning.** `prune-testing.yml` runs weekly from `main`: it keeps the newest 10 `testing` builds, deletes
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
@@ -324,7 +325,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **Two hashes, one script.** `.github/scripts/inputs-hash.sh` (tests: `tests/inputs-hash.sh`) hashes the sorted
   `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
   dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`, `.github/workflows/build-dx.yml`,
-  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx}.sh`.
+  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx,nvidia-dx-image}.sh`.
   `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`). A new dx-only file must be
   added to `is_dx_only` (its test checks that each listed path exists); a file in neither group is a default-image input.
   Why hashes and not a `paths:` filter: a path filter on `build.yml` would leave the required check `Build and push image`
@@ -381,6 +382,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   status context (any source; it is not a check run of the Actions app).
 - **Prune.** `prune-testing.yml` now runs the generic testing pass on the `-dx` package too (same keep count as the default package; `testing-*` only versions,
   promoted versions carrying `latest*` are never candidates) next to the dx per-channel pass.
+- **NVIDIA dx.** `build-nvidia-dx.yml` reuses `plan-dx.sh` (`BASE_NAME`, `DX_NAME`, `PROMOTE_FROM_TESTING=false`) and builds the same `variants/dx` layer on `octarine-os-nvidia`; see "NVIDIA dx image and the CUDA toolbox".
 - **Cannot run before the first promotion.** `workflow_run` and `workflow_dispatch` use the workflow file of the default branch, so the new
   `build-dx.yml` (testing trigger, promote job, status) first runs after this change is promoted to `main`; the first `testing` push after that
   builds dx for the first time on testing. Until then the only checks are the stub tests and `bash -n`/YAML parses. Also unverified: the status
@@ -779,10 +781,10 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   anything runs: a missing manifest is "not published", a network failure is reported separately and never treated as
   missing. The switch is `sudo bootc switch --enforce-container-sigpolicy <ref>`, the form the README documents.
   `--list` probes all twelve combinations in parallel; `--yes` skips the question, `--no` prints the plan.
-- Which combinations exist is not hard-coded: today `nvidia` has no `beta` or `testing` tag and `nvidia-dx` has no image at all.
-  Publishing `octarine-os-nvidia-dx` later needs, besides the build: the new repository in the signature policy that
-  `build_files/build.sh` generates (`IMAGE_ORG`/`IMAGE_NAME`; `tests/nvidia-variant.sh` checks the policy for each
-  repository) or `--enforce-container-sigpolicy` will refuse it, and a row in the Variants table. The recipe needs no change.
+- Which combinations exist is not hard-coded: `nvidia` and `nvidia-dx` have only `latest` (no `beta` or `testing` tag). `octarine-os-nvidia-dx` is
+  built by `build-nvidia-dx.yml` (see "NVIDIA dx image"); its repository is in the signature policy that `build_files/build.sh` generates
+  (`tests/nvidia-variant.sh` and `tests/dx-image.sh` check the policy for each repository), so the recipe needed no change except a hint
+  printed for `nvidia-dx` (a machine whose image predates the rule gets a signature-policy error from bootc).
 - Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
 
 ## NVIDIA variant (`octarine-os-nvidia`)
@@ -915,6 +917,58 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main` (for the testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 
+## NVIDIA dx image (`octarine-os-nvidia-dx`) and the CUDA toolbox
+
+- **What it is.** `ghcr.io/redcodeworks/octarine-os-nvidia-dx`: the SAME dx layer (`variants/dx`, one `Containerfile`, one package
+  list, ROCm included, no CUDA toolkit) on top of `octarine-os-nvidia` instead of `octarine-os`. Kevin's decision (2026-11-10): the DX
+  build is identical for both variants, and NVIDIA's toolkit is a user-side install. No fork of the package list: the workflow passes
+  `BASE_IMAGE=ghcr.io/<owner>/octarine-os-nvidia` and `DX_IMAGE_ID=octarine-os-nvidia-dx` (a build argument of the final stage of
+  `variants/dx/Containerfile`, default `octarine-os-dx`; `dx.sh` sets `IMAGE_ID` from it and refuses any other value).
+- **Own workflow, `build-nvidia-dx.yml` (name "Build NVIDIA dx image").** Not a matrix of `build-dx.yml`: that file posts the REQUIRED
+  check `Build dx and push image` (also the commit status on the tested commit) and its trigger and result logic must not change. The new
+  workflow never posts that context: its result job is named `NVIDIA dx build result`, there is no `statuses` permission and no status
+  call, so it can neither satisfy nor block a promotion pull request. Trigger: `workflow_run` of "Build NVIDIA variant" (`main`
+  only; that workflow itself runs only on the Sunday schedule and by dispatch) and `workflow_dispatch` with `force`; never a push, pull
+  request or `testing`. Jobs: `plan` -> `build` -> `sign` (environment `signing`) -> `nvidia_dx_result` (`aggregate-dx.sh` with promote skipped).
+  Keep its build and sign steps in line with `build-dx.yml` (a test compares the shared steps).
+- **Plan.** `plan-dx.sh` with `CHANNEL=latest BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false`
+  (the new switch skips the search for a tested testing image: there is no testing channel). Skip when the published
+  `octarine-os-nvidia-dx:latest` has the same base digest (raw manifest of the verified `octarine-os-nvidia:latest`) and the same `dx_inputs`
+  as this commit; otherwise build. `is_dx_only` lists the new workflow and `tests/nvidia-dx-image.sh`, so a change to them changes
+  `dx_inputs` (dx rebuilds too) and never rebuilds the default image.
+- **Tags.** `latest`, `latest-<sha>`, `latest-<date>-<sha>`, `<date>-<sha>`, `<date>`, `latest-<date>` (the NVIDIA variant's set), one push through
+  `push-tags.sh`, signed like the others (`cosign.pub`). No `testing`, no `beta`.
+- **Smoke tests on the built image.** `dx-smoke.sh` with `EXPECT_IMAGE_ID=octarine-os-nvidia-dx`, then `nvidia-smoke.sh present` with the same
+  `EXPECT_IMAGE_ID` (driver package, kernel module, one kernel equal to the base's, initramfs, kargs, SELinux module) and the new checks (also run by
+  the NVIDIA variant's own build): no `cuda-toolkit*`/`cuda-nvcc*`/`cuda-compiler*`/`nvidia-cuda-toolkit` package, no `/usr/local/cuda*`, no `nvcc`
+  on PATH; the CDI pieces (`nvidia-container-toolkit`, `-base`, `nvidia-ctk`) are reported as INFO only.
+- **Signature policy.** `build.sh` now writes the rule for FOUR repositories (`octarine-os`, `-nvidia`, `-dx`, `-nvidia-dx`; the base name is derived by stripping
+  `-dx` first, then `-nvidia`) into the default image, so the dx and NVIDIA images (built on it) inherit it; the smoke tests of `build.yml`, `build-beta.yml`
+  and `dx-smoke.sh` assert it. Consequence: `bootc switch --enforce-container-sigpolicy ...octarine-os-nvidia-dx` works only on a machine that has booted
+  an image carrying the new rule (the policy is `reject` by default); `ujust switch-image` prints a hint for it.
+- **CDI pieces in the NVIDIA variant (`nvidia.sh`).** The driver install (`nvidia-install.sh` of the akmods image) is expected to bring
+  `nvidia-container-toolkit`; `nvidia.sh` now tries `dnf5 -y install nvidia-container-toolkit-base` once when it is missing (a warning, never a failed build) and enables
+  `nvidia-cdi-refresh.path`/`.service` when the unit files exist. All of it UNVERIFIED (package and unit names, repository state at build time).
+- **First publication.** A new GHCR package may start private: the owner makes `octarine-os-nvidia-dx` public once (package settings), or `ujust switch-image` reports it as
+  not published. The plan job logs in with the token, so it can read a private package.
+- **The CUDA step of `ujust dev` (dx image, `70-octarine-dev.just`, step `cuda`).** Shown in the checklist and run only when an NVIDIA driver is present
+  (`nvidia-smi -L` works or `/sys/module/nvidia` exists; hooks `DEV_NVIDIA_SYSFS`); otherwise the step records "skipped (no NVIDIA driver on this machine)". Why a container:
+  NVIDIA's license does not allow baking the toolkit into a public image, and NVIDIA's `fedora45` repository had no toolkit (as of 2026-10-27: `fedora44` has `cuda-toolkit-13-x`
+  up to 13.5.0, GCC 15.x works with CUDA 13.3+, GCC 16 does not). Never installed on the host, the CUDA repository is never in the image (a test greps for it).
+  It creates the rootless distrobox `cuda` from `registry.fedoraproject.org/fedora-toolbox:44` (`DEV_CUDA_IMAGE`) with
+  `--additional-flags "--device nvidia.com/gpu=all"` (CDI), NOT `--nvidia` (known open gap on Fedora Atomic, Bluefin issue 2559: no `ld.so.conf.d` entry or `NVIDIA_*` env,
+  empty `libcuda.so` links), then inside it: NVIDIA's fedora44 repo (`dnf5 config-manager addrepo --from-repofile=...cuda-fedora44.repo`, `DEV_CUDA_REPO_URL`, skipped when a repo file
+  for it exists), `sudo dnf5 -y install cuda-toolkit gcc15-c++`, `/etc/profile.d/cuda.sh` (PATH `/usr/local/cuda/bin`, `NVCC_CCBIN=g++-15`). Precondition: the host has an NVIDIA CDI spec
+  (`nvidia.yaml` in `/var/run/cdi` or `/etc/cdi`; hook `DEV_CDI_DIRS`); without it the step fails and prints the root commands (`sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`,
+  or enabling the refresh units); the recipe never runs sudo for it (sudo stays libvirt-only). `--image IMAGE` (validated name) creates the container from that image (for example
+  `docker.io/nvidia/cuda:<version>-devel-<distro>`) and installs nothing in it; it only applies when the container is created. Idempotent (container exists and has nvcc, plus
+  profile.d for the default image: already done; an existing container without the toolkit is not recreated), network commands retried, `--no` plan, undo
+  `distrobox rm --force cuda`. After the install it runs `nvidia-smi -L` in the container; a failure is a note (GPU path unverified), not a step failure. Tests: `tests/dev-setup.sh` (stub
+  `distrobox`, `nvidia-smi`; fresh, already done, existing container without toolkit, no driver, no CDI spec, failed create, failed install, retries, `--image`, the menu row).
+- **Unverified.** Everything about the live GPU path (CDI into a rootless distrobox, libcuda inside the container, `nvcc` with `g++-15`), the existence of `cuda-fedora44.repo` at that URL, the package
+  names `cuda-toolkit` and `gcc15-c++` on Fedora 44, whether `nvidia-install.sh` ships the container toolkit and refresh units, and the whole `build-nvidia-dx.yml` run, which can only
+  happen after the workflow is on `main` (workflow_run and dispatch use the default branch's file) and after the first NVIDIA build there. Only a real NVIDIA machine can verify the CUDA step.
+
 ## Developer menu (`ujust dev`, dx image only)
 
 - **Wiring.** The recipe is `variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just` (group Developer, one recipe `dev`).
@@ -974,6 +1028,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
     An existing `~/.nvm` is untouched (fnm keeps versions in `~/.local/share/fnm`; `.nvmrc` works).
   - `python`: `uv python install 3.12 3.13 3.14` for the missing ones; installed means a `cpython-<v>.` line of `uv python list --only-installed` whose path is under
     `UV_PYTHON_INSTALL_DIR` or `~/.local/share/uv/python` (a system Python does not count), then the list is printed. `DEV_PYTHONS` is a test hook.
+  - `cuda` (last step, shown only with an NVIDIA driver): the rootless `cuda` distrobox with the CUDA toolkit, through CDI; option `--image IMAGE`. Design, hooks and what is unverified: "NVIDIA dx image and the CUDA toolbox" above.
 - **Facts used.** The dx image carries `fuse-libs` (the Toolbox AppImage), Homebrew is on PATH for bash, zsh and fish, the VS Code Flatpak is NOT verified on Flathub (chosen knowingly),
   Fedora's `rustup` RPM ships only `rustup-init`. `rustup-init` writes `~/.cargo/env` and `env.fish` even with `--no-modify-path` (it only skips rc edits).
 - **Tests.** `tests/dev-setup.sh`: stub brew, flatpak, rustup, rustup-init, fnm, uv, virsh, systemctl, sudo, id, getent, gum and the sdk wrapper on a restricted PATH, temp HOME;

@@ -107,6 +107,10 @@ timers are installed but not enabled. Turn on what you use.
   `testing-<sha>`) and promoted to `latest` on `main` when its base digest and dx inputs match, instead of being rebuilt.
   A change that touches only the dx files does not rebuild the default image, and a docs-only change builds nothing.
   The result of the dx run is the status `Build dx and push image` on the commit; details in `CLAUDE.md`.
+- CI, NVIDIA dx image: `octarine-os-nvidia-dx` is the same developer layer on the NVIDIA variant. It is built by its own workflow after
+  the weekly NVIDIA build on `main` (or by hand), has only `latest` and the dated tags, and is skipped when the NVIDIA base and the dx files are
+  unchanged. It does not take part in the required checks. The CUDA toolkit is not in any image (NVIDIA's license): on an NVIDIA machine
+  `ujust dev --only cuda` creates a rootless distrobox `cuda` with it, through CDI; details and what is unverified in `CLAUDE.md`.
 - CI: a newer push to `testing` (or a PR) cancels the older build; `main` and the scheduled run never are. A cancelled
   build can leave the `testing` tag unsigned until the next build finishes.
 
@@ -301,10 +305,11 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   replaced). Each step is skipped when the app is not installed or the change is already in place; Enter takes the
   default. `--yes` takes the defaults without asking, `--no` changes nothing and prints the plan. The summary lists how
   to undo each applied step.
-- **`dev [--yes|--no] [--only STEP[,STEP...]]` (dx image only):** a checklist of developer setup steps: `libvirt` (system
+- **`dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]` (dx image only):** a checklist of developer setup steps: `libvirt` (system
   libvirt; the one `sudo` command), `tools` (Homebrew developer tools in groups), `vscode` (Flathub, not verified),
   `jetbrains` (official Homebrew cask plus a launcher), `rust` (rustup, rust-analyzer, rust-src), `java` (SDKMAN from the
-  Homebrew tap, Zulu 8, 11, 17, 21, 25), `node` (fnm and the latest LTS) and `python` (uv-managed 3.12 to 3.14). Nothing
+  Homebrew tap, Zulu 8, 11, 17, 21, 25), `node` (fnm and the latest LTS), `python` (uv-managed 3.12 to 3.14) and, only on a machine with an NVIDIA driver, `cuda` (a
+  rootless distrobox named `cuda` with the CUDA toolkit; `--image IMAGE` uses another image). Nothing
   runs that you did not tick; `--yes` takes the defaults (and skips the `sudo` step unless you name it with
   `--only libvirt`), `--no` prints the plan. Each step prints its undo line.
 - **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home

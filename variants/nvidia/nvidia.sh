@@ -37,6 +37,17 @@ after=$(kernel_of)
 test "$(ls /usr/lib/modules | wc -l)" = 1
 [[ "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: kernel module directory changed"; exit 1; }
 
+# CDI (how a container gets the GPU, also what `ujust dev --only cuda` in the dx image uses): the driver install is expected to
+# bring nvidia-container-toolkit; when it did not, try the base package once. Failing is only a warning (the repository may not
+# be enabled here); the smoke test reports what is installed. The refresh units regenerate the CDI spec on boot and driver
+# changes (toolkit 1.18 and later); they are enabled only when they exist. UNVERIFIED on Fedora 45.
+if ! rpm -q nvidia-container-toolkit-base >/dev/null 2>&1; then
+    dnf5 -y install nvidia-container-toolkit-base || echo "WARNING: nvidia-container-toolkit-base is not installed; CDI needs it (nvidia-ctk cdi generate)"
+fi
+for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
+    if [[ -e "/usr/lib/systemd/system/${u}" ]]; then systemctl enable "${u}" || echo "WARNING: could not enable ${u}"; else echo "NOTE: ${u} does not exist in this image"; fi
+done
+
 # nvidia-install.sh writes neither of these (UNVERIFIED for Fedora; the shape Bluefin LTS uses). bootc merges this
 # kargs.d file with the ones the base image already has (if any).
 cat >/usr/lib/modprobe.d/00-nouveau-blacklist.conf <<'EOM'

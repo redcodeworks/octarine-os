@@ -208,9 +208,9 @@ policy_run() { # image name
         | sed -e "s#/etc/#$t/etc/#g" -e "s#/ctx/cosign.pub#$here/cosign.pub#g" >"$t/block.sh"
     IMAGE_ORG=redcodeworks IMAGE_NAME="$1" bash -e "$t/block.sh" >"$root/out" 2>&1
 }
-for n in octarine-os octarine-os-nvidia octarine-os-dx; do
+for n in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
     policy_run "$n"
-    for r in octarine-os octarine-os-nvidia octarine-os-dx; do
+    for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
         check "policy ($n image): sigstoreSigned rule for ghcr.io/redcodeworks/$r" python3 -c "
 import json
 d = json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']['ghcr.io/redcodeworks/$r']
@@ -257,7 +257,7 @@ F
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
-    echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"":[]}}}' >"$sb/policy.json"
+    echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"ghcr.io/redcodeworks/octarine-os-nvidia-dx":[],"":[]}}}' >"$sb/policy.json"
     printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virtiofsd swtpm edk2-ovmf glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
 }
 smoke_run() { # BASE_KERNEL
@@ -308,7 +308,7 @@ mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: an unprefixed IM
 check "workflow: the dx build passes IMAGE_VERSION (beta- prefixed on beta), the smoke test gets the channel, the neutral check knows beta" bash -c "
   grep -q 'os_version=\"beta-\${version}\"' '$wf' && grep -q 'IMAGE_VERSION=\${os_version}' '$wf'
   grep -q 'IMAGE_CHANNEL=\"\${CHANNEL}\"' '$wf' && grep -q 'BETA=\$' '$wf'
-  grep -q '^ARG IMAGE_VERSION' '$here/variants/dx/Containerfile' && grep -q 'set_os_release_field IMAGE_ID octarine-os-dx' '$here/variants/dx/dx.sh'"
+  grep -q '^ARG IMAGE_VERSION' '$here/variants/dx/Containerfile' && grep -q 'set_os_release_field IMAGE_ID .*image_id' '$here/variants/dx/dx.sh' && grep -q '^ARG DX_IMAGE_ID=octarine-os-dx' '$here/variants/dx/Containerfile'"
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0
 

@@ -22,6 +22,7 @@ export LOG="$root/log" HOME="$root/home" STATE="$root/state" GUMQ="$root/gumq"
 export OCTARINE_MENU_LIB="$repo/system_files/usr/share/octarine-os/lib/menu.sh"
 export OCTARINE_SDK_WRAPPER="$bin/sdkstub" DEV_RETRY_WAIT=0 DEV_ETC_GROUP="$root/etc-group" DEV_USR_GROUP="$root/usr-group"
 export DEV_LIBVIRT_NET_XML="$root/net-default.xml"
+export DEV_NVIDIA_SYSFS="$root/no-nvidia-module" DEV_CDI_DIRS="$root/cdi"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME OCTARINE_MENU_FORCE_TTY CARGO_HOME UV_PYTHON_INSTALL_DIR DEV_PYTHONS DEV_RETRIES
 REAL_JUST=$(command -v just)
 for c in bash sh env cat grep awk sed cut tr date cmp diff mktemp mv rm cp mkdir head tail sort dirname basename wc chmod printf ls touch tee readlink sleep ln rmdir find uniq; do
@@ -155,6 +156,51 @@ if [ "$1 $2" = "python install" ]; then
 fi
 exit 0
 F
+# nvidia-smi: a driver exists only when $STATE/nvidia does
+cat >"$bin/nvidia-smi" <<'F'
+#!/usr/bin/env bash
+[ -f "$STATE/nvidia" ] || exit 9
+echo "GPU 0: Stub (UUID: GPU-0)"
+F
+# distrobox: list, create, enter (the in-container scripts are recognized by their text), rm
+cat >"$bin/distrobox" <<'F'
+#!/usr/bin/env bash
+echo "distrobox $*" >>"$LOG"
+flagged() { # name: fail-<name> always, failn-<name> that many times
+    [ -f "$STATE/fail-$1" ] && return 0
+    if [ -f "$STATE/failn-$1" ]; then left=$(cat "$STATE/failn-$1"); if [ "$left" -gt 0 ]; then echo $((left - 1)) >"$STATE/failn-$1"; return 0; fi; fi
+    return 1
+}
+case "$1" in
+    list)
+        echo "ID           | NAME                 | STATUS          | IMAGE"
+        [ -f "$STATE/cuda-container" ] && echo "0123456789ab | cuda                 | Up 2 minutes    | $(cat "$STATE/cuda-container")"
+        exit 0
+        ;;
+    create)
+        flagged create && exit 1
+        img=""; while [ $# -gt 0 ]; do [ "$1" = --image ] && img=$2; shift; done
+        echo "$img" >"$STATE/cuda-container"
+        exit 0
+        ;;
+    enter)
+        while [ "$1" != -- ] && [ $# -gt 0 ]; do shift; done; shift
+        cmd="$*"
+        echo "in-container: $cmd" >>"$LOG"
+        case "$cmd" in
+            *"tee /etc/profile.d/cuda.sh"*) flagged profile && exit 1; : >"$STATE/cuda-profile" ;;
+            *"test -f /etc/profile.d/cuda.sh"*) [ -f "$STATE/cuda-profile" ]; exit $? ;;
+            *"nvcc"*) [ -f "$STATE/cuda-toolkit" ]; exit $? ;;
+            *"dnf5 -y install"*) flagged install && exit 1; : >"$STATE/cuda-toolkit" ;;
+            *addrepo*) flagged repo && exit 1; : >"$STATE/cuda-repo" ;;
+            *"nvidia-smi"*) [ -f "$STATE/fail-smi" ] && exit 1; echo "GPU 0: Stub" ;;
+        esac
+        exit 0
+        ;;
+    rm) rm -f "$STATE/cuda-container"; exit 0 ;;
+esac
+exit 0
+F
 # the stub sdk wrapper: handles --octarine-relink, list java, install java ID, default java ID
 cat >"$bin/sdkstub" <<'F'
 #!/usr/bin/env bash
@@ -226,6 +272,7 @@ mk_netxml() { echo '<network><name>default</name></network>' >"$root/net-default
 
 reset() {
     rm -rf "$HOME" "$STATE/formulae" "$STATE/casks" "$STATE/flatpaks" "$STATE/pbin" "$STATE/sockets" "$STATE/brewprefix" "$root"/gumq.* "$LOG"
+    rm -rf "$root/cdi"; rm -f "$STATE"/nvidia "$STATE"/cuda-container "$STATE"/cuda-toolkit "$STATE"/cuda-profile "$STATE"/cuda-repo
     rm -f "$STATE"/fail-* "$STATE"/failn-* "$STATE"/components "$STATE"/fnm-list "$STATE"/fnm-env-count "$STATE"/uvlist "$STATE"/groups "$STATE"/members "$STATE"/net "$STATE"/pinned
     unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC SUDO_RC
     mkdir -p "$HOME" "$STATE/formulae" "$STATE/casks" "$STATE/flatpaks" "$STATE/pbin" "$STATE/sockets" "$STATE/brewprefix" "$STATE/multishell"
@@ -689,6 +736,62 @@ check "the recipe file exists only in the dx variant, nowhere in the default ima
 check "the default image has no sdk wrapper and no cargo profile snippet" bash -c "[ ! -e '$repo/system_files/usr/bin/sdk' ] && [ ! -e '$repo/system_files/etc/profile.d/octarine-dx-cargo.sh' ]"
 check "Containerfile and build.sh of the default image never mention the dev recipe" bash -c "! grep -q '70-octarine-dev' '$repo/Containerfile' '$repo/build_files/build.sh'"
 check "dx.sh appends the import line to ublue's main justfile, idempotently, and asserts it" bash -c "grep -q 'import? \"/usr/share/ublue-os/just/70-octarine-dev.just\"' '$repo/variants/dx/dx.sh' && grep -q 'grep -qxF \"\${dev_import}\" \"\${ujust_main}\"' '$repo/variants/dx/dx.sh'"
+# ---- cuda (only where an NVIDIA driver exists)
+cuda_world() { reset; : >"$STATE/nvidia"; mkdir -p "$root/cdi"; echo 'cdiVersion: 0.5.0' >"$root/cdi/nvidia.yaml"; }
+reset
+run '' --yes --only cuda
+check "cuda without a driver: says so, creates nothing, exit 0" bash -c "[ $rc = 0 ] && grep -q 'No NVIDIA driver on this machine' '$root/out' && grep -qE '^cuda +skipped \(no NVIDIA driver' '$root/out' && ! grep -q 'distrobox' '$LOG'"
+cuda_world
+run '' --yes --only cuda
+check "cuda fresh: container created with the CDI device and the Fedora 44 toolbox image, not --nvidia" bash -c "[ $rc = 0 ] && grep -qx 'distrobox create --yes --name cuda --image registry.fedoraproject.org/fedora-toolbox:44 --additional-flags --device nvidia.com/gpu=all' '$LOG' && ! grep -q -- '--nvidia' '$LOG'"
+check "cuda fresh: fedora44 repo added, cuda-toolkit and gcc15-c++ installed, profile.d written, in that order" bash -c "a=\$(grep -n 'addrepo' '$LOG' | head -1 | cut -d: -f1); b=\$(grep -n 'dnf5 -y install cuda-toolkit gcc15-c++' '$LOG' | head -1 | cut -d: -f1); c=\$(grep -n 'tee /etc/profile.d/cuda.sh' '$LOG' | head -1 | cut -d: -f1); [ -n \"\$a\" ] && [ \"\$a\" -lt \"\$b\" ] && [ \"\$b\" -lt \"\$c\" ] && grep -q 'fedora44/x86_64' '$LOG' && grep -q 'NVCC_CCBIN=g++-15' '$LOG'"
+check "cuda fresh: applied, undo line, check commands, never touches the host (no sudo, no brew, no rpm-ostree)" bash -c "grep -qE '^cuda +applied' '$root/out' && grep -q 'distrobox rm --force cuda' '$root/out' && grep -q 'nvcc --version' '$root/out' && grep -q 'distrobox enter cuda -- nvidia-smi' '$root/out' && ! grep -qE '^(sudo|brew|rpm-ostree)' '$LOG'"
+: >"$LOG"
+run '' --yes --only cuda
+check "cuda second run: already done, nothing created or installed again" bash -c "[ $rc = 0 ] && grep -qE '^cuda +already done' '$root/out' && [ \$(grep -c '^distrobox create' '$LOG') = 0 ] && ! grep -q 'dnf5' '$LOG'"
+cuda_world; : >"$STATE/cuda-container"; echo registry.fedoraproject.org/fedora-toolbox:44 >"$STATE/cuda-container"
+run '' --yes --only cuda
+check "cuda: an existing container without the toolkit is not recreated, the toolkit is installed in it" bash -c "[ $rc = 0 ] && ! grep -q '^distrobox create' '$LOG' && grep -q 'dnf5 -y install cuda-toolkit' '$LOG' && grep -qE '^cuda +applied' '$root/out'"
+cuda_world
+run '' --no --only cuda
+check "cuda --no: plan only, nothing created, installed or written" bash -c "[ $rc = 0 ] && grep -q 'Plan: distrobox create' '$root/out' && grep -qE '^cuda +planned' '$root/out' && ! grep -qE '^distrobox (create|enter)' '$LOG'"
+cuda_world; echo 2 >"$STATE/failn-install"
+run '' --yes --only cuda
+check "cuda: a failing install is retried and then succeeds" bash -c "[ $rc = 0 ] && [ \$(grep -c '^in-container:.*dnf5 -y install cuda-toolkit' '$LOG') = 3 ] && grep -qE '^cuda +applied' '$root/out'"
+cuda_world; : >"$STATE/fail-install"
+run '' --yes --only cuda
+check "cuda: an install that always fails: three tries, FAILED, exit 1, re-run line, undo line, container kept" bash -c "[ $rc = 1 ] && [ \$(grep -c '^in-container:.*dnf5 -y install cuda-toolkit' '$LOG') = 3 ] && grep -qE '^cuda +FAILED' '$root/out' && grep -q 'ujust dev --only cuda' '$root/out' && grep -q 'distrobox rm --force cuda' '$root/out' && [ -f '$STATE/cuda-container' ]"
+cuda_world; : >"$STATE/fail-create"
+run '' --yes --only cuda
+check "cuda: a container that cannot be created: three tries, FAILED, exit 1, nothing installed" bash -c "[ $rc = 1 ] && [ \$(grep -c '^distrobox create' '$LOG') = 3 ] && ! grep -q 'dnf5' '$LOG' && grep -qE '^cuda +FAILED' '$root/out'"
+cuda_world; rm -rf "$root/cdi"
+run '' --yes --only cuda
+check "cuda: no host CDI spec: stops with the exact root command (not run), exit 1, no container" bash -c "[ $rc = 1 ] && grep -q 'sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml' '$root/out' && ! grep -qE '^(sudo|distrobox create)' '$LOG' && grep -qE '^cuda +FAILED' '$root/out'"
+cuda_world
+run '' --yes --only cuda --image docker.io/nvidia/cuda:13.0.0-devel-ubuntu24.04
+check "cuda --image: that image is used and nothing is installed in it" bash -c "grep -q 'distrobox create --yes --name cuda --image docker.io/nvidia/cuda:13.0.0-devel-ubuntu24.04 ' '$LOG' && ! grep -q 'dnf5' '$LOG' && ! grep -q 'tee /etc/profile.d' '$LOG'"
+check "cuda --image: a note when the image has no nvcc, still applied" bash -c "[ $rc = 0 ] && grep -q 'no nvcc found in docker.io/nvidia/cuda' '$root/out' && grep -qE '^cuda +applied' '$root/out'"
+cuda_world; echo registry.example/x:1 >"$STATE/cuda-container"; : >"$STATE/cuda-toolkit"
+run '' --yes --only cuda --image docker.io/nvidia/cuda:13.0.0-devel-ubuntu24.04
+check "cuda --image with an existing toolkit container: already done, a note that --image applies at creation" bash -c "grep -qE '^cuda +already done' '$root/out' && grep -q 'only applies when the container is created' '$root/out'"
+run '' --only cuda --image
+check "--image without a value: exit 2" bash -c "[ $rc = 2 ] && grep -q -- '--image needs an image name' '$root/out'"
+run '' --only cuda --image 'bad name;x'
+check "--image with a bad name: exit 2" bash -c "[ $rc = 2 ] && grep -q 'Not an image name' '$root/out'"
+cuda_world; : >"$STATE/fail-smi"
+run '' --yes --only cuda
+check "cuda: nvidia-smi failing inside the container is a note (unverified GPU path), not a failure" bash -c "[ $rc = 0 ] && grep -q 'GPU path is unverified' '$root/out' && grep -qE '^cuda +applied' '$root/out'"
+reset
+run '' --help
+check "--help names the cuda step, --image and the CDI route" bash -c "grep -q '^  *cuda ' '$root/out' && grep -q -- '--image IMAGE' '$root/out' && grep -q 'nvidia.com/gpu=all' '$root/out'"
+cuda_world
+OCTARINE_MENU_FORCE_TTY=1 run '' 
+check "menu: with a driver the cuda row is offered" bash -c "grep -q 'cuda^\\|CUDA toolkit in a rootless distrobox' '$LOG' || grep -q 'CUDA toolkit' '$LOG'"
+reset
+OCTARINE_MENU_FORCE_TTY=1 run ''
+check "menu: without a driver there is no cuda row" bash -c "! grep -q 'CUDA toolkit' '$LOG'"
+check "no recipe or script puts the CUDA toolkit or NVIDIA's CUDA repository on the host image" bash -c "! grep -rqiE 'cuda-toolkit|developer\.download\.nvidia\.com|cuda-nvcc' '$repo/build_files' '$repo/variants/nvidia' '$repo/variants/dx/dx.sh' '$repo/variants/dx/packages' '$repo/Containerfile'"
+
 # run the import block of dx.sh against a fake main justfile, twice
 blk="$root/importblock.sh"
 {

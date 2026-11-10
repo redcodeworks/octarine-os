@@ -4,7 +4,8 @@
 #   nvidia-smoke.sh present   the variant: driver, kernel module, initramfs, kernel arguments, SELinux module
 #   nvidia-smoke.sh absent    the default image: no NVIDIA driver packages or kernel modules
 #
-# Environment: BASE_KERNEL (present: the kernel release of the base image, which must be unchanged), and for tests
+# The NVIDIA developer image (octarine-os-nvidia-dx) runs the same `present` checks with EXPECT_IMAGE_ID=octarine-os-nvidia-dx.
+# Environment: EXPECT_IMAGE_ID (present: the os-release IMAGE_ID, default octarine-os-nvidia), BASE_KERNEL (present: the kernel release of the base image, which must be unchanged), and for tests
 # MODULES_DIR, KARGS_FILE, MODPROBE_FILE, OS_RELEASE. Package names are not hard-coded: any installed package with "nvidia" in its
 # name counts as the driver, except the firmware package (nvidia-gpu-firmware ships with Fedora's linux-firmware).
 set -uo pipefail
@@ -14,10 +15,16 @@ modules_dir="${MODULES_DIR:-/usr/lib/modules}"
 kargs_file="${KARGS_FILE:-/usr/lib/bootc/kargs.d/00-nvidia.toml}"
 modprobe_file="${MODPROBE_FILE:-/usr/lib/modprobe.d/00-nouveau-blacklist.conf}"
 os_release="${OS_RELEASE:-/etc/os-release}"
+expect_image_id="${EXPECT_IMAGE_ID:-octarine-os-nvidia}"
+local_dir="${LOCAL_DIR:-/usr/local}"
 fail=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
 nvidia_pkgs() { rpm -qa | grep -i nvidia | grep -vi firmware; }
+# The CUDA toolkit (nvcc and friends) is never part of an image: NVIDIA's license does not allow shipping it, and `ujust dev`
+# installs it in a distrobox. Only the driver's own userspace (nvidia-driver-cuda*, libcuda) belongs here.
+toolkit_pkgs() { local all; all=$(rpm -qa); grep -iE '^(cuda-toolkit|cuda-nvcc|cuda-compiler|nvidia-cuda-toolkit)' <<<"${all}"; }
+no_toolkit_files() { [ -z "$(find "${local_dir}" -maxdepth 1 -name 'cuda*' 2>/dev/null)" ] && ! command -v nvcc; }
 # Exact names of the proprietary driver's modules, anywhere under the modules directory. A glob like nvidia*.ko* also
 # matches the stock kernel's nvidia-wmi-ec-backlight.ko.xz (a laptop backlight helper, no relation to the driver).
 nvidia_re='nvidia(-drm|-modeset|-uvm|-peermem)?\.ko(\.[a-z0-9]+)?'
@@ -69,8 +76,15 @@ case "${mode}" in
         check "nouveau is blacklisted for modprobe" "grep -qx 'blacklist nouveau' '${modprobe_file}'"
         check "the NVIDIA SELinux module is installed" "semodule -l | grep -qi nvidia"
         check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
-        check "image id" "grep -qx 'IMAGE_ID=\"octarine-os-nvidia\"' '${os_release}'"
+        check "image id (${expect_image_id})" "grep -qx 'IMAGE_ID=\"${expect_image_id}\"' '${os_release}'"
         check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
+        check "no CUDA toolkit package is installed" "test -z \"\$(toolkit_pkgs)\""
+        check "no /usr/local/cuda* and no nvcc" "no_toolkit_files"
+        # what a container needs to get the GPU through CDI (informational: whether the driver install brings them is unverified)
+        for p in nvidia-container-toolkit nvidia-container-toolkit-base; do
+            if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO package ${p} installed"; else echo "INFO package ${p} NOT installed (needed for CDI)"; fi
+        done
+        if command -v nvidia-ctk >/dev/null 2>&1; then echo "INFO nvidia-ctk present"; else echo "INFO nvidia-ctk NOT present (needed for CDI)"; fi
         ;;
     absent)
         check "no NVIDIA driver package in the default image" "! nvidia_pkgs | grep -q ."

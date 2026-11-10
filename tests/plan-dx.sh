@@ -29,12 +29,13 @@ older7=$(git rev-parse --short=7 HEAD~1)
 cat > "$root/bin/skopeo" <<'F'
 #!/usr/bin/env bash
 ref="${@: -1}"
+echo "$*" >> "${SK_LOG:-/dev/null}"
 case "$1 $2" in
     "inspect --raw")
         ref="${ref#docker://}"
         ! grep -qxF "${ref}" "${MISSING}" || exit 1
         to=$(awk -v r="${ref}" '$1 == r { print $2 }' "${ALIAS}"); printf 'manifest of docker://%s' "${to:-${ref}}" ;;
-    "inspect --config") tag="${ref##*:}"; [[ "${ref}" == *octarine-os-dx:* && -f "${CFG}/${tag}" ]] && { cat "${CFG}/${tag}"; exit 0; }; exit 1 ;;
+    "inspect --config") tag="${ref##*:}"; [[ ( "${ref}" == *octarine-os-dx:* || "${ref}" == *octarine-os-nvidia-dx:* ) && -f "${CFG}/${tag}" ]] && { cat "${CFG}/${tag}"; exit 0; }; exit 1 ;;
 esac
 F
 cat > "$root/bin/cosign" <<'F'
@@ -129,6 +130,34 @@ rm -f "$CFG"/*; cfg testing "${bb}" "${inputs}"
 run beta; expect "beta never promotes: build" true false ""
 [[ "$(get base_tag)" == beta && "$(get base_digest)" == "${bb}" ]] && pass "beta builds on octarine-os:beta" || bad "beta base"
 cfg beta "${bb}" "${inputs}"; run beta; expect "beta, unchanged: skip" false false ""
+
+echo "== NVIDIA developer image (octarine-os-nvidia-dx on octarine-os-nvidia:latest, no testing channel)"
+rm -f "$CFG"/*
+nvb() { dig "docker://ghcr.io/redcodeworks/octarine-os-nvidia:$1"; }
+run_nv() { # force; outputs in $root/out
+    : > "$root/out"; : > "$root/sum"; : > "$root/sklog"
+    PATH="$root/bin:$PATH" CHANNEL=latest FORCE="${1:-false}" GITHUB_REPOSITORY_OWNER=RedCodeWorks BASE_NAME=octarine-os-nvidia \
+        DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false SK_LOG="$root/sklog" \
+        GITHUB_OUTPUT="$root/out" GITHUB_STEP_SUMMARY="$root/sum" bash "$plan" > "$root/log" 2>&1
+}
+nv="sha256:$(nvb latest)"
+run_nv; expect "nvidia-dx: nothing published: build" true false ""
+[[ "$(get base_tag)" == latest && "$(get base_digest)" == "${nv}" ]] && pass "nvidia-dx builds on octarine-os-nvidia:latest" || bad "nvidia-dx base: $(get base_tag) $(get base_digest)"
+printf '{"config":{"Labels":{"org.opencontainers.image.base.digest":"%s","io.github.redcodeworks.octarine-os.dx-inputs":"%s"}}}' "${nv}" "${inputs}" > "$CFG/latest"
+run_nv; expect "nvidia-dx: same NVIDIA base digest and dx inputs: skip" false false ""
+printf '{"config":{"Labels":{"org.opencontainers.image.base.digest":"sha256:old","io.github.redcodeworks.octarine-os.dx-inputs":"%s"}}}' "${inputs}" > "$CFG/latest"
+run_nv; expect "nvidia-dx: a new NVIDIA base digest: build" true false ""
+printf '{"config":{"Labels":{"org.opencontainers.image.base.digest":"%s","io.github.redcodeworks.octarine-os.dx-inputs":"other"}}}' "${nv}" > "$CFG/latest"
+run_nv; expect "nvidia-dx: changed dx inputs: build" true false ""
+run_nv true; expect "nvidia-dx: force builds" true false ""
+cp "$CFG/latest" "$CFG/testing"
+printf '{"config":{"Labels":{"org.opencontainers.image.base.digest":"%s","io.github.redcodeworks.octarine-os.dx-inputs":"%s"}}}' "${nv}" "${inputs}" > "$CFG/testing"
+rm -f "$CFG/latest"
+run_nv; expect "nvidia-dx: a matching testing tag is never promoted (no testing channel): build" true false ""
+check_nolook() { ! grep -qE 'octarine-os-nvidia-dx:testing' "$root/sklog"; }
+check_nolook && pass "nvidia-dx: the registry is not even asked for a testing image" || bad "nvidia-dx asked for testing"
+! grep -q 'octarine-os:' "$root/sklog" && pass "nvidia-dx: the default image is never the base" || bad "nvidia-dx looked at octarine-os:"
+rm -f "$CFG"/*
 
 echo "== failures"
 COSIGN_BASE_FAIL=1 run latest; [[ $? -ne 0 ]] && pass "an unsigned base fails the job" || bad "unsigned base"

@@ -52,9 +52,12 @@ set_os_release_field() { # key value: replace the line when it exists, append it
     grep -qx "${key}=\"${value}\"" "${file}"
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
-set_os_release_field IMAGE_ID octarine-os-dx
+# the same layer sits on the default image (octarine-os-dx) and on the NVIDIA variant (octarine-os-nvidia-dx)
+image_id="${DX_IMAGE_ID:-octarine-os-dx}"
+[[ "${image_id}" =~ ^octarine-os(-nvidia)?-dx$ ]] || { echo "ERROR: DX_IMAGE_ID '${image_id}' is not octarine-os-dx or octarine-os-nvidia-dx"; exit 1; }
+set_os_release_field IMAGE_ID "${image_id}"
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
-bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os-dx ]]'
+IMAGE_ID_EXPECTED="${image_id}" bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == "${IMAGE_ID_EXPECTED}" ]]'
 
 after=$(kernel_of)
 [[ "${after}" == "${before}" ]] || { echo "ERROR: the dx install changed the kernel (${before} -> ${after})"; exit 1; }
