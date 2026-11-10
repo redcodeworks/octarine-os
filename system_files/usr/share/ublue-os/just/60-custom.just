@@ -1894,7 +1894,6 @@ gnome-candy *args:
     fi
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
 # Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, beta, testing)
 [group('Setup')]
 [positional-arguments]
@@ -1991,7 +1990,7 @@ switch-image *args:
                 "default^default: the base image" \
                 "dx^dx: developer tools, compilers and virtualization" \
                 "nvidia^nvidia: proprietary NVIDIA driver" \
-                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen." >&2; exit 1; }
+                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen; nothing changed."; exit 0; }
             image=$MENU_ONE
         else
             echo "Name an image: default, dx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
@@ -2005,7 +2004,7 @@ switch-image *args:
             menu_one "Which channel?" \
                 "latest^latest: tested daily build (recommended)" \
                 "beta^beta: built on the next Fedora base, not tested for daily use" \
-                "testing^testing: unreleased builds" || { echo "No channel chosen." >&2; exit 1; }
+                "testing^testing: unreleased builds" || { echo "No channel chosen; nothing changed."; exit 0; }
             channel=$MENU_ONE
         else
             channel=latest
@@ -2092,7 +2091,7 @@ luks-tpm-unlock *args:
         if menu_ready_one; then
             menu_one "What do you want to do?" \
                 "enroll^Enroll or re-enroll TPM2 unlock" \
-                "remove^Remove TPM2 unlock" || { echo "Nothing chosen." >&2; exit 1; }
+                "remove^Remove TPM2 unlock" || { echo "Nothing chosen; nothing changed."; exit 0; }
             action=$MENU_ONE
         else
             echo "Name an action: enroll or remove (ujust luks-tpm-unlock --help)" >&2
@@ -2149,13 +2148,17 @@ luks-tpm-unlock *args:
             sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || failed=1
             continue
         fi
-        if [ "${tpm_of[$d]}" = yes ]; then
-            echo "== Replacing the TPM2 key on $d"
-            sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || { failed=1; continue; }
-        fi
-        echo "== Enrolling $d (asks for the volume passphrase)"
+        # One call enrolls the new TPM2 key first and wipes the old TPM2 slot only when that succeeded (systemd-cryptenroll(1),
+        # --wipe-slot=: "the enrollment is completed first, and only when successful the wipe operation executed"), so a
+        # cancelled or failed enrollment leaves the old key in place.
         enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs")
         if [ "$pin" = 1 ]; then enroll_args+=(--tpm2-with-pin=yes); fi
+        if [ "${tpm_of[$d]}" = yes ]; then
+            echo "== Replacing the TPM2 key on $d (asks for the volume passphrase; the old key stays if this fails)"
+            enroll_args+=(--wipe-slot=tpm2)
+        else
+            echo "== Enrolling $d (asks for the volume passphrase)"
+        fi
         sudo systemd-cryptenroll "${enroll_args[@]}" "$d" || { failed=1; continue; }
         if [ -n "$root_uuid" ] && [ "${uuid_of[$d]}" = "$root_uuid" ]; then root_done=1; fi
     done
@@ -2170,6 +2173,7 @@ luks-tpm-unlock *args:
     fi
     exit "$failed"
 
+# Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
 [group('Toolbox')]
 [positional-arguments]
 toolbox *args:

@@ -125,11 +125,29 @@ check "a fork's registry is kept" has "Target:  example.org/someone/octarine-os:
 run "ostree-image-signed:docker://ghcr.io/ublue-os/silverblue-main:45" dx --no
 check "from a foreign image the target uses the project's registry" has "Target:  ghcr.io/redcodeworks/octarine-os-dx:latest"
 
-# ---- the base image's toggle-nvk is replaced
+# ---- the base image's toggle-nvk is gone (the assembled justfile is checked in tests/just-recipes.sh)
 check "40-nvidia.just no longer rebases by string substitution" bash -c "! grep -q 'rpm-ostree rebase' '$justdir/40-nvidia.just'"
-out=$(just --justfile "$justdir/40-nvidia.just" toggle-nvk 2>&1)
-check "toggle-nvk points to switch-image" bash -c "echo \"$out\" | grep -q 'ujust switch-image'"
+check "40-nvidia.just defines no recipe" bash -c "! grep -qE '^toggle-nvk' '$justdir/40-nvidia.just'"
 check "switch-image is listed by the recipe scan" bash -c "just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx switch-image"
+
+# ---- Esc leaves everything as it is: exit 0, nothing run. A fake ugum that prints nothing is Esc; a terminal is faked.
+cat >"$root/fakebin/ugum" <<'EOF2'
+#!/bin/bash
+exit 130
+EOF2
+chmod +x "$root/fakebin/ugum"
+escrun() {
+    : >"$LOG"
+    PATH="$root/fakebin:$PATH" OCTARINE_MENU_FORCE_TTY=1 OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" \
+        just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+escrun
+check "Esc at the image menu exits 0" bash -c "[ $rc = 0 ] && grep -q 'nothing changed' '$root/out'"
+check "Esc at the image menu runs nothing" notlogged "bootc"
+escrun dx
+check "Esc at the channel menu exits 0" bash -c "[ $rc = 0 ] && grep -q 'nothing changed' '$root/out'"
+check "Esc at the channel menu runs nothing" notlogged "bootc"
 
 echo
 echo "$pass passed, $failn failed"

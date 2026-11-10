@@ -376,7 +376,7 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh"
+            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
@@ -447,6 +447,29 @@ jobs:
             check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml && test -s /usr/share/octarine-os/niri-setup/keybinds/standard.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/compact.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/hhkb.kdl.in"
             check "niri accepts the shipped config when niri is installed" "! command -v niri || niri validate -c /etc/niri/config.kdl"
             check "niri-setup recipe exists" "grep -q ^niri-setup /usr/share/ublue-os/just/60-custom.just"
+
+            # ujust recipes added with switch-image, toggle-updates, update and luks-tpm-unlock (jq and skopeo are in CRITICAL above)
+            for f in 10-update 10-update-base 30-distrobox 30-distrobox-base 15-luks 40-nvidia 50-akmods 60-custom; do
+              check "just file $f.just exists" "test -f /usr/share/ublue-os/just/$f.just"
+            done
+            check "update helper library shipped" "test -s /usr/share/octarine-os/lib/update-services.sh"
+            for u in rpm-ostreed-automatic.timer flatpak-system-update.timer brew-update.timer brew-upgrade.timer; do
+              check "update unit $u exists" "systemctl cat $u"
+            done
+            for u in flatpak-user-update.timer octarine-distrobox-upgrade.timer octarine-distrobox-upgrade.service; do
+              check "user update unit $u exists" "test -f /usr/lib/systemd/user/$u"
+            done
+            check "jq and skopeo run" "jq --version && skopeo --version"
+            check "staged automatic image updates are on by default (ujust toggle-updates is the user switch)" "systemctl is-enabled rpm-ostreed-automatic.timer && grep -qx AutomaticUpdatePolicy=stage /etc/rpm-ostreed.conf"
+            summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
+            check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
+            has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
+            for r in switch-image toggle-updates update luks-tpm-unlock; do
+              check "assembled justfile lists $r" "has_recipe $r"
+            done
+            for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
+              check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
+            done
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
