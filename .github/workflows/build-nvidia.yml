@@ -157,15 +157,8 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
-          : > /tmp/digests
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile octarine-os-nvidia:build "${VARIANT_IMAGE}:${tag}"
-            cat /tmp/digestfile >> /tmp/digests
-            echo >> /tmp/digests
-          done
-          # keep every distinct digest and sign each of them
-          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
-          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+          # One push, the other tags are registry-side copies of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh octarine-os-nvidia:build "${VARIANT_IMAGE}" ${ALIAS_TAGS}
 
   sign:
     name: Sign and verify NVIDIA image

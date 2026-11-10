@@ -296,15 +296,8 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
-          : > /tmp/digests
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}"
-            cat /tmp/digestfile >> /tmp/digests
-            echo >> /tmp/digests
-          done
-          # the tags can end up with different manifest digests: keep every distinct one and sign each
-          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
-          echo "digests=${digests}" >> "${GITHUB_OUTPUT}"
+          # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh "${IMAGE_NAME}:${DEFAULT_TAG}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}
 
   sign:
     name: Sign and verify beta image
