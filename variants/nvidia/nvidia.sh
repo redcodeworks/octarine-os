@@ -38,7 +38,7 @@ test "$(ls /usr/lib/modules | wc -l)" = 1
 [[ "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: kernel module directory changed"; exit 1; }
 
 # nvidia-install.sh writes neither of these (UNVERIFIED for Fedora; the shape Bluefin LTS uses). bootc merges this
-# kargs.d file with the ones the base image already has (for example 10-iommu.toml).
+# kargs.d file with the ones the base image already has (if any).
 cat >/usr/lib/modprobe.d/00-nouveau-blacklist.conf <<'EOM'
 blacklist nouveau
 options nouveau modeset=0

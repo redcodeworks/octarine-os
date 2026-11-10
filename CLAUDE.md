@@ -14,9 +14,12 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
 
 The README is user-facing for people who just need the concise what, why and basic how to use it. It is not a place
 for notes to yourself and carries no technical implementation details (those go here). Essential sections:
-Requirements, Install/Usage, Contributing, License, Credits, and a closing disclaimer ("About this repo": personal
-project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs, forks
-encouraged). American English throughout.
+Requirements, Highlights, Install (with the Variants table and the Recipes list: every `ujust` recipe, one line each, no
+step lists, the recipes explain themselves), then the closing block Contributing, License, Credits and About this repo
+(personal project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs,
+forks encouraged; its `### Fork it` heading is linked from `AGENTS.md`), disclaimer last. No design rationale, process
+history, CI or branching internals, agent instructions or recipe step lists in it. American English throughout. Checked
+against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale sections).
 
 ## Layout
 
@@ -177,7 +180,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
 - `tests/dev-setup.sh` tests `ujust dev` (dx only), the sdk wrapper, the fnm and cargo shell snippets and the dx-only wiring (see "Developer menu").
-- `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup").
+- `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup"); `tests/niri-keybinds.sh` the experimental keybind wizard (see "Keybind wizard" there).
 - `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
@@ -188,8 +191,10 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
   `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
-- The image carries no compilers or build tools; they live in the toolbox the definition describes, which
-  is the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
+- `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
+  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (default image without both, dx with the karg).
+- The default image carries no compilers or build tools (the dx image does); the toolbox the definition describes is
+  the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
   an image from the fedora-toolbox repo.
 
@@ -342,8 +347,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** `iommu=pt`.
-- **Size and compilers:** the image carries no compilers; those live in the toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
+- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the default image still ships libvirt and qemu-kvm until stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
+- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
@@ -360,11 +365,13 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   mapping use the password. The mapping `~/.config/Yubico/u2f_keys` has one line per user and must be made with the same
   origin and appid; a second key goes on the same line (`pamu2fcfg ... -n` prints the key part only).
 - **Homebrew:** see the Homebrew section above; formulae are not pinned (use `brew bundle`).
-- **Login shell for new users:** `zsh` (`SHELL=/usr/bin/zsh` in `/etc/default/useradd`, plus `/etc/skel/.zshrc`).
-  Existing accounts and root keep their shell. Rolling back to an image without zsh breaks only accounts created while
-  zsh was the default; distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh
-  (`dev-toolbox` has it; check the `gaming` one).
-- **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image.
+- **Login shell:** zsh is installed and listed in `/etc/shells`, but it is NOT the default of new users any more
+  (2026-11-10: `build.sh` no longer patches `/etc/default/useradd`, and fails the build if that file names zsh; the smoke tests of
+  `build.yml`, `build-beta.yml` and `dx-smoke.sh` assert `SHELL=/usr/bin/zsh` is absent). Choosing it is opt-in through the `shell`
+  step of `ujust user-setup` (`usermod -s`, copies `/etc/skel/.zshrc` when the user has no zsh files); `shell-setup` is planned
+  to replace that step. Accounts created while zsh was the default keep it; rolling back to an image without zsh breaks them.
+  Distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh (`dev-toolbox` has it; check the `gaming` one).
+- **Flatpaks:** a preinstall list of apps (`system_files/usr/share/flatpak/preinstall.d`), installed by `ujust flatpak-preinstall [--dry-run]` run as the user from a desktop session (checks: not root, session bus, flathub remote, network; test `tests/flatpak-preinstall.sh`). The former root boot unit `flatpak-preinstall.service` was removed: a root service has no session bus, and on a machine installed from stock Silverblue the enabled `fedora` OCI remote asks for a token over the session bus, so `flatpak preinstall -y` failed with `Cannot autolaunch D-Bus without X11 $DISPLAY` and left a failed unit on every boot (`flatpak remote-add --disable` does not disable an existing remote; `dbus-run-session` is not shipped). The smoke test asserts the unit is not enabled and the recipe exists. Unverified: the polkit behavior for a user running it. Themes and icons are not in the image. Virtual machines: the default image preinstalls GNOME Boxes (`gnome.preinstall`; its `org.gnome.Boxes.Extension.OsinfoDb` extension has no `no-autodownload` in the app's metadata, so Flatpak pulls it with the app and no entry is needed; unverified on a fresh install) and no virt-manager Flatpak (removed 2026-11-10); the dx image has virt-manager only as the RPM (`variants/dx/packages/extras.txt`) and no Flatpak copy.
 
 ## Recipe conventions (ujust recipes in `60-custom.just`, and `70-octarine-dev.just` in the dx image)
 
@@ -452,6 +459,10 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | `gamemode.example.ini` | `renice=10` | included | generic |
   | | `desiredgov=powersave`, `[custom]` tuned profile | excluded from `/etc` | AMD amd-pstate specific and needs tuned; stays in the `gaming-setup` user file |
 
+- **User-facing notes (formerly in the README's "Defaults" section).** GNOME: hot corners off, AppIndicator and GSConnect on;
+  `gsettings reset <schema> <key>` returns a key to the image default. fish: a user file of the same name disables a snippet (see
+  Paths). GameMode needs the user in the `gamemode` group (`ujust user-setup` adds it). The files are `/etc/dconf/db/distro.d`,
+  `/etc/gamemode.ini` and `/usr/share/fish`.
 - **Refreshing a default from dot-files.** Read the dot-files file, apply the selection rule again, edit the shipped file
   by hand (nothing is generated), run `tests/system-defaults.sh`. The image never copies dot-files wholesale.
 - Tests: `tests/system-defaults.sh` (placement and modes, `dconf compile`, `fish --no-execute`, snippet behavior in a temp HOME,
@@ -493,17 +504,75 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (Noctalia v5.4.1 has no system-wide config layer: built-in defaults, then every `*.toml` in the user's config directory sorted and merged,
   then `~/.local/state/noctalia/settings.toml`; `10-` sorts before the user's `config.toml`, so the user wins; content `[shell]
   polkit_agent = true` plus the explanatory comment). No `/etc` override for portals or Noctalia exists, and `user-setup` has no polkit step.
-- **Recipe.** Group Setup; steps `niri`, `portals`, `polkit`; `--yes`, `--no` (plan only), `--only STEP[,STEP]`, `help`; the shared
+- **Recipe.** Group Setup; steps `niri`, `portals`, `polkit` and the experimental `keybinds` (own bullet below); `--yes`, `--no` (plan only), `--only STEP[,STEP]`, `help`; the shared
   checklist helper (a step chosen in it is not asked "Apply?" again); each file is idempotent (identical = "already done"), a different
   existing file shows a diff, the replace question defaults to keep (also under `--yes` and with no answer to read) and a yes saves
   `<file>.bak-YYYYMMDD-HHMMSS` first; the `polkit` step skips without `noctalia` on PATH; a failed step is FAILED with its re-run command, exit 1;
   option errors exit 2; no sudo. Test hook: `OCTARINE_NIRI_SETUP_SRC` (a tree with `niri/*.kdl`, `niri-portals.conf`, `10-octarine-os.toml`).
   Test: `tests/niri-setup.sh` (fake gum, ugum, noctalia, sudo, temp HOME; `niri validate` of every include combination when niri exists; a guard
   that `ghostty` and `ptyxis` appear in no shipped niri file). The smoke checks in `build.yml` and `build-beta.yml` look for the files.
+- **User-facing notes (formerly the README's "Niri session" section).** Without a user config niri falls back to the shipped files. To
+  drop the shipped key bindings delete the `include "40-binds.kdl"` line of `~/.config/niri/config.kdl` (any other include line drops that part).
+  A different existing file is never replaced silently: the user sees a diff, the default is keep, and a replacement saves
+  `<file>.bak-<date>-<time>` first. Undo: delete the files the recipe printed; niri then uses the shipped fallback again.
+- **Keybind wizard (EXPERIMENTAL, step `keybinds`; Kevin 2026-11-10).** Never part of the default run: `--yes` alone and the checklist
+  (entry "Keybind wizard (experimental)", not preselected unless wizard flags were given) leave niri's default binds
+  (`40-binds.kdl`) alone; the opening question is "Start the keybind wizard (experimental)?" (default NO) after one experimental notice;
+  help text, menu entry, question, notice and this file say experimental (layouts and generated files may change between image versions; the
+  result is checked with `niri validate`, the previous files are restored on failure, niri's defaults are one `include` away).
+  - **Flow.** Layout (single choice): Standard (always included), Compact (adds vim-style hjkl and u/i) or HHKB (mutually exclusive
+    extras), then the modifier for SWITCHING (focus; default Ctrl+Alt), for MOVING (default Ctrl+Super, or Ctrl+Alt when switching is
+    Ctrl+Super; the same modifier as switching is refused with a message and asked again) and for OTHER actions (default Super, written
+    `Mod`). Options: `ctrl-alt`, `ctrl-super`, `meh` (`Ctrl+Alt+Shift`), `hypr` (`Ctrl+Alt+Shift+Super`), `super` (other actions only).
+    MEH and HYPR are custom QMK mappings most keyboards lack: they carry the note "needs these keys mapped in your keyboard firmware (a custom
+    QMK mapping); most keyboards do not have them" in every menu and are NEVER the default, also not for HHKB (the defaults do not depend on
+    the layout). niri has no MEH or HYPR token, so they are plain modifier strings. Esc cancels (exit 0, nothing changed); plain numbered
+    prompts replace the `ugum` menu without a terminal.
+  - **Non-interactive.** `--keybinds standard|compact|hhkb`, `--switch-mod`, `--move-mod`, `--other-mod` (`ctrl-alt|ctrl-super|meh|hypr`,
+    `super` for `--other-mod` only; `--name=value` works), `--no-wizard`; any wizard option runs the wizard without questions (missing ones take
+    the defaults, a missing one avoids the other's value). `--yes` alone = NO. Unknown names, an equal switching and moving modifier and
+    `--no-wizard` with options exit 2. `--no` prints the plan only.
+  - **Templates** `system_files/usr/share/octarine-os/niri-setup/keybinds/{standard,compact,hhkb}.kdl.in` with `@SWITCH@`, `@MOVE@`,
+    `@OTHER@` replaced by `sed`. Key-partition rule that makes duplicates impossible by construction: SWITCH and MOVE own arrows, Page_Up/Down,
+    Home, End, 1-9 and the wheel (Standard), h j k l u i (Compact) or Semicolon Slash P Apostrophe K L J U (HHKB); OTHER uses only keys outside
+    those sets (T O Q R B Y X F G M N C Z A V W E, brackets, Comma, Period, Minus, Equal, Backslash, Grave, Escape, Backspace), so the roles
+    may share a modifier without sharing a key combination; a new bind must stay inside its role's key set. If an extra layout ever collided
+    with Standard, the extra layout changes, never a silent drop.
+  - **Deviations of the wizard's Standard part from niri's defaults.** F1 shows the hotkey overlay (not Mod+Shift+Slash); Shift and Ctrl variants
+    of the `Mod` binds got their own keys (fullscreen G, preset width back B, preset height Y, reset height X, expand column N, center visible Z,
+    window height A and Backslash, floating focus switch Grave, quit E, power off monitors Backspace); the monitor binds (focus or move to a
+    monitor, move workspace) and the Shift+wheel binds are not generated (a modifier that already holds Shift cannot take another Shift; use niri's
+    defaults for them); Noctalia's binds stay on `Mod` (`50-noctalia.kdl` is unchanged and comes after the generated parts, its keys Space D S
+    Shift+S never overlap).
+  - **HHKB layout, derived from the owner's dot-files `config.example.kdl` (keys and roles only).** Included: the focus and move cross on the
+    right hand (Semicolon left, Apostrophe right, Slash down, P up; the owner has `[` up, which Standard's consume-or-expel keeps), first and last
+    column on K and L, workspace down and up on J and U (owner: Period and L). Excluded: ghostty, yazi, helix, btop, zellij, nvtop, lnav, lazydocker,
+    gdu, ipython, Firefox and fuzzel launches, the volume and media keys on Super+Alt letters, swaylock, workspace names and routing, window rules,
+    Mod+G, Mod+Delete/Backspace close, the owner's MEH/HYPR fixed assignments (now the three placeholders).
+  - **Output.** `~/.config/niri/40-binds-standard.kdl` and `41-binds-compact.kdl` or `41-binds-hhkb.kdl`; the `include "40-binds.kdl"` line of
+    `config.kdl` (or the generated lines of an earlier run) becomes `include "40-binds-standard.kdl"` plus the extra include, backup
+    `config.kdl.bak-<date>-<time>`; a `config.kdl` without such a line gets the lines before `include "50-noctalia.kdl"` only after a diff and a
+    question (default keep, also under `--yes`). A re-run regenerates: identical = already done, a different generated file shows a diff (default
+    keep, backup on yes), and a kept file leaves `config.kdl` alone. A previous `41-binds-*.kdl` of another layout is left in place, unincluded.
+    With no `~/.config/niri/config.kdl` yet the step is skipped (run the `niri` step first). After writing it runs `niri validate -c
+    ~/.config/niri/config.kdl` when niri is on PATH; on failure it restores every touched file from a snapshot, removes this run's backups,
+    reports FAILED (exit 1, re-run hint); without niri it says validation was skipped.
+  - **"NO" is verifiable.** `40-binds.kdl` equals the `binds` block of `/usr/share/doc/niri/default-config.kdl` except Mod+D (fuzzel) and Super+Alt+L
+    (swaylock) removed (the image ships neither) and the playerctl and brightness keys guarded with `command -v`; Alacritty is niri's own default
+    terminal. `tests/niri-keybinds.sh` fails on any other difference.
+  - **Tests** `tests/niri-keybinds.sh`: the matrix (3 layouts x 12 ordered switch/move pairs x 5 other modifiers = 180 runs of the real recipe against
+    the shipped tree, each checked with the real `niri validate` and a duplicate-key parser that normalizes `Mod` to `Super`; generated plus Noctalia
+    may repeat only XF86 keys), refusal and re-ask (menu and plain), never-preselected MEH and HYPR with the note, `--yes` alone, the experimental
+    wording (help, menu entry, question), existing files, keep and replace with backups, restore on a failing stub niri, niri missing, the upstream
+    comparison above.
+  - **Unverified.** niri reading the generated files in a live session, MEH and HYPR strings on a keyboard that sends them, the HHKB key positions
+    on a real HHKB, how Noctalia's `Mod` binds feel next to a non-`Mod` "other" modifier.
 - **Unverified.** niri and Noctalia reading the copied files in a session, Noctalia's `msg` subcommand names (taken from the owner's dot-files),
   the portal actually attaching oo7, `alacritty` on a booted image.
 
 ## Image identity (`IMAGE_ID`, `IMAGE_VERSION`) and the fastfetch default
+
+- Read the identity on a machine with `grep IMAGE_ /etc/os-release` (formerly a README section "Which image is this?").
 
 - `PRETTY_NAME` stays `octarineOS` in EVERY image (default, beta, nvidia, dx); `NAME`, `ID`, `VERSION_ID`, `VARIANT_ID` are
   untouched. The image identity goes only into `IMAGE_ID` and `IMAGE_VERSION` of `/usr/lib/os-release` (`/etc/os-release` is a
@@ -539,6 +608,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## Beta channel (`octarine-os:beta`)
 
+- User-facing note (formerly in the README): try it with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta`
+  and go back with the same command and `:latest`. Until Universal Blue starts a new beta it is the same Fedora release as `latest`.
+
 - `.github/workflows/build-beta.yml`: weekly (Wednesday 14:00 UTC, clear of the daily 11:00, Sunday 05:00 prune and Sunday 12:00
   NVIDIA runs) and on dispatch from any ref, never on pushes or pull requests, not a required check. It builds the normal
   image FROM `ghcr.io/ublue-os/silverblue-main:beta` (workflow env `BASE_IMAGE`, `FEDORA_VERSION=beta`; the repository variables
@@ -549,6 +621,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `prune-testing.yml` keeps the newest three `beta-*` builds and any version holding `beta`. Test: `tests/beta-channel.sh`.
 
 ## NVIDIA variant (`octarine-os-nvidia`)
+
+- User-facing note (formerly in the README): run the default install steps first, then `bootc switch --enforce-container-sigpolicy
+  ghcr.io/redcodeworks/octarine-os-nvidia:latest` and reboot; with Secure Boot on, `ujust enroll-secure-boot-key` (from the base).
 
 - **What it is.** A second image, `ghcr.io/redcodeworks/octarine-os-nvidia`, built weekly (Sunday 12:00 UTC, after the
   daily 11:00 run) by `.github/workflows/build-nvidia.yml` and by manual dispatch on `main`; never on pushes, pull requests
@@ -598,7 +673,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
   `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`, ROCm userspace), VM tooling,
-  tracing tools and a few extras; the VS Code Flatpak is preinstalled through the preinstall list. Opt-in, for the owner's own
+  tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
 - **Lineage (two channels).**
@@ -614,8 +689,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `variants/dx/dx.sh` (runs the shared installer, then the extras, copies `variants/dx/system_files/`, enables
   `podman.socket` (rootful; the default image already enables the user one globally) and asserts the kernel is unchanged and
   the only one), `variants/dx/packages/extras.txt` (grouped list, one strict `dnf5 install`),
-  `variants/dx/system_files/usr/share/flatpak/preinstall.d/dx.preinstall` (VS Code; `ujust flatpak-preinstall` reads every
-  `*.preinstall` in that directory, so a dx-only drop-in needs no recipe change), `.github/workflows/build-dx.yml`,
+  `.github/workflows/build-dx.yml` (the dx-only `dx.preinstall` was removed 2026-11-10 and `variants/dx/system_files/usr/share/flatpak`
+  with it; a dx-only Flatpak drop-in would need no recipe change, `ujust flatpak-preinstall` reads every `*.preinstall` there),
   `.github/scripts/dx-smoke.sh`, `tests/dx-image.sh`.
 - **The shared package list (digest pin).** `ghcr.io/redcodeworks/dev-packages` is a signed FROM scratch image from the
   fedora-toolbox repository (`/dev.txt`, `/install.sh`, `/README`; `dev-toolbox` installs the same list). The Containerfile pins it by
@@ -647,7 +722,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.
 - **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, fish, the rustup package and `rustup-init` (the RPM ships only that; no `rustup` command),
   `glib2-devel`, `openssl-devel`, virt-manager, virt-viewer, qemu-kvm, the libvirtd and virtqemud units, `podman.socket`,
-  the VS Code preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
+  no VS Code or virt-manager Flatpak in any preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
   (os-release, the three policy rules, sudoers, brew, recipes, removed packages). It prints `DIAG` lines on failure. Under
   `pipefail` it never pipes a producer into `grep -q` (the lesson of the NVIDIA initramfs check).
 - **Signature policy.** `build.sh` writes a `sigstoreSigned` rule for `octarine-os`, `octarine-os-nvidia` and `octarine-os-dx` into
@@ -658,8 +733,15 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Prune.** `prune-testing.yml` also prunes the `octarine-os-dx` package with `PRUNE_KIND=dx KEEP=3`: per channel the newest
   three dated builds (`latest-<date>-<sha>`, `beta-<date>-<sha>`) stay, never a version holding the bare `latest` or `beta`
   tag, any version with another tag is not a candidate, signatures of deleted images go with them.
+- **User-facing note (formerly in the README).** Switch with `bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest`
+  after updating to the newest default image (it carries the signature policy); undo by switching back to `octarine-os:latest`. `beta` follows
+  `octarine-os:beta`. The README table and the `ujust dev` text say what `dev` sets up; the step table lived in the README and is now in
+  "Developer menu" below.
 - **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
-  (Microsoft is only listed as developer). The owner chose it knowingly; the preinstall file and the README say so.
+  (Microsoft is only listed as developer). The owner chose it knowingly; it is installed only by the `vscode` step of `ujust dev` (which says so), never preinstalled.
+- **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
+  other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
+  and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).
 - **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
   and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default

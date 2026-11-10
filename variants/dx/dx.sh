@@ -20,7 +20,7 @@ dnf5 -y install --setopt=strict=1 "${extras[@]}"
 dnf5 clean all
 rm -rf /var/cache/libdnf5 /var/cache/dnf /var/log/dnf5.log* /var/log/dnf.log* /root/.cache 2>/dev/null || true
 
-# dx-only files (the VS Code Flatpak preinstall list, the `ujust dev` recipe file, the sdk wrapper, the cargo PATH snippet)
+# dx-only files (the `ujust dev` recipe file, the sdk wrapper, the cargo PATH snippet)
 cp -avf /ctx/system_files/. /
 
 # `ujust dev` exists only in this image: ublue-os-just's /usr/share/ublue-os/justfile imports every file of its own package

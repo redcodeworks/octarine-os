@@ -38,9 +38,9 @@ Everything system-level that used to be hand-layered now lives in this repo:
 - **Packages:** the niri compositor with the Noctalia shell, libvirt and QEMU, Cockpit and its
   plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
-  firewalld services and zone, GameMode settings, the `iommu=pt` kernel argument, a container
-  signature policy for the image itself.
-- **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, virt-manager, Vorta,
+  firewalld services and zone, GameMode settings, a container
+  signature policy for the image itself. The `iommu=pt` kernel argument ships only in the dx image.
+- **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta,
   Flatseal, Extension Manager and Bazaar (the software center; gnome-software is removed, firmware
   updates stay available through `fwupdmgr`).
 - **Build checks:** every build runs a smoke test before it is pushed and signed.
@@ -99,10 +99,10 @@ timers are installed but not enabled. Turn on what you use.
   `containers`, `libguestfs`). Failed optional packages are listed in
   `/usr/share/octarine-os/optional-packages-missing` (read it on a machine to see what an image lacks) and appear as
   CI warnings. Outside-Fedora packages (negativo17 `gstreamer1-plugins-bad`/`-ugly`) are optional only.
-- `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; new users get zsh). A user who configures their own terminal to start fish needs it installed, which is their own setting.
-- New users get `zsh` (`/etc/default/useradd`, `/etc/skel/.zshrc`); existing users are unchanged. Rolling back to an
-  image without zsh breaks only accounts created meanwhile; distrobox copies the host login shell, so toolbox
-  images need zsh too (`gaming` unchecked).
+- `fish` is optional: nothing in the image depends on it and it is never a login shell (bash stays the login shell; zsh is installed and opt-in). A user who configures their own terminal to start fish needs it installed, which is their own setting.
+- zsh is installed but not the default: `ujust user-setup` (step `shell`) switches your login shell to it and copies
+  `/etc/skel/.zshrc`. Distrobox copies the host login shell, so toolbox images need zsh too for a zsh user
+  (`gaming` unchecked).
 - CI: a newer push to `testing` (or a PR) cancels the older build; `main` and the scheduled run never are. A cancelled
   build can leave the `testing` tag unsigned until the next build finishes.
 
@@ -205,7 +205,21 @@ Some of these are tradeoffs you may not want.
 
 - **YubiKey for sudo and polkit** with `pam_u2f sufficient` and `nouserok`: a security-key touch
   is accepted instead of the password, no PIN is required, and without an enrolled key the password
-  still works (see "Security key" in the README).
+  still works. Enroll a key (touch it when it blinks):
+
+  ```
+  mkdir -p ~/.config/Yubico
+  pamu2fcfg -o pam://sudo -i pam://sudo > ~/.config/Yubico/u2f_keys
+  ```
+
+  A second (backup) key goes on the same line:
+
+  ```
+  f=~/.config/Yubico/u2f_keys
+  { tr -d '\n' < "$f"; pamu2fcfg -o pam://sudo -i pam://sudo -n | tr -d '\n'; echo; } > "$f.new" && mv "$f.new" "$f"
+  ```
+
+  Check with `sudo -k` then `sudo true` (it asks for the touch); undo by deleting `~/.config/Yubico/u2f_keys`.
 - **sshd:** the image disables root login and X11 and TCP forwarding, and leaves sshd off. Key-only
   login (`PasswordAuthentication no`) is a separate drop-in that is not shipped, so set it yourself
   once your `authorized_keys` works.
@@ -315,8 +329,17 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   the PATH line, optionally the extest library, and undoes the gamemode file when unchanged). Installed Flatpaks stay.
 - **`niri-setup [--yes|--no] [--only STEP[,STEP...]]`:** a checklist for the niri session. Steps: `niri` (copies
   `/etc/niri/*.kdl` into `~/.config/niri/`), `portals` (`~/.config/xdg-desktop-portal/niri-portals.conf`, with the Secret
-  portal set to oo7) and `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
-  Noctalia). A file that exists and differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+  portal set to oo7), `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
+  Noctalia) and `keybinds` (the EXPERIMENTAL keybind wizard, never part of the default run). A file that exists and
+  differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+- **Keybind wizard (experimental):** without it you keep niri's default key bindings. It asks for a layout (Standard keys
+  always, plus Compact with vim-style hjkl or HHKB, which exclude each other) and the modifiers for switching, moving and
+  other actions (Ctrl+Alt, Ctrl+Super, MEH, HYPR; Super for other actions too). MEH and HYPR need keys mapped in the
+  keyboard firmware (a custom QMK mapping), so they are never preselected. Switching and moving must use different
+  modifiers. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M]
+  [--move-mod M] [--other-mod M]`. It writes `40-binds-standard.kdl` (and `41-binds-compact.kdl` or `41-binds-hhkb.kdl`),
+  swaps the `include "40-binds.kdl"` line of `config.kdl` for them, checks the result with `niri validate` and restores the
+  previous files on failure. The layouts and generated files may change between image versions.
 
 Ideas for more, each a candidate for its own recipe:
 
