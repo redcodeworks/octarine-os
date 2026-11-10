@@ -74,7 +74,7 @@ encouraged). American English throughout.
 
 ## Branches and releases
 
-`testing` builds the `testing` image; `main` is protected, changes only by pull request from `testing`
+`testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
 The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
@@ -83,21 +83,20 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 GitLab Flow, "production branch" variant (reference implementation for the owner's other repos). `testing` is the
 integration branch (GitLab's "main"); `main` is the production branch.
 
-- **Environments.** dev = the validation build on a pull request (`build.yml`, event `pull_request` into `testing`:
-  same plan, brew pin check, build, size check, smoke test, rechunk and version check; no registry login, no push,
-  no tags, no signing); UAT = the `testing` image (the `octarine-testing` VM follows it); prod = `latest` (the
-  owner's machine).
+- **Environments.** dev = the `Test` workflow on every push to a dev branch (jobs `test` and `secrets`, about 80
+  seconds, no image build); `testing` = the image build and publish of the `testing` tags once per merge (UAT; the
+  `octarine-testing` VM follows it); `main` = promotion of the tested build to `latest` (prod, the owner's machine).
 - **Direction.** One way, downstream: feature branch -> pull request into `testing` -> pull request from `testing`
   into `main`. Fixes go upstream first (into `testing`, then promoted).
-- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch alone builds nothing;
-  only the pull request event does.
+- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch runs the `Test`
+  workflow and builds no image; there is no `pull_request` trigger in `build.yml`.
 - **Merge methods (enforced by rulesets).** A feature pull request into `testing` is squashed: one commit per feature
   (only squash is allowed there). `testing` into `main` is a merge commit (only merge commits are allowed there).
   Why: promotion must keep `testing`'s commits as ancestors of `main`; a rebase or squash of `testing` into `main`
   would rewrite them and the next promotion would replay commits that are already applied. No back-merge of `main`
   into `testing` is needed: `main` only gains the promotion merge commits that `testing` lacks, which is harmless.
-- **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks: into
-  `testing`, `Build and push image`; into `main`, `Build and push image`, `require-testing-branch` and
+- **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks (rulesets): into
+  `testing`, `test` and `secrets`; into `main`, `Build and push image`, `require-testing-branch` and
   `Sign and verify images`. Agents may merge their own feature pull request into `testing` once the required checks
   are green (Kevin, 2026-11-09; GitHub does not let an author approve their own pull request, so this means
   merging). Merging into `main` is the owner's only.
@@ -105,11 +104,19 @@ integration branch (GitLab's "main"); `main` is the production branch.
   only, never on those into `testing`); the push to `main` retags the tested `testing` image by tree hash and signs.
 - **Hotfix rule.** Fix on a `hotfix/<topic>` branch into `testing`, then promote. If `testing` is red and prod needs
   an emergency fix, open the pull request into `main` and cherry-pick the same fix into `testing` straight away.
-- **Pull request builds are validation only.** An image is built twice per change, once on the pull request and once
-  on merge; only the merge build is promoted. Gating: the build job's "Choose channel" step sets `publish=false`
-  for `pull_request`; "Login to GitHub Container Registry" and "Push To GHCR" need `publish == 'true'`; the `sign`
-  job runs only after a publish or a promotion, so it skips; the aggregate job `Build and push image` still runs
-  and passes. Concurrency group is workflow plus ref (one per PR), cancel-in-progress on. Test: `tests/pr-validation.sh`.
+- **The image is built once per change, after the merge.** A pull request into `testing` gets no image build (by
+  design; `build.yml` has no `pull_request` trigger); the merge into `testing` is the push build that publishes the
+  `testing` tags and is the first time the image is built. The trade-off: a broken image is only found by the build
+  after the merge into `testing`. A red `testing` build publishes nothing and cannot be promoted, because its
+  `Build and push image` check on the tip commit fails (that is the check `main` requires); fix it forward with a new
+  dev branch and pull request.
+- **Validation build of a dev branch by hand.** `gh workflow run build.yml -R redcodeworks/octarine-os --ref <branch>`
+  runs the full plan, build, size check and smoke test on that branch. It never publishes: the "Choose channel" step
+  sets `publish=false` for every ref but `main` and `testing`; "Login to GitHub Container Registry" and "Push To
+  GHCR" need `publish == 'true'`; the `sign` job runs only after a publish or a promotion, so it skips; no tags are
+  pushed; the aggregate job `Build and push image` still passes. Concurrency group is workflow plus ref,
+  cancel-in-progress on (only `main` and the schedule are never cancelled). The workflow must exist on that branch.
+  Test: `tests/build-triggers.sh`.
 - The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
 
 ## Test workflow
@@ -129,9 +136,8 @@ Two jobs, with these exact names because they become required checks:
 Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
 Test: `tests/test-workflow.sh`.
 
-Status: this part only adds the workflow. Planned, not done: the `testing` ruleset switches its required checks
-from `Build and push image` to `test` and `secrets`, and `build.yml` then drops its `pull_request` trigger so the
-image builds only on `testing` and `main` pushes (`tests/pr-validation.sh` changes with it).
+Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
+trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
 
 ## Rules
 
@@ -169,7 +175,7 @@ image builds only on `testing` and `main` pushes (`tests/pr-validation.sh` chang
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
-- `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
+- `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
 - `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup").
 - `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
@@ -507,7 +513,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
   | Image | `IMAGE_ID` | `IMAGE_VERSION` | Set in |
   |---|---|---|---|
-  | `octarine-os` (`latest`, `testing`, PR builds) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
+  | `octarine-os` (`latest`, `testing`) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
   | `octarine-os:beta` | `octarine-os` | `beta-<YYYYMMDD>-<short sha>` | `build.sh` |
   | `octarine-os-nvidia` | `octarine-os-nvidia` | its own build's `<YYYYMMDD>-<short sha>` | `nvidia.sh` |
   | `octarine-os-dx` (`latest`) | `octarine-os-dx` | its own build's version | `dx.sh` |
@@ -655,7 +661,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (Microsoft is only listed as developer). The owner chose it knowingly; the preinstall file and the README say so.
 - **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
   and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
-- **Unverified until promotion.** The real build (no PR build exercises `variants/dx`: `build.yml` validates the default
+- **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main`. The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 

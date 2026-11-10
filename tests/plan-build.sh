@@ -16,13 +16,13 @@ fail=0
 commit() { git add -A; git commit -qm "$1"; git rev-parse HEAD; }
 expect() { # name want event before after
     local got
-    got=$("${script}" "$3" "${4-}" "${5-HEAD}" 2>/dev/null)
+    got=$("${script}" "$3" "${4-}" "${5-HEAD}" 2>/dev/null || true)
     if [[ "${got}" == "$2" ]]; then echo "PASS $1"; else echo "FAIL $1 (got ${got}, want $2)"; fail=1; fi
 }
 echo b >> README.md; echo b >> docs/a.txt; echo b > CLAUDE.md; echo b > .gitignore
 c1=$(commit docs)
 expect "docs only push" false push "${base}" "${c1}"
-expect "docs only pull request" false pull_request "${base}" "${c1}"
+expect "pull_request is not an event of the build workflow" "" pull_request "${base}" "${c1}"
 mkdir -p docs/sub; echo b > docs/sub/deep.png; c2=$(commit deepdoc)
 expect "docs/** nested" false push "${c1}" "${c2}"
 echo b >> system_files/x; c3=$(commit code)
