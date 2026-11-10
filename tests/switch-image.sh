@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Tests for `ujust switch-image` (system_files/usr/share/ublue-os/just/60-custom.just) and the 40-nvidia.just replacement.
+# No network and nothing is switched: skopeo, sudo and bootc are fakes, the running image comes from
+# OCTARINE_SWITCH_CURRENT_REF, and the published set from FAKE_PUBLISHED. Needs: bash, just, jq.
+# Run: tests/switch-image.sh
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+justdir="$here/../system_files/usr/share/ublue-os/just"
+justfile="$justdir/60-custom.just"
+root=$(mktemp -d)
+trap 'rm -rf -- "$root"' EXIT
+pass=0
+failn=0
+ok() { pass=$((pass + 1)); echo "ok   $1"; }
+bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; echo "     rc=$rc"; }
+check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+has() { grep -qF -- "$1" "$root/out"; }
+hasnt() { ! grep -qF -- "$1" "$root/out"; }
+logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
+notlogged() { ! grep -qF -- "$1" "$root/log" 2>/dev/null; }
+
+mkdir -p "$root/fakebin"
+export LOG="$root/log"
+cat >"$root/fakebin/skopeo" <<'EOF2'
+#!/bin/bash
+# skopeo inspect --raw docker://REG/NAME:TAG ; published when NAME:TAG is in FAKE_PUBLISHED
+ref=${@: -1}
+ref=${ref#docker://}
+nt=${ref##*/}
+if [ "${FAKE_SKOPEO_DOWN:-}" = 1 ]; then echo "dial tcp: lookup ghcr.io: no such host" >&2; exit 1; fi
+case " ${FAKE_PUBLISHED:-} " in *" $nt "*) echo '{}'; exit 0 ;; esac
+echo "manifest unknown" >&2
+exit 1
+EOF2
+cat >"$root/fakebin/sudo" <<'EOF2'
+#!/bin/bash
+echo "sudo $*" >>"$LOG"
+[ "${FAKE_SWITCH_FAIL:-}" = 1 ] && exit 1
+exit 0
+EOF2
+cat >"$root/fakebin/bootc" <<'EOF2'
+#!/bin/bash
+echo "bootc $*" >>"$LOG"
+EOF2
+chmod +x "$root/fakebin/"*
+
+pub_all="octarine-os:latest octarine-os:beta octarine-os:testing octarine-os-dx:latest octarine-os-dx:beta octarine-os-dx:testing octarine-os-nvidia:latest"
+
+run() { # current ref, args...
+    local cur=$1
+    shift
+    : >"$LOG"
+    PATH="$root/fakebin:$PATH" OCTARINE_SWITCH_CURRENT_REF="$cur" FAKE_PUBLISHED="${FAKE_PUBLISHED:-$pub_all}" \
+        just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+rc=0
+base="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os:latest"
+dx="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"
+
+run "$base" --help
+check "--help explains images, channels and the rollback" bash -c "[ $rc = 0 ]" 
+check "--help names the four images and three channels" bash -c "grep -q 'nvidia-dx' '$root/out' && grep -q 'beta' '$root/out' && grep -q 'testing' '$root/out'"
+
+run "$base"
+check "no image and no terminal: exit 2 and a hint" bash -c "[ $rc = 2 ]"
+check "the hint lists the images" has "default, dx, nvidia or nvidia-dx"
+run "$base" bogus
+check "an unknown word is rejected (exit 2)" bash -c "[ $rc = 2 ]"
+run "$base" --nope
+check "an unknown option is rejected (exit 2)" bash -c "[ $rc = 2 ]"
+
+run "$base" --list
+check "--list exits 0 and shows the running image" bash -c "[ $rc = 0 ]"
+check "--list marks the current image and channel" has "published (current)"
+check "--list shows an unpublished image as not published" bash -c "grep -E '^nvidia-dx +not published' '$root/out'"
+check "--list shows beta of nvidia as not published" bash -c "grep -E '^nvidia +published +not published' '$root/out'"
+notlogged "bootc"; check "--list never switches" notlogged "sudo"
+
+run "$base" dx --no
+check "default -> dx keeps the latest channel" has "Target:  ghcr.io/redcodeworks/octarine-os-dx:latest"
+check "--no prints the enforced bootc command" has "Would run: sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest"
+check "--no runs nothing" notlogged "bootc"
+
+run "$base" dx --yes
+check "--yes runs sudo bootc switch with the enforced signature policy" logged "sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest"
+check "--yes tells the user to reboot and how to roll back" has "bootc rollback"
+
+run "$base" dx
+check "without --yes and no terminal the question is declined and nothing runs" bash -c "[ $rc = 0 ] && grep -q 'Left as it is' '$root/out'"
+check "a declined switch runs nothing" notlogged "bootc"
+
+run "$dx" beta --yes
+check "an image-less switch to beta is rejected without a terminal" bash -c "[ $rc = 2 ]"
+run "$dx" dx beta --yes
+check "dx -> dx beta changes the channel only" logged "bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:beta"
+run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:beta" default --no
+check "an image-only switch keeps the current channel (beta)" has "Target:  ghcr.io/redcodeworks/octarine-os:beta"
+run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest-20261109-abc1234" default --no
+check "a pinned dated tag falls back to latest" has "Target:  ghcr.io/redcodeworks/octarine-os:latest"
+run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" nvidia --no
+check "a digest suffix on the running image is ignored" has "Target:  ghcr.io/redcodeworks/octarine-os-nvidia:latest"
+check "switching to nvidia mentions the Secure Boot key" has "enroll-secure-boot-key"
+
+run "$dx" dx latest --yes
+check "already on the target: nothing to do" has "Already on dx (latest)."
+check "already on the target: no switch" notlogged "bootc"
+
+run "$base" nvidia beta --yes
+check "an unpublished channel is refused (exit 1)" bash -c "[ $rc = 1 ] && grep -q 'is not published' '$root/out'"
+check "an unpublished channel runs nothing" notlogged "bootc"
+run "$base" nvidia-dx --yes
+check "nvidia-dx is refused until it is published" bash -c "[ $rc = 1 ] && grep -q 'octarine-os-nvidia-dx:latest is not published' '$root/out'"
+FAKE_PUBLISHED="$pub_all octarine-os-nvidia-dx:latest" run "$base" nvidia-dx --yes
+check "nvidia-dx works once it is published" logged "ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest"
+FAKE_SKOPEO_DOWN=1 run "$base" dx --yes
+check "an unreachable registry is reported, not treated as unpublished" bash -c "[ $rc = 1 ] && grep -q 'Could not reach the registry' '$root/out'"
+check "an unreachable registry runs nothing" notlogged "bootc"
+FAKE_SWITCH_FAIL=1 run "$base" dx --yes
+check "a failed bootc switch exits 1 and says nothing changed" bash -c "[ $rc = 1 ] && grep -q 'nothing changed' '$root/out'"
+
+run "ostree-image-signed:docker://example.org/someone/octarine-os-dx:latest" default --no
+check "a fork's registry is kept" has "Target:  example.org/someone/octarine-os:latest"
+run "ostree-image-signed:docker://ghcr.io/ublue-os/silverblue-main:45" dx --no
+check "from a foreign image the target uses the project's registry" has "Target:  ghcr.io/redcodeworks/octarine-os-dx:latest"
+
+# ---- the base image's toggle-nvk is replaced
+check "40-nvidia.just no longer rebases by string substitution" bash -c "! grep -q 'rpm-ostree rebase' '$justdir/40-nvidia.just'"
+out=$(just --justfile "$justdir/40-nvidia.just" toggle-nvk 2>&1)
+check "toggle-nvk points to switch-image" bash -c "echo \"$out\" | grep -q 'ujust switch-image'"
+check "switch-image is listed by the recipe scan" bash -c "just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx switch-image"
+
+echo
+echo "$pass passed, $failn failed"
+[ "$failn" = 0 ]

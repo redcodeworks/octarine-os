@@ -1895,6 +1895,281 @@ gnome-candy *args:
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
+# Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, beta, testing)
+[group('Setup')]
+[positional-arguments]
+switch-image *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    mode=ask
+    list=0
+    image=""
+    channel=""
+    for a in "$@"; do
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--list]`. Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --list) list=1 ;;
+            default | dx | nvidia | nvidia-dx) image=$a ;;
+            latest | beta | testing) channel=$a ;;
+            -*) echo "Unknown option: $a (use --yes, --no or --list)" >&2; exit 2 ;;
+            *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, beta, testing)" >&2; exit 2 ;;
+        esac
+    done
+    name_of() {
+        case "$1" in
+            default) echo octarine-os ;;
+            dx) echo octarine-os-dx ;;
+            nvidia) echo octarine-os-nvidia ;;
+            nvidia-dx) echo octarine-os-nvidia-dx ;;
+        esac
+    }
+    # The running image, from the booted deployment: transport prefix and digest stripped
+    cur_ref=${OCTARINE_SWITCH_CURRENT_REF:-}
+    if [ -z "$cur_ref" ]; then
+        cur_ref=$(rpm-ostree status -b --json 2>/dev/null | jq -r '.deployments[0]."container-image-reference" // empty' 2>/dev/null)
+    fi
+    cur=$(printf '%s' "$cur_ref" | sed -E 's#^ostree[a-z-]*:##; s#^docker://##; s#@sha256:[0-9a-f]+$##')
+    cur_image=other
+    cur_channel=""
+    registry=ghcr.io/redcodeworks
+    if [ -n "$cur" ]; then
+        name_tag=${cur##*/}
+        cur_name=${name_tag%%:*}
+        cur_tag=latest
+        case "$name_tag" in *:*) cur_tag=${name_tag#*:} ;; esac
+        for k in default dx nvidia nvidia-dx; do
+            if [ "$cur_name" = "$(name_of "$k")" ]; then cur_image=$k; registry=${cur%/*}; fi
+        done
+        case "$cur_tag" in latest | beta | testing) cur_channel=$cur_tag ;; esac
+    fi
+    # probe IMAGE CHANNEL: 0 published, 1 not published, 2 registry unreachable
+    probe() {
+        local err rc
+        err=$(timeout 25 skopeo inspect --raw "docker://$registry/$(name_of "$1"):$2" 2>&1 >/dev/null)
+        rc=$?
+        if [ "$rc" = 0 ]; then return 0; fi
+        case "$err" in
+            *"manifest unknown"* | *"name unknown"* | *"not found"* | *"requested access"* | *"denied"* | *"404"*) return 1 ;;
+        esac
+        return 2
+    }
+    if [ -n "$cur" ]; then
+        echo "Current: $cur"
+    else
+        echo "Current: unknown (rpm-ostree reports no container image)"
+    fi
+    if [ "$list" = 1 ]; then
+        tmp=$(mktemp -d)
+        trap 'rm -rf -- "$tmp"' EXIT
+        for k in default dx nvidia nvidia-dx; do
+            for c in latest beta testing; do
+                (probe "$k" "$c"; echo $? >"$tmp/$k.$c") &
+            done
+        done
+        wait
+        printf '%-12s %-18s %-18s %-18s\n' IMAGE latest beta testing
+        for k in default dx nvidia nvidia-dx; do
+            row=$(printf '%-12s' "$k")
+            for c in latest beta testing; do
+                case "$(cat "$tmp/$k.$c" 2>/dev/null)" in 0) s=published ;; 1) s="not published" ;; *) s=unknown ;; esac
+                if [ "$k" = "$cur_image" ] && [ "$c" = "$cur_channel" ]; then s="$s (current)"; fi
+                row+=$(printf ' %-18s' "$s")
+            done
+            printf '%s\n' "$row"
+        done
+        exit 0
+    fi
+    if [ -z "$image" ]; then
+        if menu_ready_one; then
+            menu_one "Which image?" \
+                "default^default: the base image" \
+                "dx^dx: developer tools, compilers and virtualization" \
+                "nvidia^nvidia: proprietary NVIDIA driver" \
+                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen." >&2; exit 1; }
+            image=$MENU_ONE
+        else
+            echo "Name an image: default, dx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
+            exit 2
+        fi
+    fi
+    if [ -z "$channel" ]; then
+        if [ -n "$cur_channel" ] && { [ "$mode" != ask ] || ! menu_ready_one; }; then
+            channel=$cur_channel
+        elif menu_ready_one; then
+            menu_one "Which channel?" \
+                "latest^latest: tested daily build (recommended)" \
+                "beta^beta: built on the next Fedora base, not tested for daily use" \
+                "testing^testing: unreleased builds" || { echo "No channel chosen." >&2; exit 1; }
+            channel=$MENU_ONE
+        else
+            channel=latest
+        fi
+    fi
+    ref="$registry/$(name_of "$image"):$channel"
+    if [ "$image" = "$cur_image" ] && [ "$channel" = "$cur_channel" ]; then
+        echo "Already on $image ($channel)."
+        exit 0
+    fi
+    echo "Target:  $ref"
+    probe "$image" "$channel"
+    case $? in
+        0) ;;
+        1) echo "$ref is not published (yet). Run 'ujust switch-image --list' to see what is." >&2; exit 1 ;;
+        *) echo "Could not reach the registry to check $ref. Check the network and try again." >&2; exit 1 ;;
+    esac
+    case "$image" in
+        nvidia | nvidia-dx) echo "With Secure Boot, run 'ujust enroll-secure-boot-key' first if you have not enrolled the key." ;;
+    esac
+    case "$channel" in
+        beta | testing) echo "The $channel channel is not tested for daily use." ;;
+    esac
+    cmd=(sudo bootc switch --enforce-container-sigpolicy "$ref")
+    if [ "$mode" = no ]; then
+        echo "Would run: ${cmd[*]}"
+        exit 0
+    fi
+    if [ "$mode" = ask ]; then
+        menu_confirm "Switch to $image ($channel)?" n || { echo "Left as it is."; exit 0; }
+    fi
+    "${cmd[@]}" || { echo "bootc switch failed; nothing changed." >&2; exit 1; }
+    echo "Switched. Reboot to use $image ($channel); 'sudo bootc rollback' goes back to the previous deployment."
+
+# TPM2 auto-unlock for LUKS volumes: a checklist of every LUKS device; enroll, re-enroll or remove (menu or arguments)
+[group('Setup')]
+[positional-arguments]
+luks-tpm-unlock *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    action=""
+    pcrs=7+14
+    pin=0
+    mode=ask
+    want=()
+    for a in "$@"; do
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--yes|--no]`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
+            enroll | remove) action=$a ;;
+            --pcrs=*) pcrs=${a#--pcrs=} ;;
+            --pin) pin=1 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            -*) echo "Unknown option: $a (use --pcrs=7|7+14, --pin, --yes or --no)" >&2; exit 2 ;;
+            *) want+=("$a") ;;
+        esac
+    done
+    case "$pcrs" in 7 | 7+14) ;; *) echo "--pcrs takes 7 or 7+14" >&2; exit 2 ;; esac
+    sudo -v || { echo "sudo is needed to read the LUKS headers (YubiKey touch)." >&2; exit 1; }
+    devs=()
+    declare -A uuid_of=() size_of=() tpm_of=()
+    while read -r name fstype uid sz; do
+        [ "$fstype" = crypto_LUKS ] || continue
+        devs+=("$name")
+        uuid_of[$name]=$uid
+        size_of[$name]=$sz
+    done < <(lsblk -rpno NAME,FSTYPE,UUID,SIZE 2>/dev/null)
+    if [ "${#devs[@]}" -eq 0 ]; then echo "No LUKS devices found."; exit 0; fi
+    cmdline=${OCTARINE_LUKS_CMDLINE:-/proc/cmdline}
+    root_uuid=$(tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n 's/^rd\.luks\.uuid=luks-//p' | head -n1)
+    for d in "${devs[@]}"; do
+        if sudo cryptsetup luksDump "$d" 2>/dev/null | grep -q systemd-tpm2; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
+    done
+    describe() { # device
+        local role=data
+        [ -n "$root_uuid" ] && [ "${uuid_of[$1]}" = "$root_uuid" ] && role=root
+        printf '%s  %s  %s  %s  TPM2 key: %s' "$1" "${size_of[$1]}" "${uuid_of[$1]:0:8}" "$role" "$([ "${tpm_of[$1]}" = yes ] && echo enrolled || echo none)"
+    }
+    if [ -z "$action" ]; then
+        if menu_ready_one; then
+            menu_one "What do you want to do?" \
+                "enroll^Enroll or re-enroll TPM2 unlock" \
+                "remove^Remove TPM2 unlock" || { echo "Nothing chosen." >&2; exit 1; }
+            action=$MENU_ONE
+        else
+            echo "Name an action: enroll or remove (ujust luks-tpm-unlock --help)" >&2
+            exit 2
+        fi
+    fi
+    chosen=()
+    if [ "${#want[@]}" -gt 0 ]; then
+        for w in "${want[@]}"; do
+            hit=""
+            for d in "${devs[@]}"; do
+                if [ "$w" = "$d" ] || [ "$w" = "${uuid_of[$d]}" ] || [ "$w" = "/dev/disk/by-uuid/${uuid_of[$d]}" ]; then hit=$d; fi
+            done
+            [ -n "$hit" ] || { echo "No LUKS device matches: $w" >&2; exit 2; }
+            chosen+=("$hit")
+        done
+    elif menu_ready; then
+        items=()
+        for d in "${devs[@]}"; do
+            sel=0
+            if [ "$action" = enroll ] && [ "${tpm_of[$d]}" = no ]; then sel=1; fi
+            if [ "$action" = remove ] && [ "${tpm_of[$d]}" = yes ]; then sel=1; fi
+            items+=("$d^$(describe "$d")^$sel")
+        done
+        menu_multi "LUKS devices: tick the ones to $action" "${items[@]}"
+        chosen=("${MENU_RESULT[@]}")
+    else
+        for d in "${devs[@]}"; do describe "$d"; echo; done
+        echo "Name the devices (path or UUID) or run it in a terminal for the checklist." >&2
+        exit 2
+    fi
+    if [ "${#chosen[@]}" -eq 0 ]; then echo "Nothing selected."; exit 0; fi
+    if [ "$action" = enroll ]; then
+        cpuinfo=${OCTARINE_LUKS_CPUINFO:-/proc/cpuinfo}
+        if grep -qi AuthenticAMD "$cpuinfo" 2>/dev/null; then
+            echo "WARNING: do not use TPM-only unlock if your CPU is vulnerable to faulTPM (AMD Zen 1 to Zen 3), and"
+            echo "Zen 4 has a similar exploit that a BIOS update mitigates. With physical access an attacker may be"
+            echo "able to read the key. Adding a PIN (--pin) makes this much harder."
+            if [ "$mode" = ask ]; then menu_confirm "Enroll anyway?" n || { echo "Left as it is."; exit 0; }; fi
+        fi
+    fi
+    for d in "${chosen[@]}"; do
+        echo "$action  PCR $pcrs$([ "$pin" = 1 ] && echo ' + PIN')  $(describe "$d")"
+    done
+    if [ "$mode" = no ]; then exit 0; fi
+    if [ "$mode" = ask ]; then
+        menu_confirm "Go ahead?" n || { echo "Left as it is."; exit 0; }
+    fi
+    failed=0
+    root_done=0
+    for d in "${chosen[@]}"; do
+        if [ "$action" = remove ]; then
+            echo "== Removing the TPM2 key from $d"
+            sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || failed=1
+            continue
+        fi
+        if [ "${tpm_of[$d]}" = yes ]; then
+            echo "== Replacing the TPM2 key on $d"
+            sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || { failed=1; continue; }
+        fi
+        echo "== Enrolling $d (asks for the volume passphrase)"
+        enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs")
+        if [ "$pin" = 1 ]; then enroll_args+=(--tpm2-with-pin=yes); fi
+        sudo systemd-cryptenroll "${enroll_args[@]}" "$d" || { failed=1; continue; }
+        if [ -n "$root_uuid" ] && [ "${uuid_of[$d]}" = "$root_uuid" ]; then root_done=1; fi
+    done
+    if [ "$failed" = 1 ]; then echo "Some devices failed; the passphrase still works for all of them." >&2; fi
+    if [ "$root_done" = 1 ]; then
+        echo "Reboot to test it. If the root volume still asks for the passphrase, the initramfs may lack tpm2-tss:"
+        echo "  sudo rpm-ostree initramfs --enable --arg=--force-add --arg=tpm2-tss"
+    fi
+    if [ "$action" = enroll ]; then
+        if [ "$pcrs" = 7 ]; then echo "Passphrases are untouched. The key stops working when the Secure Boot state changes; run this again to re-enroll."
+        else echo "Passphrases are untouched. The key stops working when the Secure Boot state or the MOK keys change (mokutil --import or --delete); run this again to re-enroll."; fi
+    fi
+    exit "$failed"
+
 [group('Toolbox')]
 [positional-arguments]
 toolbox *args:

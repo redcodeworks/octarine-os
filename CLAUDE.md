@@ -670,6 +670,73 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   equals stable. Policy: the existing rule for the `octarine-os` path covers every tag. Prune: `PRUNE_KIND=beta KEEP=3` in
   `prune-testing.yml` keeps the newest three `beta-*` builds and any version holding `beta`. Test: `tests/beta-channel.sh`.
 
+## Overriding the base image's ujust recipes
+
+- **Between two imported files the FIRST import wins** (just 1.59, `set allow-duplicate-recipes := true` in the base
+  `justfile`, which imports `00`..`50`, then `60-custom.just`, then `70-octarine-dev.just`); a recipe of the importing file
+  beats the imported one. So a recipe in `60-custom.just` can NOT replace a base recipe with the same name. Three patterns
+  work: (1) ship a file of the same name that replaces the base file (`15-luks.just`, `40-nvidia.just`, `50-akmods.just`);
+  (2) wrap it: `build_files/build.sh` renames the base file to `<name>-base.just` before copying `system_files`, and ours
+  (`10-update.just`, `30-distrobox.just`) `import`s it and redefines single recipes (a missing base file fails the build, the
+  signal that the base changed its layout); (3) a new recipe name. Aliases of the base (`upgrade`, `auto-update`) keep
+  working because they resolve after all imports.
+- **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
+  `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, `configure-broadcom-wl` in
+  `50-akmods.just` (no Broadcom hardware or module). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
+  `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
+  rootless container).
+- `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
+  `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
+  recipes go BEFORE the `[group('Toolbox')]` line.
+
+## `ujust toggle-updates` and `ujust update`
+
+- Both live in `10-update.just` and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
+  sources: `image` (`rpm-ostreed-automatic.timer`, stages the image), `flatpak` (system `flatpak-system-update.timer` plus
+  user `flatpak-user-update.timer`), `distrobox` (user `octarine-distrobox-upgrade.timer`, shipped here, off by default),
+  `brew-update` (`brew-update.timer`), `brew-upgrade` (`brew-upgrade.timer`, off by default by `00-octarine-brew.preset`).
+  A source is on when any of its timers is enabled.
+- `toggle-updates` is a checklist (`menu_multi`, ticked where on; unticking everything asks first) or
+  `enable|disable|status [SOURCE...]`; system timers need sudo (one call per direction), user timers do not.
+  `update` runs exactly the sources that are on (`--all` runs every source, naming sources runs those, `--no` prints the
+  plan), a failing source does not stop the others. The image step is `sudo bootc upgrade`, or `sudo rpm-ostree upgrade`
+  when the booted deployment has layered packages (bootc does not know about layering).
+- The base `update` also ran `rpm-ostree update`, `flatpak update` and `distrobox upgrade -a` unconditionally and checked
+  for `uupd` (not installed here); both are replaced. Tests: `tests/update-services.sh`.
+
+## `ujust luks-tpm-unlock`
+
+- One recipe in `60-custom.just` replaces the base's `setup-luks-tpm-unlock` and `remove-luks-tpm-unlock` (which handled the
+  root device only, from `rd.luks.uuid`): `15-luks.just` keeps both names as aliases. It lists every `crypto_LUKS` device
+  (`lsblk`), reads the TPM2 token state with `sudo cryptsetup luksDump`, asks enroll or remove and then a checklist of
+  devices (preticked: unenrolled ones for enroll, enrolled ones for remove), or takes `enroll|remove DEVICE...` (path or
+  UUID). Enroll wipes an existing TPM2 slot first, then `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14` (default:
+  Secure Boot state plus the MOK list; `--pcrs=7` binds Secure Boot only, `--pin` adds a PIN); remove is `--wipe-slot=tpm2` only, passphrases are never touched.
+- Decisions: PCR 7+14 by default (the owner chose it 2026-11-09, as the base helper did; the owner's old script used 7 only; a MOK change
+  (`mokutil --import` or `--delete`) or a Secure Boot change breaks the auto-unlock until re-enrolled, the passphrase still works);
+  the base helper's AMD faulTPM warning is kept and needs a yes; the root-volume initramfs step of the base helper is a
+  printed tip only (its `lsinitrd` test looked inverted, and changing the initramfs is not done silently).
+  Tests: `tests/luks-tpm-unlock.sh` (fake `lsblk`, `cryptsetup`, `systemd-cryptenroll`, `sudo`).
+
+## `ujust switch-image`
+
+- One recipe in `60-custom.just` switches between the images (`default` = `octarine-os`, `dx` = `octarine-os-dx`, `nvidia` =
+  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `beta`, `testing`. It replaces the
+  base image's `toggle-nvk` (Universal Blue's `40-nvidia.just`), which derived names by string substitution
+  (`octarine-os-dx-nvidia-open` does not exist) and rebased without enforcing the signature policy; our `40-nvidia.just`
+  overrides that file and keeps a `toggle-nvk` that only points to `switch-image`.
+- The running image comes from `rpm-ostree status -b --json` (transport prefix and digest stripped), the registry from the
+  running image's own reference (so forks work; a foreign image falls back to `ghcr.io/redcodeworks`). With only an image it
+  keeps the current channel, `latest` when the tag is pinned. Availability is checked with `skopeo inspect --raw` before
+  anything runs: a missing manifest is "not published", a network failure is reported separately and never treated as
+  missing. The switch is `sudo bootc switch --enforce-container-sigpolicy <ref>`, the form the README documents.
+  `--list` probes all twelve combinations in parallel; `--yes` skips the question, `--no` prints the plan.
+- Which combinations exist is not hard-coded: today `nvidia` has no `beta` or `testing` tag and `nvidia-dx` has no image at all.
+  Publishing `octarine-os-nvidia-dx` later needs, besides the build: the new repository in the signature policy that
+  `build_files/build.sh` generates (`IMAGE_ORG`/`IMAGE_NAME`; `tests/nvidia-variant.sh` checks the policy for each
+  repository) or `--enforce-container-sigpolicy` will refuse it, and a row in the Variants table. The recipe needs no change.
+- Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
+
 ## NVIDIA variant (`octarine-os-nvidia`)
 
 - User-facing note (formerly in the README): run the default install steps first, then `bootc switch --enforce-container-sigpolicy
