@@ -3,16 +3,25 @@
 # and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
 # Environment: CHANNEL (latest, beta or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
-# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60). Tools: git, skopeo, cosign, jq.
+# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx). Tools: git, skopeo, cosign, jq.
 #
-# Base: octarine-os:<channel> (octarine-os:testing for the testing channel), resolved to the digest of its raw manifest
-# and verified with cosign.pub before anything is built on it.
+# Base: octarine-os:<channel> for latest and beta, resolved to the digest of its raw manifest and verified with
+# cosign.pub before anything is built on it. The testing channel does NOT use the floating `testing` tag: it takes the
+# immutable tag of the commit being built, octarine-os:testing-<short sha> (the default build of that same push). When
+# that tag does not exist (the default build was reused for a dx-only or docs-only change), it walks back like
+# plan-vanilla-reuse.sh to the nearest earlier testing-<sha> built from the same default-image inputs; when there is
+# none either, it falls back to the floating `testing` tag and prints a warning. Reason: the floating tag and the
+# immutable tag of one build have been seen with different manifest digests, and a base digest recorded from the
+# floating tag then never matched the promoted `latest` (push-tags.sh now keeps one digest per build; this keeps the
+# plan independent of the floating tag anyway, and of a newer testing build landing while the dx build runs).
 #
 # The published octarine-os-dx:<channel> carries two labels: org.opencontainers.image.base.digest (the base it was built
 # on) and io.github.redcodeworks.octarine-os.dx-inputs (inputs-hash.sh `dx` of the commit it was built from).
 #   no force, both labels equal the current base digest and the current dx_inputs    -> skip   (build=false promote=false)
 #   channel latest, a tested octarine-os-dx testing image with the same two labels   -> promote (retag, no build)
 #   anything else (nothing published, unreadable, a label differs, force)            -> build
+# After a vanilla promote, octarine-os:latest has the digest of the tested octarine-os:testing-<sha>, which is the base
+# the dx testing image recorded: that equality is what makes the promote match.
 # Candidates for the promotion: the `testing` tag, then `testing-<short sha>` of the newest MAX_WALK commits of HEAD
 # (the testing commits are the second parents of the merges on main); each must carry both labels and a valid
 # signature. `beta` never promotes (it has no testing image). Every lookup that fails means build, never skip.
@@ -25,17 +34,38 @@ channel="${CHANNEL:?CHANNEL}"
 force="${FORCE:-false}"
 : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER}"
 owner="${GITHUB_REPOSITORY_OWNER,,}"
-base="ghcr.io/${owner}/octarine-os"
-dx="ghcr.io/${owner}/octarine-os-dx"
+# The image names are parameters (a later octarine-os-nvidia-dx would set BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx)
+base="ghcr.io/${owner}/${BASE_NAME:-octarine-os}"
+dx="ghcr.io/${owner}/${DX_NAME:-octarine-os-dx}"
 base_tag="${channel}"
 l_base="org.opencontainers.image.base.digest"
 l_inputs="io.github.redcodeworks.octarine-os.dx-inputs"
 
 tmp=$(mktemp)
 trap 'rm -f "${tmp}"' EXIT
-skopeo inspect --raw "docker://${base}:${base_tag}" > "${tmp}"
-[[ -s "${tmp}" ]] || { echo "::error::Cannot read ${base}:${base_tag}"; exit 1; }
-digest="sha256:$(sha256sum "${tmp}" | sed 's/ .*//')"
+
+# The digest of the raw manifest of octarine-os:<tag>; fails when the tag cannot be read
+base_digest_of() {
+    skopeo inspect --raw "docker://${base}:$1" > "${tmp}" 2> /dev/null || return 1
+    [[ -s "${tmp}" ]] || return 1
+    echo "sha256:$(sha256sum "${tmp}" | sed 's/ .*//')"
+}
+
+if [[ "${channel}" == testing ]]; then
+    # nearest_image_for_inputs (inputs-hash.sh) asks REGISTRY_LOOKUP for the digest of testing-<sha>
+    REGISTRY_LOOKUP=base_digest_of
+    mine="testing-$(git rev-parse --short=7 HEAD)"
+    if base_digest_of "${mine}" > /dev/null; then
+        base_tag="${mine}"
+    elif found=$(nearest_image_for_inputs HEAD 2> /dev/null); then
+        read -r base_tag _ <<< "${found}"
+        echo "No ${base}:${mine} (the default build was reused): using the nearest earlier ${base_tag}, built from the same default-image inputs"
+    else
+        base_tag="testing"
+        echo "::warning::No ${base}:${mine} and no earlier testing image with the same default-image inputs: falling back to the floating ${base}:testing"
+    fi
+fi
+digest=$(base_digest_of "${base_tag}") || { echo "::error::Cannot read ${base}:${base_tag}"; exit 1; }
 cosign verify --key cosign.pub "${base}@${digest}" > /dev/null
 echo "Base image ${base}:${base_tag} = ${digest} (signature valid)"
 

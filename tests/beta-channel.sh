@@ -68,7 +68,9 @@ for line in open(sys.argv[1]):
             assert re.search(r"#\s*v\d", line), line
 PY
 check "workflow: pushes exactly beta and beta-<date>-<sha> (one push line, tags from one step, nothing else)" bash -c "
-  [ \$(grep -c 'podman push' '$wf') = 1 ]
+  set -e
+  [ \$(grep -c 'push-tags.sh' '$wf') = 1 ]
+  ! grep -q 'podman push' '$wf'
   grep -q 'alias_tags=\"\${DEFAULT_TAG}-\$(date +%Y%m%d)-\$(git rev-parse --short HEAD) \${DEFAULT_TAG}\"' '$wf'
   ! grep -qE 'generate-build-tags|tag-images|:latest|:testing' '$wf'"
 check "workflow: both pushed tags are verified after signing" bash -c "grep -q 'for tag in \${ALIAS_TAGS}' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf' && grep -q 'alias_tags: .*steps.tags' '$wf'"

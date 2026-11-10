@@ -182,7 +182,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `.github/scripts/plan-build.sh`.
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
-- `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign) and `aggregate-dx.sh`.
+- `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
@@ -340,19 +340,38 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `vanilla_inputs` of the `latest` revision with HEAD instead of the git tree, so a dx-only change does not rebuild `latest` the next day.
 - **dx on testing (`build-dx.yml`).** `workflow_run` of "Build container image" now fires for `main` and `testing`
   (`branches: [main, testing]`; the beta build only counts for `main`). Channels: `testing` (after a testing build; base
-  `octarine-os:testing`; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build), `beta`
+  `octarine-os:testing-<sha7>` of the triggering commit, see below; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build), `beta`
   (main only, dispatch or after the beta build; unchanged). Every checkout uses `workflow_run.head_sha` (a dispatch: main's tip).
   `.github/scripts/plan-dx.sh` (tests: `tests/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
   `org.opencontainers.image.base.digest` and `io.github.redcodeworks.octarine-os.dx-inputs` (new; `dx-tree` is still written but no longer compared):
-  skip only when BOTH equal the current base digest (raw manifest digest of the verified `octarine-os:<channel>`) and `dx_inputs` of the
+  skip only when BOTH equal the current base digest (raw manifest digest of the verified base, see "Base of the testing channel" below) and `dx_inputs` of the
   commit; on `latest` otherwise look for a promotable testing image (candidates `testing`, then `testing-<sha7>` of the newest 60 commits of
   HEAD; both labels must equal the current ones and the signature must verify) and retag it (job `promote`: `skopeo copy --all --preserve-digests`
   to `latest` and `latest-<date>-<sha7>`, digest compared before and after; the `sign` job verifies, it does not sign again);
   else build. After a vanilla promote the base digest of `latest` equals the tested digest, which is what makes the labels match.
-  Force always builds. Decision table (build / promote / skip), testing: nothing published or any label differs or force = build, both equal = skip;
-  latest: both equal = skip, a matching tested testing image = promote, else build; beta: both equal = skip, else build.
+  Force always builds. Decision table (build / promote / skip), testing: nothing published or any label differs or force = build, both equal = skip
+  (the base digest is that of `octarine-os:testing-<sha7>`, walk-back or fallback below);
+  latest: both equal = skip, a matching tested testing image = promote (its base digest equals `octarine-os:latest`, which after the default promote
+  is the digest of the tested `testing-<sha7>`), else build; beta: both equal = skip, else build.
   Change combinations on `testing`: dx-only = vanilla `reuse` (no vanilla build), dx builds; vanilla-only = vanilla builds, the new base digest
   makes dx build; both = both; nothing/docs-only = vanilla skips, dx skips (labels equal); first run = both build.
+- **Base of the testing channel.** `plan-dx.sh` for `testing` does not read the floating `octarine-os:testing` tag: it resolves
+  `octarine-os:testing-<short sha7 of HEAD>` (HEAD = `workflow_run.head_sha`, the commit of the default build that just finished), verifies
+  its signature and records that digest as `base.digest`. If the tag does not exist (the default build was reused for a dx-only or docs-only
+  change) it walks back with `nearest_image_for_inputs` (the `plan-vanilla-reuse.sh` logic: first-parent history, stops at a commit whose
+  `vanilla_inputs` differ) to the nearest earlier `testing-<sha>`; if there is none either it falls back to the floating `testing` tag with
+  a `::warning::` (the old behavior). `base_tag` in the plan output is the tag actually used (`testing-<sha7>`), and the dx image's `base.name`
+  label records it. `latest` still resolves `octarine-os:latest`, `beta` `octarine-os:beta`.
+- **One manifest digest per build (`push-tags.sh`).** Why the dx image never promoted (found 2026-11-10): every image workflow pushed each
+  tag with its own `podman push` of the same local image, and the pushes did not produce one manifest: `octarine-os:testing` and
+  `testing-cc213cb` of one build had different digests. The default promote copies `testing-<sha7>`, so `latest` had that digest, while the
+  dx testing image had recorded the floating `testing` digest as its base; the `latest` plan then never found a matching tested image and built
+  (about 21 minutes per promotion). The fix: `.github/scripts/push-tags.sh <local image> <registry image> <tag>...` pushes the first tag once
+  (`podman push --digestfile`), makes every other tag a registry-side `skopeo copy --all --preserve-digests` of that digest, and reads each
+  tag's digest back from the registry (a mismatch fails the step); it writes the single `digests=` output the sign job signs. `build.yml`,
+  `build-beta.yml`, `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
+  with the stub podman/skopeo registry, plus the `dx-image` and `beta-channel` workflow checks). Images published before the fix still have
+  two digests; the first promotion after it builds dx once because no tested dx image on a matching base exists yet.
 - **The dx result check.** The aggregate job `Build dx and push image` (`aggregate-dx.sh`, tested in `tests/plan-dx.sh`) is green when dx was
   built and signed, promoted and verified, or legitimately skipped; it passes without a signal when the plan was skipped (a failed or
   cancelled vanilla run, the beta build on testing). A `workflow_run` run is attached to main's tip (`GITHUB_SHA` is the default branch's), NOT to the

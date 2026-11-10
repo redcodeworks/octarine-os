@@ -559,18 +559,10 @@ jobs:
           ALIAS_TAGS: ${{ steps.gen-build-tags.outputs.alias_tags }}
         run: |
           set -euox pipefail
-          : > /tmp/digests
-          for tag in ${ALIAS_TAGS}; do
-            podman push --digestfile=/tmp/digestfile ${IMAGE_NAME}:${tag} ${IMAGE_REGISTRY}/${IMAGE_NAME}:${tag}
-            cat /tmp/digestfile >> /tmp/digests
-            echo >> /tmp/digests
-          done
-
-          # The tags do not all end up with the same manifest digest (the first one pushed
-          # differs), so keep every distinct digest and sign each of them
-          digests=$(sort -u /tmp/digests | grep -v '^$' | tr '\n' ' ')
-
-          echo "digests=${digests}" >> $GITHUB_OUTPUT
+          # One push, the other tags are registry-side copies of its digest: every tag shares one manifest digest and
+          # one signature, which is what lets the dx promotion match the tested image
+          read -r first _ <<< "${ALIAS_TAGS}"
+          .github/scripts/push-tags.sh "${IMAGE_NAME}:${first}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed `testing` digest as latest and its dated aliases, no
   # rebuild. The digest is compared before and after every copy.

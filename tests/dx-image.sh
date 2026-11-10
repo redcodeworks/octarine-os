@@ -90,12 +90,14 @@ for line in open(sys.argv[1]):
         if "ublue-os/remove-unwanted-software" not in line:  # the other workflows pin this one without a comment too
             assert re.search(r"#\s*v\d", line), line
 PY
-check "workflow: pushes <channel> and <channel>-<date>-<sha> (testing: testing and testing-<sha>), one push line, nothing else" bash -c "
-  [ \$(grep -c 'podman push' '$wf') = 1 ]
+check "workflow: pushes <channel> and <channel>-<date>-<sha> (testing: testing and testing-<sha>), one push-tags.sh call (one push, the other tag a digest copy), nothing else" bash -c "
+  set -e
+  [ \$(grep -c 'push-tags.sh' '$wf') = 1 ]
+  ! grep -q 'podman push' '$wf'
   grep -q 'alias_tags=\"\${CHANNEL}-\$(date +%Y%m%d)-\${sha} \${CHANNEL}\"' '$wf'
   grep -q 'alias_tags=\"testing-\${sha} testing\"' '$wf'
   grep -q 'sha=\$(git rev-parse --short=7 HEAD)' '$wf'
-  grep -q 'podman push --digestfile=/tmp/digestfile \"octarine-os-dx:\${CHANNEL}\" \"\${DX_IMAGE}:\${tag}\"' '$wf'
+  grep -q '.github/scripts/push-tags.sh \"octarine-os-dx:\${CHANNEL}\" \"\${DX_IMAGE}\" \${ALIAS_TAGS}' '$wf'
   ! grep -qE 'generate-build-tags|tag-images' '$wf'"
 check "workflow: every pushed digest is signed and both pushed tags are verified with cosign.pub" bash -c "
   grep -q 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY \"\${IMAGE}@\${digest}\"' '$wf'
