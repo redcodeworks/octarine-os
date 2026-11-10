@@ -1247,6 +1247,266 @@ gaming-setup *args:
     done
     exit "$failed"
 
+# Set up niri: copy config parts, portal file and polkit drop-in (--help)
+[group('Setup')]
+[positional-arguments]
+niri-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    mode=ask
+    only_list=""
+    valid_steps=" niri portals polkit "
+    args=("$@")
+    i=0
+    while [ "$i" -lt "${#args[@]}" ]; do
+        a=${args[$i]}
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step. `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --only)
+                i=$((i + 1))
+                only_list=${args[$i]:-}
+                [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
+                ;;
+            --only=*) only_list=${a#--only=} ;;
+            -*) echo "Unknown option: $a (use --yes, --no or --only STEP[,STEP...])" >&2; exit 2 ;;
+            *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
+        esac
+        i=$((i + 1))
+    done
+    if [ -n "$only_list" ]; then
+        for s in ${only_list//,/ }; do
+            case "$valid_steps" in
+                *" $s "*) ;;
+                *) echo "Unknown step: $s (steps:${valid_steps% })" >&2; exit 2 ;;
+            esac
+        done
+    fi
+
+    # Sources: the niri parts live in /etc/niri, the other two files in /usr/share/octarine-os/niri-setup. The test mode
+    # OCTARINE_NIRI_SETUP_SRC points both at a fake tree ($SRC/niri/*.kdl, $SRC/niri-portals.conf, $SRC/10-octarine-os.toml).
+    if [ -n "${OCTARINE_NIRI_SETUP_SRC:-}" ]; then
+        niri_src=$OCTARINE_NIRI_SETUP_SRC/niri
+        share_src=$OCTARINE_NIRI_SETUP_SRC
+    else
+        niri_src=/etc/niri
+        share_src=/usr/share/octarine-os/niri-setup
+    fi
+    cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
+    names=()
+    results=()
+    undos=()
+    failed=0
+    kept_any=0
+    preconfirmed=0
+
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+    sel() {
+        [ -z "$only_list" ] && return 0
+        case ",$only_list," in *",$1,"*) return 0 ;; esac
+        return 1
+    }
+    # ask <default y|n> <question>: sets $answer. --yes takes the default, --no never applies.
+    ask() {
+        local def=$1 q=$2 reply hint="[Y/n]"
+        [ "$def" = n ] && hint="[y/N]"
+        case "$mode" in
+            yes) answer=$def; return ;;
+            no) answer=n; return ;;
+        esac
+        printf '%s %s ' "$q" "$hint"
+        read -r reply || reply=""
+        case "$reply" in
+            [Yy]*) answer=y ;;
+            [Nn]*) answer=n ;;
+            *) answer=$def ;;
+        esac
+    }
+
+    # ask_apply: the "Apply?" question of a step; a step chosen in the checklist was confirmed there already
+    ask_apply() { if [ "$preconfirmed" = 1 ] && [ "$mode" != no ]; then answer=y; else ask y "Apply?"; fi; }
+
+    # place <label> <src> <dest>: copy src to dest unless the destination is identical (already done). A different
+    # existing file is never replaced silently: diff, default keep, backup before an explicit yes. Sets $place_result to
+    # applied, already, kept, planned or failed, and $place_backup to the backup path when one was made.
+    place() {
+        local label=$1 src=$2 dest=$3 backup n
+        place_backup=""
+        if [ ! -f "$src" ]; then
+            echo "  $label: source $src is missing" >&2
+            place_result=failed
+            return
+        fi
+        if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
+            echo "  $label: $dest is already identical (already done)."
+            place_result=already
+            return
+        fi
+        if [ -e "$dest" ] && [ ! -f "$dest" ]; then
+            echo "  $label: $dest exists and is not a regular file; left alone." >&2
+            place_result=failed
+            return
+        fi
+        if [ -f "$dest" ]; then
+            echo "  $label: $dest exists and differs (- yours, + shipped):"
+            diff -u "$dest" "$src" | sed 's/^/    /'
+            if [ "$mode" = no ]; then
+                echo "  Plan: would ask before replacing it (default keep; a replacement saves a timestamped backup)."
+                place_result=planned
+                return
+            fi
+            echo "  Replacing it saves your file as $dest.bak-<date>-<time> first."
+            ask n "  Replace $dest?"
+            if [ "$answer" != y ]; then
+                echo "  Kept your $dest."
+                place_result=kept
+                return
+            fi
+            backup="$dest.bak-$(date +%Y%m%d-%H%M%S)"
+            n=0
+            while [ -e "$backup" ]; do n=$((n + 1)); backup="$dest.bak-$(date +%Y%m%d-%H%M%S)-$n"; done
+            if ! cp -p -- "$dest" "$backup"; then
+                echo "  Could not back up $dest; nothing replaced." >&2
+                place_result=failed
+                return
+            fi
+            place_backup=$backup
+        elif [ "$mode" = no ]; then
+            echo "  Plan: would create $dest."
+            place_result=planned
+            return
+        fi
+        if mkdir -p -- "$(dirname "$dest")" && cp -- "$src" "$dest"; then
+            echo "  $label: wrote $dest${place_backup:+ (your previous file is saved as $place_backup)}."
+            place_result=applied
+        else
+            echo "  $label: could not write $dest" >&2
+            place_result=failed
+        fi
+    }
+    # Fold the per-file results of a step into one summary row.
+    # finish_step <step> <undo>
+    finish_step() {
+        local step=$1 undo=$2 r
+        if [ "${#file_results[@]}" -eq 0 ]; then record "$step" "skipped (nothing to do)"; return; fi
+        for r in "${file_results[@]}"; do [ "$r" = failed ] && { failed=1; record "$step" FAILED; return; }; done
+        for r in "${file_results[@]}"; do [ "$r" = applied ] && { record "$step" applied "$undo"; return; }; done
+        for r in "${file_results[@]}"; do [ "$r" = planned ] && { record "$step" "planned (would ask)"; return; }; done
+        for r in "${file_results[@]}"; do [ "$r" = kept ] && { kept_any=1; record "$step" "skipped (kept your different file)"; return; }; done
+        record "$step" "already done"
+    }
+
+    # Terminal with gum: a checklist of steps up front; the chosen steps are not asked "Apply?" again, but replacing an
+    # existing different file is still its own question (default keep).
+    if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
+        menu_title "octarineOS niri setup"
+        menu_multi "Niri setup: choose the steps (no sudo; nothing existing is replaced without asking)" \
+            "niri^Niri config files in ~/.config/niri^1" \
+            "portals^Portal config with the oo7 secret portal^1" \
+            "polkit^Noctalia polkit agent drop-in^1"
+        if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
+        echo "Selected steps: ${MENU_RESULT[*]}"
+        if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
+        only_list=$(IFS=,; echo "${MENU_RESULT[*]}")
+        preconfirmed=1
+    fi
+
+    if sel niri; then
+        echo
+        echo "== niri"
+        echo "Copies the niri config parts from $niri_src into ${cfg}/niri/ (config.kdl lists them with include lines). The copies are yours to edit."
+        file_results=()
+        shopt -s nullglob
+        parts=("$niri_src"/*.kdl)
+        shopt -u nullglob
+        if [ "${#parts[@]}" -eq 0 ]; then
+            echo "Skipped: no *.kdl files in $niri_src."
+            record "niri" "skipped (no source files)"
+        else
+            ask_apply
+            if [ "$answer" != y ] && [ "$mode" != no ]; then
+                record "niri" "skipped (not applied)"
+            else
+                for p in "${parts[@]}"; do
+                    place "$(basename "$p")" "$p" "$cfg/niri/$(basename "$p")"
+                    file_results+=("$place_result")
+                    if [ "$place_result" = kept ] && [ "$(basename "$p")" = config.kdl ]; then
+                        echo "  Note: your config.kdl was kept, so the copied parts are not used until it has include lines for them (see the shipped config.kdl)."
+                    fi
+                done
+                finish_step niri "delete the copied files in ${cfg}/niri/ (or restore a .bak-* file); with no config.kdl niri falls back to /etc/niri/config.kdl"
+            fi
+        fi
+    fi
+
+    if sel portals; then
+        echo
+        echo "== portals"
+        echo "Installs ${cfg}/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal set to oo7-portal (this image's secret service is oo7, while niri's packaged file selects gnome-keyring). A user file replaces the packaged one entirely."
+        file_results=()
+        ask_apply
+        if [ "$answer" != y ] && [ "$mode" != no ]; then
+            record "portals" "skipped (not applied)"
+        else
+            place niri-portals.conf "$share_src/niri-portals.conf" "$cfg/xdg-desktop-portal/niri-portals.conf"
+            file_results+=("$place_result")
+            finish_step portals "delete ${cfg}/xdg-desktop-portal/niri-portals.conf (the packaged file applies again at the next login)"
+        fi
+    fi
+
+    if sel polkit; then
+        echo
+        echo "== polkit"
+        echo "Writes ${cfg}/noctalia/10-octarine-os.toml, which turns on Noctalia's built-in polkit agent ([shell] polkit_agent = true): niri has no agent of its own, so without one privileged prompts fail in a niri session. Do not run another polkit agent beside it. Your own config.toml still wins (its name sorts after 10-)."
+        file_results=()
+        if ! command -v noctalia >/dev/null 2>&1; then
+            echo "Skipped: noctalia is not installed."
+            record "polkit" "skipped (noctalia not installed)"
+        else
+            ask_apply
+            if [ "$answer" != y ] && [ "$mode" != no ]; then
+                record "polkit" "skipped (not applied)"
+            else
+                place 10-octarine-os.toml "$share_src/10-octarine-os.toml" "$cfg/noctalia/10-octarine-os.toml"
+                file_results+=("$place_result")
+                finish_step polkit "delete ${cfg}/noctalia/10-octarine-os.toml and restart Noctalia"
+            fi
+        fi
+    fi
+
+    echo
+    echo "== Summary (mode: $mode)"
+    printf '%-12s %s\n' "STEP" "RESULT"
+    for i in "${!names[@]}"; do
+        printf '%-12s %s\n' "${names[$i]}" "${results[$i]}"
+    done
+    any=0
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ] && [ "${undos[$i]}" != "-" ]; then
+            [ "$any" = 0 ] && { echo; echo "To undo (per step):"; any=1; }
+            echo "  ${names[$i]}: ${undos[$i]}"
+        fi
+    done
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = applied ]; then
+            case "${names[$i]}" in
+                niri) echo "niri: reloads included config files live, no restart needed (a syntax error is shown in a notification)." ;;
+                portals) echo "portals: applies at your next login." ;;
+                polkit) echo "polkit: restart Noctalia (or log in again) for the drop-in to take effect." ;;
+            esac
+        fi
+    done
+    for i in "${!names[@]}"; do
+        if [ "${results[$i]}" = FAILED ]; then echo "Re-run the failed step: ujust niri-setup --only ${names[$i]}"; fi
+    done
+    [ "$kept_any" = 1 ] && echo "Files you already had were kept. Re-run and answer y to a replace question to take the shipped file (your file is backed up first)."
+    exit "$failed"
+
 # Themes and icons from the gnome-themes repo; no arguments opens a menu of its recipes (--help lists them)
 [group('Appearance')]
 [positional-arguments]

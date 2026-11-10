@@ -1,0 +1,5 @@
+// Session environment. Qt apps use Qt's built-in GTK3 platform theme, so they follow the GTK settings without extra
+// packages (plasma-integration, qt6ct, Kvantum).
+environment {
+    QT_QPA_PLATFORMTHEME "gtk3"
+}

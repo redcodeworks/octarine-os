@@ -1,0 +1,113 @@
+name: Test
+
+# The fast lane: every push to a dev branch runs the quick checks (just check, bash -n, tests/*.sh) and a secret scan.
+# No pull_request trigger: the push check run is reported on the commit, so the pull request sees it and nothing runs
+# twice. The image build is build.yml (testing and main pushes).
+on:
+  push:
+    branches-ignore:
+      - main
+      - testing
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    container: fedora:45
+    steps:
+      - name: Install the tools the tests need
+        run: |
+          for attempt in 1 2 3; do
+            dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
+              just jq fish zsh niri git python3 python3-pyyaml shellcheck gawk dconf bash-completion \
+              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils && exit 0
+            echo "::warning::dnf install failed (attempt ${attempt}); retrying in 20 s"
+            sleep 20
+          done
+          echo "::error::dnf install failed three times"
+          exit 1
+
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The container runs as root, but recipes and tests check that they are not run as root (no session bus), so
+      # everything after the install runs as an ordinary user, like on the desktop.
+      - name: Create the ordinary user the checks run as
+        run: |
+          useradd --create-home ci
+          git config --system --add safe.directory "${GITHUB_WORKSPACE}"
+          chown -R ci: "${GITHUB_WORKSPACE}"
+
+      - name: Install the pinned just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Make the pinned just usable by that user
+        run: install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
+
+      - name: just check
+        run: runuser -u ci -- just check
+
+      - name: bash -n on every script
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            if ! bash -n "$f"; then echo "FAIL bash -n $f"; fail=1; fi
+          done < <(git ls-files '*.sh' githooks/pre-push)
+          # shell blocks of the workflows are checked by the tests that read them; scripts only here
+          [ "$fail" = 0 ] && echo "bash -n: all scripts parse"
+          exit "$fail"
+
+      - name: Run every tests/*.sh
+        shell: runuser -u ci -- bash -e {0}
+        run: |
+          start=$(date +%s)
+          pass=0; failed=()
+          for t in tests/*.sh; do
+            s=$(date +%s)
+            log=$(mktemp)
+            if bash "$t" >"$log" 2>&1; then
+              pass=$((pass + 1)); echo "PASS ${t} ($(( $(date +%s) - s )) s)"
+            else
+              failed+=("$t"); echo "FAIL ${t} ($(( $(date +%s) - s )) s)"
+              sed 's/^/     /' "$log"
+            fi
+          done
+          echo "Summary: ${pass} passed, ${#failed[@]} failed, $(( $(date +%s) - start )) s in total"
+          if [ "${#failed[@]}" -gt 0 ]; then echo "::error::failed: ${failed[*]}"; exit 1; fi
+
+  secrets:
+    name: secrets
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Install the pinned gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          f="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${RUNNER_TEMP}/${f}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${f}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/gitleaks"
+          tar -xzf "${RUNNER_TEMP}/${f}" -C "${RUNNER_TEMP}/gitleaks" gitleaks
+          echo "${RUNNER_TEMP}/gitleaks" >> "${GITHUB_PATH}"
+
+      - name: Scan the full history
+        run: gitleaks git --config .gitleaks.toml --redact --no-banner .

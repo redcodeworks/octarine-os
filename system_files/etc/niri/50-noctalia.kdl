@@ -1,0 +1,19 @@
+// The Noctalia shell (package `noctalia`; this image's niri session uses it as the shell): start it, and use it for the
+// launcher, panels, volume and brightness keys. Delete the include line of this file to run another shell.
+// niri has no polkit agent of its own: `ujust niri-setup` turns on Noctalia's built-in one, so do not start a second.
+spawn-at-startup "noctalia"
+
+binds {
+    Mod+Space hotkey-overlay-title="Run an Application: Noctalia launcher" { spawn-sh "noctalia msg panel-toggle launcher"; }
+    Mod+D { spawn-sh "noctalia msg panel-toggle launcher"; }
+    Mod+S hotkey-overlay-title="Open the Control Center: Noctalia" { spawn-sh "noctalia msg panel-toggle control-center"; }
+    Mod+Shift+S { spawn-sh "noctalia msg settings-toggle"; }
+    Alt+Tab { spawn-sh "noctalia msg window-switcher"; }
+
+    // These replace the plain wpctl and brightnessctl binds of 40-binds.kdl with ones that show Noctalia's on-screen display.
+    XF86AudioRaiseVolume allow-when-locked=true { spawn-sh "noctalia msg volume-up"; }
+    XF86AudioLowerVolume allow-when-locked=true { spawn-sh "noctalia msg volume-down"; }
+    XF86AudioMute allow-when-locked=true { spawn-sh "noctalia msg volume-mute"; }
+    XF86MonBrightnessUp allow-when-locked=true { spawn-sh "noctalia msg brightness-up"; }
+    XF86MonBrightnessDown allow-when-locked=true { spawn-sh "noctalia msg brightness-down"; }
+}

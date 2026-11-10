@@ -1,0 +1,13 @@
+# System-wide GNOME defaults of octarineOS. Compiled into /etc/dconf/db/distro by `dconf update` during the image build.
+# The user's own settings always win (the profile lists the user database first); there are no locks.
+# Undo one key for yourself: gsettings reset <schema> <key>. Undo it for everyone: delete its line here and rebuild.
+
+[org/gnome/desktop/interface]
+# No accidental overview from the top-left corner.
+enable-hot-corners=false
+
+[org/gnome/shell]
+# Replaces the packaged default list, so the first entry is that default (Fedora's background logo). The other two
+# extensions ship with the image: tray icons for apps that still use them, and the phone integration whose firewall
+# service the image already opens. A uuid that is not installed is ignored by GNOME Shell.
+enabled-extensions=['background-logo@fedorahosted.org', 'appindicatorsupport@rgcjonas.gmail.com', 'gsconnect@andyholmes.github.io']

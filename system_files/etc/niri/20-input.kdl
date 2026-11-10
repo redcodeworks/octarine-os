@@ -1,0 +1,14 @@
+// Input devices: niri's defaults. With an empty xkb block niri takes the keyboard layout from systemd-localed
+// (`localectl set-x11-keymap`). Reference: https://niri-wm.github.io/niri/Configuration:-Input
+input {
+    keyboard {
+        xkb {
+        }
+        numlock
+    }
+
+    touchpad {
+        tap
+        natural-scroll
+    }
+}

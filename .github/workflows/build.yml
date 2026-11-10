@@ -4,11 +4,10 @@ name: Build container image
 # through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
 # path filter) so the required "Build and push image" check always exists for the commit being promoted:
 # the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
-# aggregate job named "Build and push image" then passes without it.
+# aggregate job named "Build and push image" then passes without it. There is no pull_request trigger: a dev branch
+# is checked by test.yml, the image is built when the change is merged into `testing`. A manual dispatch from any
+# other branch (`gh workflow run build.yml --ref <branch>`) builds as validation only: nothing is pushed or signed.
 on:
-  pull_request:
-    branches:
-      - testing
   schedule:
     - cron: '0 11 * * *'  # 11:00 UTC every day (runs on the default branch, so it refreshes latest)
   push:
@@ -32,7 +31,7 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # A newer push to any branch but main cancels the older build; main (publishes or promotes the tested
+  # A newer push or dispatch on any ref but main cancels the older build; main (publishes or promotes the tested
   # image) and the scheduled refresh of latest are never cancelled mid-way.
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}
 
@@ -59,8 +58,8 @@ jobs:
         id: plan
         env:
           EVENT: ${{ github.event_name }}
-          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
@@ -71,8 +70,8 @@ jobs:
       - name: Did the brew image pin change?
         id: brewpin
         env:
-          BEFORE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          AFTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           changed=true
           if [[ -n "${BEFORE}" && ! "${BEFORE}" =~ ^0+$ ]] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
@@ -202,7 +201,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # main publishes `latest`, testing publishes `testing`; pull request builds publish nothing
+      # main publishes `latest`, testing publishes `testing`; a dispatch from any other branch builds and publishes nothing
       - name: Choose channel
         id: channel
         env:
@@ -211,12 +210,10 @@ jobs:
         run: |
           publish=false
           tag=testing
-          if [[ "${EVENT}" != "pull_request" ]]; then
-            case "${REF}" in
-              refs/heads/main) publish=true; tag=latest ;;
-              refs/heads/testing) publish=true ;;
-            esac
-          fi
+          case "${REF}" in
+            refs/heads/main) publish=true; tag=latest ;;
+            refs/heads/testing) publish=true ;;
+          esac
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "Channel: tag=${tag} publish=${publish}"
@@ -408,6 +405,18 @@ jobs:
             check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/watermark.png /usr/share/octarine-os/logo/octarine-logo.png"
             check "plymouth theme selected" "grep -qx Theme=octarine /etc/plymouth/plymouthd.conf"
             check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
+            check "dconf profile lists the distro database" "grep -qx system-db:distro /etc/dconf/profile/user"
+            check "dconf keyfile of the image shipped" "grep -q ^enabled-extensions= /etc/dconf/db/distro.d/90-octarine-os"
+            check "dconf distro database is newer than our keyfile (dconf update ran)" "test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os"
+            check "dconf distro database holds our hot corner default" "grep -aq enable-hot-corners /etc/dconf/db/distro"
+            for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
+              check "fish accepts $f" "fish --no-execute $f"
+            done
+            check "gamemode defaults file shipped" "grep -qx renice=10 /etc/gamemode.ini"
+            check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl"
+            check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml"
+            check "niri accepts the shipped config when niri is installed" "! command -v niri || niri validate -c /etc/niri/config.kdl"
+            check "niri-setup recipe exists" "grep -q ^niri-setup /usr/share/ublue-os/just/60-custom.just"
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
@@ -480,7 +489,7 @@ jobs:
             "${DEFAULT_TAG}" \
             "${ALIAS_TAGS}"
 
-      # These `if` statements are so that pull requests for your custom images do not make it publish any packages under your name without you knowing
+      # These `if` statements are so that a validation run (a dispatch from a dev branch) does not make it publish any packages under your name without you knowing
       # They also check if the runner is on the default branch so that things like the merge queue (if you enable it), are going to work
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

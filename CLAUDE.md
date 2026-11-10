@@ -34,7 +34,7 @@ encouraged). American English throughout.
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
-- `.github/workflows/`: `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
+- `.github/workflows/`: `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -74,7 +74,7 @@ encouraged). American English throughout.
 
 ## Branches and releases
 
-`testing` builds the `testing` image; `main` is protected, changes only by pull request from `testing`
+`testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
 The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
@@ -83,21 +83,20 @@ The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is 
 GitLab Flow, "production branch" variant (reference implementation for the owner's other repos). `testing` is the
 integration branch (GitLab's "main"); `main` is the production branch.
 
-- **Environments.** dev = the validation build on a pull request (`build.yml`, event `pull_request` into `testing`:
-  same plan, brew pin check, build, size check, smoke test, rechunk and version check; no registry login, no push,
-  no tags, no signing); UAT = the `testing` image (the `octarine-testing` VM follows it); prod = `latest` (the
-  owner's machine).
+- **Environments.** dev = the `Test` workflow on every push to a dev branch (jobs `test` and `secrets`, about 80
+  seconds, no image build); `testing` = the image build and publish of the `testing` tags once per merge (UAT; the
+  `octarine-testing` VM follows it); `main` = promotion of the tested build to `latest` (prod, the owner's machine).
 - **Direction.** One way, downstream: feature branch -> pull request into `testing` -> pull request from `testing`
   into `main`. Fixes go upstream first (into `testing`, then promoted).
-- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch alone builds nothing;
-  only the pull request event does.
+- **Branch names.** `feat/<topic>`, `fix/<topic>`, `hotfix/<topic>`. A push to a feature branch runs the `Test`
+  workflow and builds no image; there is no `pull_request` trigger in `build.yml`.
 - **Merge methods (enforced by rulesets).** A feature pull request into `testing` is squashed: one commit per feature
   (only squash is allowed there). `testing` into `main` is a merge commit (only merge commits are allowed there).
   Why: promotion must keep `testing`'s commits as ancestors of `main`; a rebase or squash of `testing` into `main`
   would rewrite them and the next promotion would replay commits that are already applied. No back-merge of `main`
   into `testing` is needed: `main` only gains the promotion merge commits that `testing` lacks, which is harmless.
-- **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks: into
-  `testing`, `Build and push image`; into `main`, `Build and push image`, `require-testing-branch` and
+- **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks (rulesets): into
+  `testing`, `test` and `secrets`; into `main`, `Build and push image`, `require-testing-branch` and
   `Sign and verify images`. Agents may merge their own feature pull request into `testing` once the required checks
   are green (Kevin, 2026-11-09; GitHub does not let an author approve their own pull request, so this means
   merging). Merging into `main` is the owner's only.
@@ -105,12 +104,40 @@ integration branch (GitLab's "main"); `main` is the production branch.
   only, never on those into `testing`); the push to `main` retags the tested `testing` image by tree hash and signs.
 - **Hotfix rule.** Fix on a `hotfix/<topic>` branch into `testing`, then promote. If `testing` is red and prod needs
   an emergency fix, open the pull request into `main` and cherry-pick the same fix into `testing` straight away.
-- **Pull request builds are validation only.** An image is built twice per change, once on the pull request and once
-  on merge; only the merge build is promoted. Gating: the build job's "Choose channel" step sets `publish=false`
-  for `pull_request`; "Login to GitHub Container Registry" and "Push To GHCR" need `publish == 'true'`; the `sign`
-  job runs only after a publish or a promotion, so it skips; the aggregate job `Build and push image` still runs
-  and passes. Concurrency group is workflow plus ref (one per PR), cancel-in-progress on. Test: `tests/pr-validation.sh`.
+- **The image is built once per change, after the merge.** A pull request into `testing` gets no image build (by
+  design; `build.yml` has no `pull_request` trigger); the merge into `testing` is the push build that publishes the
+  `testing` tags and is the first time the image is built. The trade-off: a broken image is only found by the build
+  after the merge into `testing`. A red `testing` build publishes nothing and cannot be promoted, because its
+  `Build and push image` check on the tip commit fails (that is the check `main` requires); fix it forward with a new
+  dev branch and pull request.
+- **Validation build of a dev branch by hand.** `gh workflow run build.yml -R redcodeworks/octarine-os --ref <branch>`
+  runs the full plan, build, size check and smoke test on that branch. It never publishes: the "Choose channel" step
+  sets `publish=false` for every ref but `main` and `testing`; "Login to GitHub Container Registry" and "Push To
+  GHCR" need `publish == 'true'`; the `sign` job runs only after a publish or a promotion, so it skips; no tags are
+  pushed; the aggregate job `Build and push image` still passes. Concurrency group is workflow plus ref,
+  cancel-in-progress on (only `main` and the schedule are never cancelled). The workflow must exist on that branch.
+  Test: `tests/build-triggers.sh`.
 - The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+
+## Test workflow
+
+`.github/workflows/test.yml` (name `Test`) is the fast lane for dev branches (the image build takes about ten
+minutes). Triggers: `push` with `branches-ignore: [main, testing]` and `workflow_dispatch`; no `pull_request`
+(the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
+`testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
+Two jobs, with these exact names because they become required checks:
+
+- `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
+  `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
+  glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
+  skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
+- `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
+
+Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
+Test: `tests/test-workflow.sh`.
+
+Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
+trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
 
 ## Rules
 
@@ -148,7 +175,9 @@ integration branch (GitLab's "main"); `main` is the production branch.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the plan step with stub tools), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
-- `tests/pr-validation.sh` tests that pull requests into `testing` are validation-only (trigger, publishing gates, aggregate job, other workflows unchanged).
+- `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
+- `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup").
+- `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
@@ -370,6 +399,109 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `just --choose` was not used because its chooser needs fzf or `JUST_CHOOSER`, and our own menu keeps the look of the
   other menus. Untested on a real terminal (no tty or gum here).
 
+## System defaults (dconf, fish, GameMode)
+
+- **Selection rule** for everything taken from the owner's public dot-files repo (`redcodeworks/dot-files`, read with
+  `gh api repos/redcodeworks/dot-files/contents/<path>?ref=main --jq .content | base64 -d`), decided file by file and
+  entry by entry; when in doubt EXCLUDE and list it in the pull request table. INCLUDE only what is sensible for any user of the image
+  and needs nothing personal. EXCLUDE: visual themes and colors (Gruvbox Material, shell theme, icon, cursor, font
+  choices), the keyboard model (MEH and HYPR), workspace names and window rules, an app-grid layout built around the
+  owner's apps, editor choice, personal paths and host names, anything tied to one machine or GPU, anything needing
+  software the image does not ship (unless guarded), settings for extensions the image does not ship.
+- **Paths.** dconf: `system_files/etc/dconf/db/distro.d/90-octarine-os` (a keyfile; group headers are dconf paths; no
+  locks), compiled by `dconf update` in `build.sh` right after `system_files` is copied (a bad keyfile fails the build;
+  `test distro -nt keyfile` follows). `/etc/dconf/profile/user` in the base is `user-db:user`, `system-db:local`,
+  `system-db:site`, `system-db:distro`, so the user's own value wins and our file only fills `distro`; the package
+  `authselect` already puts `distro.d/20-authselect` there. A key set in the `distro` database REPLACES the
+  schema default, it does not merge: `org.gnome.shell enabled-extensions` has the packaged default
+  `['background-logo@fedorahosted.org']` (Fedora's schema override), so our list starts with it. Extensions are enabled only when
+  the image ships them as RPMs (AppIndicator, GSConnect); a uuid that is not installed is ignored by GNOME Shell.
+  fish: `system_files/usr/share/fish/vendor_conf.d/octarine-os-NN-*.fish` (snippets) and
+  `vendor_functions.d/<name>.fish` (functions); `/etc/fish/config.fish` is never touched. fish loads a user file of the same
+  name from `~/.config/fish/conf.d/` (or `functions/`) INSTEAD of the vendor file, so an empty file disables a snippet.
+  Every snippet must be safe in a non-interactive shell (`status is-interactive` or a pure PATH/guarded source) and
+  every helper guarded with `command -q <tool>`. `fish_add_path --global` fills `fish_user_paths`, which fish puts in front of PATH after startup
+  (and it skips directories that do not exist). The base already ships `ublue-brew.fish` (brew shellenv), so no brew snippet is added.
+  GameMode: `system_files/etc/gamemode.ini` holds only `renice=10`; the machine-specific tuning (amd-pstate governor,
+  tuned profile) is the `ujust gaming-setup gamemode` source `usr/share/octarine-os/gamemode.ini`, installed into
+  `~/.config/gamemode.ini` (the user file overrides per key).
+- **Decisions (dot-files -> image).**
+
+  | Source | Entry | Decision | Reason |
+  |---|---|---|---|
+  | `20-interface.dconf` | `enable-hot-corners=false` | included | neutral behavior, one key, easy to undo |
+  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from gnome-themes |
+  | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
+  | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
+  | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
+  | | caffeine, blur-my-shell, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, blur-my-shell and the dock are visual, caffeine adds a panel icon, user-theme is useless without a theme) |
+  | | arcmenu, hotedge, coverflow, clipboard-indicator, tiling shell | excluded | not shipped |
+  | `10-app-folders.dconf` | folder layout | excluded | layout taste, replaces GNOME's own default folders (category-based, so a candidate if the owner wants it) |
+  | `31-shell-keybindings`, `42-tiling-shell`, `43-arcmenu` | all | excluded | shortcut model, extensions not shipped |
+  | `40-dash-to-dock`, `41-auto-move-windows`, `50-shell-theme` | all | excluded | look, owner's app list, Gruvbox shell theme |
+  | `10-dotfiles-brew.fish` | brew shellenv | excluded | the base ships `ublue-brew.fish` |
+  | `20-dotfiles-editor.fish` | helix as EDITOR | excluded | editor choice |
+  | `30-dotfiles-env.fish` | `~/.local/bin` on PATH | included | neutral |
+  | `40-dotfiles-steam-ld-preload.fish` | overlay LD_PRELOAD fix | included | generic, interactive only |
+  | `45-dotfiles-rustup.fish` | cargo env | included | guarded by the file existing |
+  | `50-dotfiles-interactive.fish` | colors, aliases, eza and fzf aliases | excluded | Gruvbox colors, personal aliases (`cp -i`, `lt` ...), tools not shipped |
+  | `60-dotfiles-fzf-colors.fish` | fzf colors | excluded | colors, fzf not shipped |
+  | `functions/fish_greeting.fish` | fastfetch greeting | excluded | personal fastfetch file path |
+  | `functions/y.fish` | yazi wrapper | included | guarded with `command -q yazi` |
+  | `gamemode.example.ini` | `renice=10` | included | generic |
+  | | `desiredgov=powersave`, `[custom]` tuned profile | excluded from `/etc` | AMD amd-pstate specific and needs tuned; stays in the `gaming-setup` user file |
+
+- **Refreshing a default from dot-files.** Read the dot-files file, apply the selection rule again, edit the shipped file
+  by hand (nothing is generated), run `tests/system-defaults.sh`. The image never copies dot-files wholesale.
+- Tests: `tests/system-defaults.sh` (placement and modes, `dconf compile`, `fish --no-execute`, snippet behavior in a temp HOME,
+  INI parse, build step, smoke checks in `build.yml` and `build-beta.yml`, and a grep that no excluded category is shipped).
+  Not verified in CI or here: a real boot reading the compiled database, fish loading the vendor snippets in a session.
+
+## niri setup (`ujust niri-setup`)
+
+- **Design (Kevin).** The image ships niri configuration SOURCE files in `/etc/niri/*.kdl`; `ujust niri-setup` copies them into
+  the user's `~/.config/niri/` (user-owned copies) and brings in the portal and polkit configuration. Nothing applies without the
+  recipe, except that `/etc/niri/config.kdl` is also niri's own fallback.
+- **niri facts (26.04, from its docs under `/usr/share/doc/niri/wiki/`).** niri loads `$NIRI_CONFIG`/`--config`, else
+  `$XDG_CONFIG_HOME/niri/config.kdl`, else the fallback `/etc/niri/config.kdl`; it never merges the two; with neither it writes the
+  user file from its built-in default. `include "file.kdl"` works at the top level (relative to the including file, absolute,
+  `~/` since 26.04, `optional=true` since 26.04); includes are positional (later overrides earlier), most sections merge, repeating
+  sections (`window-rule`, `output`, `workspace`) append; a bind repeated in a later include replaces the earlier one (validated:
+  `niri validate` accepts it). `niri validate -c <file>` checks a file. niri's default is `/usr/share/doc/niri/default-config.kdl`.
+- **Layout of `system_files/etc/niri/`.** `config.kdl` (only relative `include` lines and a comment on outputs; no monitors are
+  shipped), `10-environment.kdl` (`QT_QPA_PLATFORMTHEME gtk3`), `20-input.kdl` (niri's default input: localed keyboard layout,
+  numlock, touchpad tap and natural scroll), `30-layout.kdl` (niri's default layout and screenshot path), `40-binds.kdl` (niri's
+  default key bindings with `Mod+T` = `alacritty`, the terminal the image ships and niri's own default (Kevin 2026-11-10: not ghostty,
+  which the image does not ship); no launcher or lock bind; media and brightness keys guarded with `command -v`), `50-noctalia.kdl`
+  (`spawn-at-startup "noctalia"`, the documented way for Noctalia v5, Fedora package `noctalia`; launcher, control center, settings,
+  window switcher and volume/brightness binds through `noctalia msg ...`, replacing the plain ones of the binds part), `60-window-rules.kdl`
+  (niri's two default rules). No second polkit agent is started anywhere. The parts derive from niri's default config
+  (GPL-3.0-or-later; credited in the README). Deleting an include line drops a part; the files are listed in the order they must stay.
+- **Selection rule applied to dot-files `config/niri`** (same rule as "System defaults"): excluded the MEH/HYPR binds
+  (`41-binds-meh-hyper`), the app-folder binds (`42-binds-apps`: ghostty, yazi, helix, personal folders), workspace names and routing
+  (`20-workspaces`, `51-workspace-routing`), the window rules (`50-window-rules`: opacity and blur for ghostty, Steam, personal apps),
+  Gruvbox colors, struts, gaps and column presets of `31-layout`, input taste of `30-inputs` (scroll factor, clickfinger, drag-lock),
+  gestures (`32-gestures`), `PROTON_ENABLE_HDR` and the Adwaita cursor of `10-environment`, and from `60-noctalia` the corner radius, global
+  blur, transparent workspace background, backdrop layer rule, floating settings window and the `honor-xdg-activation-with-invalid-serial`
+  debug flag (it weakens focus-steal protection). Included: `QT_QPA_PLATFORMTHEME`, `spawn-at-startup "noctalia"` and the Noctalia binds.
+- **Other two sources** (in `system_files/usr/share/octarine-os/niri-setup/`, never in `/etc`): `niri-portals.conf` (the packaged
+  `/usr/share/xdg-desktop-portal/niri-portals.conf` has `default=gnome;gtk;`, Access and Notification `gtk`, Secret `gnome-keyring`; the
+  image ships oo7-daemon/oo7-portal AND gnome-keyring, and `org.freedesktop.secrets` is aliased to `oo7-daemon.service`, so on niri the
+  packaged file selects gnome-keyring while oo7 owns the service; the user file keeps the packaged lines and sets
+  `org.freedesktop.impl.portal.Secret=oo7-portal;`; a user file replaces the packaged one entirely) and `10-octarine-os.toml`
+  (Noctalia v5.4.1 has no system-wide config layer: built-in defaults, then every `*.toml` in the user's config directory sorted and merged,
+  then `~/.local/state/noctalia/settings.toml`; `10-` sorts before the user's `config.toml`, so the user wins; content `[shell]
+  polkit_agent = true` plus the explanatory comment). No `/etc` override for portals or Noctalia exists, and `user-setup` has no polkit step.
+- **Recipe.** Group Setup; steps `niri`, `portals`, `polkit`; `--yes`, `--no` (plan only), `--only STEP[,STEP]`, `help`; the shared
+  checklist helper (a step chosen in it is not asked "Apply?" again); each file is idempotent (identical = "already done"), a different
+  existing file shows a diff, the replace question defaults to keep (also under `--yes` and with no answer to read) and a yes saves
+  `<file>.bak-YYYYMMDD-HHMMSS` first; the `polkit` step skips without `noctalia` on PATH; a failed step is FAILED with its re-run command, exit 1;
+  option errors exit 2; no sudo. Test hook: `OCTARINE_NIRI_SETUP_SRC` (a tree with `niri/*.kdl`, `niri-portals.conf`, `10-octarine-os.toml`).
+  Test: `tests/niri-setup.sh` (fake gum, ugum, noctalia, sudo, temp HOME; `niri validate` of every include combination when niri exists; a guard
+  that `ghostty` and `ptyxis` appear in no shipped niri file). The smoke checks in `build.yml` and `build-beta.yml` look for the files.
+- **Unverified.** niri and Noctalia reading the copied files in a session, Noctalia's `msg` subcommand names (taken from the owner's dot-files),
+  the portal actually attaching oo7, `alacritty` on a booted image.
+
 ## Image identity (`IMAGE_ID`, `IMAGE_VERSION`) and the fastfetch default
 
 - `PRETTY_NAME` stays `octarineOS` in EVERY image (default, beta, nvidia, dx); `NAME`, `ID`, `VERSION_ID`, `VARIANT_ID` are
@@ -381,7 +513,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
   | Image | `IMAGE_ID` | `IMAGE_VERSION` | Set in |
   |---|---|---|---|
-  | `octarine-os` (`latest`, `testing`, PR builds) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
+  | `octarine-os` (`latest`, `testing`) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
   | `octarine-os:beta` | `octarine-os` | `beta-<YYYYMMDD>-<short sha>` | `build.sh` |
   | `octarine-os-nvidia` | `octarine-os-nvidia` | its own build's `<YYYYMMDD>-<short sha>` | `nvidia.sh` |
   | `octarine-os-dx` (`latest`) | `octarine-os-dx` | its own build's version | `dx.sh` |
@@ -529,7 +661,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (Microsoft is only listed as developer). The owner chose it knowingly; the preinstall file and the README say so.
 - **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
   and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
-- **Unverified until promotion.** The real build (no PR build exercises `variants/dx`: `build.yml` validates the default
+- **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main`. The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 
