@@ -80,10 +80,16 @@ def block(p):
     t = open(p).read()
     a = t.index("- name: Smoke test image")
     b = t.index("# Optional packages that could not be installed") if "build.yml" in p else t.index("- name: Rechunk with rpm-ostree")
-    return t[a:b].strip()
+    # the only intended difference: the version pattern of the IMAGE_VERSION assertion (beta- prefix)
+    return t[a:b].strip().replace("-e VERSION_RE='beta-[0-9]{8}", "-e VERSION_RE='[0-9]{8}")
 d = sys.argv[1] + "/.github/workflows/"
 assert block(d + "build.yml") == block(d + "build-beta.yml")
 PY
+check "workflow: beta builds get the beta- version prefix and assert it; the stable build does not" bash -c "
+  grep -q 'IMAGE_VERSION_PREFIX: beta-' '$wf' && ! grep -q IMAGE_VERSION_PREFIX '$here/.github/workflows/build.yml'
+  grep -q \"VERSION_RE='beta-\[0-9\]{8}-\[0-9a-f\]{7,}'\" '$wf'
+  grep -q 'BETA=true .github/scripts/check-version-neutral.sh' '$wf'
+  grep -q 'check \"image id\"' '$wf' && grep -q 'IMAGE_ID=' '$wf'"
 check "signature policy covers the repository the beta tag lives in (any tag)" grep -q 'refs="ghcr.io/${org}/${base_name}' "$here/build_files/build.sh"
 
 # ---- prune rule for the beta channel

@@ -15,6 +15,23 @@ echo "Kernel of the base image: ${before}"
 test -x /tmp/akmods-rpms/ublue-os/nvidia-install.sh
 IMAGE_NAME=silverblue /tmp/akmods-rpms/ublue-os/nvidia-install.sh
 
+# Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
+# version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
+set_os_release_field() { # key value: replace the line when it exists, append it otherwise
+    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
+    if grep -q "^${key}=" "${file}"; then
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+    else
+        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
+        echo "${key}=\"${value}\"" >> "${file}"
+    fi
+    grep -qx "${key}=\"${value}\"" "${file}"
+}
+: "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
+set_os_release_field IMAGE_ID octarine-os-nvidia
+set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
+bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os-nvidia ]]'
+
 after=$(kernel_of)
 [[ "${after}" == "${before}" ]] || { echo "ERROR: the NVIDIA install changed the kernel (${before} -> ${after})"; exit 1; }
 test "$(ls /usr/lib/modules | wc -l)" = 1

@@ -14,6 +14,9 @@ COPY variants/nvidia/nvidia.sh /nvidia.sh
 
 FROM ${BASE_REF}
 
+# os-release IMAGE_VERSION of this build (set by the workflow), written by nvidia.sh
+ARG IMAGE_VERSION
+
 RUN --mount=type=bind,from=nvidia-akmods,src=/rpms,dst=/tmp/akmods-rpms \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \

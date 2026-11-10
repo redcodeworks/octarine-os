@@ -114,6 +114,7 @@ jobs:
           podman build -f variants/nvidia/Containerfile \
             --build-arg "BASE_REF=${BASE_REF}" \
             --build-arg "AKMODS_REF=${AKMODS_REF}" \
+            --build-arg "IMAGE_VERSION=${version}" \
             --label "org.opencontainers.image.title=octarine-os-nvidia" \
             --label "org.opencontainers.image.description=octarineOS with the proprietary NVIDIA driver (variant for NVIDIA GPUs, built weekly from the default image)" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
