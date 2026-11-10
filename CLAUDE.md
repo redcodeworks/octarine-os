@@ -34,7 +34,7 @@ encouraged). American English throughout.
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
-- `.github/workflows/`: `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
+- `.github/workflows/`: `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -111,6 +111,27 @@ integration branch (GitLab's "main"); `main` is the production branch.
   job runs only after a publish or a promotion, so it skips; the aggregate job `Build and push image` still runs
   and passes. Concurrency group is workflow plus ref (one per PR), cancel-in-progress on. Test: `tests/pr-validation.sh`.
 - The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+
+## Test workflow
+
+`.github/workflows/test.yml` (name `Test`) is the fast lane for dev branches (the image build takes about ten
+minutes). Triggers: `push` with `branches-ignore: [main, testing]` and `workflow_dispatch`; no `pull_request`
+(the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
+`testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
+Two jobs, with these exact names because they become required checks:
+
+- `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
+  `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
+  glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
+  skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
+- `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
+
+Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
+Test: `tests/test-workflow.sh`.
+
+Status: this part only adds the workflow. Planned, not done: the `testing` ruleset switches its required checks
+from `Build and push image` to `test` and `secrets`, and `build.yml` then drops its `pull_request` trigger so the
+image builds only on `testing` and `main` pushes (`tests/pr-validation.sh` changes with it).
 
 ## Rules
 
