@@ -52,10 +52,10 @@ check "the assembled justfile parses" just --justfile "$root/Assembled" --summar
 for r in switch-image toggle-updates update luks-tpm-unlock toolbox user-setup niri-setup gaming-setup gnome-candy flatpak-preinstall; do
     check "$r is listed" bash -c "$(declare -f summary); root='$root'; summary | grep -qx '$r'"
 done
-for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock setup-distrobox-app configure-broadcom-wl; do
+for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock setup-distrobox-app configure-broadcom-wl broadcom-wl; do
     check "$r is not listed" bash -c "$(declare -f summary); root='$root'; ! summary | grep -qx '$r'"
 done
-check "our 40-nvidia.just and 15-luks.just define no recipe or alias (they only replace the base files)" bash -c "! grep -qE '^(alias |[a-z@\\[])' '$justdir/40-nvidia.just' '$justdir/15-luks.just'"
+check "our 40-nvidia.just, 15-luks.just and 50-akmods.just define no recipe or alias (they only replace the base files)" bash -c "! grep -qE '^(alias |[a-z@\\[])' '$justdir/40-nvidia.just' '$justdir/15-luks.just' '$justdir/50-akmods.just'"
 check "the base's toggle-nvk cannot return: no recipe of that name in any file we ship" bash -c "! grep -rqE '^toggle-nvk' '$justdir' '$dxdir'"
 for f in 15-luks 40-nvidia 50-akmods; do
     check "$f.just keeps the base file name (build.sh's copy overwrites the base file)" test -f "$justdir/$f.just"

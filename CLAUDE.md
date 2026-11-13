@@ -151,11 +151,15 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   repo and is pulled in by a `ujust` recipe, such as `ujust gnome-candy <recipe>`. System-level files
   (PAM, sysctl, firewalld, `/etc` defaults) are fine in `system_files/`.
 - Podman only; no Docker daemon.
-- `sshd`, `tailscaled`, `cockpit.socket`, the snapper timers and `mcelog` stay off by default.
+- `sshd`, `tailscaled`, `cockpit.socket` and the snapper timers stay off by default. `mcelog.service` is NOT masked any more: the packaged unit skips itself without `/dev/mcelog` and when `edac_mce_amd` is loaded, and our drop-in `mcelog.service.d/50-octarine-intel-only.conf` (`ExecCondition` on `GenuineIntel`) skips it on any other CPU, so Intel keeps machine-check logging and AMD gets no failed unit (checked 2026-11: the kernel has `CONFIG_X86_MCELOG_LEGACY=y`; behavior on an Intel machine is untested).
   The image enables staged automatic updates by default: the base image's `ublue-os-update-services` enables
   `rpm-ostreed-automatic.timer` and ships `/etc/rpm-ostreed.conf` with `AutomaticUpdatePolicy=stage` (our `build.sh` adds
   nothing; the smoke test checks both). Image changes must not disable or alter that default. `ujust toggle-updates` is the
   user's own switch for it, one source among the others, and `ujust update` follows that switch.
+  The base's `rpm-ostreed-automatic.service.d/override.conf` already has `Wants`/`After=network-online.target` (and a metered-connection
+  `ExecCondition`); that cannot help after a wake from sleep (the target is already reached), where the run failed with
+  "pinging container registry". Our separate drop-in `50-octarine-retry.conf` adds a bounded retry (`Restart=on-failure`,
+  `RestartSec=60`, five starts per hour); the policy stays untouched. `NetworkManager-wait-online.service` is enabled; the smoke test checks both.
 - Never put security key registrations (`u2f_keys`), private keys or `.env` files in `system_files/`;
   the build guard and gitleaks hook both reject them.
 - `just` takes positional arguments only. Recipe text changes must pass `just --fmt --check`.
@@ -724,12 +728,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `30-distrobox-base.just` (build.sh) and imported by ours; the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just`
   are overwritten by ours (not renamed, so nothing of them survives): `15-luks.just` and `40-nvidia.just` are empty on
   purpose (the base's `setup-luks-tpm-unlock`, `remove-luks-tpm-unlock` and `toggle-nvk` are gone, no aliases, no stub),
-  `50-akmods.just` keeps `configure-broadcom-wl` as `[private]`. The base package builds `/usr/share/ublue-os/justfile`
+  `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
-  `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, `configure-broadcom-wl` in
-  `50-akmods.just` (no Broadcom hardware or module). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
+  `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
 - `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
@@ -750,6 +753,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   when the booted deployment has layered packages (bootc does not know about layering).
 - The base `update` also ran `rpm-ostree update`, `flatpak update` and `distrobox upgrade -a` unconditionally and checked
   for `uupd` (not installed here); both are replaced. Tests: `tests/update-services.sh`.
+
+## Hardware targeting (what is set only where the hardware is)
+
+- `system_files/etc/profile.d/proton.sh` exports `PROTON_FSR4_UPGRADE=1` only when a DRM card has vendor `0x1002` (AMD), by a bash
+  glob loop with no subprocess (it runs at every login shell; `OCTARINE_SYSFS_DRM` redirects sysfs in tests). `PROTON_ENABLE_WAYLAND=1`
+  stays for everyone but is experimental and reported rough on NVIDIA. fish has no equivalent file (fish does not read `profile.d`).
+- GameMode's `desiredgov=powersave` (upstream gamemode#419 workaround) is right only with amd-pstate in active mode: `gaming-setup gamemode`
+  pre-ticks the step and writes the line only when `/sys/devices/system/cpu/amd_pstate/status` is `active` (`GAMING_SETUP_PSTATE_STATUS`
+  in tests); otherwise the line and its comment are left out and the tuned `[custom]` part stays.
+- `switch-image nvidia|nvidia-dx` without an NVIDIA GPU (`0x10de`): says so and asks (default No); `--yes` alone refuses, `--force` proceeds.
+- `luks-tpm-unlock` exits 0 with a message when `/dev/tpmrm0` is missing (`OCTARINE_TPM_DEVICE` in tests).
+- Tests: `tests/hardware-targeting.sh` and the cases added to `gaming-setup.sh`, `switch-image.sh`, `luks-tpm-unlock.sh`.
+  Only real hardware shows: Wayland and FSR4 behavior in games, amd-pstate states, the mcelog unit on Intel, the retry after a wake.
 
 ## `ujust luks-tpm-unlock`
 

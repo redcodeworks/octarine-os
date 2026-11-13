@@ -22,6 +22,8 @@ logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
 notlogged() { ! grep -qF -- "$1" "$root/log" 2>/dev/null; }
 export LOG="$root/log"
 mkdir -p "$root/fakebin"
+: >"$root/tpmrm0"
+export OCTARINE_TPM_DEVICE="$root/tpmrm0"
 
 root_uuid=53df742f-65ee-4ba5-8adf-8d51565386bf
 data_uuid=9be2eb1e-ec1e-4e97-933e-64f9341bf5f6
@@ -66,6 +68,12 @@ run() { # args...
     rc=$?
 }
 
+OCTARINE_TPM_DEVICE="$root/none" run enroll /dev/nvme1n1 --yes
+check "no TPM device: clear message, exit 0, no sudo and no enrollment" bash -c "[ $rc = 0 ] && grep -q 'no TPM 2.0 device' '$root/out' && [ ! -s '$LOG' ]"
+OCTARINE_TPM_DEVICE="$root/none" run
+check "no TPM device with no arguments: the same message, exit 0" bash -c "[ $rc = 0 ] && grep -q 'no TPM 2.0 device' '$root/out'"
+OCTARINE_TPM_DEVICE="$root/none" run --help
+check "no TPM device: --help still works" bash -c "[ $rc = 0 ] && grep -q 'PCR 7+14' '$root/out'"
 run --help
 check "--help explains enroll, remove, PCRs and the PIN" bash -c "grep -q 'remove' '$root/out' && grep -q 'PCR 7+14' '$root/out' && grep -q -- '--pin' '$root/out'"
 run
@@ -170,14 +178,15 @@ printf 'set allow-duplicate-recipes := true\nimport "%s/hide/30-distrobox.just"\
 just --justfile "$root/Hide" --list >"$root/out" 2>&1; rc=$?
 check "setup-distrobox-app is not listed" hasnt "setup-distrobox-app"
 check "configure-broadcom-wl is not listed" hasnt "configure-broadcom-wl"
+check "broadcom-wl is not listed" hasnt "broadcom-wl"
 check "install-resolve and distrobox-assemble stay listed (Resolve is wanted)" bash -c "grep -q install-resolve '$root/out' && grep -q distrobox-assemble '$root/out'"
 just --justfile "$root/Hide" --show setup-distrobox-app >"$root/out" 2>&1; rc=$?
 check "setup-distrobox-app is still defined, as the private override" bash -c "[ $rc = 0 ] && grep -q 'private' '$root/out' && ! grep -q BASE-APP '$root/out'"
 just --justfile "$root/Hide" --show configure-broadcom-wl >"$root/out" 2>&1; rc=$?
-check "configure-broadcom-wl is still defined" bash -c "[ $rc = 0 ] && grep -q 'private' '$root/out'"
+check "configure-broadcom-wl is gone (the file is comment-only)" bash -c "[ $rc != 0 ]"
 just --justfile "$root/Hide" --show broadcom-wl >"$root/out" 2>&1; rc=$?
-check "the broadcom-wl alias still resolves" bash -c "[ $rc = 0 ]"
-check "the 50-akmods replacement has no other public recipe" bash -c "! grep -E '^[a-z][a-z0-9-]* .*:\$' '$justdir/50-akmods.just' | grep -qv '^configure-broadcom-wl'"
+check "the broadcom-wl alias is gone" bash -c "[ $rc != 0 ]"
+check "the 50-akmods replacement defines nothing (comments only)" bash -c "! grep -qvE '^(#|\$)' '$justdir/50-akmods.just'"
 
 echo
 echo "$pass passed, $failn failed"

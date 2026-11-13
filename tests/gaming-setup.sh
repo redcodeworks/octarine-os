@@ -23,6 +23,9 @@ export GAMING_SETUP_APPSTREAM_DIRS="$root/appstream" GAMING_SETUP_GAMEMODE_SRC="
 export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
 export EXTEST_SRC="$root/extest-src" EXTEST_DEST="$root/extest-dest"
 unset XDG_DATA_HOME XDG_STATE_HOME XDG_CONFIG_HOME
+printf 'active\n' >"$root/pstate-active"
+printf 'passive\n' >"$root/pstate-passive"
+export GAMING_SETUP_PSTATE_STATUS="$root/pstate-active"
 mkdir -p "$HOME" "$root/appstream"
 
 cat >"$bin/flatpak" <<'F'
@@ -294,6 +297,21 @@ reset
 export OCTARINE_MENU_FORCE_TTY=1
 run '' reset --yes
 check "gum: a named step (reset) opens no checklist" notlogged "gum choose"
+
+# gamemode without amd-pstate in active mode: the desiredgov workaround is left out, the tuned part stays
+reset
+GAMING_SETUP_PSTATE_STATUS="$root/pstate-passive" run '' --yes gamemode
+check "gamemode (no amd-pstate active): no desiredgov line and no workaround comment" bash -c "! grep -q '^desiredgov=\|gamemode#419\|FeralInteractive' '$HOME/.config/gamemode.ini'"
+check "gamemode (no amd-pstate active): renice and the tuned start/end stay" bash -c "grep -q '^renice=10' '$HOME/.config/gamemode.ini' && grep -q '^start=tuned-adm' '$HOME/.config/gamemode.ini' && grep -q '^end=tuned-adm' '$HOME/.config/gamemode.ini'"
+check "gamemode (no amd-pstate active): the note says why" has "amd-pstate is not in active mode"
+GAMING_SETUP_PSTATE_STATUS="$root/pstate-passive" run '' gamemode
+check "gamemode (no amd-pstate active): idempotent" has "already has the tuning"
+reset
+GAMING_SETUP_PSTATE_STATUS="$root/missing" run '' --yes gamemode
+check "gamemode (no pstate file at all): also left out" bash -c "! grep -q '^desiredgov=' '$HOME/.config/gamemode.ini'"
+reset
+run '' --yes gamemode
+check "gamemode (amd-pstate active): the workaround is installed" bash -c "grep -q '^desiredgov=powersave' '$HOME/.config/gamemode.ini'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
