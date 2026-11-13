@@ -767,6 +767,32 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Tests: `tests/hardware-targeting.sh` and the cases added to `gaming-setup.sh`, `switch-image.sh`, `luks-tpm-unlock.sh`.
   Only real hardware shows: Wayland and FSR4 behavior in games, amd-pstate states, the mcelog unit on Intel, the retry after a wake.
 
+## `ujust hardware-setup`
+
+- One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
+  A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
+  calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
+  `amd-kargs` and `fido-key` have code of their own. Flags: `--yes` (ticked-by-default available steps that are not done; never
+  `amd-kargs`), `--no` (plan), `--list` (state per step: `available`, `done`, `not applicable (reason)`), `--only a,b` (a hidden step
+  prints `not applicable: <step> (<reason>)` and the run exits 0), `--help`. No terminal and no flag: one question per step; a gum
+  terminal: the shared checklist (done steps unticked and marked); Esc exits 0.
+- Steps and detection (paths are environment variables in tests): `sensors` (not a VM, `sensors-detect` present; done when
+  `octarine-sensors.conf` or `nct6775.conf` exists in `/etc/modules-load.d`), `amd-gpu` (vendor `0x1002` and `/sys/module/amdgpu`;
+  installs the LACT Flatpak system-wide and runs it with `LACT_UNATTENDED_SETUP=true`, UNVERIFIED without an AMD machine; done when
+  `lactd` is enabled), `amd-kargs` (same detection; `sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0x<current | 0x4000>`,
+  optional, never default; done when the command line or `rpm-ostree kargs` has it; the argument is NOT shipped), `amd-cpu-gaming`
+  (`amd_pstate/status` is `active`; calls `gaming-setup gamemode`), `nvidia` (`0x10de`; `switch-image nvidia`, or `nvidia-dx` when
+  `IMAGE_ID` ends in `-dx`; done when `/sys/module/nvidia` exists), `cuda` (driver loaded and the dx recipe file exists; `dev --only cuda`),
+  `secure-boot` (EFI, `mokutil --sb-state` enabled, the key file present; ticked by default only on an NVIDIA image whose key
+  `mokutil --test-key` does not report enrolled), `tpm-luks` (`/dev/tpmrm0` and a `crypto_LUKS` volume; never reported done, since
+  reading the headers needs root), `fido-key` (`lsusb -d 1050:` or a hidraw with `ID_SECURITY_TOKEN=1`; runs
+  `pamu2fcfg -o pam://sudo -i pam://sudo` into a temp file, mode 600, moved into `~/.config/Yubico/u2f_keys`; an existing non-empty file
+  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `virtualization` (dx image and `/dev/kvm`;
+  `dev --only libvirt`; done when the user is in `libvirt`).
+- Adding an entry: add its id to `valid_steps` and `step_ids`, its text, and a case in `reason_of`, `done_of`, `default_of`, `undo_of`
+  and `run_of`, then cases in `tests/hardware-setup.sh`. Skipped for now: firmware and laptop power. Unverified without hardware:
+  every detection on a real machine, the LACT unattended setup, `pamu2fcfg` with a key, the kargs change.
+
 ## `ujust sensors-setup`
 
 - Opt-in recipe in `60-custom.just` (group System): the Super I/O driver is chip-specific (nct6775, it87, ...), so the image

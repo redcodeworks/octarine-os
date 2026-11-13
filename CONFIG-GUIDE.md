@@ -293,6 +293,10 @@ Recipes run through `ujust`; arguments are positional, for example `ujust toolbo
 They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
 and safeguards are in `CLAUDE.md`. What you need to use them:
 
+- **`hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`:** one checklist of vendor and hardware specific steps that
+  calls the standalone recipes (`sensors-setup`, `switch-image`, `luks-tpm-unlock`, `gaming-setup gamemode`, `dev --only cuda`,
+  `enroll-secure-boot-key`) and adds the AMD GPU tool (LACT), the optional `amdgpu.ppfeaturemask` kernel argument and the security
+  key registration for `sudo`. A step is listed only when the machine has the hardware; `--list` shows why one is hidden.
 - **`user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`:** an interactive checklist, one y/n question per step,
   in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
   the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
