@@ -13,7 +13,7 @@ failn=0
 rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; echo "     rc=$rc"; }
-check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
 has() { grep -qF -- "$1" "$root/out"; }
 hasnt() { ! grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
@@ -41,7 +41,30 @@ mk udevadm 'exit 0'
 mk pamu2fcfg 'echo "pamu2fcfg $*" >>"$LOG"; [ "${FAKE_PAM_FAIL:-}" = 1 ] && exit 1; echo "kevin:KEYDATA"'
 mk systemd-detect-virt '[ "${FAKE_VM:-}" = 1 ]'
 mk sensors-detect 'exit 0'
-mk distrobox 'echo "ID | NAME | STATUS | IMAGE"; for b in ${FAKE_BOXES:-}; do echo "abc | $b | Up 1 hour | img"; done'
+cat >"$bin/distrobox" <<'F'
+#!/bin/bash
+[ "$1" = list ] || echo "distrobox $*" >>"$LOG"
+if [ "$1" = list ]; then echo "ID | NAME | STATUS | IMAGE"; for b in ${FAKE_BOXES:-}; do echo "abc | $b | Up 1 hour | img"; done; exit 0; fi
+if [ "$1" = enter ]; then
+    box=""; while [ "$1" != -- ] && [ $# -gt 0 ]; do [ "$1" = --name ] && box=$2; shift; done; shift
+    [ -z "$box" ] && box=$1 && shift && shift
+    cmd="$*"
+    case "$cmd" in
+        "bash -lc command -v rocminfo") [ "${FAKE_ROCM_TOOLS:-}" = 1 ] && echo /usr/bin/rocminfo; exit 0 ;;
+        "bash -lc command -v hipcc") [ "${FAKE_ROCM_TOOLS:-}" = 1 ] && echo /usr/bin/hipcc; exit 0 ;;
+        "bash -lc command -v rocm-smi") [ "${FAKE_ROCM_TOOLS:-}" = 1 ] && [ "${FAKE_NO_SMI:-}" != 1 ] && echo /usr/bin/rocm-smi; exit 0 ;;
+        "bash -lc command -v nvcc") echo /usr/local/cuda-13.3/bin/nvcc; exit 0 ;;
+        "distrobox-export --bin "*)
+            set -- $cmd; path=$3; dir=$5; act=${6:-}
+            [ "${FAKE_EXPORT_FAIL:-}" = 1 ] && exit 1
+            if [ "$act" = --unexport ]; then rm -f "$dir/$(basename "$path")"; else mkdir -p "$dir"; printf '#!/bin/sh\n# distrobox_binary\n# name: %s\n' "$box" >"$dir/$(basename "$path")"; fi
+            exit 0 ;;
+    esac
+fi
+exit 0
+F
+chmod +x "$bin/distrobox"
+export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
 export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
 
@@ -56,6 +79,7 @@ card card0 0x1002
 mkdir -p "$root/m/amdgpu" "$root/m/efi"
 echo active >"$root/m/pstate"
 : >"$root/m/tpm"
+: >"$root/m/kfd"
 echo "quiet" >"$root/m/cmdline"
 echo 4294950911 >"$root/m/ppfm"
 : >"$root/m/key.der"
@@ -192,6 +216,47 @@ check "cuda step runs ujust dev --only cuda" logged "ujust dev --only cuda --yes
 OCTARINE_OS_RELEASE="$root/os-release-dx" HW_KVM="$root/m/dx/kvm" run --only virtualization --yes
 check "virtualization step runs ujust dev --only libvirt" logged "ujust dev --only libvirt --yes"
 rm -rf "$root/m/drm/card1"
+
+# ---- rocm and the opt-in export
+check "rocm: the ini installs the five Fedora packages from the toolbox image, no extra repository" bash -c "grep -q 'additional_packages=\"rocminfo rocm-smi rocm-hip rocm-opencl hipcc\"' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini' && grep -q '^image=registry.fedoraproject.org/fedora-toolbox:45' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini' && ! grep -qi 'copr\|repo=' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini'"
+rm -rf "$root/exportbin"
+run --list
+check "rocm available with an AMD GPU, /dev/kfd and distrobox" bash -c "grep -E '^rocm +available' '$root/out'"
+check "rocm-export hidden while the box does not exist" bash -c "grep -E '^rocm-export +not applicable \(the rocm box does not exist yet\)' '$root/out'"
+HW_KFD="$root/m/nokfd" run --list
+check "rocm hidden without /dev/kfd" bash -c "grep -E '^rocm +not applicable \(no /dev/kfd' '$root/out'"
+OCTARINE_SYSFS_DRM="$root/m/none" run --list
+check "rocm hidden without an AMD GPU" bash -c "grep -E '^rocm +not applicable \(no AMD GPU\)' '$root/out'"
+run --only rocm --yes
+check "rocm creates the box through ujust toolbox rocm and prints checks and undo" bash -c "grep -q 'ujust toolbox rocm' '$LOG' && grep -q 'distrobox enter rocm -- rocminfo' '$root/out' && grep -q 'distrobox rm --force rocm' '$root/out'"
+check "rocm exports nothing by default" bash -c "[ ! -d '$root/exportbin' ] && ! grep -q 'distrobox-export' '$LOG'"
+check "rocm says the GPU support is unverified" bash -c "grep -q 'not verified' '$root/out'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm --yes
+check "rocm is done when the box has rocminfo" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'ujust toolbox rocm' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm --yes --export
+check "rocm --export exports exactly hipcc, rocminfo and rocm-smi, real paths from the box" bash -c "[ \"\$(ls '$root/exportbin' | LC_ALL=C sort | tr '\n' ' ')\" = 'hipcc rocm-smi rocminfo ' ] && grep -q 'distrobox-export --bin /usr/bin/hipcc --export-path $root/exportbin' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes
+check "already exported wrappers are recognized, nothing re-exported" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'distrobox-export' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes --unexport
+check "--unexport removes only the wrappers of the rocm box" bash -c "[ -z \"\$(ls '$root/exportbin')\" ] && grep -q 'unexported' '$root/out'"
+mkdir -p "$root/exportbin"; echo "mine" >"$root/exportbin/hipcc"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes --export
+check "a foreign hipcc in ~/.local/bin is shown and skipped; the others are still exported" bash -c "grep -q 'not ours' '$root/out' && [ \"\$(cat '$root/exportbin/hipcc')\" = mine ] && [ -f '$root/exportbin/rocminfo' ] && [ -f '$root/exportbin/rocm-smi' ]"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes --unexport
+check "--unexport leaves the foreign file alone" bash -c "[ \"\$(cat '$root/exportbin/hipcc')\" = mine ] && [ ! -e '$root/exportbin/rocminfo' ]"
+rm -rf "$root/exportbin"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 FAKE_NO_SMI=1 run --only rocm-export --yes --export
+check "a missing binary in the box is skipped with a message" bash -c "grep -q 'skipped: rocm-smi is not installed in the box rocm' '$root/out' && [ -f '$root/exportbin/hipcc' ] && [ ! -e '$root/exportbin/rocm-smi' ]"
+rm -rf "$root/exportbin"
+FAKE_BOXES=cuda run --only cuda-export --yes --export
+check "cuda-export exports nvcc only, real versioned path resolved in the box (nvidia-smi never)" bash -c "[ -f '$root/exportbin/nvcc' ] && [ \$(ls '$root/exportbin' | wc -l) = 1 ] && grep -q 'distrobox-export --bin /usr/local/cuda-13.3/bin/nvcc' '$LOG'"
+rm -rf "$root/exportbin"
+FAKE_EXPORT_FAIL=1 FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes
+check "a failing export is FAILED with exit 1" bash -c "[ $rc = 1 ] && grep -q FAILED '$root/out'"
+rm -rf "$root/exportbin"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --no --only rocm-export
+check "--no shows the plan for the export step and changes nothing" bash -c "[ ! -d '$root/exportbin' ] && grep -q 'Plan' '$root/out'"
+check "the rocm step is not ticked by default (--yes alone installs nothing in a box)" bash -c "$(declare -f run) ; : >'$LOG'; PATH='$bin':\$PATH just --justfile '$justfile' hardware-setup --yes </dev/null >/dev/null 2>&1; ! grep -q 'toolbox rocm' '$LOG'"
 
 # no terminal and no flags: one question per step, empty answers take the defaults
 run

@@ -443,6 +443,7 @@ jobs:
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
             check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
             check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
+            check "rocm toolbox definition and the box-export helper" "grep -q \"^\\[rocm\\]\" /usr/share/ublue-os/distrobox/rocm.ini && grep -q additional_packages /usr/share/ublue-os/distrobox/rocm.ini && test -s /usr/share/octarine-os/lib/box-export.sh"
             check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
             check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
             check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"

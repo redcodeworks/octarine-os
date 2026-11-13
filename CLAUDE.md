@@ -433,7 +433,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the default image still ships libvirt and qemu-kvm until stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
-- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
+- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
@@ -767,12 +767,40 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Tests: `tests/hardware-targeting.sh` and the cases added to `gaming-setup.sh`, `switch-image.sh`, `luks-tpm-unlock.sh`.
   Only real hardware shows: Wayland and FSR4 behavior in games, amd-pstate states, the mcelog unit on Intel, the retry after a wake.
 
+## ROCm is opt-in (not in the dx images)
+
+- The shared `dev-packages` list (fedora-toolbox repo, pinned by digest) still carries `rocminfo rocm-smi rocm-hip rocm-opencl hipcc` because
+  it also builds the owner's `fedora-toolbox` container. `variants/dx/dx.sh` runs the installer with
+  `EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc"` (EXCLUDE takes exact package names, space separated; an excluded entry is not looked up;
+  present in the pinned installer, `dev-packages/install.sh`), and fails the build if any of the five is installed afterwards. `dx-smoke.sh`
+  (shared by dx and nvidia-dx) asserts the five are NOT installed. Measured on the owner's machine with `dnf5 remove --assumeno`: 21 packages
+  leave with them, about 3 GiB (rocm-llvm-static 2.2 GiB, rocm-comgr, rocm-llvm-libs, rocm-clang*, rocm-runtime); nothing else in
+  the dx extras depends on them. The default image never had ROCm.
+- The `rocm` step of `ujust hardware-setup` (shown with an AMD GPU and `/dev/kfd`) runs `ujust toolbox rocm`, which assembles
+  `system_files/usr/share/ublue-os/distrobox/rocm.ini`: image `registry.fedoraproject.org/fedora-toolbox:45` (the tag exists; bump it with the
+  base), `additional_packages` the five packages from Fedora's repositories (no extra repository), `init=false`, `nvidia=false`. No group is
+  needed: udev makes `/dev/kfd` and `/dev/dri/renderD*` mode 0666 on Fedora (`50-udev-default.rules`, verified on the owner's machine).
+  Whether Fedora's ROCm build covers an RX 9070 XT (gfx1201) is UNVERIFIED. The toolbox recipe was reused for creation and removal
+  (`ujust toolbox rocm --remove`); the CUDA box keeps its direct `distrobox create` in `ujust dev` because it needs the CDI device flag, NVIDIA's
+  repository file and `gcc15-c++` installed inside the box, which an assemble file cannot express.
+
+## Opt-in export of box binaries (`--export`)
+
+- Kevin's decision (2026-11-13): the `cuda` and `rocm` boxes export NOTHING by default (the old host wrapper scripts are gone and stay gone).
+  `--export` (on `ujust dev --only cuda` and on `ujust hardware-setup`, also as the steps `cuda-export`, `rocm-export`) runs
+  `distrobox-export --bin <path> --export-path ~/.local/bin` inside the box for a short list: CUDA `nvcc`, ROCm `hipcc rocminfo rocm-smi`
+  (never `nvidia-smi`, the host has it). `--unexport` removes only wrappers of that box. Shared code: `system_files/usr/share/octarine-os/lib/box-export.sh`
+  (`box_export <box> <dir> export|unexport <bin>...`): the real path is resolved in the box with `bash -lc 'command -v X'` (so
+  `/usr/local/cuda*/bin` and `/usr/bin/hipcc` are found, not guessed); a missing binary is skipped with a message; a file in `~/.local/bin`
+  is ours only when it carries `# distrobox_binary` and `# name: <box>`; anything else is shown and left alone; an existing own
+  wrapper reports "already exported". Tests: `tests/dev-setup.sh` and `tests/hardware-setup.sh` (stub `distrobox`).
+
 ## `ujust hardware-setup`
 
 - One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
   A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
   calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
-  `amd-kargs` and `fido-key` have code of their own. Flags: `--yes` (ticked-by-default available steps that are not done; never
+  `amd-kargs` and `fido-key` have code of their own (plus the export steps, which use `box-export.sh`). Flags: `--yes` (ticked-by-default available steps that are not done; never
   `amd-kargs`), `--no` (plan), `--list` (state per step: `available`, `done`, `not applicable (reason)`), `--only a,b` (a hidden step
   prints `not applicable: <step> (<reason>)` and the run exits 0), `--help`. No terminal and no flag: one question per step; a gum
   terminal: the shared checklist (done steps unticked and marked); Esc exits 0.
@@ -787,7 +815,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `mokutil --test-key` does not report enrolled), `tpm-luks` (`/dev/tpmrm0` and a `crypto_LUKS` volume; never reported done, since
   reading the headers needs root), `fido-key` (`lsusb -d 1050:` or a hidraw with `ID_SECURITY_TOKEN=1`; runs
   `pamu2fcfg -o pam://sudo -i pam://sudo` into a temp file, mode 600, moved into `~/.config/Yubico/u2f_keys`; an existing non-empty file
-  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `virtualization` (dx image and `/dev/kvm`;
+  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `rocm` (AMD GPU and `/dev/kfd` and distrobox; `ujust toolbox rocm`; not ticked by default; done when the box has `rocminfo`) with `rocm-export` and `cuda-export` (opt-in, never ticked; see "Opt-in export"), `virtualization` (dx image and `/dev/kvm`;
   `dev --only libvirt`; done when the user is in `libvirt`).
 - Adding an entry: add its id to `valid_steps` and `step_ids`, its text, and a case in `reason_of`, `done_of`, `default_of`, `undo_of`
   and `run_of`, then cases in `tests/hardware-setup.sh`. Skipped for now: firmware and laptop power. Unverified without hardware:
@@ -896,7 +924,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 ## dx image (`octarine-os-dx`)
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
-  `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`, ROCm userspace), VM tooling,
+  `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`; no ROCm, see below), VM tooling,
   tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
@@ -977,7 +1005,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 ## NVIDIA dx image (`octarine-os-nvidia-dx`) and the CUDA toolbox
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-nvidia-dx`: the SAME dx layer (`variants/dx`, one `Containerfile`, one package
-  list, ROCm included, no CUDA toolkit) on top of `octarine-os-nvidia` instead of `octarine-os`. Kevin's decision (2026-11-10): the DX
+  list, no ROCm, no CUDA toolkit) on top of `octarine-os-nvidia` instead of `octarine-os`. Kevin's decision (2026-11-10): the DX
   build is identical for both variants, and NVIDIA's toolkit is a user-side install. No fork of the package list: the workflow passes
   `BASE_IMAGE=ghcr.io/<owner>/octarine-os-nvidia` and `DX_IMAGE_ID=octarine-os-nvidia-dx` (a build argument of the final stage of
   `variants/dx/Containerfile`, default `octarine-os-dx`; `dx.sh` sets `IMAGE_ID` from it and refuses any other value).

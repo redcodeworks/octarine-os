@@ -52,6 +52,9 @@ done
 check "pkgconf finds glib-2.0 and openssl" "pkgconf --exists glib-2.0 openssl"
 
 echo "== virtualization (extras.txt)"
+for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
+    check "ROCm package ${p} is NOT installed (ujust hardware-setup provides ROCm in a distrobox)" "! rpm -q ${p}"
+done
 check "package qemu-kvm" "rpm -q qemu-kvm"
 check "qemu-kvm binary" "have qemu-kvm || test -x /usr/libexec/qemu-kvm"
 for c in virt-manager virt-viewer virt-install; do

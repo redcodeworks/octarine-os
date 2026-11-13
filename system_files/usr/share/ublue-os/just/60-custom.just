@@ -2344,26 +2344,29 @@ hardware-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
-    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming nvidia cuda secure-boot tpm-luks fido-key virtualization "
+    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization "
     mode=ask
     list=0
     only_list=""
+    export_flag=""
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image), secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), virtualization (libvirt access; runs ujust dev --only libvirt, dx image). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), virtualization (libvirt access; runs ujust dev --only libvirt, dx image). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
+            --export) export_flag=export ;;
+            --unexport) export_flag=unexport ;;
             --only)
                 i=$((i + 1))
                 only_list=${args[$i]:-}
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no, --list or --only STEP[,STEP...])" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --list, --export, --unexport or --only STEP[,STEP...])" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
@@ -2391,6 +2394,10 @@ hardware-setup *args:
     sb_key=${HW_SB_KEY:-/etc/pki/akmods/certs/akmods-ublue.der}
     dev_just=${HW_DEV_JUST:-/usr/share/ublue-os/just/70-octarine-dev.just}
     kvm_dev=${HW_KVM:-/dev/kvm}
+    kfd_dev=${HW_KFD:-/dev/kfd}
+    export_dir=${HW_EXPORT_DIR:-$HOME/.local/bin}
+    rocm_bins=(hipcc rocminfo rocm-smi)
+    cuda_bins=(nvcc)
     modload_dir=${OCTARINE_MODULES_LOAD_DIR:-/etc/modules-load.d}
     u2f_file=${HW_U2F_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/Yubico/u2f_keys}
     lact_app=io.github.ilya_zlobintsev.LACT
@@ -2398,14 +2405,17 @@ hardware-setup *args:
     cmdline_file=${HW_CMDLINE:-/proc/cmdline}
     gm_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
 
-    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming nvidia cuda secure-boot tpm-luks fido-key virtualization)
+    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization)
     declare -A text=(
         [sensors]="Fan and temperature chip driver (sensors-detect; sudo)"
         [amd-gpu]="AMD GPU: LACT Flatpak and its daemon lactd"
         [amd-kargs]="AMD GPU: kernel argument amdgpu.ppfeaturemask for overclocking (optional; sudo, reboot)"
         [amd-cpu-gaming]="AMD CPU: GameMode tuning for amd-pstate"
+        [rocm]="AMD GPU: ROCm compute tools in a rootless distrobox"
+        [rocm-export]="ROCm: export hipcc, rocminfo and rocm-smi to ~/.local/bin (optional)"
         [nvidia]="NVIDIA: switch to the NVIDIA image"
         [cuda]="NVIDIA: CUDA toolkit in a rootless distrobox"
+        [cuda-export]="CUDA: export nvcc to ~/.local/bin (optional)"
         [secure-boot]="Secure Boot: enroll the image key"
         [tpm-luks]="TPM2 auto-unlock for LUKS volumes (sudo)"
         [fido-key]="Security key: register it for sudo and polkit (touch)"
@@ -2422,10 +2432,16 @@ hardware-setup *args:
                 if ! has_vendor 0x1002; then echo "no AMD GPU"
                 elif [ ! -d "$amdgpu_mod" ]; then echo "the amdgpu driver is not loaded"; fi ;;
             amd-cpu-gaming) [ "$(cat "$pstate" 2>/dev/null)" = active ] || echo "amd-pstate is not in active mode" ;;
+            rocm | rocm-export)
+                if ! has_vendor 0x1002; then echo "no AMD GPU"
+                elif [ ! -e "$kfd_dev" ]; then echo "no /dev/kfd (the amdgpu compute interface)"
+                elif ! command -v distrobox >/dev/null 2>&1; then echo "distrobox is not installed"
+                elif [ "$1" = rocm-export ] && ! box_exists rocm; then echo "the rocm box does not exist yet"; fi ;;
             nvidia) has_vendor 0x10de || echo "no NVIDIA GPU" ;;
             cuda)
                 if [ ! -d "$nvidia_mod" ]; then echo "the NVIDIA driver is not loaded"
                 elif [ ! -f "$dev_just" ]; then echo "needs the dx image (ujust dev)"; fi ;;
+            cuda-export) box_exists cuda || echo "the cuda box does not exist yet" ;;
             secure-boot)
                 if [ ! -d "$efi_dir" ]; then echo "not booted with UEFI"
                 elif ! command -v mokutil >/dev/null 2>&1; then echo "mokutil is not installed"
@@ -2451,6 +2467,14 @@ hardware-setup *args:
         done
         return 1
     }
+    # exports_done <box> <bin>...: every wrapper exists and is an export of that box
+    exports_done() {
+        local box=$1 b
+        shift
+        for b in "$@"; do
+            grep -q '^# distrobox_binary' "$export_dir/$b" 2>/dev/null && grep -q "^# name: $box\$" "$export_dir/$b" 2>/dev/null || return 1
+        done
+    }
     # done_of <step>: already in place
     done_of() {
         case "$1" in
@@ -2458,6 +2482,9 @@ hardware-setup *args:
             amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
             amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
             amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
+            rocm) box_exists rocm && distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
+            rocm-export) exports_done rocm "${rocm_bins[@]}" ;;
+            cuda-export) exports_done cuda "${cuda_bins[@]}" ;;
             nvidia) [ -d "$nvidia_mod" ] ;;
             cuda) box_exists cuda ;;
             secure-boot) mokutil --test-key "$sb_key" 2>&1 | grep -qi 'already enrolled' ;;
@@ -2469,6 +2496,7 @@ hardware-setup *args:
     default_of() { # 1 when ticked by default
         case "$1" in
             sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
+            rocm | rocm-export | cuda-export) echo 0 ;;
             secure-boot)
                 case "$image_id" in *nvidia*) echo 1 ;; *) echo 0 ;; esac ;;
             *) echo 0 ;;
@@ -2480,6 +2508,9 @@ hardware-setup *args:
             amd-gpu) echo "flatpak uninstall $lact_app; sudo systemctl disable --now lactd" ;;
             amd-kargs) echo "sudo rpm-ostree kargs --delete-if-present=amdgpu.ppfeaturemask=<value> (the one shown) and reboot" ;;
             amd-cpu-gaming) echo "ujust gaming-setup reset" ;;
+            rocm) echo "distrobox rm --force rocm (or ujust toolbox rocm --remove)" ;;
+            rocm-export) echo "ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin <path> --export-path ~/.local/bin --unexport in the box, for each of ${rocm_bins[*]})" ;;
+            cuda-export) echo "ujust hardware-setup --only cuda-export --unexport (or distrobox-export --bin <path> --export-path ~/.local/bin --unexport in the box, for ${cuda_bins[*]})" ;;
             nvidia) echo "sudo bootc rollback (or ujust switch-image default)" ;;
             cuda) echo "distrobox rm --force cuda" ;;
             secure-boot) echo "sudo mokutil --delete $sb_key" ;;
@@ -2490,6 +2521,14 @@ hardware-setup *args:
     }
     ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
 
+    box_lib="${OCTARINE_BOX_EXPORT_LIB:-/usr/share/octarine-os/lib/box-export.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$box_lib" ]; then . "$box_lib"; else box_export() { echo "  FAILED: $box_lib is missing" >&2; return 1; }; fi
+    run_export() { # box bins...  (honors --unexport)
+        local box=$1
+        shift
+        if [ "$export_flag" = unexport ]; then box_export "$box" "$export_dir" unexport "$@"; else box_export "$box" "$export_dir" export "$@"; fi
+    }
     retry() { "$@" || { echo "  failed; trying once more in 5 s" >&2; sleep "${HW_RETRY_WAIT:-5}"; "$@"; }; }
     # run_of <step>: do it; return code is the step's result (the called recipes keep their own messages)
     run_of() {
@@ -2513,6 +2552,14 @@ hardware-setup *args:
                 echo "Reboot to apply it. The argument is NOT shipped by default; it unlocks LACT's overclocking controls."
                 ;;
             amd-cpu-gaming) "$ujust_cmd" gaming-setup gamemode "${yes[@]}" ;;
+            rocm)
+                echo "Creates a rootless distrobox named rocm from Fedora's toolbox image and installs the ROCm tools from Fedora's repositories inside it (large download). The GPU nodes are world-accessible through udev, so no group is needed. Whether this ROCm build supports your GPU (for example RDNA4 gfx1201) is not verified here."
+                "$ujust_cmd" toolbox rocm || return 1
+                echo "Check it:  distrobox enter rocm -- rocminfo   and   distrobox enter rocm -- rocm-smi"
+                echo "Entering the box always works without exported commands; export them with: ujust hardware-setup --only rocm-export"
+                ;;
+            rocm-export) run_export rocm "${rocm_bins[@]}" ;;
+            cuda-export) run_export cuda "${cuda_bins[@]}" ;;
             nvidia)
                 case "$image_id" in *-dx) arg=nvidia-dx ;; *) arg=nvidia ;; esac
                 "$ujust_cmd" switch-image "$arg" "${yes[@]}"
@@ -2608,10 +2655,25 @@ hardware-setup *args:
         done
     fi
 
+    # --export adds the export step after rocm and cuda; --unexport turns them into their unexport steps
+    if [ -n "$export_flag" ]; then
+        expanded=()
+        for s in "${chosen[@]}"; do
+            case "$s:$export_flag" in
+                rocm:export) expanded+=(rocm rocm-export) ;;
+                cuda:export) expanded+=(cuda cuda-export) ;;
+                rocm:unexport) expanded+=(rocm-export) ;;
+                cuda:unexport) expanded+=(cuda-export) ;;
+                *) expanded+=("$s") ;;
+            esac
+        done
+        chosen=("${expanded[@]}")
+    fi
     for s in "${chosen[@]}"; do
         echo
         echo "== $s: ${text[$s]}"
-        if [ "${isdone[$s]}" = 1 ]; then
+        if [ "$export_flag" = unexport ] && [[ "$s" == *-export ]]; then isdone[$s]=0; fi
+        if [ "${isdone[$s]:-0}" = 1 ]; then
             echo "Already done."
             record "$s" "already done"
             continue

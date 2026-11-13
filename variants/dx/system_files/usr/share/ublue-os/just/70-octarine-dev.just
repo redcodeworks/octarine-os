@@ -13,7 +13,8 @@ dev *args:
     mode=ask
     only_list=""
     cuda_image=""
-    valid_steps=" libvirt tools vscode jetbrains rust java node python cuda "
+    export_flag=""
+    valid_steps=" libvirt tools vscode jetbrains rust java node python cuda cuda-export "
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
@@ -21,7 +22,7 @@ dev *args:
         case "$a" in
             help | --help | -h)
                 cat <<'HELP'
-    Developer setup for the octarineOS dx image, a checklist of steps. `ujust dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]`.
+    Developer setup for the octarineOS dx image, a checklist of steps. `ujust dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE] [--export|--unexport]`.
     On a terminal, `ujust dev` alone opens a checklist; nothing runs that you did not tick.
     Steps, in order:
       libvirt    use the system libvirt: join the libvirt group (sudo, once; takes effect at your next login), default URI
@@ -47,6 +48,10 @@ dev *args:
                  distrobox enter cuda -- bash -lc 'nvcc --version'. If a CUDA program cannot find libcuda.so.1 inside the
                  container, check 'ldconfig -p | grep libcuda' there (a known gap of distrobox's own --nvidia option on
                  Fedora Atomic, which this step does not use); none of this is verified on a real GPU yet
+    cuda exports nothing by default. --export (with --only cuda) also exports nvcc to ~/.local/bin with distrobox-export (the real path is
+    resolved inside the box; a file there that is not an export of the cuda box is never overwritten); --unexport removes only that
+    wrapper. Undo: ujust dev --only cuda --unexport, and distrobox rm --force cuda for the box. Wrappers start the container on first use and
+    cover only what is exported; entering the box (distrobox enter cuda -- nvcc ...) always works without them.
     --yes takes every default without asking (the libvirt step needs sudo, so it runs under --yes only when named with
     --only libvirt), --no only prints the plan, --only runs the named steps. Every step prints how to undo it. Existing
     files that differ are never replaced silently: you see a diff, the default is keep, and a replacement saves
@@ -68,11 +73,24 @@ dev *args:
                 [ -n "$cuda_image" ] || { echo "--image needs an image name" >&2; exit 2; }
                 ;;
             --image=*) cuda_image=${a#--image=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...] or --image IMAGE)" >&2; exit 2 ;;
+            --export) export_flag=export ;;
+            --unexport) export_flag=unexport ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --export, --unexport, --only STEP[,STEP...] or --image IMAGE)" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
     done
+    # --export adds the cuda-export step after cuda; --unexport turns cuda into cuda-export (only the wrappers are removed)
+    if [ -n "$export_flag" ]; then
+        case ",$only_list," in
+            *",cuda,"*)
+                if [ "$export_flag" = export ]; then only_list=${only_list//cuda/cuda,cuda-export}; else only_list=${only_list//cuda/cuda-export}; fi
+                only_list=${only_list//cuda-export,cuda-export/cuda-export}
+                ;;
+            *",cuda-export,"*) ;;
+            *) echo "--export and --unexport apply to the cuda step: use --only cuda" >&2; exit 2 ;;
+        esac
+    fi
     if [ -n "$only_list" ]; then
         for s in ${only_list//,/ }; do
             case "$valid_steps" in
@@ -918,6 +936,27 @@ dev *args:
         record cuda applied "$undo"
     }
 
+    # ---- step: cuda-export (opt-in; never part of "every step": it runs only when named, or by --export / --unexport)
+    step_cuda_export() {
+        local lib="${OCTARINE_BOX_EXPORT_LIB:-/usr/share/octarine-os/lib/box-export.sh}" dir="${DEV_EXPORT_DIR:-$HOME/.local/bin}" action=export out
+        echo
+        echo "== cuda-export"
+        [ "$export_flag" = unexport ] && action=unexport
+        echo "Exports nvcc (the CUDA compiler; nvidia-smi is not exported, the host has its own) from the box cuda to $dir with distrobox-export, or with --unexport removes only that wrapper. Wrappers start the container on first use and cover only nvcc; 'distrobox enter cuda -- nvcc ...' always works without them."
+        echo "  Undo: ujust dev --only cuda --unexport  (or distrobox-export --bin <path> --export-path $dir --unexport inside the box); the box itself: distrobox rm --force cuda"
+        if [ ! -r "$lib" ]; then echo "FAILED: $lib is missing" >&2; fail_step cuda-export; return; fi
+        if ! cuda_exists; then echo "  The box cuda does not exist; run: ujust dev --only cuda"; record cuda-export "skipped (no cuda box)"; return; fi
+        if [ "$mode" = no ]; then echo "  Plan: $action nvcc"; record cuda-export planned; return; fi
+        # shellcheck source=/dev/null
+        . "$lib"
+        out=$(box_export cuda "$dir" "$action" nvcc 2>&1); local rc=$?
+        printf '%s\n' "$out"
+        if [ "$rc" != 0 ]; then fail_step cuda-export
+        elif [[ "$out" == *"already exported"* ]]; then record cuda-export "already done"
+        elif [[ "$out" == *"skipped"* ]]; then record cuda-export "skipped (see above)"
+        else record cuda-export "$action"ed "ujust dev --only cuda --unexport"; fi
+    }
+
     # Terminal with gum: a checklist of steps up front (nothing is ticked: you choose); the chosen steps are not asked
     # "Apply?" again, but replacing a different existing file is still its own question (default keep).
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
@@ -934,6 +973,7 @@ dev *args:
         )
         if nvidia_present; then
             menu_items+=("cuda^CUDA toolkit in a rootless distrobox (needs an NVIDIA driver)^0")
+            if cuda_exists; then menu_items+=("cuda-export^Export nvcc from the cuda box to ~/.local/bin (optional)^0"); fi
         fi
         menu_multi "Developer setup: choose the steps (only libvirt uses sudo; nothing existing is replaced without asking)" "${menu_items[@]}"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
@@ -952,6 +992,7 @@ dev *args:
     sel node && step_node
     sel python && step_python
     sel cuda && step_cuda
+    [ -n "$only_list" ] && sel cuda-export && step_cuda_export
 
     echo
     echo "== Summary (mode: $mode)"
