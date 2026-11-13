@@ -2511,7 +2511,11 @@ hardware-setup *args:
             amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
             amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
             amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
-            rocm) box_exists rocm && distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
+            rocm)
+                box_exists rocm || return 1
+                # plan modes (--list, --no) stay pure: entering a distrobox starts a stopped container, so the box is not entered there
+                if [ "$list" = 1 ] || [ "$mode" = no ]; then rocm_unchecked=1; return 1; fi
+                distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
             rocm-export) exports_done rocm "${rocm_bins[@]}" ;;
             cuda-export) exports_done cuda "${cuda_bins[@]}" ;;
             nvidia) [ -d "$nvidia_mod" ] ;;
@@ -2621,6 +2625,7 @@ hardware-setup *args:
     }
 
     avail=()
+    rocm_unchecked=0
     declare -A why=() isdone=()
     for s in "${step_ids[@]}"; do
         why[$s]=$(reason_of "$s")
@@ -2629,7 +2634,13 @@ hardware-setup *args:
             if done_of "$s"; then isdone[$s]=1; else isdone[$s]=0; fi
         fi
     done
-    state_of() { if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"; elif [ "${isdone[$1]}" = 1 ]; then echo done; else echo available; fi; }
+    unchecked_note="the rocm box exists; not checked in plan mode, entering it would start the container"
+    state_of() {
+        if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
+        elif [ "${isdone[$1]}" = 1 ]; then echo done
+        elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
+        else echo available; fi
+    }
 
     if [ "$list" = 1 ]; then
         printf '%-16s %s\n' STEP STATE
@@ -2713,6 +2724,7 @@ hardware-setup *args:
         fi
         if [ "$mode" = no ]; then
             echo "Plan: would run this step. Undo: $(undo_of "$s")"
+            if [ "$s" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "Note: $unchecked_note."; fi
             record "$s" planned
             continue
         fi

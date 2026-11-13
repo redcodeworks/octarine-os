@@ -252,6 +252,12 @@ check "rocm exports nothing by default" bash -c "[ ! -d '$root/exportbin' ] && !
 check "rocm says the GPU support is unverified" bash -c "grep -q 'not verified' '$root/out'"
 FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm --yes
 check "rocm is done when the box has rocminfo" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'ujust toolbox rocm' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --list
+check "--list with an existing rocm box: never enters or starts it, says so" bash -c "[ $rc = 0 ] && grep -E '^rocm +available \(the rocm box exists; not checked in plan mode' '$root/out' && ! grep -qE 'distrobox enter|podman start|distrobox start' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --no --only rocm
+check "--no with an existing rocm box: pure (no distrobox enter, no podman start), the plan notes it was not checked" bash -c "[ $rc = 0 ] && grep -q 'not checked in plan mode' '$root/out' && grep -qE '^rocm +planned' '$root/out' && ! grep -qE 'distrobox enter|podman start|distrobox start' '$LOG'"
+FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --no
+check "--no (all steps) with an existing rocm box: no distrobox enter or podman start" bash -c "[ $rc = 0 ] && ! grep -qE 'distrobox enter|podman start|distrobox start' '$LOG'"
 FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm --yes --export
 check "rocm --export exports exactly hipcc, rocminfo and rocm-smi, real paths from the box" bash -c "[ \"\$(ls '$root/exportbin' | LC_ALL=C sort | tr '\n' ' ')\" = 'hipcc rocm-smi rocminfo ' ] && grep -q 'distrobox-export --bin /usr/bin/hipcc --export-path $root/exportbin' '$LOG'"
 FAKE_BOXES=rocm FAKE_ROCM_TOOLS=1 run --only rocm-export --yes

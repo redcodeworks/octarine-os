@@ -775,6 +775,12 @@ dev *args:
             return
         fi
         cuda_exists && exists=1
+        if [ "$exists" = 1 ] && [ "$mode" = no ]; then
+            # plan mode stays pure: entering a distrobox starts a stopped container
+            echo "  The container cuda exists. Whether it has the toolkit is not checked in plan mode (entering it would start the container); a real run checks and installs only what is missing."
+            record cuda planned
+            return
+        fi
         if [ "$exists" = 1 ]; then
             in_cuda 'test -x /usr/local/cuda/bin/nvcc || command -v nvcc >/dev/null 2>&1' && nvcc_ok=1
             in_cuda 'test -f /etc/profile.d/cuda.sh' && prof_ok=1

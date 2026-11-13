@@ -730,6 +730,9 @@ check "cuda: an existing container without the toolkit is not recreated, the too
 cuda_world
 run '' --no --only cuda
 check "cuda --no: plan only, nothing created, installed or written" bash -c "[ $rc = 0 ] && grep -q 'Plan: distrobox create' '$root/out' && grep -qE '^cuda +planned' '$root/out' && ! grep -qE '^distrobox (create|enter)' '$LOG'"
+cuda_world; echo registry.fedoraproject.org/fedora-toolbox:44 >"$STATE/cuda-container"
+run '' --no --only cuda
+check "cuda --no with an existing box: pure, the box is never entered or started, and the plan says it was not checked" bash -c "[ $rc = 0 ] && grep -q 'not checked in plan mode' '$root/out' && grep -qE '^cuda +planned' '$root/out' && ! grep -qE 'distrobox enter|in-container|podman start|distrobox start' '$LOG'"
 cuda_world; echo 2 >"$STATE/failn-install"
 run '' --yes --only cuda
 check "cuda: a failing install is retried and then succeeds" bash -c "[ $rc = 0 ] && [ \$(grep -c '^in-container:.*dnf5 -y install cuda-toolkit' '$LOG') = 3 ] && grep -qE '^cuda +applied' '$root/out'"
