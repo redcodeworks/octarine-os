@@ -413,7 +413,7 @@ check "libvirt --no passes --no on (a plan only)" grep -qx 'ujust virthost-setup
 check "a failing delegate makes the step FAILED and the exit non-zero" bash -c "[ $rc != 0 ] && grep -q FAILED '$root/out'"
 : >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --yes
 check "--yes alone skips the libvirt step (it needs sudo) and says how to run it" bash -c "! grep -q virthost-setup '$LOG' && grep -q 'ujust dev --only libvirt --yes' '$root/out'"
-check "the dev recipe file has no libvirt group, usermod, virsh or sudo code of its own any more" bash -c "! grep -E 'usermod|virsh |gpasswd|net-autostart|^[[:space:]]*sudo ' '$here/variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just'"
+check "the dev recipe file has no libvirt group, usermod, virsh or sudo code of its own any more" bash -c "! grep -E 'usermod|virsh |gpasswd|net-autostart|^[[:space:]]*sudo ' '$repo/variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just'"
 
 # ---- tools
 reset
