@@ -210,9 +210,22 @@ jobs:
           echo "promote=${promote}" >> "${GITHUB_OUTPUT}"
           echo "build=${build} promote=${promote}"
 
+  # The prebuilt binaries (sched_ext schedulers, libextest.so) from binaries/: built once per tree hash, signed, reused. The
+  # job gates the image build only; it has no required check name (see binaries.yml).
+  binaries:
+    name: Prebuilt binaries image
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    uses: ./.github/workflows/binaries.yml
+    permissions:
+      contents: read
+      packages: write
+    # the signing secret is a repository secret, which a called workflow only gets when it is passed on
+    secrets: inherit
+
   build_push:
     name: Build image
-    needs: plan
+    needs: [plan, binaries]
     if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-26.04
 
@@ -307,6 +320,23 @@ jobs:
           cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
+      # The prebuilt binaries image (octarine-os-binaries, built from binaries/ by the binaries job): verify the digest it
+      # handed over with this repository's key, log it and pass it to the build as BINARIES_IMAGE
+      - name: Set up cosign (binaries image)
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Login to GitHub Container Registry (to pull the binaries image)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify the binaries image
+        run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
+
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
         run: |
@@ -364,6 +394,18 @@ jobs:
 
             check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
             check "menu helper library shipped" "test -s /usr/share/octarine-os/lib/menu.sh"
+            # prebuilt binaries (binaries/: scx, extest): installed only; whether a scheduler loads is for a real machine to say
+            check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
+            for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
+                check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
+                check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
+            done
+            check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
+            check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
+            check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
+            check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
+            check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
+            check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
             check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"

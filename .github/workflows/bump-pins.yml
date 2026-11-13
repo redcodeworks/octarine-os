@@ -1,0 +1,157 @@
+name: Bump prebuilt image pins
+# Weekly check of the one external image the Containerfiles still pin by digest: dev-packages (variants/dx/Containerfile), the shared
+# developer package list built and signed by the fedora-toolbox repository. (The sched_ext schedulers and extest are built in this
+# repository from binaries/ and followed by upstream-check.yml instead.) The job resolves the digest of `:latest`, verifies its cosign
+# signature (keys/redcodeworks-toolbox-cosign.pub) and compares it with the pin (.github/scripts/bump-pin.sh holds the decision,
+# tests/bump-pins.sh tests it). Equal: the job ends green, "nothing to bump". Different: ONE pull request from
+# `bump/dev-packages-digest` into `testing` that changes only the pin (digest line, and the tag line that labels it), created or
+# updated in place. A registry that cannot be reached, a missing `latest` tag or a signature that does not verify fails the job and
+# changes nothing. Bump pull requests are merged by the owner.
+#
+# Tuesday 07:00 UTC. Scheduled workflows run only from the default branch, so the schedule starts after the first promotion of this
+# file into `main`; workflow_dispatch works from any branch that has the file.
+#
+# Token: only the default GITHUB_TOKEN, no personal token. Its pushes and pull requests start no push or pull_request workflow,
+# except workflow_dispatch, so right after each push the job dispatches the Test workflow on the branch
+# (`gh workflow run test.yml --ref bump/dev-packages-digest`, hence `actions: write`): a run on the branch tip whose jobs are named
+# `test` and `secrets`, the checks the ruleset requires into `testing`. If the dispatch fails or no run shows up the job stays
+# green and the pull request body and the job summary say how to start the checks by hand. UNVERIFIED on GitHub: whether a
+# dispatched run satisfies the required checks of the pull request. The repository setting "Allow GitHub Actions to create and
+# approve pull requests" must be on (it is).
+on:
+  schedule:
+    - cron: '0 7 * * 2'  # Tuesday 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+  packages: read
+
+jobs:
+  bump:
+    name: Bump ${{ matrix.image }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [dev-packages]
+    env:
+      IMAGE: ${{ matrix.image }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # The pins on `testing` are what gets bumped, whatever branch the schedule or a dispatch runs from
+      - name: Check out testing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: testing
+          fetch-depth: 0
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Compare the pin with latest
+        id: decide
+        run: |
+          set +e
+          .github/scripts/bump-pin.sh "${IMAGE}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0 | 10) ;;
+            *) echo "### ${IMAGE}: failed (exit ${rc}, see the log)" >> "${GITHUB_STEP_SUMMARY}"; exit "${rc}" ;;
+          esac
+
+      - name: Nothing to bump
+        if: steps.decide.outputs.result == 'equal'
+        run: |
+          echo "nothing to bump: ${IMAGE} is pinned to ${{ steps.decide.outputs.digest }} (${{ steps.decide.outputs.tag }})"
+          echo "### ${IMAGE}: nothing to bump (pin equals latest, ${{ steps.decide.outputs.digest }})" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Create or update the bump pull request
+        if: steps.decide.outputs.result == 'different'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ steps.decide.outputs.previous }}
+          NEW: ${{ steps.decide.outputs.digest }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="bump/${IMAGE}-digest"
+          mapfile -t changed < <(git diff --name-only)
+          [[ "${#changed[@]}" -eq 1 ]] || { echo "::error::expected exactly one changed file, got: ${changed[*]}"; exit 1; }
+          file=${changed[0]}
+          cp "${file}" "${RUNNER_TEMP}/pin.new"
+          git checkout -- "${file}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # an existing bump branch is kept current by merging testing into it (no force-push), then the pin is written again
+          if git ls-remote --exit-code --heads origin "${branch}" > /dev/null; then
+            git fetch origin "${branch}"
+            git checkout -B "${branch}" "origin/${branch}"
+            git merge --no-edit -X theirs origin/testing
+          else
+            git checkout -b "${branch}"
+          fi
+          cp "${RUNNER_TEMP}/pin.new" "${file}"
+          if git diff --quiet; then
+            echo "The branch ${branch} already carries this pin."
+          else
+            git add -- "${file}"
+            git commit -m "Bump the ${IMAGE} pin to its latest digest ${NEW}: ${IMAGE} is built and signed by the fedora-toolbox repository, and its pin moves only through this reviewed change."
+            git push origin "${branch}"
+            pushed=true
+          fi
+          # Pushes by GITHUB_TOKEN start no workflow, workflow_dispatch is the exception: run Test on the branch tip so that
+          # `test` and `secrets` report on the pull request's head commit. Fail soft: a note tells how to start them by hand.
+          note=""
+          if [[ "${pushed:-false}" == true ]]; then
+            tip=$(git rev-parse HEAD)
+            started=false
+            if gh workflow run test.yml --ref "${branch}"; then
+              for _ in 1 2 3 4 5 6; do
+                sleep 5
+                if [[ -n "$(gh run list --workflow test.yml --branch "${branch}" --event workflow_dispatch --commit "${tip}" --json databaseId --jq '.[0].databaseId // empty')" ]]; then started=true; break; fi
+              done
+            fi
+            if [[ "${started}" != true ]]; then
+              note=$'\n\n**The required checks `test` and `secrets` may not have started:** the Test workflow could not be dispatched or its run did not show up. Start them with `gh workflow run test.yml --ref '"${branch}"'` (or Actions, Test, Run workflow, branch `'"${branch}"'`).'
+              echo "::warning::could not confirm the Test run on ${branch}"
+            fi
+          fi
+          {
+            echo "Moves the ${IMAGE} pin from \`${OLD}\` to \`${NEW}\` (tag \`${TAG}\`): the digest of \`ghcr.io/redcodeworks/${IMAGE}:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`."
+            echo
+            echo "Only ${file} changes: the digest line and the tag line. Not verified: nothing was built or booted here; the image build after the merge into \`testing\` is the first build with this pin."
+            echo "The checks \`test\` and \`secrets\` run through a dispatched Test workflow on the branch (the default token starts no workflow by itself). Not verified on GitHub: whether a dispatched run satisfies the required checks of this pull request."
+            printf '%s\n' "${note}"
+          } > "${RUNNER_TEMP}/body.md"
+          number=$(gh pr list --head "${branch}" --base testing --state open --json number --jq '.[0].number // empty')
+          if [[ -n "${number}" ]]; then
+            gh pr edit "${number}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"
+            url=$(gh pr view "${number}" --json url --jq .url)
+            echo "Updated ${url}"
+          else
+            if ! url=$(gh pr create --base testing --head "${branch}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"); then
+              echo "::error::Could not open the pull request. Is Settings, Actions, General, Allow GitHub Actions to create and approve pull requests, on?"
+              exit 1
+            fi
+            echo "Opened ${url}"
+          fi
+          {
+            echo "### ${IMAGE}: ${url}"
+            echo
+            echo "Pin \`${OLD}\` to \`${NEW}\` (\`${TAG}\`), signature valid."
+            if [[ -n "${note}" ]]; then
+              echo
+              echo "The Test run could not be confirmed: start it with \`gh workflow run test.yml --ref ${branch}\`."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

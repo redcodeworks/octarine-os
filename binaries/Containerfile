@@ -1,0 +1,68 @@
+# The prebuilt binaries of octarineOS, published as ghcr.io/redcodeworks/octarine-os-binaries (FROM scratch) and tagged with the
+# git tree hash of this directory (`git rev-parse HEAD:binaries`), so the same content is built once and reused by every
+# image build (see "Prebuilt binaries" in CLAUDE.md). Build context: this directory.
+#   /scx/bin/<name>, /scx/schedulers.tsv     the sched_ext schedulers listed in scx/schedulers.tsv (scx/upstream.env: the pinned tag)
+#   /extest/lib/libextest.so (ELF32), /extest/lib64/libextest.so (ELF64)     (extest/upstream.env: our fork, pinned commit)
+#   /scx, /extest each also hold LICENSES/, SOURCE, BUILDINFO; /LICENSES, /SOURCE, /BUILDINFO combine both components
+# The builder is a Fedora 45 container (the release of the image the binaries go into) pinned by DIGEST, with the toolchain
+# from Fedora's own repositories. Each source is fetched at the pinned commit and the build fails unless the checkout is exactly
+# that commit; cargo runs with --locked. Nothing here runs on a pull request or a feature branch (see binaries.yml).
+ARG BUILDER=registry.fedoraproject.org/fedora:45@sha256:e15959f36d52307f176f8c068009f6f1451c3b238b37a1f03e56dbfa4526e8b1
+
+FROM ${BUILDER} AS scx
+
+RUN dnf5 -y install --setopt=install_weak_deps=False --setopt=strict=1 \
+        git-core rust cargo clang llvm lld libbpf-devel elfutils-libelf-devel zlib-devel libzstd-devel \
+        pkgconf-pkg-config bpftool make gcc binutils \
+    && dnf5 clean all
+
+COPY lib /binaries/lib
+COPY scx /binaries/scx
+
+RUN /binaries/lib/fetch-source.sh /binaries/scx/upstream.env /src
+
+# Every scheduler in scx/schedulers.tsv from the one tag in a single cargo invocation (cargo build --release --locked -p <each>);
+# the BPF side is compiled by scx's build scripts with clang. build.sh then stages the binaries, licenses, SOURCE, BUILDINFO and
+# the manifest and runs each binary's --version.
+RUN STAGE_SH=/binaries/lib/stage.sh /binaries/scx/build.sh /binaries/scx/schedulers.tsv /binaries/scx/upstream.env /src /out
+
+FROM ${BUILDER} AS extest
+
+RUN dnf5 -y install --setopt=install_weak_deps=False --setopt=strict=1 \
+        git-core rust cargo gcc binutils \
+        rust-std-static-i686-unknown-linux-gnu glibc-devel.i686 libgcc.i686 \
+    && dnf5 clean all
+
+COPY lib /binaries/lib
+COPY extest /binaries/extest
+
+RUN /binaries/lib/fetch-source.sh /binaries/extest/upstream.env /src
+RUN STAGE_SH=/binaries/lib/stage.sh /binaries/extest/build.sh /binaries/extest/upstream.env /src /out
+
+FROM ${BUILDER} AS assemble
+
+COPY lib /binaries/lib
+COPY --from=scx /out /image/scx
+COPY --from=extest /out /image/extest
+RUN /binaries/lib/assemble.sh /image
+
+FROM scratch
+
+# Build values passed by CI (podman build --build-arg ...); no secrets
+ARG IMAGE_VERSION=dev
+ARG IMAGE_REVISION=unknown
+ARG IMAGE_CREATED=unknown
+
+COPY --from=assemble /image/ /
+
+LABEL maintainer="redcodeworks/octarine-os" \
+      org.opencontainers.image.authors="redcodeworks" \
+      org.opencontainers.image.vendor="redcodeworks" \
+      org.opencontainers.image.title="octarine-os-binaries" \
+      org.opencontainers.image.description="Prebuilt binaries for octarineOS: sched_ext schedulers (scx) and libextest.so (extest), 64-bit and 32-bit, built from pinned upstream commits" \
+      org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
+      org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \
+      org.opencontainers.image.licenses="GPL-2.0-only AND MIT" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.created="${IMAGE_CREATED}"

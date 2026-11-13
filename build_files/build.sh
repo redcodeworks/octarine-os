@@ -250,6 +250,12 @@ chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
 lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
 # --- end branding ---
 
+# --- Prebuilt binaries: sched_ext schedulers and the extest libraries ---
+# Two signed files-only images from the fedora-toolbox repository, pinned by digest in the Containerfile and bind-mounted
+# at /binaries/<name>; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
+# no unit, no preset, nothing is started.
+/ctx/install-binaries.sh
+
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).
 

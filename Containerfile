@@ -6,10 +6,18 @@
 ARG BREW_TAG=20261108
 ARG BREW_DIGEST=sha256:2993b28cf9a54efebdc418ef42228618f5c68e8b931430f2d60eddc190e30016
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
+# Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-os-binaries is a FROM scratch image built from the binaries/
+# directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, and libextest.so for Steam Input on Wayland, 32-bit and
+# 64-bit, MIT) and signed with this image's key. Its tag is the git tree hash of binaries/, so a change to binaries/ builds a new
+# one and everything else reuses it. The reference has no default: CI passes BINARIES_IMAGE as <image>@<digest> (the binaries
+# workflow resolves and verifies it before the image build), and `just build` defaults to the hash tag of the checked-out
+# tree (see "Prebuilt binaries" in CLAUDE.md). build.sh installs the files under /usr.
+ARG BINARIES_IMAGE
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
 ARG FEDORA_VERSION=45
 FROM ${BREW_IMAGE} AS brew
+FROM ${BINARIES_IMAGE} AS binaries
 
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
@@ -56,7 +64,10 @@ ARG IMAGE_VERSION
 # Brew's files go in first; build.sh then copies system_files over them, so our presets and files win
 COPY --from=brew /system_files /
 
+# The prebuilt binaries image is bind-mounted, not copied, so build.sh installs exactly what it checks (scx/bin,
+# scx/schedulers.tsv, extest/lib, extest/lib64, and LICENSES/, SOURCE, BUILDINFO of each component)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=binaries,source=/,target=/binaries \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

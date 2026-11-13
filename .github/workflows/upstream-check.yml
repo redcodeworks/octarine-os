@@ -1,0 +1,73 @@
+name: Check upstream releases
+# Weekly: for every component of binaries/ (binaries/scx, binaries/extest) ask upstream for its latest release and, when it is
+# newer than the pin in binaries/<name>/upstream.env (extest: asked of the real project, and only once our fork redcodeworks/extest
+# has the commit; the fork is never written to), open or update ONE bump pull request on the branch bump/<name> into `testing`.
+# It changes only upstream.env; nothing is built or published here (the merge into testing changes the tree hash of binaries/, and
+# the build after it builds and signs the new binaries image). Monday 07:00 UTC; scheduled workflows run only from `main`, so
+# the first scheduled run follows the first promotion that carries this file. workflow_dispatch works from any branch that has it.
+#
+# Token: only the default GITHUB_TOKEN (no personal token). Its pushes and pull requests start no push or pull_request workflow,
+# except workflow_dispatch, so bump-upstream.sh dispatches the Test workflow on the bump branch: the required checks `test` and
+# `secrets` then run on the head commit. NOT verified on GitHub: whether a dispatched run satisfies the required checks of the pull
+# request. The repository setting "Allow GitHub Actions to create and approve pull requests" must be on (it is).
+on:
+  schedule:
+    - cron: '0 7 * * 1'  # Mondays 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-check
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  check:
+    name: Check upstream releases
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout testing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: testing
+          fetch-depth: 0
+
+      - name: Ask upstream and open bump pull requests
+        run: |
+          set -uo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          failed=0
+          {
+            echo "## Upstream check"
+            echo
+          } >> "${GITHUB_STEP_SUMMARY}"
+          for envfile in binaries/*/upstream.env; do
+            dir=$(dirname "${envfile}")
+            decision=$(.github/scripts/upstream-check.sh "${dir}")
+            echo "${dir}: ${decision}"
+            echo "- \`${dir}\`: ${decision}" >> "${GITHUB_STEP_SUMMARY}"
+            read -r verb tag commit _ <<<"${decision}"
+            case "${verb}" in
+              bump)
+                if ! .github/scripts/bump-upstream.sh "${dir}" "${tag}" "${commit}"; then
+                  echo "::error::could not open or update the bump pull request for ${dir}"
+                  failed=1
+                fi
+                ;;
+              forkbehind)
+                fork=$(sed -n 's/^UPSTREAM_REPO=//p' "${envfile}")
+                echo "::notice::${dir}: the fork ${fork} is behind upstream: sync it (gh repo sync ${fork}) and rerun"
+                echo "- \`${dir}\`: the fork ${fork} is behind upstream: sync it (\`gh repo sync ${fork}\`) and rerun" >> "${GITHUB_STEP_SUMMARY}"
+                ;;
+              unreachable) echo "::warning::${dir}: ${decision}" ;;
+              *) echo "::notice::${dir}: nothing to bump (${decision})" ;;
+            esac
+          done
+          exit "${failed}"

@@ -841,7 +841,7 @@ gaming-setup *args:
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (build extest, pinned commit, in the dev-toolbox if the host has no cargo), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is built, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_SRC (default ~/Repos/extest), EXTEST_DEST (default ~/.local/lib/extest), EXTEST_COMMIT, GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -857,6 +857,8 @@ gaming-setup *args:
     override_file="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/overrides/$steam"
     state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gaming-setup"
     ext_dest=$(readlink -f -- "${EXTEST_DEST:-$HOME/.local/lib/extest}")
+    ext_src="${GAMING_SETUP_EXTEST_SRC:-/usr/lib/extest}"
+    ext_lib32="$ext_dest/lib/libextest.so"
     ext_so="$ext_dest/lib64/libextest.so"
     marker="X-Octarine-Generated=ujust gaming-setup"
     names=()
@@ -954,7 +956,7 @@ gaming-setup *args:
             "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
             "^Steam extras^0" \
             "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
-            "extest^extest build (experimental)^0" \
+            "extest^extest libraries (Steam Input on Wayland)^0" \
             "desktop^Generated Steam launchers^1" \
             "^Tuning^0" \
             "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
@@ -1011,50 +1013,37 @@ gaming-setup *args:
     fi
     fi
 
-    # extest: build the pinned upstream commit (https://github.com/Supreeeme/extest by Supreeeme and contributors,
-    # MIT license; this repo ships none of its source)
+    # extest: install the prebuilt libraries the image ships in /usr/lib/extest (built from https://github.com/redcodeworks/extest,
+    # a fork of https://github.com/Supreeeme/extest by Supreeeme and contributors, MIT license) into $ext_dest, where the
+    # Flatpak Steam reaches them through --filesystem=<dir>:ro. Nothing is built here.
     if selected extest && ! explicit reset; then
     cur=extest
     echo
-    echo "== extest (experimental)"
-    src="${EXTEST_SRC:-$HOME/Repos/extest}"
-    commit="${EXTEST_COMMIT:-cb77cd4f80f83393a24bae17dd975e14fa6eb1b2}"
-    if [ -f "$ext_so" ]; then
-        echo "extest is already built: $ext_so"
-        record "extest" "already done"
-    elif ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
-        echo "EXTEST_COMMIT must be a full 40-character SHA."
+    echo "== extest"
+    same() { [ -f "$1" ] && [ -f "$2" ] && [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$(sha256sum "$2" | cut -d' ' -f1)" ]; }
+    if [ ! -f "$ext_src/lib/libextest.so" ] || [ ! -f "$ext_src/lib64/libextest.so" ]; then
+        echo "The extest libraries are missing from $ext_src: this image does not ship them (update the image)." >&2
         failed=1
         record "extest" FAILED
+    elif same "$ext_src/lib/libextest.so" "$ext_lib32" && same "$ext_src/lib64/libextest.so" "$ext_so"; then
+        echo "extest is already installed: $ext_dest/lib and $ext_dest/lib64"
+        record "extest" "already done"
     else
-        echo "Builds extest (X11 XTEST to uinput shim for Steam Input on Wayland) from commit $commit into $ext_dest. Needs cargo and a C linker: the build runs in the dev-toolbox when the host has none. Not verified end to end inside the Flatpak client."
+        echo "Installs the prebuilt extest libraries (X11 XTEST to uinput shim for Steam Input on Wayland) from $ext_src into $ext_dest, 32-bit as lib/libextest.so and 64-bit as lib64/libextest.so. Not verified end to end inside the Flatpak client."
         ask n "Apply?"
         if [ "$answer" != y ]; then
             record "extest" "$(skipped_result)"
         else
-            build='set -euo pipefail
-    export PATH="$HOME/.cargo/bin:$PATH"
-    src=$1; dest=$2; commit=$3
-    command -v cargo >/dev/null || { echo "cargo not found. Install Rust first (for example with rustup)."; exit 1; }
-    if [ ! -d "$src/.git" ]; then git clone https://github.com/Supreeeme/extest "$src"; fi
-    cd "$src"
-    if [ "$(git rev-parse HEAD)" != "$commit" ]; then git fetch --quiet origin; git checkout --quiet --detach "$commit"; fi
-    cargo build --release --locked --target x86_64-unknown-linux-gnu
-    install -Dm755 target/x86_64-unknown-linux-gnu/release/libextest.so "$dest/lib64/libextest.so"'
-            if command -v cargo >/dev/null 2>&1; then
-                bash -c "$build" _ "$src" "$ext_dest" "$commit"
-            elif command -v distrobox >/dev/null 2>&1; then
-                echo "No cargo on the host: building inside dev-toolbox."
-                distrobox enter -n dev-toolbox -- bash -c "$build" _ "$src" "$ext_dest" "$commit"
+            # a file that is already there and differs (for example a library built by hand earlier) is kept with a timestamp
+            stamp=$(date +%Y%m%d-%H%M%S)
+            for f in "$ext_lib32" "$ext_so"; do
+                if [ -f "$f" ]; then cp -p -- "$f" "$f.bak-$stamp" && echo "Kept the existing $f as $f.bak-$stamp"; fi
+            done
+            if install -Dm755 "$ext_src/lib/libextest.so" "$ext_lib32" && install -Dm755 "$ext_src/lib64/libextest.so" "$ext_so"; then
+                echo "Installed $ext_lib32 and $ext_so (extest by Supreeeme and contributors, MIT license: https://github.com/Supreeeme/extest). Run the desktop step next."
+                record "extest" applied "ujust gaming-setup reset (offers to remove the libraries)"
             else
-                echo "No cargo and no distrobox: cannot build."
-                false
-            fi
-            if [ $? -eq 0 ] && [ -f "$ext_so" ]; then
-                echo "Installed $ext_so (extest by Supreeeme and contributors, MIT license: https://github.com/Supreeeme/extest). Run the desktop step next."
-                record "extest" applied "ujust gaming-setup reset (offers to remove the library); the source checkout $src stays"
-            else
-                echo "Failed: extest build" >&2
+                echo "Failed: could not install the extest libraries into $ext_dest" >&2
                 failed=1
                 record "extest" FAILED
             fi
@@ -1073,7 +1062,11 @@ gaming-setup *args:
     else
         hook=""
         label=""
-        if [ -f "$ext_so" ]; then hook=" --filesystem=$ext_dest:ro --env=LD_PRELOAD=$ext_so"; label="extest"; fi
+        # LD_PRELOAD carries the literal $LIB: the dynamic loader (ld.so(8)) expands it to lib or lib64 per process, so
+        # Steam's 32-bit client loads the 32-bit library and the 64-bit client the 64-bit one. In an Exec line the argument
+        # is quoted and the dollar sign escaped (the desktop entry spec: \\$ in the file is \$ after unescaping, $ after
+        # quoting); the shell must not see it, hence single quotes here.
+        if [ -f "$ext_lib32" ] && [ -f "$ext_so" ]; then hook=' --filesystem='"$ext_dest"':ro "--env=LD_PRELOAD='"$ext_dest"'/\\$LIB/libextest.so"'; label="extest"; fi
         res=${GAMING_SETUP_RES:-}
         if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
             st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
@@ -1226,11 +1219,11 @@ gaming-setup *args:
     else
         record "reset: PATH override" "$(skipped_result)"
     fi
-    ask n "Also remove the extest library $ext_so?"
+    ask n "Also remove the extest libraries in $ext_dest?"
     if [ "$answer" = y ]; then
-        rm -f -- "${ext_so:?}"
-        rmdir "${ext_dest:?}/lib64" "${ext_dest:?}" 2>/dev/null
-        record "reset: extest library" applied "ujust gaming-setup extest rebuilds it"
+        rm -f -- "${ext_so:?}" "${ext_lib32:?}"
+        rmdir "${ext_dest:?}/lib" "${ext_dest:?}/lib64" "${ext_dest:?}" 2>/dev/null
+        record "reset: extest library" applied "ujust gaming-setup extest installs them again"
     else
         record "reset: extest library" "$(skipped_result)"
     fi
