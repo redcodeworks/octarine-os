@@ -273,9 +273,9 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
   checks the secrets first, runs the PostgreSQL guard, never pulls, a running pod is a no-op, unknown name exits 2), `status` (pods, containers, ports, running image against the pin), `logs SERVICE`
   (`journalctl --user`, 200 lines); `ujust datastore-setup [--yes|--no|--status|--pin|--unpin|--update|--backup DIR [--stop]]`. Helper `/usr/share/octarine-os/lib/datastore.sh`.
 - **Storage and backups.** Named volumes live in Podman's graphroot, `~/.local/share/containers/storage` with no `storage.conf` (the owner's machine moves it with `containers/storage.conf`
-  and the btrfs driver); `--status` shows the graphroot and warns when it is under the home; moving it is documented, not automated. `--backup DIR` exports each volume to `DIR/<volume>-<date>.tar`
-  (`podman volume export`), PostgreSQL while running through an online `pg_dumpall` into `DIR/postgresql-<date>.sql`; a running pod with Valkey, SeaweedFS or Kafka volumes is refused unless `--stop`
-  (stops the pod, exports, starts it again); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
+  and the btrfs driver); `--status` shows the graphroot and warns when it is under the home; moving it is documented, not automated. `--backup DIR` exports each volume to `DIR/<volume>-<YYYYMMDD-HHMMSS>.tar`
+  (`podman volume export`; a name that exists is never reused, `-2`, `-3` ... is appended; written to `<name>.part` and renamed on success, a failure removes only its own `.part`, never an earlier backup), PostgreSQL while running through an online `pg_dumpall` into `DIR/postgresql-<stamp>.sql`; a running pod with Valkey, SeaweedFS or Kafka volumes is refused unless `--stop`
+  (stops the pod, exports, starts it again; a trap starts again exactly the pods this run stopped on Ctrl-C, SIGTERM or an early failure); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
 - **Smoke test** (`dx-smoke.sh`): the eleven Quadlet files exist, no `[Install]`, every image an exact tag with a digest, no latest, `AutoUpdate=`, home path or local image, loopback ports only, the recipe file and helper
   ship, and the generator dry run produces the pod and container units. Tests: `tests/datastore.sh`, `tests/datastore-bump.sh`, `tests/dx-image.sh`.
 - **Unverified (real machine).** The first `systemctl --user start datastore-pod` (image pulls, healthchecks), the secret mounts, SELinux labels on the volumes, the owner's graphroot, a Kafka start with the pinned 4.3.2, and that the removal of the owner's own Quadlet copies leaves the same behavior (container names are kept: `pgsql` and the pod aliases).
@@ -1020,6 +1020,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## `ujust hardware-setup`
 
+Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is entered or started, because `distrobox enter` starts a stopped container. The `rocm` probe in hardware-setup and the existing-box check of the dev `cuda` step say "not checked in plan mode" instead; a real run probes as before. Tests: `tests/hardware-setup.sh`, `tests/dev-setup.sh` (no `distrobox enter` or `podman start` in the log).
+
 - One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
   A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
   calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
@@ -1093,6 +1095,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   built by `build-nvidia-dx.yml` (see "NVIDIA dx image"); its repository is in the signature policy that `build_files/build.sh` generates
   (`tests/nvidia-variant.sh` and `tests/dx-image.sh` check the policy for each repository), so the recipe needed no change except a hint
   printed for `nvidia-dx` (a machine whose image predates the rule gets a signature-policy error from bootc).
+- Staged images: the recipe also reads the STAGED deployment (`rpm-ostree status --json`, `staged: true`; test hook `OCTARINE_SWITCH_STAGED_REF`). When it equals the target (digest ignored) it says "already staged: reboot to use it" and calls nothing (no second `bootc switch`, no second security-key touch); a different staged image is named and replaced. The hardware-setup `nvidia` step goes through this recipe, so its probe (`/sys/module/nvidia`, false until the reboot) cannot cause a second switch.
 - Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
 
 ## NVIDIA variant (`octarine-os-nvidia`)
