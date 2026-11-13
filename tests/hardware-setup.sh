@@ -42,6 +42,7 @@ mk pamu2fcfg 'echo "pamu2fcfg $*" >>"$LOG"; [ "${FAKE_PAM_FAIL:-}" = 1 ] && exit
 mk systemd-detect-virt '[ "${FAKE_VM:-}" = 1 ]'
 mk sensors-detect 'exit 0'
 mk distrobox 'echo "ID | NAME | STATUS | IMAGE"; for b in ${FAKE_BOXES:-}; do echo "abc | $b | Up 1 hour | img"; done'
+export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
 
 osrel="$root/os-release"
