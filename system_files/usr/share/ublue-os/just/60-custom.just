@@ -2176,6 +2176,124 @@ luks-tpm-unlock *args:
     fi
     exit "$failed"
 
+# Detect the fan and temperature chip of this board and load its driver at boot (--help for usage)
+[group('System')]
+[positional-arguments]
+sensors-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
+    mode=ask
+    for a in "$@"; do
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--yes|--no]`. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            *) echo "Unknown argument: $a (use --yes, --no or --help)" >&2; exit 1 ;;
+        esac
+    done
+    sysconfig=${OCTARINE_SENSORS_SYSCONFIG:-/etc/sysconfig/lm_sensors}
+    dir=${OCTARINE_MODULES_LOAD_DIR:-/etc/modules-load.d}
+    target="$dir/octarine-sensors.conf"
+    legacy="$dir/nct6775.conf"
+    if ! command -v sensors-detect >/dev/null 2>&1; then
+        echo "sensors-detect is not installed (package lm_sensors, part of the image's optional packages); nothing changed." >&2
+        exit 1
+    fi
+    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
+    [ -e "$target" ] && echo "Existing: $target"
+    [ -e "$legacy" ] && echo "Existing (older hand-made name): $legacy"
+    if [ "$mode" = no ]; then echo "(--no: nothing was run or changed)"; exit 0; fi
+    if [ "$mode" = ask ]; then
+        menu_confirm "Probe the hardware with sensors-detect --auto and write the module list?" n || { echo "Left as it is."; exit 0; }
+    fi
+    echo "== Step with sudo (YubiKey touch; not retried): sensors-detect --auto"
+    if ! sudo -v; then
+        echo "sudo failed. Run it yourself, then re-run this recipe: sudo sensors-detect --auto" >&2
+        exit 1
+    fi
+    detect_out=$(sudo sensors-detect --auto 2>&1)
+    detect_rc=$?
+    if [ "$detect_rc" -ne 0 ]; then
+        printf '%s\n' "$detect_out" | tail -n 15 >&2
+        echo "sensors-detect failed (exit $detect_rc). Nothing was written. Re-run: sudo sensors-detect --auto" >&2
+        exit 1
+    fi
+    if printf '%s\n' "$detect_out" | grep -qE 'no sensors were detected|No modules to load'; then
+        echo "No sensor chip needs a driver on this machine; nothing written. (If your fan headers are still missing, the chip may be unsupported or need acpi_enforce_resources=lax, which this recipe does not set.)"
+        exit 0
+    fi
+    mods=()
+    if [ -r "$sysconfig" ]; then
+        for var in BUS_MODULES HWMON_MODULES; do
+            val=$(sed -n "s/^${var}=\"\\(.*\\)\"[[:space:]]*\$/\\1/p" "$sysconfig" | tail -n 1)
+            for m in $val; do
+                case "$m" in
+                    *[!A-Za-z0-9_-]* | "") echo "Ignoring an odd module name in $sysconfig: $m" >&2 ;;
+                    *) case " ${mods[*]:-} " in *" $m "*) ;; *) mods+=("$m") ;; esac ;;
+                esac
+            done
+        done
+    fi
+    if [ "${#mods[@]}" -eq 0 ]; then
+        echo "sensors-detect found chips but listed no module to load (their drivers load by themselves); nothing written."
+        exit 0
+    fi
+    echo "Modules to load: ${mods[*]}"
+    new=$(mktemp)
+    trap 'rm -f -- "$new"' EXIT
+    {
+        echo "# Written by 'ujust sensors-setup' (sensors-detect --auto): drivers for this board's fan and temperature chips."
+        echo "# Undo: sudo rm $target ; then 'sudo modprobe -r <module>' or reboot."
+        printf '%s\n' "${mods[@]}"
+    } >"$new"
+    failed=0
+    ts=$(date +%Y%m%d-%H%M%S)
+    if [ -e "$target" ] && cmp -s "$new" "$target"; then
+        echo "Already done: $target has exactly this content."
+    else
+        replace=1
+        if [ -e "$target" ]; then
+            echo "== $target exists and differs:"
+            diff -u "$target" "$new" || true
+            if [ "$mode" = ask ]; then menu_confirm "Replace it (a backup is kept)?" n || { replace=0; echo "Kept the existing file."; }; fi
+        fi
+        if [ "$replace" = 1 ]; then
+            if [ -e "$target" ]; then
+                sudo cp -p "$target" "$target.bak-$ts" || failed=1
+                echo "Backup: $target.bak-$ts"
+            fi
+            if sudo tee "$target" <"$new" >/dev/null; then echo "Wrote $target"; else echo "Could not write $target. Run: sudo tee $target" >&2; failed=1; fi
+        fi
+    fi
+    if [ -e "$legacy" ]; then
+        echo "Note: the older hand-made file $legacy exists; it loads modules too."
+        doit=0
+        if [ "$mode" = yes ]; then doit=1; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
+        if [ "$doit" = 1 ]; then
+            if sudo mv "$legacy" "$legacy.bak-$ts"; then echo "Moved $legacy to $legacy.bak-$ts (undo: sudo mv it back)"; else failed=1; fi
+        else
+            echo "Kept $legacy."
+        fi
+    fi
+    for m in "${mods[@]}"; do
+        if sudo modprobe "$m"; then echo "Loaded $m"; else echo "Could not load $m (try: sudo modprobe $m)" >&2; failed=1; fi
+    done
+    echo "== Fan and temperature lines from sensors:"
+    if command -v sensors >/dev/null 2>&1; then
+        sensors 2>/dev/null | grep -Ei '^[A-Za-z0-9_-]+-(isa|pci|virtual|acpi|i2c)|fan[0-9]*:|pump|temp[0-9]*:|^[A-Za-z]+ *[0-9]*:.*°C' || echo "(sensors printed no fan or temperature lines)"
+    else
+        echo "(sensors is not installed)"
+    fi
+    echo
+    echo "This persists across image updates (a file in /etc, the driver comes with the kernel): no need to re-run after an update, only after a hardware change."
+    echo "If some fan headers are still missing, some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it."
+    echo "Undo: sudo rm $target ; sudo modprobe -r ${mods[*]} ; sudo systemctl disable --now lm_sensors.service (sensors-detect enabled it)"
+    exit "$failed"
+
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
 [group('Toolbox')]
 [positional-arguments]
@@ -4215,122 +4333,4 @@ toolbox *args:
     do_apps
     undo_note
     old_dev_note
-    exit "$failed"
-
-# Detect the fan and temperature chip of this board and load its driver at boot (--help for usage)
-[group('System')]
-[positional-arguments]
-sensors-setup *args:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
-    # shellcheck source=/dev/null
-    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
-    if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
-    mode=ask
-    for a in "$@"; do
-        case "$a" in
-            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--yes|--no]`. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
-            --yes) mode=yes ;;
-            --no) mode=no ;;
-            *) echo "Unknown argument: $a (use --yes, --no or --help)" >&2; exit 1 ;;
-        esac
-    done
-    sysconfig=${OCTARINE_SENSORS_SYSCONFIG:-/etc/sysconfig/lm_sensors}
-    dir=${OCTARINE_MODULES_LOAD_DIR:-/etc/modules-load.d}
-    target="$dir/octarine-sensors.conf"
-    legacy="$dir/nct6775.conf"
-    if ! command -v sensors-detect >/dev/null 2>&1; then
-        echo "sensors-detect is not installed (package lm_sensors, part of the image's optional packages); nothing changed." >&2
-        exit 1
-    fi
-    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
-    [ -e "$target" ] && echo "Existing: $target"
-    [ -e "$legacy" ] && echo "Existing (older hand-made name): $legacy"
-    if [ "$mode" = no ]; then echo "(--no: nothing was run or changed)"; exit 0; fi
-    if [ "$mode" = ask ]; then
-        menu_confirm "Probe the hardware with sensors-detect --auto and write the module list?" n || { echo "Left as it is."; exit 0; }
-    fi
-    echo "== Step with sudo (YubiKey touch; not retried): sensors-detect --auto"
-    if ! sudo -v; then
-        echo "sudo failed. Run it yourself, then re-run this recipe: sudo sensors-detect --auto" >&2
-        exit 1
-    fi
-    detect_out=$(sudo sensors-detect --auto 2>&1)
-    detect_rc=$?
-    if [ "$detect_rc" -ne 0 ]; then
-        printf '%s\n' "$detect_out" | tail -n 15 >&2
-        echo "sensors-detect failed (exit $detect_rc). Nothing was written. Re-run: sudo sensors-detect --auto" >&2
-        exit 1
-    fi
-    if printf '%s\n' "$detect_out" | grep -qE 'no sensors were detected|No modules to load'; then
-        echo "No sensor chip needs a driver on this machine; nothing written. (If your fan headers are still missing, the chip may be unsupported or need acpi_enforce_resources=lax, which this recipe does not set.)"
-        exit 0
-    fi
-    mods=()
-    if [ -r "$sysconfig" ]; then
-        for var in BUS_MODULES HWMON_MODULES; do
-            val=$(sed -n "s/^${var}=\"\\(.*\\)\"[[:space:]]*\$/\\1/p" "$sysconfig" | tail -n 1)
-            for m in $val; do
-                case "$m" in
-                    *[!A-Za-z0-9_-]* | "") echo "Ignoring an odd module name in $sysconfig: $m" >&2 ;;
-                    *) case " ${mods[*]:-} " in *" $m "*) ;; *) mods+=("$m") ;; esac ;;
-                esac
-            done
-        done
-    fi
-    if [ "${#mods[@]}" -eq 0 ]; then
-        echo "sensors-detect found chips but listed no module to load (their drivers load by themselves); nothing written."
-        exit 0
-    fi
-    echo "Modules to load: ${mods[*]}"
-    new=$(mktemp)
-    trap 'rm -f -- "$new"' EXIT
-    {
-        echo "# Written by 'ujust sensors-setup' (sensors-detect --auto): drivers for this board's fan and temperature chips."
-        echo "# Undo: sudo rm $target ; then 'sudo modprobe -r <module>' or reboot."
-        printf '%s\n' "${mods[@]}"
-    } >"$new"
-    failed=0
-    ts=$(date +%Y%m%d-%H%M%S)
-    if [ -e "$target" ] && cmp -s "$new" "$target"; then
-        echo "Already done: $target has exactly this content."
-    else
-        replace=1
-        if [ -e "$target" ]; then
-            echo "== $target exists and differs:"
-            diff -u "$target" "$new" || true
-            if [ "$mode" = ask ]; then menu_confirm "Replace it (a backup is kept)?" n || { replace=0; echo "Kept the existing file."; }; fi
-        fi
-        if [ "$replace" = 1 ]; then
-            if [ -e "$target" ]; then
-                sudo cp -p "$target" "$target.bak-$ts" || failed=1
-                echo "Backup: $target.bak-$ts"
-            fi
-            if sudo tee "$target" <"$new" >/dev/null; then echo "Wrote $target"; else echo "Could not write $target. Run: sudo tee $target" >&2; failed=1; fi
-        fi
-    fi
-    if [ -e "$legacy" ]; then
-        echo "Note: the older hand-made file $legacy exists; it loads modules too."
-        doit=0
-        if [ "$mode" = yes ]; then doit=1; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
-        if [ "$doit" = 1 ]; then
-            if sudo mv "$legacy" "$legacy.bak-$ts"; then echo "Moved $legacy to $legacy.bak-$ts (undo: sudo mv it back)"; else failed=1; fi
-        else
-            echo "Kept $legacy."
-        fi
-    fi
-    for m in "${mods[@]}"; do
-        if sudo modprobe "$m"; then echo "Loaded $m"; else echo "Could not load $m (try: sudo modprobe $m)" >&2; failed=1; fi
-    done
-    echo "== Fan and temperature lines from sensors:"
-    if command -v sensors >/dev/null 2>&1; then
-        sensors 2>/dev/null | grep -Ei '^[A-Za-z0-9_-]+-(isa|pci|virtual|acpi|i2c)|fan[0-9]*:|pump|temp[0-9]*:|^[A-Za-z]+ *[0-9]*:.*°C' || echo "(sensors printed no fan or temperature lines)"
-    else
-        echo "(sensors is not installed)"
-    fi
-    echo
-    echo "This persists across image updates (a file in /etc, the driver comes with the kernel): no need to re-run after an update, only after a hardware change."
-    echo "If some fan headers are still missing, some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it."
-    echo "Undo: sudo rm $target ; sudo modprobe -r ${mods[*]} ; sudo systemctl disable --now lm_sensors.service (sensors-detect enabled it)"
     exit "$failed"
