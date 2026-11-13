@@ -1,7 +1,7 @@
 ---
 name: Build NVIDIA dx image
 # The NVIDIA developer image (ghcr.io/<owner>/octarine-os-nvidia-dx): the SAME dx layer as octarine-os-dx (variants/dx, one
-# shared package list, ROCm included, no CUDA toolkit) on top of the NVIDIA variant octarine-os-nvidia instead of octarine-os.
+# shared package list without ROCm, no CUDA toolkit) on top of the NVIDIA variant octarine-os-nvidia instead of octarine-os.
 # The variant has only a `latest` channel (weekly, Sunday 12:00 UTC, main only), so this image has only `latest` and the
 # dated tags: it starts when "Build NVIDIA variant" finishes on `main` (workflow_run, which always runs the workflow file of
 # the default branch) or by manual dispatch on `main`; it never runs on pushes, pull requests or `testing`. The plan job

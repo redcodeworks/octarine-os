@@ -161,22 +161,44 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
+            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
               check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
             done
+            # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
+            for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
+              check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
+            done
+            check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
             for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock \
-                     nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
+                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon \
+                     nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
                      restic rclone guestfs-tools libguestfs \
                      libguestfs-xfs virt-v2v; do
               if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
             done
+            # GPaste (optional, shipped but not enabled): when installed, the extension directory, its UUID and the compiled schema must be there
+            if rpm -q gnome-shell-extension-gpaste >/dev/null 2>&1; then
+              check "GPaste extension directory and UUID" "grep -qF GPaste@gnome-shell-extensions.gnome.org /usr/share/gnome-shell/extensions/GPaste@gnome-shell-extensions.gnome.org/metadata.json"
+              check "GPaste schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.GPaste show-history | grep -q Alt"
+              check "GPaste daemon is D-Bus activated" "test -f /usr/share/dbus-1/services/org.gnome.GPaste.service"
+              check "GPaste is not enabled by default" "! grep -q GPaste /etc/dconf/db/distro.d/90-octarine-os"
+            else
+              echo "INFO GPaste not installed (listed in optional-packages-missing)"
+            fi
+            for e in just-perfection-desktop@just-perfection:just-perfection ddterm@amezin.github.com:ddterm freon@UshakovVasilii_Github.yahoo.com:freon; do
+              u=${e%%:*}; k=${e#*:}
+              if [ -d /usr/share/gnome-shell/extensions/$u ]; then
+                check "extension $u: UUID in metadata.json" "grep -qF $u /usr/share/gnome-shell/extensions/$u/metadata.json"
+                check "extension $u: schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas list-keys org.gnome.shell.extensions.$k"
+              else echo "INFO extension $u not installed (listed in optional-packages-missing)"; fi
+            done
+            check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
@@ -211,6 +233,7 @@ jobs:
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
             check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
             check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
+            check "rocm toolbox definition and the box-export helper" "grep -q \"^\\[rocm\\]\" /usr/share/ublue-os/distrobox/rocm.ini && grep -q additional_packages /usr/share/ublue-os/distrobox/rocm.ini && test -s /usr/share/octarine-os/lib/box-export.sh"
             check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
             check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
             check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
@@ -247,6 +270,9 @@ jobs:
             done
             check "jq and skopeo run" "jq --version && skopeo --version"
             check "staged automatic image updates are on by default (ujust toggle-updates is the user switch)" "systemctl is-enabled rpm-ostreed-automatic.timer && grep -qx AutomaticUpdatePolicy=stage /etc/rpm-ostreed.conf"
+            check "mcelog is not masked and has the Intel-only drop-in" "! systemctl is-enabled mcelog.service 2>&1 | grep -qx masked && grep -q GenuineIntel /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf"
+            check "automatic update retry drop-in: bounded on-failure restart" "grep -qx Restart=on-failure /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx RestartSec=60 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx StartLimitBurst=5 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf"
+            check "automatic update service waits for the network (base drop-in) and NetworkManager-wait-online is enabled" "grep -q After=network-online.target /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/override.conf && systemctl is-enabled NetworkManager-wait-online.service"
             summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
             check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
             has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }

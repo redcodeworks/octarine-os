@@ -10,7 +10,13 @@ echo "Kernel of the base image: ${before}"
 
 # The shared developer list: one strict dnf5 install, then the installer cleans the dnf caches
 test -f /dev-packages/install.sh
-bash /dev-packages/install.sh
+# ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) stays in the shared list, which also
+# builds the owner's fedora-toolbox, but is NOT part of the dx images: `ujust hardware-setup` (step rocm) provides it in a
+# rootless distrobox instead. EXCLUDE takes exact package names (see dev-packages/install.sh in the fedora-toolbox repo).
+EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc" bash /dev-packages/install.sh
+for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
+    if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
+done
 
 # The extras (grouped list, one strict transaction; names the shared list or the base already installed are skipped)
 mapfile -t extras < <(sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' /ctx/extras.txt)

@@ -151,11 +151,15 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   repo and is pulled in by a `ujust` recipe, such as `ujust gnome-candy <recipe>`. System-level files
   (PAM, sysctl, firewalld, `/etc` defaults) are fine in `system_files/`.
 - Podman only; no Docker daemon.
-- `sshd`, `tailscaled`, `cockpit.socket`, the snapper timers and `mcelog` stay off by default.
+- `sshd`, `tailscaled`, `cockpit.socket` and the snapper timers stay off by default. `mcelog.service` is NOT masked any more: the packaged unit skips itself without `/dev/mcelog` and when `edac_mce_amd` is loaded, and our drop-in `mcelog.service.d/50-octarine-intel-only.conf` (`ExecCondition` on `GenuineIntel`) skips it on any other CPU, so Intel keeps machine-check logging and AMD gets no failed unit (checked 2026-11: the kernel has `CONFIG_X86_MCELOG_LEGACY=y`; behavior on an Intel machine is untested).
   The image enables staged automatic updates by default: the base image's `ublue-os-update-services` enables
   `rpm-ostreed-automatic.timer` and ships `/etc/rpm-ostreed.conf` with `AutomaticUpdatePolicy=stage` (our `build.sh` adds
   nothing; the smoke test checks both). Image changes must not disable or alter that default. `ujust toggle-updates` is the
   user's own switch for it, one source among the others, and `ujust update` follows that switch.
+  The base's `rpm-ostreed-automatic.service.d/override.conf` already has `Wants`/`After=network-online.target` (and a metered-connection
+  `ExecCondition`); that cannot help after a wake from sleep (the target is already reached), where the run failed with
+  "pinging container registry". Our separate drop-in `50-octarine-retry.conf` adds a bounded retry (`Restart=on-failure`,
+  `RestartSec=60`, five starts per hour); the policy stays untouched. `NetworkManager-wait-online.service` is enabled; the smoke test checks both.
 - Never put security key registrations (`u2f_keys`), private keys or `.env` files in `system_files/`;
   the build guard and gitleaks hook both reject them.
 - `just` takes positional arguments only. Recipe text changes must pass `just --fmt --check`.
@@ -428,8 +432,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the default image still ships libvirt and qemu-kvm until stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
-- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling moves into a toolbox image.
+- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the VM-hosting set moved out of the default image too, see stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
+- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
@@ -529,7 +533,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
   | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
   | | caffeine, blur-my-shell, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, blur-my-shell and the dock are visual, caffeine adds a panel icon, user-theme is useless without a theme) |
-  | | arcmenu, hotedge, coverflow, clipboard-indicator, tiling shell | excluded | not shipped |
+  | | GPaste (`gpaste`, `gnome-shell-extension-gpaste`, extension `GPaste@gnome-shell-extensions.gnome.org`) | shipped, not enabled | optional `misc` group; the daemon is D-Bus activated (no unit to enable); switch on with `gnome-extensions enable GPaste@gnome-shell-extensions.gnome.org`; default shortcuts Ctrl+Alt+H (history) and Ctrl+Alt+G (UI) |
+  | | Just Perfection, ddterm, Freon (`gnome-shell-extension-just-perfection`, `-ddterm`, `-freon`; UUIDs `just-perfection-desktop@just-perfection`, `ddterm@amezin.github.com`, `freon@UshakovVasilii_Github.yahoo.com`) | shipped, not enabled | optional `misc` group, switch on with `gnome-extensions enable <uuid>`; ddterm toggles on F12 by default; Freon reads lm_sensors (in the same group; may need `sensors-detect` for extra sensors) |
+  | | arcmenu, hotedge, coverflow, tiling shell | excluded | not shipped |
   | `10-app-folders.dconf` | folder layout | excluded | layout taste, replaces GNOME's own default folders (category-based, so a candidate if the owner wants it) |
   | `31-shell-keybindings`, `42-tiling-shell`, `43-arcmenu` | all | excluded | shortcut model, extensions not shipped |
   | `40-dash-to-dock`, `41-auto-move-windows`, `50-shell-theme` | all | excluded | look, owner's app list, Gruvbox shell theme |
@@ -722,12 +728,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `30-distrobox-base.just` (build.sh) and imported by ours; the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just`
   are overwritten by ours (not renamed, so nothing of them survives): `15-luks.just` and `40-nvidia.just` are empty on
   purpose (the base's `setup-luks-tpm-unlock`, `remove-luks-tpm-unlock` and `toggle-nvk` are gone, no aliases, no stub),
-  `50-akmods.just` keeps `configure-broadcom-wl` as `[private]`. The base package builds `/usr/share/ublue-os/justfile`
+  `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
-  `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, `configure-broadcom-wl` in
-  `50-akmods.just` (no Broadcom hardware or module). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
+  `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
 - `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
@@ -748,6 +753,86 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   when the booted deployment has layered packages (bootc does not know about layering).
 - The base `update` also ran `rpm-ostree update`, `flatpak update` and `distrobox upgrade -a` unconditionally and checked
   for `uupd` (not installed here); both are replaced. Tests: `tests/update-services.sh`.
+
+## Hardware targeting (what is set only where the hardware is)
+
+- `system_files/etc/profile.d/proton.sh` exports `PROTON_FSR4_UPGRADE=1` only when a DRM card has vendor `0x1002` (AMD), by a bash
+  glob loop with no subprocess (it runs at every login shell; `OCTARINE_SYSFS_DRM` redirects sysfs in tests). `PROTON_ENABLE_WAYLAND=1`
+  stays for everyone but is experimental and reported rough on NVIDIA. fish has no equivalent file (fish does not read `profile.d`).
+- GameMode's `desiredgov=powersave` (upstream gamemode#419 workaround) is right only with amd-pstate in active mode: `gaming-setup gamemode`
+  pre-ticks the step and writes the line only when `/sys/devices/system/cpu/amd_pstate/status` is `active` (`GAMING_SETUP_PSTATE_STATUS`
+  in tests); otherwise the line and its comment are left out and the tuned `[custom]` part stays.
+- `switch-image nvidia|nvidia-dx` without an NVIDIA GPU (`0x10de`): says so and asks (default No); `--yes` alone refuses, `--force` proceeds.
+- `luks-tpm-unlock` exits 0 with a message when `/dev/tpmrm0` is missing (`OCTARINE_TPM_DEVICE` in tests).
+- Tests: `tests/hardware-targeting.sh` and the cases added to `gaming-setup.sh`, `switch-image.sh`, `luks-tpm-unlock.sh`.
+  Only real hardware shows: Wayland and FSR4 behavior in games, amd-pstate states, the mcelog unit on Intel, the retry after a wake.
+
+## ROCm is opt-in (not in the dx images)
+
+- The shared `dev-packages` list (fedora-toolbox repo, pinned by digest) still carries `rocminfo rocm-smi rocm-hip rocm-opencl hipcc` because
+  it also builds the owner's `fedora-toolbox` container. `variants/dx/dx.sh` runs the installer with
+  `EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc"` (EXCLUDE takes exact package names, space separated; an excluded entry is not looked up;
+  present in the pinned installer, `dev-packages/install.sh`), and fails the build if any of the five is installed afterwards. `dx-smoke.sh`
+  (shared by dx and nvidia-dx) asserts the five are NOT installed. Measured on the owner's machine with `dnf5 remove --assumeno`: 21 packages
+  leave with them, about 3 GiB (rocm-llvm-static 2.2 GiB, rocm-comgr, rocm-llvm-libs, rocm-clang*, rocm-runtime); nothing else in
+  the dx extras depends on them. The default image never had ROCm.
+- The `rocm` step of `ujust hardware-setup` (shown with an AMD GPU and `/dev/kfd`) runs `ujust toolbox rocm`, which assembles
+  `system_files/usr/share/ublue-os/distrobox/rocm.ini`: image `registry.fedoraproject.org/fedora-toolbox:45` (the tag exists; bump it with the
+  base), `additional_packages` the five packages from Fedora's repositories (no extra repository), `init=false`, `nvidia=false`. No group is
+  needed: udev makes `/dev/kfd` and `/dev/dri/renderD*` mode 0666 on Fedora (`50-udev-default.rules`, verified on the owner's machine).
+  Whether Fedora's ROCm build covers an RX 9070 XT (gfx1201) is UNVERIFIED. The toolbox recipe was reused for creation and removal
+  (`ujust toolbox rocm --remove`); the CUDA box keeps its direct `distrobox create` in `ujust dev` because it needs the CDI device flag, NVIDIA's
+  repository file and `gcc15-c++` installed inside the box, which an assemble file cannot express.
+
+## Opt-in export of box binaries (`--export`)
+
+- Kevin's decision (2026-11-13): the `cuda` and `rocm` boxes export NOTHING by default (the old host wrapper scripts are gone and stay gone).
+  `--export` (on `ujust dev --only cuda` and on `ujust hardware-setup`, also as the steps `cuda-export`, `rocm-export`) runs
+  `distrobox-export --bin <path> --export-path ~/.local/bin` inside the box for a short list: CUDA `nvcc`, ROCm `hipcc rocminfo rocm-smi`
+  (never `nvidia-smi`, the host has it). `--unexport` removes only wrappers of that box. Shared code: `system_files/usr/share/octarine-os/lib/box-export.sh`
+  (`box_export <box> <dir> export|unexport <bin>...`): the real path is resolved in the box with `bash -lc 'command -v X'` (so
+  `/usr/local/cuda*/bin` and `/usr/bin/hipcc` are found, not guessed); a missing binary is skipped with a message; a file in `~/.local/bin`
+  is ours only when it carries `# distrobox_binary` and `# name: <box>`; anything else is shown and left alone; an existing own
+  wrapper reports "already exported". Tests: `tests/dev-setup.sh` and `tests/hardware-setup.sh` (stub `distrobox`).
+
+## `ujust hardware-setup`
+
+- One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
+  A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
+  calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
+  `amd-kargs` and `fido-key` have code of their own (plus the export steps, which use `box-export.sh`). Flags: `--yes` (ticked-by-default available steps that are not done; never
+  `amd-kargs`), `--no` (plan), `--list` (state per step: `available`, `done`, `not applicable (reason)`), `--only a,b` (a hidden step
+  prints `not applicable: <step> (<reason>)` and the run exits 0), `--help`. No terminal and no flag: one question per step; a gum
+  terminal: the shared checklist (done steps unticked and marked); Esc exits 0.
+- Steps and detection (paths are environment variables in tests): `sensors` (not a VM, `sensors-detect` present; done when
+  `octarine-sensors.conf` or `nct6775.conf` exists in `/etc/modules-load.d`), `amd-gpu` (vendor `0x1002` and `/sys/module/amdgpu`;
+  installs the LACT Flatpak system-wide and runs it with `LACT_UNATTENDED_SETUP=true`, UNVERIFIED without an AMD machine; done when
+  `lactd` is enabled), `amd-kargs` (same detection; `sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0x<current | 0x4000>`,
+  optional, never default; done when the command line or `rpm-ostree kargs` has it; the argument is NOT shipped), `amd-cpu-gaming`
+  (`amd_pstate/status` is `active`; calls `gaming-setup gamemode`), `nvidia` (`0x10de`; `switch-image nvidia`, or `nvidia-dx` when
+  `IMAGE_ID` ends in `-dx`; done when `/sys/module/nvidia` exists), `cuda` (driver loaded and the dx recipe file exists; `dev --only cuda`),
+  `secure-boot` (EFI, `mokutil --sb-state` enabled, the key file present; ticked by default only on an NVIDIA image whose key
+  `mokutil --test-key` does not report enrolled), `tpm-luks` (`/dev/tpmrm0` and a `crypto_LUKS` volume; never reported done, since
+  reading the headers needs root), `fido-key` (`lsusb -d 1050:` or a hidraw with `ID_SECURITY_TOKEN=1`; runs
+  `pamu2fcfg -o pam://sudo -i pam://sudo` into a temp file, mode 600, moved into `~/.config/Yubico/u2f_keys`; an existing non-empty file
+  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `rocm` (AMD GPU and `/dev/kfd` and distrobox; `ujust toolbox rocm`; not ticked by default; done when the box has `rocminfo`) with `rocm-export` and `cuda-export` (opt-in, never ticked; see "Opt-in export"), `virtualization` (dx image only, because only dx has libvirt, and `/dev/kvm`;
+  `dev --only libvirt`; done when the user is in `libvirt`).
+- Adding an entry: add its id to `valid_steps` and `step_ids`, its text, and a case in `reason_of`, `done_of`, `default_of`, `undo_of`
+  and `run_of`, then cases in `tests/hardware-setup.sh`. Skipped for now: firmware and laptop power. Unverified without hardware:
+  every detection on a real machine, the LACT unattended setup, `pamu2fcfg` with a key, the kargs change.
+
+## `ujust sensors-setup`
+
+- Opt-in recipe in `60-custom.just` (group System): the Super I/O driver is chip-specific (nct6775, it87, ...), so the image
+  never forces a module on (a missing chip would make `systemd-modules-load` log errors). It runs `sudo sensors-detect --auto`
+  (Fedora's `lm_sensors`; `--auto` writes `/etc/sysconfig/lm_sensors` with `BUS_MODULES`/`HWMON_MODULES`,
+  `/etc/modprobe.d/lm_sensors.conf` and enables `lm_sensors.service`, and leaves out autoloaded drivers), parses the two
+  variables from `/etc/sysconfig/lm_sensors` (module names validated), treats "no sensors were detected" and "No modules to load"
+  in the output as nothing to do, and writes `/etc/modules-load.d/octarine-sensors.conf` (static header, so an identical file means
+  "already done"). A different existing file: diff, default keep, `.bak-<timestamp>` on replace; the older hand-made
+  `nct6775.conf` is offered for a move to `.bak-<timestamp>`. `--no` is a plan and changes nothing (detection needs root), `--yes`
+  asks nothing. The files persist across image updates, so no re-run after an update. `acpi_enforce_resources=lax` is not set.
+  Tests: `tests/sensors-setup.sh` (fake `sudo`, `sensors-detect`, `modprobe`, `sensors`). Not verifiable in CI: a real chip.
 
 ## `ujust luks-tpm-unlock`
 
@@ -839,7 +924,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 ## dx image (`octarine-os-dx`)
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
-  `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`, ROCm userspace), VM tooling,
+  `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`; no ROCm, see below), VM tooling,
   tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
@@ -911,8 +996,28 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
   other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
   and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).
-- **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
-  and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
+- **Stage 3 (done, `feat/vm-host-to-dx`).** The VM-hosting set moved out of the default image and lives only in dx and nvidia-dx
+  (`variants/dx/packages/extras.txt`: `libvirt` and `qemu-kvm` meta packages, `cockpit-machines`, `virt-install`, `virtiofsd`, `swtpm`,
+  `swtpm-tools`, `dnsmasq`, `edk2-ovmf`, `virt-manager`, `virt-viewer`, `libvirt-nss`, ...). `build.sh` no longer lists `libvirt` and
+  `qemu-kvm` (CRITICAL) or `cockpit-machines` (the `cockpit` group); the `libguestfs` group (`guestfs-tools`, `libguestfs`,
+  `libguestfs-xfs`, `virt-v2v`) stays in the default image and drags in libvirt libraries and a QEMU subset as dependencies
+  (measured on the default image of 2026-11-10 with `dnf5 --disable-repo='*' remove --assumeno libvirt qemu-kvm cockpit-machines`:
+  103 packages and about 79 MiB go away, among them `libvirt`, `libvirt-daemon`, `libvirt-daemon-driver-storage-*` (except `-core`),
+  `libvirt-dbus`, `libvirt-glib`, `qemu-kvm`, `qemu-system-x86`, the `qemu-audio-*`, `-block-*`, `-device-*`, `-ui-*` modules,
+  `virtiofsd`, `virt-install`, `cockpit-machines`, `spice-server`, `virglrenderer`, glusterfs and Ceph client libraries). What stays
+  because of libguestfs and virt-v2v: `libvirt-libs`, `libvirt-client`, `libvirt-daemon-common`, `-driver-qemu`, `-driver-network`,
+  `-driver-secret`, `-driver-storage-core`, `-daemon-log`, `-daemon-config-network`, `qemu-kvm-core`, `qemu-system-x86-core`,
+  `qemu-img`, `qemu-common`, `edk2-ovmf`, `nbdkit*`, `passt`, `supermin`, `libguestfs-appliance`, `swtpm` (with `-libs`, `-tools`,
+  `-selinux`, dragged in by the QEMU driver, so it is NOT asserted absent), `dnsmasq`, `virt-what`. The `libvirt` group and the
+  `virtqemud` units can still exist in the default image through the driver packages, but nothing enables them. Smoke tests:
+  `build.yml` and `build-beta.yml` assert `libvirt`, `qemu-kvm`, `cockpit-machines`, `virt-manager`, `virt-viewer` and `libvirt-nss`
+  are absent (and `guestfs-tools` present); `nvidia-smoke.sh present` asserts the same for the plain NVIDIA image (skipped for an
+  `-dx` image id); `dx-smoke.sh` asserts the full set, the `libvirtd`, `virtqemud`, `virtnetworkd` and `virtstoraged` units and
+  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). The root `Justfile` recipe `test-vm`
+  needs libvirt on the host, so it runs on a dx machine. Switching a machine from dx to the default image removes VM hosting
+  (`ujust dev --only libvirt` and the hardware-setup `virtualization` step are dx-only; the user's `libvirt` group membership stays
+  in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
+  2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main` (for the testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
@@ -920,7 +1025,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 ## NVIDIA dx image (`octarine-os-nvidia-dx`) and the CUDA toolbox
 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-nvidia-dx`: the SAME dx layer (`variants/dx`, one `Containerfile`, one package
-  list, ROCm included, no CUDA toolkit) on top of `octarine-os-nvidia` instead of `octarine-os`. Kevin's decision (2026-11-10): the DX
+  list, no ROCm, no CUDA toolkit) on top of `octarine-os-nvidia` instead of `octarine-os`. Kevin's decision (2026-11-10): the DX
   build is identical for both variants, and NVIDIA's toolkit is a user-side install. No fork of the package list: the workflow passes
   `BASE_IMAGE=ghcr.io/<owner>/octarine-os-nvidia` and `DX_IMAGE_ID=octarine-os-nvidia-dx` (a build argument of the final stage of
   `variants/dx/Containerfile`, default `octarine-os-dx`; `dx.sh` sets `IMAGE_ID` from it and refuses any other value).
@@ -1146,7 +1251,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
   `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
   `chrome-flatpak-webapps` and `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; steps
-  in order: `groups` (copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first;
+  in order: `groups` (the gum checklist names only the groups `getent` finds, so the default image says gamemode and input; copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first;
   sudo), `shell` (`usermod -s /usr/bin/zsh`, second and last sudo use; skeleton zsh files copied with `cp -n` for the
   invoking user only), `flatpak` (skipped per app when missing (`flatpak info`) or the override is present (`flatpak
   override --user --show`); defaults yes except the Steam devices (widens the sandbox) and the games directory (needs a

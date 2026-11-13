@@ -19,7 +19,7 @@ user-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -135,9 +135,17 @@ user-setup *args:
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
         ui=1
         menu_title "octarineOS user setup"
+        # only name the groups that exist here (libvirt exists only where libvirt is installed, so not on the default image)
+        menu_groups=()
+        for g in gamemode input libvirt; do getent group "$g" >/dev/null 2>&1 && menu_groups+=("$g"); done
+        case "${#menu_groups[@]}" in
+            0) menu_groups_text="no extra groups" ;;
+            1) menu_groups_text="${menu_groups[0]}" ;;
+            *) menu_groups_text="$(IFS=,; echo "${menu_groups[*]:0:${#menu_groups[@]}-1}" | sed 's/,/, /g') and ${menu_groups[${#menu_groups[@]}-1]}" ;;
+        esac
         menu_multi "User setup: choose the steps" \
             "^Account^0" \
-            "groups^Add $user to gamemode, input and libvirt (sudo)^1" \
+            "groups^Add $user to $menu_groups_text (sudo)^1" \
             "shell^Login shell zsh (sudo)^1" \
             "^Apps^0" \
             "flatpak^Flatpak access overrides^1" \
@@ -167,7 +175,7 @@ user-setup *args:
     done
     echo "== groups"
     if [ "${#groups_todo[@]}" -eq 0 ]; then
-        echo "$user is already in every available group (gamemode, input, libvirt)."
+        echo "$user is already in every available group (gamemode, input, libvirt where installed)."
         record "groups" "already done"
     else
         echo "Will add $user to: ${groups_todo[*]} (uses sudo; takes effect at next login)."
@@ -932,6 +940,11 @@ gaming-setup *args:
         echo "$v"
     }
 
+    # GameMode's desiredgov=powersave is the workaround for upstream gamemode#419 and only right on amd-pstate in active
+    # mode (amd-pstate-epp). On other CPUs or drivers the step is not pre-ticked and the line is left out of the file.
+    pstate_active=0
+    [ "$(cat "${GAMING_SETUP_PSTATE_STATUS:-/sys/devices/system/cpu/amd_pstate/status}" 2>/dev/null)" = active ] && pstate_active=1
+    gm_default=$pstate_active
     # Terminal with gum and no step named: a checklist of the steps (the chosen ones run as if named, so they count
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
@@ -944,7 +957,7 @@ gaming-setup *args:
             "extest^extest build (experimental)^0" \
             "desktop^Generated Steam launchers^1" \
             "^Tuning^0" \
-            "gamemode^GameMode tuning in ~/.config/gamemode.ini^1"
+            "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -1133,6 +1146,13 @@ gaming-setup *args:
         echo "Skipped: $src_ini is missing."
         record "gamemode" "skipped (no source file)"
     else
+        if [ "$pstate_active" = 0 ]; then
+            # not amd-pstate-epp: drop the desiredgov workaround (its comment block and the line); the rest stays
+            gm_tmp=$(mktemp)
+            sed '/^; Keep the CPU governor/,/^desiredgov=/d' "$src_ini" >"$gm_tmp"
+            src_ini=$gm_tmp
+            echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
+        fi
         command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
         id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
         if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
@@ -1145,7 +1165,7 @@ gaming-setup *args:
                 echo "Replacing it keeps a timestamped backup."
                 ask n "Replace it?"
             else
-                echo "Installs the GameMode tuning (renice=10, desiredgov=powersave, tuned latency-performance while a game runs) as $dest_ini."
+                echo "Installs the GameMode tuning (renice=10,$([ "$pstate_active" = 1 ] && echo " desiredgov=powersave,") tuned latency-performance while a game runs) as $dest_ini."
                 ask y "Apply?"
             fi
             if [ "$answer" != y ]; then
@@ -1906,17 +1926,19 @@ switch-image *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     list=0
+    force=0
     image=""
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--list]`. Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
+            --force) force=1 ;;
             default | dx | nvidia | nvidia-dx) image=$a ;;
             latest | beta | testing) channel=$a ;;
-            -*) echo "Unknown option: $a (use --yes, --no or --list)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --force or --list)" >&2; exit 2 ;;
             *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, beta, testing)" >&2; exit 2 ;;
         esac
     done
@@ -2015,6 +2037,26 @@ switch-image *args:
         echo "Already on $image ($channel)."
         exit 0
     fi
+    # nvidia images on a machine without an NVIDIA GPU: say so and ask (--yes alone does not bypass it, --force does)
+    case "$image" in
+        nvidia | nvidia-dx)
+            has_nvidia=0
+            for v in "${OCTARINE_SYSFS_DRM:-/sys/class/drm}"/card*/device/vendor; do
+                [ -r "$v" ] && [ "$(cat "$v" 2>/dev/null)" = 0x10de ] && has_nvidia=1
+            done
+            if [ "$has_nvidia" = 0 ] && [ "$force" = 0 ]; then
+                echo "This machine has no NVIDIA GPU, so the $image image gives you a driver you cannot use (and it needs Secure Boot key enrollment)."
+                if [ "$mode" = no ]; then
+                    echo "(A real run would ask for confirmation, or need --force.)"
+                elif [ "$mode" = yes ]; then
+                    echo "Not switching: --yes does not bypass this. Add --force to switch anyway." >&2
+                    exit 1
+                else
+                    menu_confirm "Switch to $image anyway?" n || { echo "Left as it is."; exit 0; }
+                fi
+            fi
+            ;;
+    esac
     echo "Target:  $ref"
     probe "$image" "$channel"
     case $? in
@@ -2070,6 +2112,10 @@ luks-tpm-unlock *args:
         esac
     done
     case "$pcrs" in 7 | 7+14) ;; *) echo "--pcrs takes 7 or 7+14" >&2; exit 2 ;; esac
+    if [ ! -e "${OCTARINE_TPM_DEVICE:-/dev/tpmrm0}" ]; then
+        echo "This machine has no TPM 2.0 device (${OCTARINE_TPM_DEVICE:-/dev/tpmrm0} is missing), so TPM2 auto-unlock is not possible here. Check the firmware settings (fTPM or PTT) if you expected one. Nothing changed."
+        exit 0
+    fi
     sudo -v || { echo "sudo is needed to read the LUKS headers (YubiKey touch)." >&2; exit 1; }
     devs=()
     declare -A uuid_of=() size_of=() tpm_of=()
@@ -2174,6 +2220,493 @@ luks-tpm-unlock *args:
         if [ "$pcrs" = 7 ]; then echo "Passphrases are untouched. The key stops working when the Secure Boot state changes; run this again to re-enroll."
         else echo "Passphrases are untouched. The key stops working when the Secure Boot state or the MOK keys change (mokutil --import or --delete); run this again to re-enroll."; fi
     fi
+    exit "$failed"
+
+# Detect the fan and temperature chip of this board and load its driver at boot (--help for usage)
+[group('System')]
+[positional-arguments]
+sensors-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
+    mode=ask
+    for a in "$@"; do
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--yes|--no]`. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            *) echo "Unknown argument: $a (use --yes, --no or --help)" >&2; exit 1 ;;
+        esac
+    done
+    sysconfig=${OCTARINE_SENSORS_SYSCONFIG:-/etc/sysconfig/lm_sensors}
+    dir=${OCTARINE_MODULES_LOAD_DIR:-/etc/modules-load.d}
+    target="$dir/octarine-sensors.conf"
+    legacy="$dir/nct6775.conf"
+    if ! command -v sensors-detect >/dev/null 2>&1; then
+        echo "sensors-detect is not installed (package lm_sensors, part of the image's optional packages); nothing changed." >&2
+        exit 1
+    fi
+    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
+    [ -e "$target" ] && echo "Existing: $target"
+    [ -e "$legacy" ] && echo "Existing (older hand-made name): $legacy"
+    if [ "$mode" = no ]; then echo "(--no: nothing was run or changed)"; exit 0; fi
+    if [ "$mode" = ask ]; then
+        menu_confirm "Probe the hardware with sensors-detect --auto and write the module list?" n || { echo "Left as it is."; exit 0; }
+    fi
+    echo "== Step with sudo (YubiKey touch; not retried): sensors-detect --auto"
+    if ! sudo -v; then
+        echo "sudo failed. Run it yourself, then re-run this recipe: sudo sensors-detect --auto" >&2
+        exit 1
+    fi
+    detect_out=$(sudo sensors-detect --auto 2>&1)
+    detect_rc=$?
+    if [ "$detect_rc" -ne 0 ]; then
+        printf '%s\n' "$detect_out" | tail -n 15 >&2
+        echo "sensors-detect failed (exit $detect_rc). Nothing was written. Re-run: sudo sensors-detect --auto" >&2
+        exit 1
+    fi
+    if printf '%s\n' "$detect_out" | grep -qE 'no sensors were detected|No modules to load'; then
+        echo "No sensor chip needs a driver on this machine; nothing written. (If your fan headers are still missing, the chip may be unsupported or need acpi_enforce_resources=lax, which this recipe does not set.)"
+        exit 0
+    fi
+    mods=()
+    if [ -r "$sysconfig" ]; then
+        for var in BUS_MODULES HWMON_MODULES; do
+            val=$(sed -n "s/^${var}=\"\\(.*\\)\"[[:space:]]*\$/\\1/p" "$sysconfig" | tail -n 1)
+            for m in $val; do
+                case "$m" in
+                    *[!A-Za-z0-9_-]* | "") echo "Ignoring an odd module name in $sysconfig: $m" >&2 ;;
+                    *) case " ${mods[*]:-} " in *" $m "*) ;; *) mods+=("$m") ;; esac ;;
+                esac
+            done
+        done
+    fi
+    if [ "${#mods[@]}" -eq 0 ]; then
+        echo "sensors-detect found chips but listed no module to load (their drivers load by themselves); nothing written."
+        exit 0
+    fi
+    echo "Modules to load: ${mods[*]}"
+    new=$(mktemp)
+    trap 'rm -f -- "$new"' EXIT
+    {
+        echo "# Written by 'ujust sensors-setup' (sensors-detect --auto): drivers for this board's fan and temperature chips."
+        echo "# Undo: sudo rm $target ; then 'sudo modprobe -r <module>' or reboot."
+        printf '%s\n' "${mods[@]}"
+    } >"$new"
+    failed=0
+    ts=$(date +%Y%m%d-%H%M%S)
+    if [ -e "$target" ] && cmp -s "$new" "$target"; then
+        echo "Already done: $target has exactly this content."
+    else
+        replace=1
+        if [ -e "$target" ]; then
+            echo "== $target exists and differs:"
+            diff -u "$target" "$new" || true
+            if [ "$mode" = ask ]; then menu_confirm "Replace it (a backup is kept)?" n || { replace=0; echo "Kept the existing file."; }; fi
+        fi
+        if [ "$replace" = 1 ]; then
+            if [ -e "$target" ]; then
+                sudo cp -p "$target" "$target.bak-$ts" || failed=1
+                echo "Backup: $target.bak-$ts"
+            fi
+            if sudo tee "$target" <"$new" >/dev/null; then echo "Wrote $target"; else echo "Could not write $target. Run: sudo tee $target" >&2; failed=1; fi
+        fi
+    fi
+    if [ -e "$legacy" ]; then
+        echo "Note: the older hand-made file $legacy exists; it loads modules too."
+        doit=0
+        if [ "$mode" = yes ]; then doit=1; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
+        if [ "$doit" = 1 ]; then
+            if sudo mv "$legacy" "$legacy.bak-$ts"; then echo "Moved $legacy to $legacy.bak-$ts (undo: sudo mv it back)"; else failed=1; fi
+        else
+            echo "Kept $legacy."
+        fi
+    fi
+    for m in "${mods[@]}"; do
+        if sudo modprobe "$m"; then echo "Loaded $m"; else echo "Could not load $m (try: sudo modprobe $m)" >&2; failed=1; fi
+    done
+    echo "== Fan and temperature lines from sensors:"
+    if command -v sensors >/dev/null 2>&1; then
+        sensors 2>/dev/null | grep -Ei '^[A-Za-z0-9_-]+-(isa|pci|virtual|acpi|i2c)|fan[0-9]*:|pump|temp[0-9]*:|^[A-Za-z]+ *[0-9]*:.*°C' || echo "(sensors printed no fan or temperature lines)"
+    else
+        echo "(sensors is not installed)"
+    fi
+    echo
+    echo "This persists across image updates (a file in /etc, the driver comes with the kernel): no need to re-run after an update, only after a hardware change."
+    echo "If some fan headers are still missing, some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it."
+    echo "Undo: sudo rm $target ; sudo modprobe -r ${mods[*]} ; sudo systemctl disable --now lm_sensors.service (sensors-detect enabled it)"
+    exit "$failed"
+
+# Vendor and hardware setup: a checklist of steps, each shown only when this machine has the hardware (--help)
+[group('Setup')]
+[positional-arguments]
+hardware-setup *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
+    ujust_cmd=${OCTARINE_UJUST:-ujust}
+    drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
+    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization "
+    mode=ask
+    list=0
+    only_list=""
+    export_flag=""
+    args=("$@")
+    i=0
+    while [ "$i" -lt "${#args[@]}" ]; do
+        a=${args[$i]}
+        case "$a" in
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), virtualization (libvirt access; runs ujust dev --only libvirt, dx image). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --list) list=1 ;;
+            --export) export_flag=export ;;
+            --unexport) export_flag=unexport ;;
+            --only)
+                i=$((i + 1))
+                only_list=${args[$i]:-}
+                [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
+                ;;
+            --only=*) only_list=${a#--only=} ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --list, --export, --unexport or --only STEP[,STEP...])" >&2; exit 2 ;;
+            *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
+        esac
+        i=$((i + 1))
+    done
+    if [ -n "$only_list" ]; then
+        for s in ${only_list//,/ }; do
+            case "$valid_steps" in *" $s "*) ;; *) echo "Unknown step: $s (steps:${valid_steps% })" >&2; exit 2 ;; esac
+        done
+    fi
+
+    image_id=$(sed -n 's/^IMAGE_ID="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "${OCTARINE_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -n1)
+    has_vendor() { # hex id
+        local v
+        for v in "$drm"/card*/device/vendor; do
+            [ -r "$v" ] && [ "$(cat "$v" 2>/dev/null)" = "$1" ] && return 0
+        done
+        return 1
+    }
+    box_exists() { distrobox list 2>/dev/null | awk -F'|' -v b="$1" 'NR > 1 { x = $2; gsub(/ /, "", x); if (x == b) f = 1 } END { exit !f }'; }
+    amdgpu_mod=${HW_AMDGPU_MODULE:-/sys/module/amdgpu}
+    nvidia_mod=${HW_NVIDIA_MODULE:-/sys/module/nvidia}
+    pstate=${GAMING_SETUP_PSTATE_STATUS:-/sys/devices/system/cpu/amd_pstate/status}
+    tpm_dev=${OCTARINE_TPM_DEVICE:-/dev/tpmrm0}
+    efi_dir=${HW_EFI:-/sys/firmware/efi}
+    sb_key=${HW_SB_KEY:-/etc/pki/akmods/certs/akmods-ublue.der}
+    dev_just=${HW_DEV_JUST:-/usr/share/ublue-os/just/70-octarine-dev.just}
+    kvm_dev=${HW_KVM:-/dev/kvm}
+    kfd_dev=${HW_KFD:-/dev/kfd}
+    export_dir=${HW_EXPORT_DIR:-$HOME/.local/bin}
+    rocm_bins=(hipcc rocminfo rocm-smi)
+    cuda_bins=(nvcc)
+    modload_dir=${OCTARINE_MODULES_LOAD_DIR:-/etc/modules-load.d}
+    u2f_file=${HW_U2F_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/Yubico/u2f_keys}
+    lact_app=io.github.ilya_zlobintsev.LACT
+    ppfm_param=${HW_PPFEATUREMASK:-/sys/module/amdgpu/parameters/ppfeaturemask}
+    cmdline_file=${HW_CMDLINE:-/proc/cmdline}
+    gm_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
+
+    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization)
+    declare -A text=(
+        [sensors]="Fan and temperature chip driver (sensors-detect; sudo)"
+        [amd-gpu]="AMD GPU: LACT Flatpak and its daemon lactd"
+        [amd-kargs]="AMD GPU: kernel argument amdgpu.ppfeaturemask for overclocking (optional; sudo, reboot)"
+        [amd-cpu-gaming]="AMD CPU: GameMode tuning for amd-pstate"
+        [rocm]="AMD GPU: ROCm compute tools in a rootless distrobox"
+        [rocm-export]="ROCm: export hipcc, rocminfo and rocm-smi to ~/.local/bin (optional)"
+        [nvidia]="NVIDIA: switch to the NVIDIA image"
+        [cuda]="NVIDIA: CUDA toolkit in a rootless distrobox"
+        [cuda-export]="CUDA: export nvcc to ~/.local/bin (optional)"
+        [secure-boot]="Secure Boot: enroll the image key"
+        [tpm-luks]="TPM2 auto-unlock for LUKS volumes (sudo)"
+        [fido-key]="Security key: register it for sudo and polkit (touch)"
+        [virtualization]="Virtualization: libvirt access for your user (sudo)"
+    )
+
+    # reason_of <step>: prints why the step does not apply (nothing when it does)
+    reason_of() {
+        case "$1" in
+            sensors)
+                if systemd-detect-virt --quiet 2>/dev/null; then echo "this is a virtual machine"
+                elif ! command -v sensors-detect >/dev/null 2>&1; then echo "sensors-detect (lm_sensors) is not installed"; fi ;;
+            amd-gpu | amd-kargs)
+                if ! has_vendor 0x1002; then echo "no AMD GPU"
+                elif [ ! -d "$amdgpu_mod" ]; then echo "the amdgpu driver is not loaded"; fi ;;
+            amd-cpu-gaming) [ "$(cat "$pstate" 2>/dev/null)" = active ] || echo "amd-pstate is not in active mode" ;;
+            rocm | rocm-export)
+                if ! has_vendor 0x1002; then echo "no AMD GPU"
+                elif [ ! -e "$kfd_dev" ]; then echo "no /dev/kfd (the amdgpu compute interface)"
+                elif ! command -v distrobox >/dev/null 2>&1; then echo "distrobox is not installed"
+                elif [ "$1" = rocm-export ] && ! box_exists rocm; then echo "the rocm box does not exist yet"; fi ;;
+            nvidia) has_vendor 0x10de || echo "no NVIDIA GPU" ;;
+            cuda)
+                if [ ! -d "$nvidia_mod" ]; then echo "the NVIDIA driver is not loaded"
+                elif [ ! -f "$dev_just" ]; then echo "needs the dx image (ujust dev)"; fi ;;
+            cuda-export) box_exists cuda || echo "the cuda box does not exist yet" ;;
+            secure-boot)
+                if [ ! -d "$efi_dir" ]; then echo "not booted with UEFI"
+                elif ! command -v mokutil >/dev/null 2>&1; then echo "mokutil is not installed"
+                elif ! mokutil --sb-state 2>/dev/null | grep -qi 'enabled'; then echo "Secure Boot is not enabled"
+                elif [ ! -f "$sb_key" ]; then echo "the image key $sb_key is not present"; fi ;;
+            tpm-luks)
+                if [ ! -e "$tpm_dev" ]; then echo "no TPM 2.0 device"
+                elif ! lsblk -rno FSTYPE 2>/dev/null | grep -qx crypto_LUKS; then echo "no LUKS volume"; fi ;;
+            fido-key)
+                if ! command -v pamu2fcfg >/dev/null 2>&1; then echo "pamu2fcfg (pam-u2f) is not installed"
+                elif ! fido_present; then echo "no security key found"; fi ;;
+            virtualization)
+                case "$image_id" in *-dx) ;; *) echo "needs the dx image"; return ;; esac
+                [ -e "$kvm_dev" ] || echo "no /dev/kvm (virtualization is off in the firmware or this is a VM)" ;;
+        esac
+    }
+    fido_present() {
+        local h
+        if command -v lsusb >/dev/null 2>&1 && [ -n "$(lsusb -d 1050: 2>/dev/null)" ]; then return 0; fi
+        for h in ${HW_HIDRAW_GLOB:-/dev/hidraw*}; do
+            [ -e "$h" ] || continue
+            udevadm info -q property -n "$h" 2>/dev/null | grep -qx 'ID_SECURITY_TOKEN=1' && return 0
+        done
+        return 1
+    }
+    # exports_done <box> <bin>...: every wrapper exists and is an export of that box
+    exports_done() {
+        local box=$1 b
+        shift
+        for b in "$@"; do
+            grep -q '^# distrobox_binary' "$export_dir/$b" 2>/dev/null && grep -q "^# name: $box\$" "$export_dir/$b" 2>/dev/null || return 1
+        done
+    }
+    # done_of <step>: already in place
+    done_of() {
+        case "$1" in
+            sensors) [ -e "$modload_dir/octarine-sensors.conf" ] || [ -e "$modload_dir/nct6775.conf" ] ;;
+            amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
+            amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
+            amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
+            rocm) box_exists rocm && distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
+            rocm-export) exports_done rocm "${rocm_bins[@]}" ;;
+            cuda-export) exports_done cuda "${cuda_bins[@]}" ;;
+            nvidia) [ -d "$nvidia_mod" ] ;;
+            cuda) box_exists cuda ;;
+            secure-boot) mokutil --test-key "$sb_key" 2>&1 | grep -qi 'already enrolled' ;;
+            tpm-luks) return 1 ;;
+            fido-key) [ -s "$u2f_file" ] ;;
+            virtualization) id -nG 2>/dev/null | tr ' ' '\n' | grep -qx libvirt ;;
+        esac
+    }
+    default_of() { # 1 when ticked by default
+        case "$1" in
+            sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
+            rocm | rocm-export | cuda-export) echo 0 ;;
+            secure-boot)
+                case "$image_id" in *nvidia*) echo 1 ;; *) echo 0 ;; esac ;;
+            *) echo 0 ;;
+        esac
+    }
+    undo_of() {
+        case "$1" in
+            sensors) echo "sudo rm $modload_dir/octarine-sensors.conf; sudo systemctl disable --now lm_sensors.service" ;;
+            amd-gpu) echo "flatpak uninstall $lact_app; sudo systemctl disable --now lactd" ;;
+            amd-kargs) echo "sudo rpm-ostree kargs --delete-if-present=amdgpu.ppfeaturemask=<value> (the one shown) and reboot" ;;
+            amd-cpu-gaming) echo "ujust gaming-setup reset" ;;
+            rocm) echo "distrobox rm --force rocm (or ujust toolbox rocm --remove)" ;;
+            rocm-export) echo "ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin <path> --export-path ~/.local/bin --unexport in the box, for each of ${rocm_bins[*]})" ;;
+            cuda-export) echo "ujust hardware-setup --only cuda-export --unexport (or distrobox-export --bin <path> --export-path ~/.local/bin --unexport in the box, for ${cuda_bins[*]})" ;;
+            nvidia) echo "sudo bootc rollback (or ujust switch-image default)" ;;
+            cuda) echo "distrobox rm --force cuda" ;;
+            secure-boot) echo "sudo mokutil --delete $sb_key" ;;
+            tpm-luks) echo "ujust luks-tpm-unlock remove" ;;
+            fido-key) echo "rm $u2f_file" ;;
+            virtualization) echo "sudo gpasswd -d $(id -un) libvirt" ;;
+        esac
+    }
+    ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
+
+    box_lib="${OCTARINE_BOX_EXPORT_LIB:-/usr/share/octarine-os/lib/box-export.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$box_lib" ]; then . "$box_lib"; else box_export() { echo "  FAILED: $box_lib is missing" >&2; return 1; }; fi
+    run_export() { # box bins...  (honors --unexport)
+        local box=$1
+        shift
+        if [ "$export_flag" = unexport ]; then box_export "$box" "$export_dir" unexport "$@"; else box_export "$box" "$export_dir" export "$@"; fi
+    }
+    retry() { "$@" || { echo "  failed; trying once more in 5 s" >&2; sleep "${HW_RETRY_WAIT:-5}"; "$@"; }; }
+    # run_of <step>: do it; return code is the step's result (the called recipes keep their own messages)
+    run_of() {
+        local arg yes=()
+        [ "$mode" = yes ] && yes=(--yes)
+        case "$1" in
+            sensors) "$ujust_cmd" sensors-setup "${yes[@]}" ;;
+            amd-gpu)
+                echo "Installs the verified LACT Flatpak from Flathub (system scope; polkit may ask for a touch), then asks it to set up its daemon lactd."
+                retry flatpak install -y --system flathub "$lact_app" || return 1
+                echo "Setting up lactd (LACT_UNATTENDED_SETUP=true; this unattended mode is taken from LACT's Flatpak notes and is not verified here)."
+                if ! flatpak run --env=LACT_UNATTENDED_SETUP=true "$lact_app"; then
+                    echo "The daemon setup did not finish. Open LACT once from the app grid and accept its offer to install the lactd service." >&2
+                    return 1
+                fi
+                ;;
+            amd-kargs)
+                arg=$(ppfm_arg) || return 1
+                echo "Run once with sudo (a touch; not retried): sudo rpm-ostree kargs --append-if-missing=$arg"
+                sudo rpm-ostree kargs --append-if-missing="$arg" || return 1
+                echo "Reboot to apply it. The argument is NOT shipped by default; it unlocks LACT's overclocking controls."
+                ;;
+            amd-cpu-gaming) "$ujust_cmd" gaming-setup gamemode "${yes[@]}" ;;
+            rocm)
+                echo "Creates a rootless distrobox named rocm from Fedora's toolbox image and installs the ROCm tools from Fedora's repositories inside it (large download). The GPU nodes are world-accessible through udev, so no group is needed. Whether this ROCm build supports your GPU (for example RDNA4 gfx1201) is not verified here."
+                "$ujust_cmd" toolbox rocm || return 1
+                echo "Check it:  distrobox enter rocm -- rocminfo   and   distrobox enter rocm -- rocm-smi"
+                echo "Entering the box always works without exported commands; export them with: ujust hardware-setup --only rocm-export"
+                ;;
+            rocm-export) run_export rocm "${rocm_bins[@]}" ;;
+            cuda-export) run_export cuda "${cuda_bins[@]}" ;;
+            nvidia)
+                case "$image_id" in *-dx) arg=nvidia-dx ;; *) arg=nvidia ;; esac
+                "$ujust_cmd" switch-image "$arg" "${yes[@]}"
+                ;;
+            cuda) "$ujust_cmd" dev --only cuda "${yes[@]}" ;;
+            secure-boot) "$ujust_cmd" enroll-secure-boot-key ;;
+            tpm-luks) "$ujust_cmd" luks-tpm-unlock ;;
+            fido-key)
+                local dir tmp
+                dir=$(dirname "$u2f_file")
+                mkdir -p "$dir" || return 1
+                tmp=$(mktemp "$dir/.u2f_keys.XXXXXX") || return 1
+                echo "Touch your security key when it blinks."
+                if pamu2fcfg -o pam://sudo -i pam://sudo >"$tmp" && [ -s "$tmp" ]; then
+                    chmod 600 "$tmp"
+                    mv -- "$tmp" "$u2f_file" || { rm -f "$tmp"; return 1; }
+                    echo "Wrote $u2f_file. Check: sudo -k; sudo true (asks for the touch). A second key: see CONFIG-GUIDE.md."
+                else
+                    rm -f "$tmp"
+                    echo "No key was registered (nothing written)." >&2
+                    return 1
+                fi
+                ;;
+            virtualization) "$ujust_cmd" dev --only libvirt "${yes[@]}" ;;
+        esac
+    }
+
+    avail=()
+    declare -A why=() isdone=()
+    for s in "${step_ids[@]}"; do
+        why[$s]=$(reason_of "$s")
+        if [ -z "${why[$s]}" ]; then
+            avail+=("$s")
+            if done_of "$s"; then isdone[$s]=1; else isdone[$s]=0; fi
+        fi
+    done
+    state_of() { if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"; elif [ "${isdone[$1]}" = 1 ]; then echo done; else echo available; fi; }
+
+    if [ "$list" = 1 ]; then
+        printf '%-16s %s\n' STEP STATE
+        for s in "${step_ids[@]}"; do printf '%-16s %s\n' "$s" "$(state_of "$s")"; done
+        exit 0
+    fi
+
+    names=()
+    results=()
+    undos=()
+    failed=0
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    chosen=()
+    if [ -n "$only_list" ]; then
+        for s in ${only_list//,/ }; do
+            if [ -n "${why[$s]}" ]; then
+                echo "not applicable: $s (${why[$s]})"
+            else
+                chosen+=("$s")
+            fi
+        done
+        [ "${#chosen[@]}" -gt 0 ] || exit 0
+    elif [ "${#avail[@]}" -eq 0 ]; then
+        echo "No hardware-specific step applies to this machine."
+        exit 0
+    elif [ "$mode" = yes ]; then
+        for s in "${avail[@]}"; do
+            [ "${isdone[$s]}" = 1 ] && continue
+            [ "$(default_of "$s")" = 1 ] && chosen+=("$s")
+        done
+    elif [ "$mode" = ask ] && menu_ready; then
+        items=()
+        for s in "${avail[@]}"; do
+            sel=$(default_of "$s")
+            label=${text[$s]}
+            if [ "${isdone[$s]}" = 1 ]; then sel=0; label+=" (done)"; fi
+            items+=("$s^$label^$sel")
+        done
+        menu_title "octarineOS hardware setup"
+        menu_multi "Hardware setup: choose the steps (only what this machine has is listed)" "${items[@]}"
+        if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed. Run ujust hardware-setup --list to see the steps."; exit 0; fi
+        chosen=("${MENU_RESULT[@]}")
+        if ! menu_confirm "Run these steps: ${chosen[*]}?" y; then echo "Nothing changed."; exit 0; fi
+    elif [ "$mode" = no ]; then
+        chosen=("${avail[@]}")
+    else
+        # no terminal menu: ask one question per available step
+        for s in "${avail[@]}"; do
+            [ "${isdone[$s]}" = 1 ] && continue
+            def=$(default_of "$s")
+            hint="[y/N]"; [ "$def" = 1 ] && hint="[Y/n]"
+            printf '%s %s ' "${text[$s]}?" "$hint"
+            read -r reply || reply=""
+            case "$reply" in [Yy]*) chosen+=("$s") ;; [Nn]*) ;; *) [ "$def" = 1 ] && chosen+=("$s") ;; esac
+        done
+    fi
+
+    # --export adds the export step after rocm and cuda; --unexport turns them into their unexport steps
+    if [ -n "$export_flag" ]; then
+        expanded=()
+        for s in "${chosen[@]}"; do
+            case "$s:$export_flag" in
+                rocm:export) expanded+=(rocm rocm-export) ;;
+                cuda:export) expanded+=(cuda cuda-export) ;;
+                rocm:unexport) expanded+=(rocm-export) ;;
+                cuda:unexport) expanded+=(cuda-export) ;;
+                *) expanded+=("$s") ;;
+            esac
+        done
+        chosen=("${expanded[@]}")
+    fi
+    for s in "${chosen[@]}"; do
+        echo
+        echo "== $s: ${text[$s]}"
+        if [ "$export_flag" = unexport ] && [[ "$s" == *-export ]]; then isdone[$s]=0; fi
+        if [ "${isdone[$s]:-0}" = 1 ]; then
+            echo "Already done."
+            record "$s" "already done"
+            continue
+        fi
+        if [ "$mode" = no ]; then
+            echo "Plan: would run this step. Undo: $(undo_of "$s")"
+            record "$s" planned
+            continue
+        fi
+        if run_of "$s"; then
+            record "$s" applied "$(undo_of "$s")"
+        else
+            echo "Failed: $s. Re-run: ujust hardware-setup --only $s" >&2
+            failed=1
+            record "$s" FAILED
+        fi
+    done
+    if [ "${#names[@]}" -eq 0 ]; then echo "Nothing to do."; exit 0; fi
+    echo
+    echo "== Summary (mode: $mode)"
+    printf '%-18s %s\n' STEP RESULT
+    for k in "${!names[@]}"; do printf '%-18s %s\n' "${names[$k]}" "${results[$k]}"; done
+    echo
+    echo "To undo (per step):"
+    for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
     exit "$failed"
 
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)

@@ -72,6 +72,7 @@ F
 cat >"$bin/getent" <<'F'
 #!/usr/bin/env bash
 if [ "$1" = passwd ]; then echo "$2:x:1000:1000::/home/$2:$(cat "$SHELLF")"; exit 0; fi
+[ "$2" = libvirt ] && [ -n "${NO_LIBVIRT_GROUP:-}" ] && exit 2
 case "$2" in gamemode | input | libvirt) echo "$2:x:1:" ;; *) exit 2 ;; esac
 F
 cat >"$bin/id" <<'F'
@@ -448,6 +449,10 @@ export OCTARINE_MENU_FORCE_TTY=1
 run ''
 check "gum checklist: Esc (empty) changes nothing" notlogged "usermod"
 check "gum checklist: Esc is not a failure" test "$rc" = 0
+reset
+export OCTARINE_MENU_FORCE_TTY=1
+NO_LIBVIRT_GROUP=1 run ''
+check "gum checklist: without a libvirt group (default image) the groups entry names only gamemode and input" bash -c "grep -qF 'Add tester to gamemode and input (sudo)' '$LOG' && ! grep -q 'Add tester to .*libvirt' '$LOG'"
 reset
 export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
 gumq 1 'Account: Login shell zsh (sudo)\n'

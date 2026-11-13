@@ -35,8 +35,10 @@ Two ideas run through everything:
 
 Everything system-level that used to be hand-layered now lives in this repo:
 
-- **Packages:** the niri compositor with the Noctalia shell, libvirt and QEMU, Cockpit and its
-  plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`.
+- **Packages:** the niri compositor with the Noctalia shell, Cockpit and its
+  plugins, PCP for Cockpit metrics, backup tools, GSConnect and more. See `build_files/build.sh`. Hosting virtual
+  machines (libvirt, QEMU, virt-manager, Cockpit machines) is not in the default image: it ships only in the dx images; the
+  libguestfs tools stay everywhere.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, a container
   signature policy for the image itself. The `iommu=pt` kernel argument ships only in the dx image.
@@ -274,7 +276,7 @@ ARGs), overridable with the repository variables of the same names. A Fedora maj
 3. **Switch to the image:** `sudo bootc switch ghcr.io/<owner>/<image>:latest`, reboot, then repeat it with
    `--enforce-container-sigpolicy` and reboot again (the first switch runs under stock Fedora's accept-anything policy).
    Remove old layered packages first, since local layers get in the way of `bootc upgrade`.
-4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and `libvirt`, the zsh login shell, fish profile, search providers and the Flatpak access steps), restore the
+4. **Fix identity:** run `ujust user-setup` (groups `gamemode`, `input` and, where libvirt is installed (dx), `libvirt`, the zsh login shell, fish profile, search providers and the Flatpak access steps), restore the
    `crypttab` and `fstab` lines for the data drives, and re-enroll TPM unlock.
 5. **Clone the dotfiles into `~/.config`**, set the hooks path, and run the homefiles deploy script.
 6. **Flatpaks:** `ujust flatpak-preinstall` (from a desktop terminal) installs the set the image lists. Restore the rest and their overrides
@@ -293,8 +295,12 @@ Recipes run through `ujust`; arguments are positional, for example `ujust toolbo
 They are idempotent. The README has the one-line list and `ujust --list` is the index; options, state files
 and safeguards are in `CLAUDE.md`. What you need to use them:
 
+- **`hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`:** one checklist of vendor and hardware specific steps that
+  calls the standalone recipes (`sensors-setup`, `switch-image`, `luks-tpm-unlock`, `gaming-setup gamemode`, `dev --only cuda`,
+  `enroll-secure-boot-key`) and adds the AMD GPU tool (LACT), ROCm in a rootless distrobox (the dx images no longer carry ROCm), opt-in `--export` of `nvcc` or `hipcc`, `rocminfo` and `rocm-smi` to `~/.local/bin`, the optional `amdgpu.ppfeaturemask` kernel argument and the security
+  key registration for `sudo`. A step is listed only when the machine has the hardware; `--list` shows why one is hidden.
 - **`user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`:** an interactive checklist, one y/n question per step,
-  in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
+  in this order: `groups` (join `gamemode`, `input` and, where libvirt is installed (dx images), `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
   the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
   input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
   launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: the 12-font developer set from

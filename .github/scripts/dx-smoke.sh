@@ -52,6 +52,9 @@ done
 check "pkgconf finds glib-2.0 and openssl" "pkgconf --exists glib-2.0 openssl"
 
 echo "== virtualization (extras.txt)"
+for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
+    check "ROCm package ${p} is NOT installed (ujust hardware-setup provides ROCm in a distrobox)" "! rpm -q ${p}"
+done
 check "package qemu-kvm" "rpm -q qemu-kvm"
 check "qemu-kvm binary" "have qemu-kvm || test -x /usr/libexec/qemu-kvm"
 for c in virt-manager virt-viewer virt-install; do
@@ -59,7 +62,10 @@ for c in virt-manager virt-viewer virt-install; do
 done
 check "libvirtd.service present" "test -e ${unit_dir}/libvirtd.service"
 check "virtqemud.service present" "test -e ${unit_dir}/virtqemud.service"
-for p in libvirt cockpit-machines virtiofsd swtpm edk2-ovmf; do
+check "virtnetworkd.service present (ujust dev enables its socket)" "test -e ${unit_dir}/virtnetworkd.service"
+check "virtstoraged.service present (ujust dev enables its socket)" "test -e ${unit_dir}/virtstoraged.service"
+# the full VM-hosting set lives here: the default image and nvidia no longer carry it
+for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer virtiofsd swtpm swtpm-tools edk2-ovmf libvirt-nss dnsmasq; do
     check "package ${p}" "rpm -q ${p}"
 done
 
@@ -120,7 +126,7 @@ if [ "${fail}" != 0 ]; then
     echo "DIAG BASE_KERNEL: ${BASE_KERNEL:-unset}"
     echo "DIAG kernel packages: $(rpm -qa 'kernel*' 2>&1 | sort | tr '\n' ' ')"
     missing=""
-    for p in gcc gcc-c++ clang cmake ninja-build meson gdb pkgconf uv rustup fish glib2-devel openssl-devel qemu-kvm virt-manager virt-viewer virt-install libvirt; do
+    for p in gcc gcc-c++ clang cmake ninja-build meson gdb pkgconf uv rustup fish glib2-devel openssl-devel qemu-kvm virt-manager virt-viewer virt-install libvirt cockpit-machines swtpm libvirt-nss; do
         rpm -q "${p}" >/dev/null 2>&1 || missing="${missing} ${p}"
     done
     echo "DIAG developer and VM packages not installed:${missing:- none}"

@@ -5,8 +5,9 @@
 # (outside repositories; VS Code is a Flatpak that `ujust dev` installs on request).
 
 # --- VM hosting ---
-# The default image ships these today; they are listed here so dx stays self-sufficient when the default image
-# drops its VM-hosting set (planned, see CLAUDE.md). Already-installed packages are skipped by dnf5.
+# The default image no longer ships the VM-hosting set (libvirt and qemu-kvm meta packages, cockpit-machines): the dx
+# variants (and so nvidia-dx) are the only place it comes from. The default image keeps the libguestfs tools, which pull in
+# libvirt libraries and QEMU pieces as dependencies; dnf5 skips what is already installed.
 libvirt
 qemu-kvm
 cockpit-machines

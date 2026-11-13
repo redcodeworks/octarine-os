@@ -119,6 +119,12 @@ smoke() { # mode
 K=$k
 mk_image "$K"
 check "smoke present: a complete variant passes" smoke present
+mk_image "$K"; printf 'kmod-nvidia-%s\nnvidia-driver\nlibvirt\n' "$K" >"$RPM_LIST"
+smoke present >"$root/sm.out" 2>&1; check "smoke present: libvirt in the plain NVIDIA image fails (VM hosting is dx only)" bash -c "[ $? -ne 0 ] && grep -q 'FAIL no VM-hosting package' '$root/sm.out'"
+mk_image "$K"; printf 'kmod-nvidia-%s\nnvidia-driver\nlibvirt-libs\nguestfs-tools\n' "$K" >"$RPM_LIST"
+smoke present >"$root/sm.out" 2>&1; check "smoke present: libvirt libraries and the libguestfs tools are allowed" test $? -eq 0
+mk_image "$K"; mkdir -p "$root/img/local"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os-nvidia-dx"/' "$root/img/os-release"; printf 'kmod-nvidia-%s\nnvidia-driver\nlibvirt\nqemu-kvm\n' "$K" >"$RPM_LIST"
+EXPECT_IMAGE_ID=octarine-os-nvidia-dx smoke present >"$root/sm.out" 2>&1; check "smoke present: the nvidia-dx image may carry the VM-hosting set" test $? -eq 0
 # the NVIDIA developer image (octarine-os-nvidia-dx): the same checks with another IMAGE_ID, and never a CUDA toolkit
 mk_image "$K"; mkdir -p "$root/img/local"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os-nvidia-dx"/' "$root/img/os-release"
 EXPECT_IMAGE_ID=octarine-os-nvidia-dx smoke present >"$root/sm.out" 2>&1; check "smoke present: the nvidia-dx image passes with EXPECT_IMAGE_ID=octarine-os-nvidia-dx" test $? -eq 0
