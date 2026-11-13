@@ -125,6 +125,12 @@ jobs:
       - name: Verify the binaries image
         run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
 
+      - name: Say which path the binaries image took
+        env:
+          ACTION: ${{ needs.binaries.outputs.action }}
+          HASH: ${{ needs.binaries.outputs.hash }}
+        run: echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
+
       # Fail early and clearly if the beta base cannot be pulled (the tag only exists while Universal Blue builds a beta)
       - name: Check the base image can be pulled
         run: |

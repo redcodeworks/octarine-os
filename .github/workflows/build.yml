@@ -337,6 +337,12 @@ jobs:
       - name: Verify the binaries image
         run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
 
+      - name: Say which path the binaries image took
+        env:
+          ACTION: ${{ needs.binaries.outputs.action }}
+          HASH: ${{ needs.binaries.outputs.hash }}
+        run: echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
+
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
         run: |

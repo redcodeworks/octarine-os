@@ -128,6 +128,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   hash tag of the checked-out tree, and labels the image `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for
   `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public (the GPL source records ship in
   the image either way).
+- **Which path ran.** The run shows it: a green job "Reuse the binaries image" (the lookup found a signed image for the hash, the build and sign jobs are skipped) or "Build the binaries image" plus "Sign the binaries image"; `binaries.yml` outputs `action` (`reused`, `built` or `validated` for a branch that cannot publish), `hash` and `digest`, each deciding job writes one line to the run summary, and `build.yml` and `build-beta.yml` repeat it; a tag whose signature fails to verify is not reused, the build path rebuilds and signs it again.
 - **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
   `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
   the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
