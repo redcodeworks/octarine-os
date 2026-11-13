@@ -220,6 +220,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # the signing secret is a repository secret, which a called workflow only gets when it is passed on
+    secrets: inherit
 
   build_push:
     name: Build image
