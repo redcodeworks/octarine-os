@@ -139,7 +139,7 @@ mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
 optional_groups=(
-    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
+    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
     "cockpit:cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
     "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
     "pcp:pcp python3-pcp"

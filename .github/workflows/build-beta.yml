@@ -169,7 +169,7 @@ jobs:
             done
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
             for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
+                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon \
                      nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
@@ -186,6 +186,14 @@ jobs:
             else
               echo "INFO GPaste not installed (listed in optional-packages-missing)"
             fi
+            for e in just-perfection-desktop@just-perfection:just-perfection ddterm@amezin.github.com:ddterm freon@UshakovVasilii_Github.yahoo.com:sensors; do
+              u=${e%%:*}; k=${e#*:}
+              if [ -d /usr/share/gnome-shell/extensions/$u ]; then
+                check "extension $u: UUID in metadata.json" "grep -qF $u /usr/share/gnome-shell/extensions/$u/metadata.json"
+                check "extension $u: schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas list-keys org.gnome.shell.extensions.$k"
+              else echo "INFO extension $u not installed (listed in optional-packages-missing)"; fi
+            done
+            check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
