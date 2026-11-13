@@ -6,10 +6,22 @@
 ARG BREW_TAG=20261108
 ARG BREW_DIGEST=sha256:2993b28cf9a54efebdc418ef42228618f5c68e8b931430f2d60eddc190e30016
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
+# Prebuilt binaries, as files only: two tiny signed FROM scratch images built and published by the fedora-toolbox repository
+# (ghcr.io/redcodeworks/scx-bin: the sched_ext schedulers scx_*, GPL-2.0; ghcr.io/redcodeworks/extest-bin: libextest.so for Steam
+# Input on Wayland, 32-bit and 64-bit, MIT). Pinned by DIGEST like the brew image; the tag is for humans (`testing-<sha7>`,
+# `latest-<YYYYMMDD>-<sha7>`, `testing` or `latest`). The weekly workflow bump-pins.yml opens the pull request that moves a
+# pin to `latest`; CI checks the format on every build and verifies the signature (keys/redcodeworks-toolbox-cosign.pub).
+# build.sh installs them under /usr (see "Prebuilt binaries" in CLAUDE.md).
+ARG SCX_BIN_TAG=testing-fcede79
+ARG SCX_BIN_DIGEST=sha256:e56699772be615d240cc2c06ae7b6705f46cc73afc44717b3113d36c6d48458d
+ARG EXTEST_BIN_TAG=testing-05f2e35
+ARG EXTEST_BIN_DIGEST=sha256:de9f2951fc15cf577ad538d4262414b164f16f9d035bb907b7fe91edc7532e49
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
 ARG FEDORA_VERSION=45
 FROM ${BREW_IMAGE} AS brew
+FROM ghcr.io/redcodeworks/scx-bin@${SCX_BIN_DIGEST} AS scxbin
+FROM ghcr.io/redcodeworks/extest-bin@${EXTEST_BIN_DIGEST} AS extestbin
 
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
@@ -56,7 +68,11 @@ ARG IMAGE_VERSION
 # Brew's files go in first; build.sh then copies system_files over them, so our presets and files win
 COPY --from=brew /system_files /
 
+# The prebuilt binary images are bind-mounted, not copied, so build.sh installs exactly what it checks (scx-bin: bin/,
+# schedulers.tsv, LICENSES/, SOURCE, BUILDINFO; extest-bin: lib/, lib64/, LICENSES/, SOURCE, BUILDINFO)
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=bind,from=scxbin,source=/,target=/binaries/scx-bin \
+    --mount=type=bind,from=extestbin,source=/,target=/binaries/extest-bin \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     --mount=type=tmpfs,dst=/tmp \

@@ -78,6 +78,60 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
   the CI steps and the smoke assertions; existing prefixes stay untouched.
 
+## Prebuilt binaries (scx-bin, extest-bin)
+
+Two tiny signed `FROM scratch` images, built and published by the fedora-toolbox repository (public, readable anonymously), carry
+binaries the image ships without compiling them: `ghcr.io/redcodeworks/scx-bin` and `ghcr.io/redcodeworks/extest-bin`. The
+DEFAULT image installs both (nvidia and the dx variants inherit them from it).
+
+- **Contents.** `scx-bin`: `/bin/scx_rusty scx_lavd scx_cake scx_bpfland scx_cosmos scx_flash scx_p2dq` (sched-ext/scx tag v1.1.4,
+  GPL-2.0), `/schedulers.tsv` (one line per scheduler, four tab-separated fields: name, `bin/<name>`, minimum kernel (empty for
+  all seven so far), description up to 120 characters, no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`,
+  which collapses the empty field), `/LICENSES/`, `/SOURCE`, `/BUILDINFO` (the shared libraries each binary needs: libelf, libz,
+  libzstd, libgcc_s, libc). `extest-bin`: `/lib/libextest.so` (32-bit ELF) and `/lib64/libextest.so` (64-bit ELF), built from the
+  owner's fork `redcodeworks/extest` at commit `cb77cd4f...` (MIT; the highest GLIBC symbol version needed is 2.34, fine for
+  Flatpak runtimes), `/LICENSES/extest-LICENSE`, `/SOURCE`, `/BUILDINFO`.
+- **Pins.** `ARG SCX_BIN_TAG`/`SCX_BIN_DIGEST` and `ARG EXTEST_BIN_TAG`/`EXTEST_BIN_DIGEST` at the top of the `Containerfile` (global ARGs
+  before the first FROM, like brew's; the two FROM lines come after the brew stage so the base ARGs stay in scope), stages `scxbin` and `extestbin`. The digest decides; the tag is a label for humans
+  (`testing-<sha7>`, `latest-<YYYYMMDD>-<sha7>`, `testing`, `latest`). Pinned 2026-11-13 to the immutable build tags
+  `testing-fcede79` (scx-bin, `sha256:e5669977...`) and `testing-05f2e35` (extest-bin, `sha256:de9f2951...`), the newest builds
+  then; the `testing` tags pointed at the same digests and the signatures verified with the toolbox key. Once the binary
+  repository publishes `latest` (same digest as the promoted build), the weekly bump moves the pins there.
+- **Verification.** `.github/scripts/check-binary-pins.sh --verify` (a step in `build.yml` and `build-beta.yml`, on every build) checks the
+  tag and digest format and runs `cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/<image>@<digest>`
+  (the toolbox key also signs `dev-packages`); the reference is logged as the record of what the build used. A hand-edited or
+  unsigned digest fails the build.
+- **Installation.** The build step bind-mounts both images at `/binaries/<name>`; `build_files/install-binaries.sh` (called by
+  `build.sh`; `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways, then installs the
+  schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
+  `/usr/lib/extest/lib/libextest.so` and `/usr/lib/extest/lib64/libextest.so`, and the license texts, `SOURCE` and `BUILDINFO` to
+  `/usr/share/licenses/octarine-os-binaries/<image>/` (it fails when the GPL or MIT text is missing). Nothing is enabled or started:
+  no unit, no preset.
+- **Smoke test** (`build.yml`, copied into `build-beta.yml`, `tests/binary-images.sh` fails when they drift): the manifest exists;
+  per scheduler it is executable, `--version` runs, and `ldd` shows no `not found`; the extest libraries are executable and
+  `file` shows a 32-bit and a 64-bit ELF respectively; the GPL-2.0 and MIT texts and the `SOURCE` and `BUILDINFO` records ship.
+- **Weekly bump.** `.github/workflows/bump-pins.yml` (Tuesday 07:00 UTC, after the binary repository's Monday check, plus
+  `workflow_dispatch`; scheduled workflows run only from `main`, so the schedule starts after the first promotion). A job per image
+  (`scx-bin`, `extest-bin`, and `dev-packages`, which goes through the same script `.github/scripts/bump-pin.sh` with the
+  `DEV_PACKAGES` pin of `variants/dx/Containerfile`): resolve the digest of `:latest` (`skopeo inspect --raw | sha256sum`), verify its
+  signature, compare. Decisions (exit code, result): equal (0, `equal`: green, "nothing to bump", also when the signature verifies);
+  different (10, `different`: rewrite the digest line and the tag line, the dated tag with the same digest or `latest`, and nothing
+  else); registry unreachable, `latest` missing or an empty answer (1, `unreachable`: the job fails, nothing changes); bad signature
+  (2, `badsignature`: fails, nothing changes, even when the digest is equal); malformed pin or unknown image (3). On `different` the
+  job creates or updates ONE pull request per image from `bump/<image>-digest` into `testing`; an existing branch is kept current by
+  merging `testing` into it (never a force-push). The owner merges bump pull requests. **Token:** pushes and pull requests made with the default
+  `GITHUB_TOKEN` start no workflows, so `test` and `secrets` (required into `testing`) would not run. The job uses the repository
+  secret `BUMP_TOKEN` (a token that may push branches and open pull requests) when it is set; otherwise it falls back to the default token and says
+  in the pull request body and the job summary that the checks must be started by closing and reopening the pull request or by running the Test
+  workflow on the branch. No step prints a token. **Setting:** "Allow GitHub Actions to create and approve pull requests" (Settings,
+  Actions, General) must be on, or opening the pull request fails with that hint. The first real run, the PR creation and the token
+  path are UNVERIFIED until the workflow is on `main` and has run.
+- **Unverified.** That a scheduler loads on a real kernel (CI cannot load BPF; only `--version` and `ldd` run); the `$LIB` expansion
+  inside Steam's Flatpak and a real Steam run (see "Recipe conventions"/gaming-setup above). The runtime recipe for the schedulers
+  is separate work.
+- **Undo.** Remove the two stages and ARG pairs, the bind mounts, the `install-binaries.sh` call, the smoke assertions, the pin check
+  steps, `bump-pins.yml`, the tests, and restore the cargo build in the `extest` step from git history.
+
 ## Branches and releases
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
@@ -184,6 +238,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
+- `tests/binary-images.sh` tests the prebuilt binary images (pins, CI pin check, installer, smoke assertions, the bump workflow and its decision table with fake skopeo and cosign; see "Prebuilt binaries").
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.
@@ -1273,21 +1328,27 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   and the ProtonUp-Qt id are unverified here), `extensions` (gamescope and MangoHud Vulkan layers on Steam's runtime
   branch, Proton-GE `com.valvesoftware.Steam.CompatibilityTool.Proton-GE//stable`, each ref checked with `flatpak
   remote-info` first; the PATH override adds `/usr/lib/extensions/vulkan/gamescope/bin` and `.../MangoHud/bin` when
-  installed; the MangoHud directory name is unverified), `extest` (pinned commit `cb77cd4f...`, env `EXTEST_SRC`,
-  `EXTEST_DEST`, `EXTEST_COMMIT`; builds with host cargo or inside dev-toolbox), `desktop` (launchers
+  installed; the MangoHud directory name is unverified), `extest` (installs the prebuilt libraries of the image, see "Prebuilt binaries": `/usr/lib/extest/lib/libextest.so` and `lib64/libextest.so`
+  into `$EXTEST_DEST` (default `~/.local/lib/extest`) with the same relative names, 0755, comparing sha256 first and saying
+  "already done" when both are identical; fails with a clear message when the image lacks them; test hook
+  `GAMING_SETUP_EXTEST_SRC` for the source directory; nothing is built any more, `EXTEST_SRC` and `EXTEST_COMMIT` are gone), `desktop` (launchers
   `octarine-gaming-steam*.desktop` carrying `X-Octarine-Generated=ujust gaming-setup`; only marked files are
-  overwritten; the extest hook is the old mechanism, `--filesystem=<lib>:ro --env=LD_PRELOAD=<lib>/lib64/libextest.so`,
-  but passed to `flatpak run` per launcher instead of a global override; gamescope launcher: `flatpak run
+  overwritten; the extest hook (only when both libraries are installed) is `--filesystem=<dir>:ro --env=LD_PRELOAD=<dir>/$LIB/libextest.so`
+  passed to `flatpak run` per launcher instead of a global override. The literal `$LIB` is the dynamic loader's token (ld.so(8):
+  `lib` or `lib64` per process), so Steam's default 32-bit client loads the 32-bit library and the experimental 64-bit client
+  (an application setting) the 64-bit one. In the `Exec=` line the argument is double-quoted and the dollar sign escaped as
+  `\\$` (desktop entry spec: the file's backslash escape comes first, then the quoting rule; GLib's parser gives back `$`);
+  `tests/gaming-setup.sh` asserts the generated text and its unescaped form. UNVERIFIED: `$LIB` expansion inside Steam's
+  Flatpak (the sandbox's loader and library layout), and a real Steam run with either client; gamescope launcher: `flatpak run
   --command=gamescope ... -f -W -H -r --adaptive-sync -- steam -gamepadui`, the `steam -gamepadui` part is an
   unverified choice; resolution from Mutter DisplayConfig, else `niri msg --json outputs` with jq, else `GAMING_SETUP_RES`
-  or a prompt; never silent), `gamemode` and `reset` (also removes the old global extest override entries). Tests:
-  `tests/gaming-setup.sh`. Extest is by Supreeeme and contributors, MIT license; credited in the README, no source
-  shipped.
+  or a prompt; never silent), `gamemode` and `reset` (also removes the old global extest override entries and, when asked, both libraries). Tests:
+  `tests/gaming-setup.sh`. Extest is by Supreeeme and contributors, MIT license; credited in the README; the image ships
+  the built libraries with the license text and source record ("Prebuilt binaries").
   Flatpak recipes only add or remove their own override entries (Flatseal shows the result); recipes are
   idempotent, and each override-changing recipe has a matching reset (`user-setup` prints the undo per applied step).
   Themes land in `~/.themes`, icons in `~/.local/share/icons`; `gnome-candy` needs network, git and just, and
-  without a name opens a checklist (everything off by default). The extest step needs `cargo` and a C linker (the host has none; the recipe uses the
-  toolbox) and is not verified end to end.
+  without a name opens a checklist (everything off by default). The extest step is not verified end to end with a real Steam.
 
 ## Image hygiene notes
 

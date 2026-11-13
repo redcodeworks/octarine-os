@@ -96,6 +96,11 @@ jobs:
           cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
+      # The prebuilt binary images (scx-bin, extest-bin) are pinned by digest in the Containerfile: format check and the
+      # cosign signature of each pinned digest (keys/redcodeworks-toolbox-cosign.pub), on every build
+      - name: Check and verify the prebuilt binary image pins
+        run: .github/scripts/check-binary-pins.sh --verify
+
       # Fail early and clearly if the beta base cannot be pulled (the tag only exists while Universal Blue builds a beta)
       - name: Check the base image can be pulled
         run: |
@@ -149,6 +154,18 @@ jobs:
 
             check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
             check "menu helper library shipped" "test -s /usr/share/octarine-os/lib/menu.sh"
+            # prebuilt binaries (scx-bin, extest-bin): installed only; whether a scheduler loads is for a real machine to say
+            check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
+            for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
+                check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
+                check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
+            done
+            check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
+            check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
+            check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
+            check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx-bin"
+            check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest-bin"
+            check "source and build records ship for both binary images" "for i in scx-bin extest-bin; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
             check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"

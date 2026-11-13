@@ -1,0 +1,141 @@
+name: Bump prebuilt image pins
+# Weekly check of the images the Containerfiles pin by digest and that the fedora-toolbox repository publishes: scx-bin and
+# extest-bin (Containerfile) and dev-packages (variants/dx/Containerfile). For each one the job resolves the digest of
+# `:latest`, verifies its cosign signature (keys/redcodeworks-toolbox-cosign.pub) and compares it with the pin
+# (.github/scripts/bump-pin.sh holds the decision, tests/bump-pins.sh tests it). Equal: the job ends green, "nothing to bump".
+# Different: ONE pull request per image from `bump/<image>-digest` into `testing` that changes only the pin (digest line, and
+# the tag line that labels it), created or updated in place. A registry that cannot be reached, a missing `latest` tag or
+# a signature that does not verify fails the job and changes nothing. Bump pull requests are merged by the owner.
+#
+# Monday is the binary repository's own check, Tuesday 07:00 UTC is ours. Scheduled workflows run only from the default
+# branch, so the schedule starts after the first promotion of this file into `main`; workflow_dispatch works from any branch
+# that has the file.
+#
+# Token: pull requests and pushes made with the default GITHUB_TOKEN do not start other workflows, so the required checks
+# `test` and `secrets` would not run on a bump pull request. When the repository secret BUMP_TOKEN is set (a token that may
+# push branches and open pull requests, and does trigger workflows) the job uses it; otherwise it falls back to
+# GITHUB_TOKEN and says so in the pull request body and the job summary: start the checks by closing and reopening the pull
+# request, or run the Test workflow on the branch. The repository setting "Allow GitHub Actions to create and approve pull
+# requests" (Settings, Actions, General) must be on for either token to open the pull request.
+on:
+  schedule:
+    - cron: '0 7 * * 2'  # Tuesday 07:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    name: Bump ${{ matrix.image }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [scx-bin, extest-bin, dev-packages]
+    env:
+      IMAGE: ${{ matrix.image }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # The pins on `testing` are what gets bumped, whatever branch the schedule or a dispatch runs from
+      - name: Check out testing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: testing
+          fetch-depth: 0
+          token: ${{ secrets.BUMP_TOKEN || github.token }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Compare the pin with latest
+        id: decide
+        run: |
+          set +e
+          .github/scripts/bump-pin.sh "${IMAGE}"
+          rc=$?
+          set -e
+          case "${rc}" in
+            0 | 10) ;;
+            *) echo "### ${IMAGE}: failed (exit ${rc}, see the log)" >> "${GITHUB_STEP_SUMMARY}"; exit "${rc}" ;;
+          esac
+
+      - name: Nothing to bump
+        if: steps.decide.outputs.result == 'equal'
+        run: |
+          echo "nothing to bump: ${IMAGE} is pinned to ${{ steps.decide.outputs.digest }} (${{ steps.decide.outputs.tag }})"
+          echo "### ${IMAGE}: nothing to bump (pin equals latest, ${{ steps.decide.outputs.digest }})" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Create or update the bump pull request
+        if: steps.decide.outputs.result == 'different'
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_TOKEN || github.token }}
+          HAVE_BUMP_TOKEN: ${{ secrets.BUMP_TOKEN != '' }}
+          OLD: ${{ steps.decide.outputs.previous }}
+          NEW: ${{ steps.decide.outputs.digest }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          set -euo pipefail
+          branch="bump/${IMAGE}-digest"
+          mapfile -t changed < <(git diff --name-only)
+          [[ "${#changed[@]}" -eq 1 ]] || { echo "::error::expected exactly one changed file, got: ${changed[*]}"; exit 1; }
+          file=${changed[0]}
+          cp "${file}" "${RUNNER_TEMP}/pin.new"
+          git checkout -- "${file}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # an existing bump branch is kept current by merging testing into it (no force-push), then the pin is written again
+          if git ls-remote --exit-code --heads origin "${branch}" > /dev/null; then
+            git fetch origin "${branch}"
+            git checkout -B "${branch}" "origin/${branch}"
+            git merge --no-edit -X theirs origin/testing
+          else
+            git checkout -b "${branch}"
+          fi
+          cp "${RUNNER_TEMP}/pin.new" "${file}"
+          if git diff --quiet; then
+            echo "The branch ${branch} already carries this pin."
+          else
+            git add -- "${file}"
+            git commit -m "Bump the ${IMAGE} pin to its latest digest ${NEW}: ${IMAGE} is built and signed by the fedora-toolbox repository, and its pin moves only through this reviewed change."
+            git push origin "${branch}"
+          fi
+          note=""
+          if [[ "${HAVE_BUMP_TOKEN}" != true ]]; then
+            note=$'\n\n**The required checks `test` and `secrets` did not start:** this pull request was made with the default token (the repository secret `BUMP_TOKEN` is not set), and GitHub does not start workflows for it. Close and reopen the pull request, or run the Test workflow on the branch `'"${branch}"'`.'
+          fi
+          {
+            echo "Moves the ${IMAGE} pin from \`${OLD}\` to \`${NEW}\` (tag \`${TAG}\`): the digest of \`ghcr.io/redcodeworks/${IMAGE}:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`."
+            echo
+            echo "Only ${file} changes: the digest line and the tag line. Not verified: nothing was built or booted here; the image build after the merge into \`testing\` is the first build with this pin."
+            printf '%s\n' "${note}"
+          } > "${RUNNER_TEMP}/body.md"
+          number=$(gh pr list --head "${branch}" --base testing --state open --json number --jq '.[0].number // empty')
+          if [[ -n "${number}" ]]; then
+            gh pr edit "${number}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"
+            url=$(gh pr view "${number}" --json url --jq .url)
+            echo "Updated ${url}"
+          else
+            if ! url=$(gh pr create --base testing --head "${branch}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"); then
+              echo "::error::Could not open the pull request. Is Settings, Actions, General, Allow GitHub Actions to create and approve pull requests, on?"
+              exit 1
+            fi
+            echo "Opened ${url}"
+          fi
+          {
+            echo "### ${IMAGE}: ${url}"
+            echo
+            echo "Pin \`${OLD}\` to \`${NEW}\` (\`${TAG}\`), signature valid."
+            if [[ "${HAVE_BUMP_TOKEN}" != true ]]; then
+              echo
+              echo "BUMP_TOKEN is not set: the pull request was made with the default token, so the required checks did not start. Close and reopen it, or run the Test workflow on \`${branch}\`."
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}"

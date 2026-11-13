@@ -336,9 +336,10 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
 - **`gaming-setup [step...] [--yes|--no]`:** a checklist, or name steps to run exactly those: `steam`, `protonup`
   (ProtonUp-Qt), `lutris` (Flatpaks from Flathub, installed only when Flathub lists them as verified),
   `extensions` (gamescope and MangoHud Vulkan layers for Steam's runtime branch, Proton-GE, and a PATH override so
-  they resolve inside the sandbox), `extest` (experimental; builds a pinned upstream commit, in the dev-toolbox when the
-  host has no cargo), `desktop` (generated Steam launchers in `~/.local/share/applications`, marked with an
-  `X-Octarine-Generated` key; extest is hooked in when built; a gamescope launcher uses your current resolution and
+  they resolve inside the sandbox), `extest` (copies the prebuilt libraries the image ships in `/usr/lib/extest`, 32-bit and
+  64-bit, to `~/.local/lib/extest`; nothing is built), `desktop` (generated Steam launchers in `~/.local/share/applications`, marked with an
+  `X-Octarine-Generated` key; extest is hooked in when installed, with `$LIB` so the 32-bit and the 64-bit Steam client each load their own
+  library, not yet tested inside Steam's Flatpak; a gamescope launcher uses your current resolution and
   refresh rate), `gamemode` (installs the tuning from `/usr/share/octarine-os/gamemode.ini` as
   `~/.config/gamemode.ini`, never silently over a different file) and `reset` (removes the generated launchers and
   the PATH line, optionally the extest library, and undoes the gamemode file when unchanged). Installed Flatpaks stay.

@@ -89,14 +89,14 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     assert "pull_request" not in on and "pull_request_target" not in on, f
 PY
-check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00" python3 - "$here" <<'PY'
+check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Tuesday 07:00 pin bumps" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     for s in (on.get("schedule") or []):
         crons[f.rsplit("/", 1)[1]] = s["cron"]
-assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0"}, crons
+assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0", "bump-pins.yml": "0 7 * * 2"}, crons
 assert len(set(crons.values())) == len(crons)
 PY
 
