@@ -23,7 +23,7 @@ is_dx_only() {
         variants/dx/* | .github/workflows/build-dx.yml | .github/scripts/dx-smoke.sh | .github/scripts/plan-dx.sh) return 0 ;;
         .github/scripts/aggregate-dx.sh | keys/redcodeworks-toolbox-cosign.pub) return 0 ;;
         .github/workflows/build-nvidia-dx.yml | tests/nvidia-dx-image.sh) return 0 ;;
-        tests/dx-image.sh | tests/dev-setup.sh | tests/plan-dx.sh) return 0 ;;
+        tests/dx-image.sh | tests/dev-setup.sh | tests/plan-dx.sh | tests/datastore.sh) return 0 ;;
         *) return 1 ;;
     esac
 }

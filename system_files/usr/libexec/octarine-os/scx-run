@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ExecStart of scx@.service: run the scheduler binary of the registry entry for this instance. The binary path and the flags come
+# only from the root-owned registry; nothing from the caller's environment or from any user file is used.
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scx-lib.sh
+. "${here}/scx-lib.sh"
+name=${1-}
+reg=$(scx_find_instance "${name}") || { scx_log "run: unknown scheduler instance"; exit 2; }
+binary=$(scx_reg_get "${reg}" BINARY)
+flags=$(scx_reg_get "${reg}" FLAGS)
+[[ "${binary}" =~ ^/usr/bin/scx_[a-z0-9_]+$ && -x "${binary}" ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
+# shellcheck disable=SC2086  # the flags are a word list from the root-owned registry on purpose
+exec env -i PATH=/usr/bin:/usr/sbin LANG=C "${binary}" ${flags}

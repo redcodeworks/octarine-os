@@ -1,0 +1,2 @@
+# Every scheduler ships disabled; `ujust scheduler` enables one on request.
+disable scx@*.service

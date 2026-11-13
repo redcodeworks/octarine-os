@@ -317,6 +317,7 @@ run() { # stdin text, args...
     rc=$?
 }
 gumq() { printf '%b' "$2" >"$root/gumq.$1"; }
+mkdir -p "$root/ujbin"; printf '#!/bin/bash\necho "ujust $*" >>"$LOG"\n[ "${FAKE_VIRTHOST_FAIL:-}" = 1 ] && exit 1\nexit 0\n' >"$root/ujbin/ujust"; chmod +x "$root/ujbin/ujust"; export OCTARINE_UJUST="$root/ujbin/ujust"
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null | tail -40; }
 check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
@@ -346,10 +347,6 @@ check "a stray argument: exit 2" test "$rc" = 2
 check "help and comment text carry no personal names" bash -c "! grep -qiE 'kevin|redcodeworks' '$justfile'"
 
 # ---- the sudo command: the shipped recipe uses it only in the libvirt step
-check "sudo is called in the libvirt step only" bash -c "
-  rest=\$(sed '/^    # ---- step: libvirt/,/^    # ---- step: tools/d' '$justfile')
-  body=\$(sed -n '/^    # ---- step: libvirt/,/^    # ---- step: tools/p' '$justfile')
-  grep -q 'sudo sh -c' <<<\"\$body\" && ! grep -E '(^|[^[:alnum:]_])sudo (sh|usermod|systemctl|-)' <<<\"\$rest\""
 
 # ---- menu: entries and ids (a fake terminal and a fake gum)
 reset
@@ -402,50 +399,21 @@ run '' --yes
 check "second run: nothing installed again" bash -c "! grep -qE '^(brew install|flatpak install|rustup-init|uv python install|fnm install|sdk install)' '$LOG'"
 check "second run: every attempted step already done, exit 0" bash -c "[ $rc = 0 ] && for s in tools vscode jetbrains rust java node python; do grep -qE \"^\$s +already done\" '$root/out' || exit 1; done"
 check "second run: no undo section" hasnt "To undo"
-reset; installed_world
-run '' --yes --only libvirt
-check "libvirt already set up: no sudo, already done" bash -c "[ $rc = 0 ] && grep -qE '^libvirt +already done' '$root/out' && ! grep -q '^sudo' '$LOG'"
 
-# ---- libvirt
-reset
-echo autostart >"$STATE/net"
-run '' --yes --only libvirt
-check "libvirt fresh with --only: ONE sudo call with group, usermod and sockets" bash -c "[ \$(grep -c '^sudo' '$LOG') = 1 ] && grep '^sudo' '$LOG' | grep -q \"usermod -aG libvirt tester\" && grep '^sudo' '$LOG' | grep -q 'systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket' && grep '^sudo' '$LOG' | grep -q \"grep '^libvirt:' $root/usr-group >> $root/etc-group\""
-check "libvirt fresh: libvirt.conf written with the default URI" bash -c "grep -qx 'uri_default = \"qemu:///system\"' '$HOME/.config/libvirt/libvirt.conf'"
-check "libvirt fresh: tells to log in again and does not touch the network yet" bash -c "grep -q 'Log out and back in' '$root/out' && grep -q \"run 'ujust dev --only libvirt' again\" '$root/out' && ! grep -q 'virsh' '$LOG'"
-check "libvirt fresh: undo line and exit 0" bash -c "[ $rc = 0 ] && grep -q '^  libvirt: sudo gpasswd -d tester libvirt' '$root/out'"
-reset
-printf 'root:x:0:\nlibvirt:x:970:\n' >"$root/etc-group"
-run '' --only libvirt --yes
-check "libvirt: the group line is not copied again when /etc/group has it" bash -c "grep '^sudo' '$LOG' | grep -qv 'usr-group'"
-reset
-SUDO_RC=1 run '' --only libvirt --yes
-check "libvirt: a failed sudo is reported once with the exact command, not retried" bash -c "[ $rc = 1 ] && [ \$(grep -c '^sudo' '$LOG') = 1 ] && grep -q \"Run it yourself:  sudo sh -c 'grep\" '$root/out' && grep -qE '^libvirt +FAILED' '$root/out'"
-reset
-installed_world
-rm -f "$STATE/sockets/virtstoraged"; echo noautostart >"$STATE/net"
-run '' --only libvirt --yes
-check "libvirt: only the missing socket is enabled; the network gets autostart" bash -c "grep '^sudo' '$LOG' | grep -qx 'sudo sh -c systemctl enable --now virtstoraged.socket' && grep -q 'virsh -c qemu:///system net-autostart default' '$LOG' && ! grep -q usermod '$LOG'"
-reset
-installed_world
-echo missing >"$STATE/net"
-run '' --only libvirt --yes
-check "libvirt: a missing default network is defined from the shipped XML, autostarted, started" bash -c "grep -q 'net-define $root/net-default.xml' '$LOG' && grep -q 'net-autostart default' '$LOG' && grep -q 'net-start default' '$LOG'"
-reset
-installed_world
-echo down >"$STATE/net"
-run '' --only libvirt --yes
-check "libvirt: an unreachable daemon is a note, not a failure" bash -c "[ $rc = 0 ] && grep -q 'could not be checked' '$root/out' && grep -qE '^libvirt +already done' '$root/out'"
-reset
-installed_world
-printf 'uri_default = "qemu:///session"\n' >"$HOME/.config/libvirt/libvirt.conf"
-run '' --only libvirt --yes
-check "libvirt: a different libvirt.conf is shown as a diff and kept under --yes" bash -c "grep -q 'differs' '$root/out' && grep -q 'qemu:///session' '$HOME/.config/libvirt/libvirt.conf' && ls '$HOME/.config/libvirt/' | grep -qv bak && [ -z \"\$(ls '$HOME'/.config/libvirt/*.bak-* 2>/dev/null)\" ]"
-run 'y\ny\n' --only libvirt
-check "libvirt: answering y replaces it after a timestamped backup" bash -c "grep -qx 'uri_default = \"qemu:///system\"' '$HOME/.config/libvirt/libvirt.conf' && grep -q 'qemu:///session' \$(ls '$HOME'/.config/libvirt/libvirt.conf.bak-*)"
-reset
-run '' --only libvirt --no
-check "libvirt --no: prints the command, runs no sudo, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'sudo sh -c' '$root/out' && ! grep -q '^sudo' '$LOG' && [ ! -e '$HOME/.config/libvirt' ] && grep -qE '^libvirt +planned' '$root/out'"
+# ---- libvirt: delegated to ujust virthost-setup (the implementation and its tests live in tests/virthost-setup.sh)
+mkdir -p "$root/ujbin"
+printf '#!/bin/bash\necho "ujust $*" >>"$LOG"\n[ "${FAKE_VIRTHOST_FAIL:-}" = 1 ] && exit 1\nexit 0\n' >"$root/ujbin/ujust"; chmod +x "$root/ujbin/ujust"
+: >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --only libvirt
+check "libvirt step delegates to ujust virthost-setup --only daemons,connection and runs no sudo itself" bash -c "grep -qx 'ujust virthost-setup --only daemons,connection' '$LOG' && ! grep -q '^sudo' '$LOG' && grep -q 'delegated' '$root/out'"
+: >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --only libvirt --yes
+check "libvirt --yes passes --yes on when the step is named" grep -qx 'ujust virthost-setup --only daemons,connection --yes' "$LOG"
+: >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --only libvirt --no
+check "libvirt --no passes --no on (a plan only)" grep -qx 'ujust virthost-setup --only daemons,connection --no' "$LOG"
+: >"$LOG"; FAKE_VIRTHOST_FAIL=1 OCTARINE_UJUST="$root/ujbin/ujust" run '' --only libvirt
+check "a failing delegate makes the step FAILED and the exit non-zero" bash -c "[ $rc != 0 ] && grep -q FAILED '$root/out'"
+: >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --yes
+check "--yes alone skips the libvirt step (it needs sudo) and says how to run it" bash -c "! grep -q virthost-setup '$LOG' && grep -q 'ujust dev --only libvirt --yes' '$root/out'"
+check "the dev recipe file has no libvirt group, usermod, virsh or sudo code of its own any more" bash -c "! grep -E 'usermod|virsh |gpasswd|net-autostart|^[[:space:]]*sudo ' '$repo/variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just'"
 
 # ---- tools
 reset
@@ -762,6 +730,9 @@ check "cuda: an existing container without the toolkit is not recreated, the too
 cuda_world
 run '' --no --only cuda
 check "cuda --no: plan only, nothing created, installed or written" bash -c "[ $rc = 0 ] && grep -q 'Plan: distrobox create' '$root/out' && grep -qE '^cuda +planned' '$root/out' && ! grep -qE '^distrobox (create|enter)' '$LOG'"
+cuda_world; echo registry.fedoraproject.org/fedora-toolbox:44 >"$STATE/cuda-container"
+run '' --no --only cuda
+check "cuda --no with an existing box: pure, the box is never entered or started, and the plan says it was not checked" bash -c "[ $rc = 0 ] && grep -q 'not checked in plan mode' '$root/out' && grep -qE '^cuda +planned' '$root/out' && ! grep -qE 'distrobox enter|in-container|podman start|distrobox start' '$LOG'"
 cuda_world; echo 2 >"$STATE/failn-install"
 run '' --yes --only cuda
 check "cuda: a failing install is retried and then succeeds" bash -c "[ $rc = 0 ] && [ \$(grep -c '^in-container:.*dnf5 -y install cuda-toolkit' '$LOG') = 3 ] && grep -qE '^cuda +applied' '$root/out'"

@@ -92,8 +92,8 @@ check "Containerfile: the binaries image comes from BINARIES_IMAGE (no default, 
   grep -qx 'ARG BINARIES_IMAGE' '$cf' && grep -qx 'FROM \${BINARIES_IMAGE} AS binaries' '$cf' && grep -q 'from=binaries,source=/,target=/binaries' '$cf' &&
   ! grep -qE 'SCX_BIN|EXTEST_BIN|scx-bin|extest-bin' '$cf' &&
   [ \$(grep -n '^ARG FEDORA_VERSION' '$cf' | cut -d: -f1) -lt \$(grep -n '^FROM \${BINARIES_IMAGE}' '$cf' | cut -d: -f1) ]"
-check "build.sh runs install-binaries.sh and nothing enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && ! grep -qiE 'systemctl .*scx|scx.*(\.service|\.preset)' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh'"
-check "no scx unit or preset ships in system_files" bash -c "! find '$here/system_files' -iname '*scx*' | grep -q ."
+check "build.sh runs install-binaries.sh and generates the registry; no build file enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && ! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh' '$here/build_files/gen-schedulers.sh'"
+check "every scx unit file of system_files is disabled by the preset (nothing is wanted by default)" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! find '$here/system_files' -path '*wants*' -iname '*scx*' | grep -q ."
 check "Justfile: build passes BINARIES_IMAGE (default: the tree-hash tag of binaries/) and labels the image with it" bash -c "grep -q 'BINARIES_IMAGE=\${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:\$(git rev-parse HEAD:binaries)}' '$here/Justfile' && grep -q 'io.github.redcodeworks.octarine-os.binaries=' '$here/Justfile'"
 check "the old foreign-image machinery is gone (pin check script, toolbox-key paragraph, foreign tests)" bash -c "! test -e '$here/.github/scripts/check-binary-pins.sh' && ! grep -rq 'check-binary-pins' '$here/.github' '$here/CLAUDE.md' && ! grep -q 'scx-bin' '$here/keys/README.md'"
 
@@ -155,7 +155,7 @@ check "binaries.yml: reusable (workflow_call with digest and image outputs) and 
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
 assert set(on) == {"workflow_call", "workflow_dispatch"}, set(on)
-assert set(on["workflow_call"]["outputs"]) == {"digest", "image"}
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash"}
 PY
 check "binaries.yml: no job carries a required check name; the signing job is the only one with the signing environment" python3 -I - "$wfb" <<'PY'
 import sys, yaml
@@ -173,7 +173,28 @@ check "binaries.yml: the tag is the tree hash of binaries/, a usable image skips
 check "binaries.yml: signed the way the images are (same key and secret, old bundle format), then verified by digest and by tag" bash -c "
   grep -q 'COSIGN_PRIVATE_KEY: \${{ secrets.SIGNING_SECRET }}' '$wfb' && grep -q -- 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wfb' &&
   grep -q 'cosign verify --key cosign.pub \"\${IMAGE}@\${DIGEST}\"' '$wfb' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${HASH}\"' '$wfb'"
-check "binaries.yml: the result job hands over the digest of a usable image, of a signed new one, or nothing for a validation build" bash -c "grep -q 'digest=\${CHECK_DIGEST}' '$wfb' && grep -q 'digest=\${BUILD_DIGEST}' '$wfb' && grep -q 'digest=\" >> ' '$wfb'"
+check "binaries.yml: the result job takes the digest from exactly one producer per case: the reuse job, the sign job, or nothing for a validation build" bash -c "grep -q 'digest=\${REUSE_DIGEST}' '$wfb' && grep -q 'digest=\${SIGN_DIGEST}' '$wfb' && grep -q 'digest=\" >> ' '$wfb' && ! grep -q 'CHECK_DIGEST' '$wfb' && ! grep -q 'BUILD_DIGEST' '$wfb'"
+check "binaries.yml: a job named Reuse the binaries image runs only when the lookup found a signed image, the build runs only otherwise, and the build and sign jobs are skipped on reuse" python3 -I - "$wfb" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1]))
+j = w["jobs"]
+assert j["reuse"]["name"] == "Reuse the binaries image"
+assert j["reuse"]["if"] == "needs.check.outputs.usable == 'true'" and j["reuse"]["needs"] == "check"
+assert j["build"]["if"] == "needs.check.outputs.usable != 'true'"
+assert set(j["result"]["needs"]) == {"check", "reuse", "build", "sign"}
+assert "reuse" not in j["build"]["needs"] and "reuse" not in j["sign"]["needs"]
+PY
+check "binaries.yml: the workflow outputs are digest, image, action (built, reused or validated) and hash" python3 -I - "$wfb" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash"}, set(on["workflow_call"]["outputs"])
+t = open(sys.argv[1]).read()
+for v in ("action=reused", "action=built", "action=validated"):
+    assert v in t, v
+PY
+check "binaries.yml: each deciding job writes its line to the run summary (reused, built in Nm and signed, validation only)" bash -c "grep -q 'Binaries image: reused .*signature verified, no build' '$wfb' && grep -q 'Binaries image: built .* in \${minutes}m, signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && [ \$(grep -c GITHUB_STEP_SUMMARY '$wfb') -ge 3 ]"
+check "build.yml and build-beta.yml say which path the binaries image took in their own summary, and still gate on binaries-use.sh" bash -c "for f in build.yml build-beta.yml; do grep -q 'Say which path the binaries image took' '$here/.github/workflows/'\$f && grep -q 'needs.binaries.outputs.action' '$here/.github/workflows/'\$f && grep -q 'binaries-use.sh' '$here/.github/workflows/'\$f || exit 1; done"
+check "a signature that fails on an existing tag is not reused: the lookup reports usable=false (badsignature) and the build path rebuilds and signs; the reuse job needs usable=true" bash -c "grep -q 'badsignature' '$here/.github/scripts/binaries-lookup.sh' && grep -q 'usable false' '$here/.github/scripts/binaries-lookup.sh'"
 check "build.yml and build-beta.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]

@@ -1,0 +1,37 @@
+// TEMPLATE. build_files/gen-schedulers.sh turns this file into /usr/share/polkit-1/rules.d/50-octarine-scx.rules at image build,
+// replacing the placeholder in the unit regex below with the exact alternation of the registry's instance names: only real, shipped
+// schedulers match, so adding a scheduler stays one line in binaries/scx/schedulers.tsv.
+// Let the logged-in wheel user start and stop the sched_ext scheduler units scx@<name>.service without a prompt, so the
+// GameMode hooks and `ujust scheduler` can switch schedulers without a YubiKey touch. Nothing else is granted: not other units,
+// not enable or disable (manage-unit-files), not restart (an in-place switch is a `start` of another instance: Conflicts= stops the
+// running one), not other verbs. A request that lacks the `unit` or `verb` detail does not match.
+// The unit files, the binaries and the flags are root-owned and fixed by the image, so this is a performance and availability
+// risk for the session user, not code execution as root (see "Prebuilt binaries" and the scheduler notes in CLAUDE.md).
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    var unit = action.lookup("unit");
+    var verb = action.lookup("verb");
+    if (typeof unit !== "string" || typeof verb !== "string") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (!/^scx@(@INSTANCES@)\.service$/.test(unit)) {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (verb !== "start" && verb !== "stop") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.local && subject.active && subject.isInGroup("wheel")) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});
+
+// Two side doors, both accepted on purpose (see "sched_ext schedulers" in CLAUDE.md):
+// - systemd also sends the verbs `stop` and `start` for FreezeUnit and ThawUnit, so the rule also lets the user freeze and thaw the
+//   cgroup of an scx unit. Impact: a short userspace stall, then the sched_ext watchdog ejects the scheduler (back to EEVDF).
+// - StartTransientUnit with a caller-chosen name scx@x.service also matches (polkit sees verb `start` and that unit name). The only
+//   thing that stops a user from creating a transient ROOT unit with an arbitrary ExecStart under such a name is systemd's refusal
+//   "Unit already loaded or has a fragment file" because the template scx@.service exists. This rule must NEVER be shipped without
+//   usr/lib/systemd/system/scx@.service (gen-schedulers.sh refuses, and the image smoke test checks).

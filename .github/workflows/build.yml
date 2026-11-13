@@ -337,6 +337,12 @@ jobs:
       - name: Verify the binaries image
         run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
 
+      - name: Say which path the binaries image took
+        env:
+          ACTION: ${{ needs.binaries.outputs.action }}
+          HASH: ${{ needs.binaries.outputs.hash }}
+        run: echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
+
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
         run: |
@@ -405,6 +411,10 @@ jobs:
             check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
             check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
             check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
+            check "scheduler units: the template and the polkit rule ship, the helpers and the GameMode hooks are executable" "test -f /usr/lib/systemd/system/scx@.service && test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x /usr/libexec/octarine-os/\$f || exit 1; done"
+            check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
+            check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
+            check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
             check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
@@ -431,7 +441,7 @@ jobs:
             check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
             for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon \
+                     gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon \
                      nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
@@ -486,7 +496,7 @@ jobs:
             check "sudo timestamp_timeout is 30 (minutes, not seconds)" "grep -qx \"Defaults timestamp_timeout=30\" /etc/sudoers.d/10-timestamp-timeout"
             check "sudoers fragment valid" "visudo -c -f /etc/sudoers.d/10-timestamp-timeout"
             check "firewalld config valid" "firewall-offline-cmd --check-config"
-            check "no iommu karg file (only the dx image carries it)" "! test -e /usr/lib/bootc/kargs.d/10-iommu.toml"
+            check "no iommu karg file (no image ships one; it is opt-in)" "! test -e /usr/lib/bootc/kargs.d/10-iommu.toml"
             check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
             check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
             check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
@@ -542,6 +552,15 @@ jobs:
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
+
+      # Tier 1 compatibility check: every shipped scheduler against the kernel of THIS image, statically (kernel config, the
+      # kernel's own BTF read out of vmlinuz, the kernel symbols and struct sched_ext_ops members each scheduler's embedded BPF
+      # object requires). It loads nothing; a failure here fails the build and so blocks the promotion of this build.
+      - name: Check the shipped schedulers against the image kernel
+        run: |
+          set -euo pipefail
+          podman run --rm -v "${PWD}/.github/scripts/scx-kernel-check.py:/scx-kernel-check.py:ro" "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            bash -c 'kver=$(ls /usr/lib/modules | head -n1); echo "kernel ${kver}"; python3 -I /scx-kernel-check.py --kernel-dir "/usr/lib/modules/${kver}"'
 
       # Optional packages that could not be installed (build.sh writes the list): a warning each, never a failure
       - name: Report missing optional packages

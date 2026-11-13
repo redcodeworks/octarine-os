@@ -1146,7 +1146,7 @@ gaming-setup *args:
             src_ini=$gm_tmp
             echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
         fi
-        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
+        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the tuned part of the GameMode start and end hooks does nothing."
         id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
         if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
             echo "$dest_ini already has the tuning."
@@ -2030,6 +2030,17 @@ switch-image *args:
         echo "Already on $image ($channel)."
         exit 0
     fi
+    # An image that a bootc switch already STAGED (waiting for the reboot) is not the booted one: do not switch (and ask for a security key touch) again.
+    staged_ref=${OCTARINE_SWITCH_STAGED_REF-}
+    if [ -z "${OCTARINE_SWITCH_STAGED_REF+x}" ]; then
+        staged_ref=$(rpm-ostree status --json 2>/dev/null | jq -r '[.deployments[] | select(.staged == true)][0]."container-image-reference" // empty' 2>/dev/null)
+    fi
+    staged=$(printf '%s' "$staged_ref" | sed -E 's#^ostree[a-z-]*:##; s#^docker://##; s#@sha256:[0-9a-f]+$##')
+    if [ -n "$staged" ] && [ "$staged" = "$ref" ]; then
+        echo "$image ($channel) is already staged: reboot to use it. Nothing to do ('sudo bootc rollback' goes back to the previous deployment)."
+        exit 0
+    fi
+    if [ -n "$staged" ]; then echo "Note: $staged is staged and waiting for a reboot; this switch replaces it."; fi
     # nvidia images on a machine without an NVIDIA GPU: say so and ask (--yes alone does not bypass it, --force does)
     case "$image" in
         nvidia | nvidia-dx)
@@ -2345,7 +2356,7 @@ hardware-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
-    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization "
+    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan "
     mode=ask
     list=0
     only_list=""
@@ -2355,7 +2366,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), virtualization (libvirt access; runs ujust dev --only libvirt, dx image). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2406,7 +2417,7 @@ hardware-setup *args:
     cmdline_file=${HW_CMDLINE:-/proc/cmdline}
     gm_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
 
-    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization)
+    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan)
     declare -A text=(
         [sensors]="Fan and temperature chip driver (sensors-detect; sudo)"
         [amd-gpu]="AMD GPU: LACT Flatpak and its daemon lactd"
@@ -2420,8 +2431,23 @@ hardware-setup *args:
         [secure-boot]="Secure Boot: enroll the image key"
         [tpm-luks]="TPM2 auto-unlock for LUKS volumes (sudo)"
         [fido-key]="Security key: register it for sudo and polkit (touch)"
-        [virtualization]="Virtualization: libvirt access for your user (sudo)"
+        [iommu]="Passthrough: kernel argument iommu=pt (optional; sudo, reboot)"
+        [wake-on-lan]="Wake-on-LAN for the wired NIC (sudo)"
     )
+
+    # Wake-on-LAN helpers: the physical NIC (the port when the default route is a bridge), its capability, the active profile
+    wol_nic() {
+        local n port
+        n=$(ip -o route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+        if [ -n "$n" ] && [ -d "${WOL_NET_DIR:-/sys/class/net}/$n/bridge" ]; then port=$(ls "${WOL_NET_DIR:-/sys/class/net}/$n/brif" 2>/dev/null | head -n1); [ -n "$port" ] && n=$port; fi
+        echo "$n"
+    }
+    wol_capable() {
+        local n eo; n=$(wol_nic); [ -n "$n" ] || return 1
+        if command -v ethtool >/dev/null 2>&1 && eo=$(ethtool "$n" 2>/dev/null) && [ -n "$eo" ]; then grep -E 'Supports Wake-on:' <<<"$eo" | grep -q g; return; fi
+        [ -e "${WOL_NET_DIR:-/sys/class/net}/$n/device/power/wakeup" ]
+    }
+    wol_profile() { nmcli -g GENERAL.CONNECTION device show "$(wol_nic)" 2>/dev/null; }
 
     # reason_of <step>: prints why the step does not apply (nothing when it does)
     reason_of() {
@@ -2454,9 +2480,11 @@ hardware-setup *args:
             fido-key)
                 if ! command -v pamu2fcfg >/dev/null 2>&1; then echo "pamu2fcfg (pam-u2f) is not installed"
                 elif ! fido_present; then echo "no security key found"; fi ;;
-            virtualization)
-                case "$image_id" in *-dx) ;; *) echo "needs the dx image"; return ;; esac
-                [ -e "$kvm_dev" ] || echo "no /dev/kvm (virtualization is off in the firmware or this is a VM)" ;;
+            iommu)
+                case "$image_id" in *-dx) ;; *) echo "needs the dx image (ujust virthost-setup)"; return ;; esac
+                [ -n "$(ls -A "${HW_IOMMU_DIR:-/sys/class/iommu}" 2>/dev/null)" ] || echo "no IOMMU found (enable VT-d or AMD-Vi in the UEFI firmware)" ;;
+            wake-on-lan)
+                if ! wol_capable; then echo "no wired NIC that reports magic-packet wake"; fi ;;
         esac
     }
     fido_present() {
@@ -2483,7 +2511,11 @@ hardware-setup *args:
             amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
             amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
             amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
-            rocm) box_exists rocm && distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
+            rocm)
+                box_exists rocm || return 1
+                # plan modes (--list, --no) stay pure: entering a distrobox starts a stopped container, so the box is not entered there
+                if [ "$list" = 1 ] || [ "$mode" = no ]; then rocm_unchecked=1; return 1; fi
+                distrobox enter rocm -- bash -lc 'command -v rocminfo' </dev/null >/dev/null 2>&1 ;;
             rocm-export) exports_done rocm "${rocm_bins[@]}" ;;
             cuda-export) exports_done cuda "${cuda_bins[@]}" ;;
             nvidia) [ -d "$nvidia_mod" ] ;;
@@ -2491,12 +2523,14 @@ hardware-setup *args:
             secure-boot) mokutil --test-key "$sb_key" 2>&1 | grep -qi 'already enrolled' ;;
             tpm-luks) return 1 ;;
             fido-key) [ -s "$u2f_file" ] ;;
-            virtualization) id -nG 2>/dev/null | tr ' ' '\n' | grep -qx libvirt ;;
+            iommu) grep -qw 'iommu=pt' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -qw 'iommu=pt' ;;
+            wake-on-lan) [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(wol_profile)" 2>/dev/null | head -n1)" = magic ] ;;
         esac
     }
     default_of() { # 1 when ticked by default
         case "$1" in
             sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
+            iommu | wake-on-lan) echo 0 ;;
             rocm | rocm-export | cuda-export) echo 0 ;;
             secure-boot)
                 case "$image_id" in *nvidia*) echo 1 ;; *) echo 0 ;; esac ;;
@@ -2517,7 +2551,8 @@ hardware-setup *args:
             secure-boot) echo "sudo mokutil --delete $sb_key" ;;
             tpm-luks) echo "ujust luks-tpm-unlock remove" ;;
             fido-key) echo "rm $u2f_file" ;;
-            virtualization) echo "sudo gpasswd -d $(id -un) libvirt" ;;
+            iommu) echo "sudo rpm-ostree kargs --delete-if-present=iommu=pt (and --delete-if-present=intel_iommu=on on Intel) and reboot" ;;
+            wake-on-lan) echo "ujust wake-on-lan --off" ;;
         esac
     }
     ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
@@ -2584,11 +2619,13 @@ hardware-setup *args:
                     return 1
                 fi
                 ;;
-            virtualization) "$ujust_cmd" dev --only libvirt "${yes[@]}" ;;
+            iommu) "$ujust_cmd" virthost-setup --only iommu "${yes[@]}" ;;
+            wake-on-lan) "$ujust_cmd" wake-on-lan "${yes[@]}" ;;
         esac
     }
 
     avail=()
+    rocm_unchecked=0
     declare -A why=() isdone=()
     for s in "${step_ids[@]}"; do
         why[$s]=$(reason_of "$s")
@@ -2597,7 +2634,13 @@ hardware-setup *args:
             if done_of "$s"; then isdone[$s]=1; else isdone[$s]=0; fi
         fi
     done
-    state_of() { if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"; elif [ "${isdone[$1]}" = 1 ]; then echo done; else echo available; fi; }
+    unchecked_note="the rocm box exists; not checked in plan mode, entering it would start the container"
+    state_of() {
+        if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
+        elif [ "${isdone[$1]}" = 1 ]; then echo done
+        elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
+        else echo available; fi
+    }
 
     if [ "$list" = 1 ]; then
         printf '%-16s %s\n' STEP STATE
@@ -2681,6 +2724,7 @@ hardware-setup *args:
         fi
         if [ "$mode" = no ]; then
             echo "Plan: would run this step. Undo: $(undo_of "$s")"
+            if [ "$s" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "Note: $unchecked_note."; fi
             record "$s" planned
             continue
         fi
@@ -2701,6 +2745,438 @@ hardware-setup *args:
     echo "To undo (per step):"
     for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
     exit "$failed"
+
+# Choose a sched_ext CPU scheduler: at boot and while GameMode runs
+[group('Setup')]
+[positional-arguments]
+scheduler *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready_one >/dev/null; then menu_one() { return 3; }; menu_confirm() { return 1; }; menu_title() { printf '%s\n' "$1"; }; fi
+    registry="${SCHEDULER_REGISTRY:-/usr/share/octarine-os/schedulers.d}"
+    sysfs="${SCHEDULER_SYSFS:-/sys/kernel/sched_ext}"
+    state_dir="${SCHEDULER_STATE_DIR:-/var/lib/octarine-os}"
+    conf="${SCHEDULER_USER_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/octarine-os/scheduler.conf}"
+    usage="Usage: ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no] [-h|--help]"
+    boot_want=""
+    gm_want=""
+    action=""
+    mode=ask
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --boot) shift; if [ "$#" -eq 0 ]; then echo "--boot needs NAME or none" >&2; echo "$usage" >&2; exit 2; fi; boot_want=$1 ;;
+            --boot=*) boot_want=${1#--boot=} ;;
+            --gamemode) shift; if [ "$#" -eq 0 ]; then echo "--gamemode needs skip, none or NAME" >&2; echo "$usage" >&2; exit 2; fi; gm_want=$1 ;;
+            --gamemode=*) gm_want=${1#--gamemode=} ;;
+            --status) action=status ;;
+            --restore) action=restore ;;
+            --list) action=list ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now and checked: it counts as applied only when it really runs (system setting; sudo is primed once, a security-key touch per command is possible; never retried, the exact command is printed when it fails; the previous scheduler is switched off only after the new one runs, and is restored if it does not). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --restore puts the machine back on the boot choice (start the enabled instance and stop any other one, or stop every running scheduler when none is enabled), for the case that gamemoded died during a game and the game-time scheduler stayed active; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
+            *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
+        esac
+        shift
+    done
+
+    # the registry: one file per scheduler (instance name = file name without .conf)
+    reg_get() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$1"; }
+    inst=()
+    desc=()
+    mink=()
+    for f in "$registry"/*.conf; do
+        [ -f "$f" ] || continue
+        b=${f##*/}
+        inst+=("${b%.conf}")
+        desc+=("$(reg_get "$f" DESCRIPTION)")
+        mink+=("$(reg_get "$f" MIN_KERNEL)")
+    done
+    if [ "${#inst[@]}" -eq 0 ]; then echo "No schedulers are registered in $registry (this image ships none)." >&2; exit 1; fi
+    is_inst() { local x; for x in "${inst[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
+    desc_of() { local k; for k in "${!inst[@]}"; do [ "${inst[$k]}" = "$1" ] && { printf '%s' "${desc[$k]}"; return; }; done; }
+    short() { local t=$1 max=${2:-76}; if [ "${#t}" -gt "$max" ]; then t="${t:0:$((max - 1))}…"; fi; printf '%s' "$t"; }
+    names_list="$(IFS=' '; echo "${inst[*]}")"
+
+    if [ "$action" = list ]; then
+        echo "Shipped schedulers (use the name on the left; --boot NAME, --gamemode NAME):"
+        for k in "${!inst[@]}"; do
+            printf '  %-9s scx_%-9s minimum kernel: %-4s %s\n' "${inst[$k]}" "${inst[$k]}" "${mink[$k]:-any}" "${desc[$k]}"
+        done
+        echo "  none      the kernel's default scheduler (EEVDF)"
+        echo "  skip      (--gamemode only) do not switch when a game starts"
+        exit 0
+    fi
+    if [ "$(id -u)" = 0 ]; then echo "Run this as your user, not as root: it writes your GameMode choice, and the boot step asks for sudo itself." >&2; exit 1; fi
+
+    # validate names before anything else
+    if [ -n "$boot_want" ] && [ "$boot_want" != none ] && ! is_inst "$boot_want"; then
+        echo "Unknown scheduler for --boot: '$boot_want'. Known: none $names_list" >&2; exit 2
+    fi
+    if [ -n "$gm_want" ] && [ "$gm_want" != none ] && [ "$gm_want" != skip ] && ! is_inst "$gm_want"; then
+        echo "Unknown choice for --gamemode: '$gm_want'. Known: skip none $names_list" >&2; exit 2
+    fi
+
+    if [ ! -d "$sysfs" ]; then
+        echo "Not applicable: this kernel has no sched_ext ($sysfs is missing)."
+        exit 0
+    fi
+
+    sched_state() { cat "$sysfs/state" 2>/dev/null || echo unknown; }
+    active_sched() { local o; o=$(cat "$sysfs/root/ops" 2>/dev/null); if [ -n "$o" ] && is_inst "$o"; then echo "$o"; elif [ -n "$o" ]; then echo "$o (not one of ours)"; fi; }
+    enabled_insts() { local i; for i in "${inst[@]}"; do [ "$(systemctl is-enabled "scx@$i.service" 2>/dev/null)" = enabled ] && echo "$i"; done; }
+    gm_current() {
+        local v=""
+        if [ -r "$conf" ]; then v=$(awk -F= '$1 == "GAMEMODE_SCHED" { v = $2 } END { print v }' "$conf" | tr -d '[:space:]"'"'"); fi
+        case "$v" in "" | skip) echo skip ;; none) echo none ;; *) if is_inst "$v"; then echo "$v"; else echo "skip"; fi ;; esac
+    }
+
+    if [ "$action" = status ]; then
+        kern=$(uname -r)
+        a=$(active_sched)
+        e=$(enabled_insts | tr '\n' ' ')
+        echo "sched_ext state:   $(sched_state)"
+        a_txt=$a
+        [ -n "$a_txt" ] || a_txt="none (the kernel default, EEVDF)"
+        echo "active scheduler:  $a_txt"
+        echo "boot choice:       ${e:-none} (the enabled scx@NAME.service)"
+        echo "GameMode choice:   $(gm_current) ($conf)"
+        dis=""
+        for i in "${inst[@]}"; do
+            m="$state_dir/scx-disabled/$i"
+            if [ -f "$m" ]; then
+                if [ "$(head -c 200 "$m")" = "$kern" ]; then dis="$dis $i (disabled for this kernel $kern after repeated load failures)"; else dis="$dis $i (marker for another kernel)"; fi
+            fi
+        done
+        echo "disabled markers: ${dis:- none}"
+        boot_first=$(enabled_insts | head -n1)
+        a_inst=$(active_sched)
+        if [ -n "$a_inst" ] && [ "$a_inst" != "$boot_first" ]; then
+            echo "note: the running scheduler ($a_inst) differs from the boot choice (${boot_first:-none})."
+            if command -v gamemoded >/dev/null 2>&1; then
+                gms=$(timeout 2 gamemoded -s 2>&1 | head -n1)
+                case "$gms" in
+                    *"is active"* | *"are active"*) echo "      GameMode reports an active session: $gms" ;;
+                    "") echo "      GameMode did not answer (gamemoded -s): the hint is skipped; run ujust scheduler --restore if no game is running." ;;
+                    *) echo "      a game-time scheduler is active but no GameMode session is registered: run ujust scheduler --restore" ;;
+                esac
+            else
+                echo "      GameMode state unknown (gamemoded -s is not available): if no game is running, run ujust scheduler --restore"
+            fi
+        fi
+        exit 0
+    fi
+
+    if [ "$action" = restore ]; then
+        boot_first=$(enabled_insts | head -n1)
+        cmds=()
+        if [ -n "$boot_first" ]; then
+            if [ "$(active_sched)" != "$boot_first" ]; then cmds+=("systemctl start scx@$boot_first.service"); fi
+            for i in "${inst[@]}"; do
+                if [ "$i" != "$boot_first" ] && [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ]; then cmds+=("systemctl stop scx@$i.service"); fi
+            done
+        else
+            for i in "${inst[@]}"; do
+                if [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ]; then cmds+=("systemctl stop scx@$i.service"); fi
+            done
+            a=$(active_sched)
+            if [ "${#cmds[@]}" -eq 0 ] && [ -n "$a" ] && is_inst "$a"; then cmds+=("systemctl stop scx@$a.service"); fi
+        fi
+        echo "== restore the boot choice (${boot_first:-none: the kernel default scheduler, EEVDF})"
+        if [ "${#cmds[@]}" -eq 0 ]; then echo "Already consistent: nothing to do."; exit 0; fi
+        printf '  %s\n' "${cmds[@]}"
+        echo "Needs no prompt for the active wheel user (polkit rule); if that is refused the same command runs once through sudo (a security-key touch), never retried. Undo: ujust scheduler --gamemode NAME and start a game, or systemctl start scx@NAME.service"
+        if [ "$mode" = no ]; then echo "Plan only."; exit 0; fi
+        rc=0
+        for c in "${cmds[@]}"; do
+            if $c 2>/dev/null; then echo "Done: $c"; continue; fi
+            echo "Refused without privileges; trying once through sudo: sudo $c"
+            if ! sudo $c; then echo "Failed: sudo $c" >&2; echo "Run it yourself when ready." >&2; rc=1; break; fi
+            echo "Done: sudo $c"
+        done
+        exit "$rc"
+    fi
+
+    boot_cur=$(enabled_insts | head -n1)
+    gm_cur=$(gm_current)
+    names=()
+    results=()
+    undos=()
+    failed=0
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # interactive: ask both steps when nothing was named and this is a terminal
+    if [ -z "$boot_want" ] && [ -z "$gm_want" ] && [ "$mode" = ask ]; then
+        specs=()
+        specs+=("none^$(short "None - the kernel's default scheduler (EEVDF)")")
+        for k in "${!inst[@]}"; do specs+=("${inst[$k]}^$(short "${inst[$k]}: ${desc[$k]}")"); done
+        # the current choice first (menu_one preselects the first item)
+        ordered=()
+        cur_id=${boot_cur:-none}
+        for s in "${specs[@]}"; do [ "${s%%^*}" = "$cur_id" ] && ordered+=("$s"); done
+        for s in "${specs[@]}"; do [ "${s%%^*}" = "$cur_id" ] || ordered+=("$s"); done
+        menu_title "octarineOS scheduler"
+        menu_one "Scheduler at boot (now: $cur_id; first entry = keep)" "${ordered[@]}"
+        rc=$?
+        if [ "$rc" -eq 3 ]; then
+            echo "No terminal menu available: nothing changed. Name what you want:"
+            echo "$usage"
+            echo "Shipped: none $names_list (ujust scheduler --list shows the descriptions)"
+            exit 0
+        fi
+        if [ "$rc" -eq 0 ]; then boot_want=$MENU_ONE; fi
+        gspecs=()
+        gspecs+=("skip^$(short "Skip - do not switch when a game starts")")
+        gspecs+=("none^$(short "None - the kernel's default scheduler (EEVDF) during games")")
+        for k in "${!inst[@]}"; do gspecs+=("${inst[$k]}^$(short "${inst[$k]}: ${desc[$k]}")"); done
+        gordered=()
+        for s in "${gspecs[@]}"; do [ "${s%%^*}" = "$gm_cur" ] && gordered+=("$s"); done
+        for s in "${gspecs[@]}"; do [ "${s%%^*}" = "$gm_cur" ] || gordered+=("$s"); done
+        menu_one "Scheduler while GameMode is active (now: $gm_cur; first entry = keep)" "${gordered[@]}"
+        if [ $? -eq 0 ]; then gm_want=$MENU_ONE; fi
+        if [ -z "$boot_want" ] && [ -z "$gm_want" ]; then echo "Nothing chosen; nothing changed."; exit 0; fi
+        echo "Plan: boot ${boot_want:-unchanged}, GameMode ${gm_want:-unchanged}"
+        if ! menu_confirm "Apply?" y; then echo "Nothing changed."; exit 0; fi
+    elif [ -z "$boot_want" ] && [ -z "$gm_want" ]; then
+        echo "Nothing to change. Now: boot ${boot_cur:-none}, GameMode $gm_cur. Name what you want:"
+        echo "$usage"
+        echo "Shipped: none $names_list (ujust scheduler --list shows the descriptions)"
+        exit 0
+    fi
+
+    # step 1: the boot choice (system unit; sudo is primed once with sudo -v, then one command per call, never retried)
+    if [ -n "$boot_want" ]; then
+        echo
+        echo "== scheduler at boot"
+        already=0
+        # "already set" means enabled AND really running: the kernel reports that scheduler, and systemd says the unit is active
+        sched_active_ok() {
+            [ "$(systemctl is-active "scx@$1.service" 2>/dev/null)" = active ] || return 1
+            [ "$(sched_state)" = enabled ] && [ "$(cat "$sysfs/root/ops" 2>/dev/null)" = "$1" ]
+        }
+        wait_active() {
+            local t=${SCHEDULER_WAIT:-5} n=0
+            while ! sched_active_ok "$1"; do
+                n=$((n + 1))
+                [ "$n" -gt "$t" ] && return 1
+                sleep 1
+            done
+            return 0
+        }
+        # why_inactive NAME: sets why_kind (btf, marker or other) and prints the reason
+        why_inactive() {
+            local m="$state_dir/scx-disabled/$1" kern=${SCHEDULER_KERNEL:-$(uname -r)}
+            why_kind=other
+            if [ ! -e "${SCHEDULER_BTF:-/sys/kernel/btf/vmlinux}" ]; then
+                why_kind=btf
+                echo "  Why: this kernel exposes no BTF (${SCHEDULER_BTF:-/sys/kernel/btf/vmlinux} is missing), so scx@$1 skips itself quietly."
+            elif [ -f "$m" ] && [ "$(head -c 200 "$m")" = "$kern" ]; then
+                why_kind=marker
+                echo "  Why: scx@$1 is disabled for this kernel ($kern) after repeated load failures (marker $m)."
+            else
+                echo "  Why: the unit did not become active; the last journal lines of scx@$1.service:"
+                journalctl -u "scx@$1.service" -n 5 --no-pager 2>&1 | sed 's/^/    /'
+            fi
+        }
+        if [ "$boot_want" = none ] && [ -z "$boot_cur" ]; then already=1; fi
+        if [ "$boot_want" != none ] && [ "$boot_cur" = "$boot_want" ] && [ "$(enabled_insts | wc -l)" -eq 1 ] && sched_active_ok "$boot_want"; then already=1; fi
+        if [ "$already" = 1 ]; then
+            echo "Already set: ${boot_want}."
+            record "boot" "already done"
+        else
+            others=()
+            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] || others+=("$i"); done
+            was_enabled=0
+            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] && was_enabled=1; done
+            cmds=()
+            if [ "$boot_want" = none ]; then
+                for i in "${others[@]}"; do cmds+=("sudo systemctl disable --now scx@$i.service"); done
+            else
+                cmds+=("sudo systemctl enable --now scx@$boot_want.service")
+                for i in "${others[@]}"; do cmds+=("sudo systemctl disable --now scx@$i.service  (only after scx@$boot_want is verified running)"); done
+            fi
+            echo "Sets $( [ "$boot_want" = none ] && echo 'the kernel default scheduler (EEVDF)' || echo "scx_$boot_want ($(short "$(desc_of "$boot_want")" 90))") at boot. System setting: uses sudo (a security-key touch is likely for each command: one shared touch is not guaranteed, it depends on the sudo configuration); never retried."
+            if [ "$was_enabled" = 1 ] && [ "$boot_want" != none ]; then echo "scx@$boot_want is enabled but not running: it is started now and the reason is reported if it does not run."; fi
+            for c in "${cmds[@]}"; do echo "  $c"; done
+            if [ "$mode" = no ]; then
+                record "boot" "plan only"
+            else
+                okc=1
+                note=""
+                if [ "$boot_want" = none ]; then
+                    sudo -v || { okc=0; echo "Failed: sudo -v (no administrator rights)" >&2; }
+                    for i in "${others[@]}"; do
+                        [ "$okc" = 1 ] || break
+                        if ! sudo systemctl disable --now "scx@$i.service"; then okc=0; echo "Failed: sudo systemctl disable --now scx@$i.service" >&2; echo "Run the commands above yourself when ready." >&2; fi
+                    done
+                    note="run: ${cmds[*]}"
+                else
+                    old_running=()
+                    for i in "${others[@]}"; do [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ] && old_running+=("$i"); done
+                    enable_ok=0
+                    if ! sudo -v; then
+                        okc=0
+                        echo "Failed: sudo -v (no administrator rights)" >&2
+                    else
+                        # the new instance is enabled and started FIRST; its Conflicts= stops the running one, the old one stays enabled until the new one is verified
+                        if sudo systemctl enable --now "scx@$boot_want.service"; then enable_ok=1; else okc=0; echo "Failed: sudo systemctl enable --now scx@$boot_want.service" >&2; fi
+                        if [ "$enable_ok" = 1 ] && ! wait_active "$boot_want"; then
+                            okc=0
+                            echo "scx@$boot_want is NOT running: sched_ext reports '$(sched_state)', scheduler '$(active_sched)'." >&2
+                            why_inactive "$boot_want" >&2
+                            if [ "$why_kind" = marker ]; then
+                                m="$state_dir/scx-disabled/$boot_want"
+                                if [ "$mode" = ask ] && menu_confirm "Remove the marker ($m) and start scx@$boot_want again?" n; then
+                                    if sudo rm -- "$m" && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
+                                else
+                                    echo "  To try again anyway: sudo rm -- $m   (then: ujust scheduler --boot $boot_want). Nothing was removed." >&2
+                                fi
+                            fi
+                        fi
+                        if [ "$okc" = 1 ]; then
+                            for i in "${others[@]}"; do
+                                if ! sudo systemctl disable --now "scx@$i.service"; then okc=0; note="scx@$boot_want runs, but scx@$i is still enabled: run sudo systemctl disable --now scx@$i.service"; echo "Failed: sudo systemctl disable --now scx@$i.service" >&2; fi
+                            done
+                        else
+                            # roll back: the boot choice stays as it was (undo what this run enabled, start the old instance again)
+                            if [ "$was_enabled" = 0 ] && [ "$(systemctl is-enabled "scx@$boot_want.service" 2>/dev/null)" = enabled ]; then sudo systemctl disable --now "scx@$boot_want.service" || echo "Failed: sudo systemctl disable --now scx@$boot_want.service (run it yourself)" >&2; fi
+                            rest=""
+                            for i in "${old_running[@]}"; do
+                                if [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" != active ]; then
+                                    if sudo systemctl start "scx@$i.service"; then rest="$rest $i"; else echo "Failed: sudo systemctl start scx@$i.service (run it yourself)" >&2; fi
+                                fi
+                            done
+                            [ -n "$rest" ] && echo "Restored the previous scheduler:$rest (scx@$boot_want is not kept at boot)." >&2
+                            [ "$was_enabled" = 0 ] && [ "$(systemctl is-enabled "scx@$boot_want.service" 2>/dev/null)" != enabled ] && echo "scx@$boot_want was disabled again; the boot choice is as before." >&2
+                        fi
+                    fi
+                    [ -n "$note" ] || note="run: ${cmds[0]#sudo }"
+                fi
+                if [ "$okc" = 1 ]; then
+                    record "boot" "applied" "ujust scheduler --boot ${boot_cur:-none}"
+                else
+                    failed=1
+                    record "boot" FAILED "$note"
+                fi
+            fi
+        fi
+    fi
+
+    # step 2: the GameMode choice (a user file, no sudo)
+    if [ -n "$gm_want" ]; then
+        echo
+        echo "== scheduler while GameMode is active"
+        if [ "$gm_want" = "$gm_cur" ] && [ -f "$conf" ]; then
+            echo "Already set: ${gm_want}."
+            record "gamemode" "already done"
+        else
+            echo "Writes GAMEMODE_SCHED=$gm_want to $conf (no sudo). The GameMode hooks read it when a game starts."
+            if [ "$mode" = no ]; then
+                record "gamemode" "plan only"
+            else
+                mkdir -p "$(dirname "$conf")" || true
+                tmp=$(mktemp "$conf.XXXXXX" 2>/dev/null)
+                if [ -n "$tmp" ]; then
+                    if [ -f "$conf" ]; then grep -v '^GAMEMODE_SCHED=' "$conf" >"$tmp" || true; else
+                        printf '%s\n' "# Written by ujust scheduler. GAMEMODE_SCHED=skip|none|<scheduler name> (see ujust scheduler --list); absent means skip." >"$tmp"
+                    fi
+                    printf 'GAMEMODE_SCHED=%s\n' "$gm_want" >>"$tmp"
+                fi
+                if [ -n "$tmp" ] && mv -f -- "$tmp" "$conf"; then
+                    record "gamemode" applied "ujust scheduler --gamemode $gm_cur"
+                else
+                    rm -f -- "$tmp" 2>/dev/null
+                    echo "Failed: could not write $conf" >&2
+                    failed=1
+                    record "gamemode" FAILED
+                fi
+            fi
+        fi
+    fi
+
+    echo
+    echo "== Summary"
+    for k in "${!names[@]}"; do printf '  %-10s %s\n' "${names[$k]}" "${results[$k]}"; done
+    echo "To undo:"
+    for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
+    exit "$failed"
+
+# Turn on Wake-on-LAN (magic packet) for the wired NIC through NetworkManager
+[group('Setup')]
+[positional-arguments]
+wake-on-lan *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    usage="Usage: ujust wake-on-lan [--yes|--no] [--status] [--off] [--nic IFACE] [-h]"
+    mode=ask
+    action=on
+    nic_want=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --status) action=status ;;
+            --off) action=off ;;
+            --nic) shift; if [ "$#" -eq 0 ]; then echo "--nic needs an interface" >&2; exit 2; fi; nic_want=$1 ;;
+            --nic=*) nic_want=${1#--nic=} ;;
+            help | --help | -h) printf '%s\n' 'Wake-on-LAN for the wired NIC, set through NetworkManager so it persists: `ujust wake-on-lan [--yes|--no] [--status] [--off] [--nic IFACE]`. Finds the NIC with the default route (or --nic), reads whether it supports magic-packet wake (ethtool Wake-on contains g; without ethtool or without the right to read it, the sysfs power/wakeup file is used), takes the profile that is active on the PHYSICAL device (when the NIC is a bridge port that is the port profile, not the bridge), and runs `sudo nmcli connection modify "<profile>" 802-3-ethernet.wake-on-lan magic` and `sudo nmcli device reapply <iface>` (sudo, a security-key touch, never retried; the exact commands are printed when one fails). --off sets the value ignore. --status shows the setting and the MAC address. Undo: ujust wake-on-lan --off. This only configures the operating system: also enable Wake on LAN (often named Power On By PCI-E) in the BIOS or UEFI, and switch off ErP or EuP deep-sleep savings if the machine does not wake from a full shutdown (names vary). The real test is yours: shut down, then send a magic packet from another machine (wakeonlan MAC or etherwake MAC). Some drivers reset the setting at shutdown: not verified here. No tools are installed.'; exit 0 ;;
+            *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
+        esac
+        shift
+    done
+    if [ "$(id -u)" = 0 ]; then echo "Run this as your user, not as root: sudo is used for the one change." >&2; exit 1; fi
+    net_dir="${WOL_NET_DIR:-/sys/class/net}"
+    nic="$nic_want"
+    if [ -z "$nic" ]; then nic=$(ip -o route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'); fi
+    if [ -z "$nic" ]; then echo "No wired NIC found (no default route). Name one with --nic IFACE." >&2; exit 1; fi
+    # a bridge is not the physical device: look for its port
+    if [ -d "$net_dir/$nic/bridge" ]; then
+        port=$(ls "$net_dir/$nic/brif" 2>/dev/null | head -n1)
+        if [ -n "$port" ]; then echo "$nic is a bridge: the physical port is $port."; nic=$port; fi
+    fi
+    capable=0
+    if command -v ethtool >/dev/null 2>&1 && eout=$(ethtool "$nic" 2>/dev/null) && [ -n "$eout" ]; then
+        grep -E 'Supports Wake-on:' <<<"$eout" | grep -q 'g' && capable=1
+    elif [ -e "$net_dir/$nic/device/power/wakeup" ]; then
+        echo "(ethtool is missing or not readable as your user: using $net_dir/$nic/device/power/wakeup as the capability hint)"
+        capable=1
+    fi
+    if [ "$capable" = 0 ]; then echo "$nic does not report magic-packet wake support: nothing to do." ; exit 0; fi
+    prof=$(nmcli -g GENERAL.CONNECTION device show "$nic" 2>/dev/null)
+    if [ -z "$prof" ] || [ "$prof" = "--" ]; then echo "No active NetworkManager profile on $nic." >&2; exit 1; fi
+    cur=$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$prof" 2>/dev/null | head -n1)
+    mac=$(cat "$net_dir/$nic/address" 2>/dev/null)
+    if [ "$action" = status ]; then
+        echo "NIC $nic, profile '$prof', wake-on-lan setting: ${cur:-unknown}, MAC ${mac:-unknown}"
+        exit 0
+    fi
+    want=magic; [ "$action" = off ] && want=ignore
+    echo "NIC $nic (MAC ${mac:-unknown}), profile '$prof': wake-on-lan is '${cur:-unknown}', wanted '$want'."
+    if [ "$cur" = "$want" ]; then echo "Already done."; exit 0; fi
+    undo_val=ignore; [ "$action" = off ] && undo_val=magic
+    echo "Undo: ujust wake-on-lan$([ "$action" = off ] || echo ' --off')"
+    c1=(sudo nmcli connection modify "$prof" 802-3-ethernet.wake-on-lan "$want")
+    c2=(sudo nmcli device reapply "$nic")
+    echo "Commands (sudo, a security-key touch, never retried):"
+    echo "  ${c1[*]}"
+    echo "  ${c2[*]}"
+    if [ "$mode" = no ]; then echo "Plan only."; exit 0; fi
+    if [ "$mode" != yes ]; then
+        menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+        # shellcheck source=/dev/null
+        if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+        if ! declare -F menu_confirm >/dev/null || ! menu_confirm "Apply?" y; then echo "Nothing changed."; exit 0; fi
+    fi
+    if ! "${c1[@]}"; then echo "FAILED: ${c1[*]}" >&2; exit 1; fi
+    if ! "${c2[@]}"; then echo "FAILED: ${c2[*]}" >&2; echo "The setting is saved in the profile; it applies at the next connection." >&2; exit 1; fi
+    echo "Done. Check: nmcli -g 802-3-ethernet.wake-on-lan connection show '$prof'; ethtool $nic | grep Wake-on"
+    if [ "$action" = on ]; then
+        echo "Reminder: this is the operating-system side only. Enable Wake on LAN (Power On By PCI-E) in the BIOS or UEFI, and switch off ErP or EuP if the machine does not wake from a full shutdown."
+        echo "Test it: shut down, then from another machine: wakeonlan ${mac:-<MAC>}  (or etherwake ${mac:-<MAC>})"
+    fi
+    exit 0
 
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
 [group('Toolbox')]

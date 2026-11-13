@@ -128,6 +128,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   hash tag of the checked-out tree, and labels the image `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for
   `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public (the GPL source records ship in
   the image either way).
+- **Which path ran.** The run shows it: a green job "Reuse the binaries image" (the lookup found a signed image for the hash, the build and sign jobs are skipped) or "Build the binaries image" plus "Sign the binaries image"; `binaries.yml` outputs `action` (`reused`, `built` or `validated` for a branch that cannot publish), `hash` and `digest`, each deciding job writes one line to the run summary, and `build.yml` and `build-beta.yml` repeat it; a tag whose signature fails to verify is not reused, the build path rebuilds and signs it again.
 - **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
   `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
   the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
@@ -167,6 +168,136 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
 - **Undo.** Remove `binaries/`, the three `binaries-*.sh` scripts, `binaries.yml`, `upstream-check.yml`, the `binaries` jobs and steps, the
   `BINARIES_IMAGE` argument and mount, `install-binaries.sh`, the smoke assertions and the tests; restore the cargo build in the `extest`
   step from git history.
+
+## sched_ext schedulers (`scx@`, `ujust scheduler`)
+
+The seven shipped schedulers (`scx_rusty`, `scx_lavd`, `scx_cake`, `scx_bpfland`, `scx_cosmos`, `scx_flash`, `scx_p2dq`, sched-ext/scx v1.1.4,
+built from `binaries/scx`, see "Prebuilt binaries"; Fedora's own old `scx_rusty` package is not used) are BPF schedulers that replace the
+kernel's default (EEVDF) while loaded. EVERYTHING SHIPS OFF: no preset enables one (`00-octarine-scx.preset` says `disable scx@*.service`), none runs
+after install; the owner decides default-on after a soak. Whatever fails, the machine stays on EEVDF. Adding a scheduler later = one line in
+`binaries/scx/schedulers.tsv` plus the upstream bump; the registry, drop-ins, menus and tests derive from it.
+
+- **Registry.** `build_files/gen-schedulers.sh` (called by `build.sh` after `install-binaries.sh`) reads `/usr/share/octarine-os/schedulers.tsv`
+  (four tab-separated fields: name, `bin/<name>`, minimum kernel (EMPTY for all seven today), description up to 120 characters; read with
+  `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`) and writes `/usr/share/octarine-os/schedulers.d/<instance>.conf` (`NAME`, `INSTANCE`, `BINARY`,
+  `DESCRIPTION`, `MIN_KERNEL`, `FLAGS`; parsed with awk, never sourced). The **instance name is the scheduler name without `scx_`**: `rusty`, `lavd`, `cake`,
+  `bpfland`, `cosmos`, `flash`, `p2dq` (it equals the scheduler's `sched_ext_ops` name, which `/sys/kernel/sched_ext/root/ops` shows). It also writes per
+  instance `scx@<name>.service.d/10-conflicts.conf` (`Conflicts=` on every other instance) and, only when the registry has a minimum kernel,
+  `20-kernel.conf` (`ConditionKernelVersion=>=<min>`).
+- **Unit** `system_files/usr/lib/systemd/system/scx@.service`: `Type=simple`, `ConditionPathExists=/sys/kernel/sched_ext`, `StartLimitIntervalSec=0`
+  (user-triggered start/stop cycles never trip systemd's start limit), `Restart=on-failure`, `RestartSec=5`, `ExecCondition=` `scx-preflight %i`,
+  `ExecStart=` `scx-run %i`, `ExecStartPost=` `scx-verify %i`, `[Install] WantedBy=multi-user.target`. No hardening directives, as in upstream's own
+  `services/scx.service` (which has none either): loading a BPF scheduler needs root and a sandbox that blocks `bpf()` would stop it; whether stricter
+  settings still load is UNVERIFIED. Helpers in `/usr/libexec/octarine-os/` (`scx-lib.sh`, `scx-preflight`, `scx-run`, `scx-verify`):
+  `scx-preflight` refuses quietly (exit 1, the unit is skipped, not failed) when `/sys/kernel/btf/vmlinux` is missing or the marker
+  `/var/lib/octarine-os/scx-disabled/<name>` holds the running `uname -r`; `scx-run` runs the registry's binary (must be `/usr/bin/scx_*`) with the
+  registry's flags and a cleared environment; `scx-verify` waits up to 5 s until `/sys/kernel/sched_ext/state` is `enabled` and
+  `/sys/kernel/sched_ext/root/ops` equals the instance (sysfs facts read from the kernel docs and a running nox; the `root` directory exists only while a scheduler is loaded).
+- **Safeguards (each tested in `tests/schedulers.sh`).** (a) The polkit rule is GENERATED at image build: `build_files/gen-schedulers.sh` fills the template `usr/share/octarine-os/polkit/50-octarine-scx.rules.in` with the exact alternation of the registry instance names and writes `usr/share/polkit-1/rules.d/50-octarine-scx.rules`. It grants `YES` for
+  `org.freedesktop.systemd1.manage-units` ONLY when the `unit` detail matches `^scx@(rusty|lavd|cake|bpfland|cosmos|flash|p2dq)\.service$` (the real instances, nothing else: not `scx@evil`, not `scx@rusty2`, not a hyphenated or uppercase name) AND the `verb` detail is exactly `start` or
+  `stop` (not `restart`, `try-restart`, `reload-or-restart`, `kill`, `reset-failed` or `set-property`: the hooks and the recipe only use start and stop, an in-place switch is a start of another instance and `Conflicts=` stops the running one) AND `subject.local && subject.active && subject.isInGroup("wheel")`; a request without those details never matches; nothing else is granted (not
+  enable/disable). The test runs the GENERATED rule (built from a fixture registry) in node against simulated actions: each real name for start and stop (restart matches for none), the unregistered and malformed names, other verbs, other subjects (`nodejs` is installed in the `test` job), and shows that one more manifest line adds the instance to the rule. The rule is in `/usr/share`, not `/etc`, so
+  the base's `/etc/polkit-1/rules.d` attributes are not touched. (b) The instance name is attacker-chosen: all three helpers match it EXACTLY against the registry
+  files (`^[a-z0-9][a-z0-9_]*$` AND a file of that name) before any use and exit 2 for anything else (`../x`, empty, spaces, case, an unregistered name); no path is
+  built from an unvalidated name. (c) Root units read only the root-owned registry, `/usr` binaries, sysfs and `/var/lib/octarine-os`; flags come from the registry only;
+  no user file or environment. The per-user file is read ONLY by the GameMode hooks (run as the user). (d) `scx-verify` is the crash-loop protection: the marker is written ONLY after a real load
+  failure (sched_ext not enabled at all after the timeout), counted in the root-owned `/var/lib/octarine-os/scx-failures/<name>` (never above the threshold), at the third consecutive verified failure; a success removes
+  the count and the marker; a stop during the wait (SIGTERM) counts nothing. When sched_ext is enabled but ANOTHER scheduler holds it (for example the user ran `systemctl start --job-mode=ignore-dependencies scx@B.service` while `scx@A` runs, which skips the `Conflicts=` stop), the start fails as "busy" and counts nothing and writes no marker, so that trick cannot disable a scheduler for the kernel. (e) Residual risk in plain words (after the hardening: the rule only matches real instance names, only start and stop are granted, and a busy sched_ext is never counted as a failure): any process running as the logged-in wheel user in an active local
+  session can switch among the shipped schedulers without a prompt (an availability and performance risk, not code execution as root, because the unit files, binaries and flags
+  are root-owned), the same trust class as the existing tuned rule. Side doors, accepted on purpose: (1) systemd sends the verbs `stop` and `start` for FreezeUnit and ThawUnit too, so the user can also freeze and thaw the cgroup of an scx unit (a short userspace stall, then the sched_ext watchdog ejects the scheduler back to EEVDF). (2) `subject.local` does not stop same-user code that arrives remotely: a process started by `systemd-run --user` or a user unit from an SSH login leaves the session cgroup and takes polkit's Display-session fallback, so it counts as local and active. (3) `StartTransientUnit` with a caller-chosen name `scx@x.service` also matches the rule (polkit sees the verb `start` and that unit name); the ONLY thing that stops a user from creating a transient ROOT unit with an arbitrary `ExecStart` under such a name is systemd's refusal "Unit already loaded or has a fragment file" because the template `usr/lib/systemd/system/scx@.service` exists. The rule must never be shipped without that template: `gen-schedulers.sh` refuses to generate it, and a test and the image smoke test check the file (do not rename or drop it). (4) `Restart=on-failure` with `StartLimitIntervalSec=0` retries every 5 s until the failure marker trips, which the three-verified-failure rule bounds. Comparison: stock Fedora asks for administrator authentication for every unit action; this rule is smaller than the existing `libvirt` group (`org.libvirt.unix.manage`, root-equivalent) and the `gamemode` group exceptions. No systemd sandbox hardening is added to `scx@.service` (loading BPF under it is unverified). UNVERIFIED: whether schedulers expose a stats socket and who can read it. From the scx source (`scx_stats`
+  server, v1.1.4) the default is a Unix socket `/var/run/scx/root/stats` created by the root-run scheduler with its umask, so with the usual 022 only root could connect;
+  not checked on a running scheduler.
+- **GameMode hooks.** `/usr/libexec/octarine-os/gamemode-start` and `gamemode-end` (library `gamemode-lib.sh`) are the `[custom] start=` and `end=` of
+  `usr/share/octarine-os/gamemode.ini` (installed as `~/.config/gamemode.ini` by `ujust gaming-setup gamemode`; the image's own `/etc/gamemode.ini` has no `[custom]` on
+  purpose), with `script_timeout=20`. They run the two tuned commands as before (`latency-performance` on start, `balanced` on end), independent steps, side by side with the
+  scheduler step. The user's choice is `GAMEMODE_SCHED=skip|none|<name>` in `~/.config/octarine-os/scheduler.conf` (parsed, validated against the registry; absent or invalid means skip): `skip` does nothing; a name runs
+  `systemctl start scx@<name>.service` and checks `/sys/kernel/sched_ext/root/ops`; `none` stops the active scheduler; `end` restores the boot choice (the instance `systemctl is-enabled` reports
+  enabled, else the default scheduler) only when `start` switched something (marker in `$XDG_RUNTIME_DIR/octarine-scx`). If the chosen scheduler fails, the boot choice is restored. A lock serializes overlapping
+  games. Each hook always exits 0, logs with `logger -t octarine-scx`, bounds every step, and sends `notify-send` on failure. Kevin's own `~/.config/gamemode.ini` overrides the image file and must be updated by hand.
+- **Failure mode and recovery.** If `gamemoded` dies or crashes during a game, `gamemode-end` never runs and the game-time scheduler stays active. `ujust scheduler --restore` puts the machine back on the boot choice (start the enabled instance and stop any other; or stop every running one when none is enabled; the polkit rule applies, otherwise the same command runs once through sudo, never retried; `--no` prints the plan; idempotent), `--status` points at it when the running scheduler differs from the boot choice (it asks `gamemoded -s` with a 2 s timeout and says when it cannot), and `gamemode-start` repairs a stale state itself before it switches (GameMode calls start only for the first game): when a scheduler runs that is neither the boot choice nor the requested one, it restores the boot choice first.
+- **Recipe `ujust scheduler`** (group Setup, above `toolbox`, not part of `hardware-setup`): step 1 scheduler at boot (None plus every registry entry, current first; `sudo -v` once, then `sudo systemctl enable --now scx@NAME.service` FIRST and the enabled other instance is disabled only after the new one is verified running (`systemctl is-active` plus `/sys/kernel/sched_ext/state` and `root/ops`, waited up to `SCHEDULER_WAIT` seconds, default 5); "already set" means enabled AND running; a scheduler that does not run is reported FAILED with the reason (no BTF, the crash-loop marker of this kernel, or the last journal lines), the new instance is disabled again if this run enabled it and the old one is started again, and a marker is removed (`sudo rm -- /var/lib/octarine-os/scx-disabled/NAME`) only when the user confirms (default no; never under `--yes`); sharing one security-key touch between the sudo commands is NOT guaranteed (it depends on the sudoers credential cache); never retried; exact command printed on failure), step 2 scheduler while GameMode is active (Skip, None, entries; writes `scheduler.conf`, no sudo). Every option shows its
+  description (menu text shortened to 76 characters; `--list` shows the full text). Flags `--boot`, `--gamemode`, `--status`, `--list`, `--restore`, `--yes`, `--no`, `-h`; unknown name or option exits 2; refuses root; "not applicable" without
+  `/sys/kernel/sched_ext`. Test hooks `SCHEDULER_REGISTRY|SYSFS|STATE_DIR|USER_CONF|WAIT|BTF|KERNEL`. Tests: `tests/scheduler-recipe.sh`.
+- **Tier 1 compatibility check** (`.github/scripts/scx-kernel-check.py`, a step after the smoke test in `build.yml` and `build-beta.yml`, run inside the built image; the dx and NVIDIA variants inherit the same kernel and the
+  schedulers, so they need none). FEASIBLE and built: the image's `/usr/lib/modules/<kver>/vmlinuz` is an x86 bzImage whose payload offset and length are in the setup header (zstd on Fedora 45); decompressed, the vmlinux has a
+  `.BTF` section (159774 types on 7.2.15) which the script parses itself (no bpftool or pahole needed), plus `config` and `System.map` next to it. It checks `CONFIG_SCHED_CLASS_EXT`, `CONFIG_BPF_SYSCALL` and
+  `CONFIG_DEBUG_INFO_BTF` are `y`; for each scheduler binary it extracts the embedded BPF object (an EM_BPF ELF inside the Rust binary) and requires that every REQUIRED import (undefined, non-weak ELF symbols; weak
+  ones are the scx compat layer's optional kfuncs and are only notes; `CONFIG_*` and `LINUX_KERNEL_VERSION` are libbpf's own `.kconfig` externs, checked against the kernel config) exists in the kernel BTF (functions, variables) or `System.map`,
+  and that every `struct sched_ext_ops` member the object sets (found through the `.struct_ops*` relocations and the object's own BTF) exists in the kernel's `struct sched_ext_ops`. Run on 2026-11-13 by hand against
+  the 7.2.15 kernel of the image and the seven v1.1.4 binaries: all pass. A failure fails the build, which blocks promoting it. If the kernel image's BTF cannot be read the comparison is skipped with a warning (the config part
+  still counts). It does NOT prove the verifier accepts the programs, that a member's meaning is unchanged, or that the userspace side works. Tests: `tests/scx-kernel-check.sh` (synthetic kernel and objects).
+- **Smoke test** (both build workflows): the template, the polkit rule and the helpers exist, the registry has one file per manifest line with a conflicts drop-in each, and nothing enables a scheduler.
+- **Unverified.** Loading any scheduler on the shipped kernel (only a real machine can), the live switch during a game, SELinux and kernel lockdown effects on loading, the stats socket permissions, the polkit rule
+  in a real session (only simulated), and whether `systemctl start` as the user really needs no prompt with the rule installed. The GameMode hooks run from a systemd user service: confirm polkit treats that as local and active, else the hooks need a different subject condition; test with a real GameMode run and `systemd-run --user --pipe systemctl start scx@rusty.service`. Also unverified on a real machine: that a `StartTransientUnit` named `scx@x.service` (for example with `systemd-run --user`'s system-bus counterpart through `busctl`) returns "already loaded"; each scheduler loading under SELinux (the units probably run as `unconfined_service_t`) and under kernel lockdown=integrity; the stats socket mode; the sched_ext watchdog timeout; whether a Flatpak with system-bus access can match the rule; and a `gamemoded`-launched `systemctl start` getting YES.
+- **Undo.** `ujust scheduler --boot none --gamemode skip`; remove the units, helpers, rule, preset, `gen-schedulers.sh` and the recipe.
+
+## Datastore containers (dx image only, opt-in)
+
+The dx images ship generic datastore and Kafka Quadlets: rootless, user-level, STOPPED by default, nothing enabled, no lingering. Derived from the
+owner's own Quadlets (which override them from `~/.config/containers/systemd` until removed); nothing personal, no airflow, connect, superset, trino,
+lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
+
+- **Rule.** The Quadlets are rootless user units: their start and stop state never needs administrator rights or any privilege prompt. Start and stop are
+  `systemctl --user start|stop <unit>` only. Only the image build writes under `/usr`. Every shipped port is bound to `127.0.0.1` and above 1023.
+  `tests/datastore.sh` fails if a shipped Quadlet, recipe, helper, the pin file or this section mentions a privilege-escalation tool, if a unit publishes
+  a port below 1024 or anything but `127.0.0.1`, and if a recipe runs as root.
+- **Files.** `variants/dx/datastore/quadlets/` (templates), `variants/dx/datastore/datastore.env` (the ONE pin file), `variants/dx/datastore/render.sh`
+  (run by `dx.sh` at build: copies the templates to `/usr/share/containers/systemd/users/` and replaces each `@NAME_IMAGE@` with
+  `<image>:<tag>@<digest>`; fails on a missing or malformed pin, a `latest` or floating tag, or a tag outside its major). Units: `datastore.pod`
+  (`PodName=datastore`, ports 5432 PostgreSQL, 6379 Valkey, 8333 S3, 9333 SeaweedFS master, 8889 filer on loopback), `postgresql.container` (container
+  name `pgsql`), `valkey.container`, `seaweedfs.container`, `kafka.pod` + `kafka.container` (KRaft, 9092), `lakehouse.network`, the named `local`-driver
+  volumes `postgresql-data`, `valkey-data`, `seaweed-data`, `kafka-data`. No `[Install]`, no preset, no lingering. Generated unit names (read with
+  `quadlet --user --dryrun` on the image's podman 6.1): `datastore-pod.service`, `kafka-pod.service`, `postgresql.service`, `valkey.service`,
+  `seaweedfs.service`, `kafka.service`, plus `*-volume.service` and `lakehouse-network.service`.
+- **Location, verified.** The user generator reads `/usr/share/containers/systemd/users/` (checked by running `quadlet --user --dryrun` as an unprivileged user on
+  the default image with the rendered files mounted there: all units are generated). The dx smoke test repeats that dry run inside the built image.
+- **Pins.** Exact patch-level tags with digests (`Image=name:tag@sha256:...`; the tag stays for humans, the digest decides), recorded 2026-11-13: postgres
+  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `3.99`, kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
+  `AutoUpdate=` on any shipped unit: a stateful service never changes image unattended. Majors are never bumped automatically (PostgreSQL 17 to 18 needs dump
+  and restore or `pg_upgrade`). `tests/datastore.sh` checks that every shipped `Image=` equals the pin file, is an exact tag with a digest, and is not `latest`.
+- **Weekly bump.** `bump-pins.yml` (Tuesday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
+  the newest tag of the same shape and suffix inside the pinned major, with its manifest digest (`skopeo inspect --raw | sha256sum`); release candidates and other
+  suffixes never match; a NEWER MAJOR is only named in the pull request body ("newer major available, manual decision") and never changes the pin; one pull request
+  per image on `bump/<image>-digest` into `testing`, with the same default-token-plus-dispatch design as the other bump workflows. These are public registry
+  images: the digest comes from the registry, nothing of ours signs it. Tests: `tests/datastore-bump.sh`.
+- **User override, verified.** `~/.config/containers/systemd/<service>.container.d/10-image.conf` with `[Container]` and `Image=` replaces the shipped image: checked with
+  `quadlet --user --dryrun` (the drop-in is loaded from the user directory while the unit comes from `/usr/share`, and the generated `podman run` uses the drop-in's image, the last `Image=` wins).
+  `ujust datastore-setup --pin SERVICE=TAG` writes that drop-in (same major only, no digest: a tag can move; a major change is refused, do it by hand), `--unpin` removes it,
+  `--status` shows shipped pin, override, running image, the PostgreSQL data major (`PG_VERSION` read with `podman unshare cat`), the storage location and the volume sizes.
+- **Secrets, never in the image.** `Secret=postgresql-password`, `valkey-password` and `seaweedfs-s3-config` (a generated SeaweedFS identities JSON, admin with a random access and
+  secret key). `ujust datastore-setup` creates the MISSING ones with `podman secret create NAME -` from random data through stdin (never printed, logged or passed as an argument, an
+  existing secret is never overwritten); undo `podman secret rm`.
+- **Data-version guard.** `ujust datastore start` refuses to start the datastore pod when the data volume's `PG_VERSION` major differs from the effective image's major, with the dump and restore
+  message; the Quadlet itself stays simple. `--status` shows both majors. `ujust datastore-setup --update` prints the pins, says "back up first", pulls only after confirmation and never restarts a running service.
+- **Recipes** (dx recipe file `72-octarine-datastore.just`, imported by `dx.sh`, group Setup; rootless, refuse root, no hardware-setup step): `ujust datastore start|stop [datastore|kafka|all]` (default datastore;
+  checks the secrets first, runs the PostgreSQL guard, never pulls, a running pod is a no-op, unknown name exits 2), `status` (pods, containers, ports, running image against the pin), `logs SERVICE`
+  (`journalctl --user`, 200 lines); `ujust datastore-setup [--yes|--no|--status|--pin|--unpin|--update|--backup DIR [--stop]]`. Helper `/usr/share/octarine-os/lib/datastore.sh`.
+- **Storage and backups.** Named volumes live in Podman's graphroot, `~/.local/share/containers/storage` with no `storage.conf` (the owner's machine moves it with `containers/storage.conf`
+  and the btrfs driver); `--status` shows the graphroot and warns when it is under the home; moving it is documented, not automated. `--backup DIR` exports each volume to `DIR/<volume>-<YYYYMMDD-HHMMSS>.tar`
+  (`podman volume export`; a name that exists is never reused, `-2`, `-3` ... is appended; written to `<name>.part` and renamed on success, a failure removes only its own `.part`, never an earlier backup), PostgreSQL while running through an online `pg_dumpall` into `DIR/postgresql-<stamp>.sql`; a running pod with Valkey, SeaweedFS or Kafka volumes is refused unless `--stop`
+  (stops the pod, exports, starts it again; a trap starts again exactly the pods this run stopped on Ctrl-C, SIGTERM or an early failure); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
+- **Smoke test** (`dx-smoke.sh`): the eleven Quadlet files exist, no `[Install]`, every image an exact tag with a digest, no latest, `AutoUpdate=`, home path or local image, loopback ports only, the recipe file and helper
+  ship, and the generator dry run produces the pod and container units. Tests: `tests/datastore.sh`, `tests/datastore-bump.sh`, `tests/dx-image.sh`.
+- **Unverified (real machine).** The first `systemctl --user start datastore-pod` (image pulls, healthchecks), the secret mounts, SELinux labels on the volumes, the owner's graphroot, a Kafka start with the pinned 4.3.2, and that the removal of the owner's own Quadlet copies leaves the same behavior (container names are kept: `pgsql` and the pod aliases).
+
+## virthost-setup and wake-on-lan
+
+`ujust virthost-setup` (dx image only, `variants/dx/system_files/usr/share/ublue-os/just/75-octarine-virthost.just`, imported by `dx.sh`, group Setup) turns a dx machine into a KVM/libvirt host; it is the single implementation. `ujust dev --only libvirt` delegates to `virthost-setup --only daemons,connection` (the old libvirt code and its tests are gone; under `--yes` the step still runs only when named); the hardware-setup `virtualization` step is removed and its `iommu` entry only delegates to `virthost-setup --only iommu`. Checklist (menu through `menu.sh`), flags `--yes`, `--no` (plan only), `--only`, `--list`, `--image-dir`, `--nic`, `--bridge`, `--virtio stable|latest`, `--pool`, `--force`, `--yes-remote`, `-h`; refuses root; sudo only where named, one command per call, never retried, the exact command printed on failure. `--yes` runs check, daemons, connection, image-dir, virtio and libvirt-network, never iommu or bridge (name those). Steps and the commands they run:
+
+- **check** (no sudo): `vmx`/`svm` in cpuinfo, `/dev/kvm`, `kvm` modules, `virt-host-validate qemu` summarized (the IOMMU warning points at the iommu step, the AMD Secure Guest line is informational; no flag: "enable VT-x or SVM in the UEFI").
+- **daemons**: verifies the modular sockets (`virtqemud`, `virtnetworkd`, `virtstoraged`, `virtnodedevd`, `virtsecretd`, `virtnwfilterd`, each plain, `-ro`, `-admin`) with `systemctl is-enabled`; `sudo systemctl enable --now <missing>`; an enabled `libvirtd.socket` or `libvirtd.service` is disabled (it excludes socket activation of the modular daemons) and never enabled. `virtproxyd` and `virtinterfaced` are left alone.
+- **iommu** (reboot): CPU vendor from cpuinfo; AMD `iommu=pt`; Intel `intel_iommu=on iommu=pt` (the Fedora kernel does not enable the Intel IOMMU by default, checked on the owner's kernel config; AMD's is on); only shown when an IOMMU exists (`/sys/class/iommu` or AMD-Vi/DMAR in `dmesg`, else "enable VT-d or AMD-Vi in the UEFI"); `sudo rpm-ostree kargs --append-if-missing=<arg>` once; "already set" from `/proc/cmdline` or `rpm-ostree kargs`; undo `--delete-if-present=<each>` and reboot. `iommu=pt` matters only for device passthrough. No image ships a kernel argument.
+- **connection**: `sudo usermod -aG libvirt $USER` and `uri_default = "qemu:///system"` in `~/.config/libvirt/libvirt.conf` (backup first when it differs, other lines kept; never `LIBVIRT_DEFAULT_URI` in a shell file); log in again.
+- **image-dir**: default `/var/lib/libvirt/images` or `--image-dir DIR`; `setfacl -m u:$USER:rwx` plus the default ACL (`-d`), no recursion and no `-b`; for a custom directory also `mkdir -p`, `setfacl -m u:qemu:x` on each parent that lacks it, `semanage fcontext -a -t virt_image_t 'DIR(/.*)?'` plus `restorecon -R` (fallback `chcon -R -t virt_image_t`, said not to survive a relabel), and with `--pool NAME` a libvirt dir pool (`pool-define-as`, `pool-build`, `pool-start`, `pool-autostart` through the libvirt group). UNVERIFIED: qemu really opening an image in a custom directory with that label.
+- **virtio** (no sudo): `curl -fL --proto =https --proto-redir =https --retry 3 -C -` of the fedorapeople `stable-virtio` link (`latest-virtio` with `--virtio latest`) into the image directory as a `.part` file, renamed to the versioned name from the final URL, a `virtio-win.iso` symlink, a size sanity check, and the sha256 recorded in `<file>.sha256`: no checksum or signature is published, so nothing is verified and the output says so; an existing `virtio-win*.iso` is skipped (`--force`); offline prints the URL to fetch by hand. No RPM or repository is added.
+- **bridge** (network blip, asks first, refused over SSH without `--yes-remote`): NetworkManager profiles only, current syntax: `nmcli connection add type bridge con-name br0 ifname br0 bridge.stp no connection.autoconnect-ports yes ipv4.method auto ipv6.method auto`, `nmcli connection add type ethernet con-name br0-<nic> ifname <nic> connection.port-type bridge connection.controller br0`, the old profile `connection.autoconnect no` (kept, not deleted), then `connection up br0` and `up br0-<nic>`; the NIC is the wired device with the default route (or `--nic`; several candidates or none: the list is printed; Wi-Fi only: refused, bridging does not work in station mode); `br0` plus a `br0-<nic>` profile present means already done (the owner's layout); undo printed before applying. UNVERIFIED: the takeover on a live LAN; the `cloned-mac-address` behavior of NetworkManager and whether GNOME Settings lists the bridge (nothing found; it is visible in `nmcli` and `nm-connection-editor`).
+- **libvirt-network**: `virsh -c qemu:///system net-define` of `<network><name>nwbridge</name><forward mode='bridge'/><bridge name='br0'/></network>` from a temp file, `net-start`, `net-autostart`; skipped when it exists or when the host bridge is missing; the default NAT network is untouched.
+
+Not included, by decision: a TuneD profile, package installation (dx ships the set), Wi-Fi bridging, spice and nested virtualization.
+
+`ujust wake-on-lan [--yes|--no|--status|--off] [--nic IFACE]` (default image too, `60-custom.just` above `toolbox`) and the hardware-setup step `wake-on-lan` (which only delegates to it, shown only when the wired NIC reports `Supports Wake-on` with `g` in `ethtool`, or when `ethtool` cannot be read as the user and the sysfs `power/wakeup` file exists): the NIC is the default-route device, or the bridge's physical port when that device is a bridge, and the setting goes on the profile that is ACTIVE on the physical device (the port profile `br0-<nic>`, not the bridge profile); `sudo nmcli connection modify "<profile>" 802-3-ethernet.wake-on-lan magic` then `sudo nmcli device reapply <nic>` (`--off` sets `ignore`); idempotent; prints the MAC, the BIOS or UEFI reminder (Wake on LAN or Power On By PCI-E, ErP or EuP off) and that only the OS side is configured and the wake test is the user's (`wakeonlan <MAC>` or `etherwake`). The `nmcli` property value table is from blog sources and unverified; some drivers may reset the setting at shutdown (not verified).
+
+Tests: `tests/virthost-setup.sh` (every step fresh, done and failing; Intel and AMD; NIC detection; nox bridge layout; SSH, Wi-Fi and root refusals; ACL, SELinux and pool; virtio download, existing, forced, offline; `nwbridge`; Wake-on-LAN with and without a bridge), `tests/hardware-setup.sh`, `tests/dev-setup.sh`. Only a real machine can verify: the bridge takeover, qemu with a custom directory and its label, WoL waking the machine, the group re-login, and the virtio download from a network that blocks scripts.
 
 ## Branches and releases
 
@@ -274,7 +405,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
-- `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries").
+- `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries"); `tests/schedulers.sh`, `tests/scheduler-recipe.sh` and `tests/scx-kernel-check.sh` test the scheduler runtime, the recipe and the kernel check (see "sched_ext schedulers").
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.
@@ -299,7 +430,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`
   (Esc, the single-call re-enroll, the image-off line).
 - `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
-  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (default image without both, dx with the karg).
+  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (no image ships either; the iommu karg is opt-in).
 - The default image carries no compilers or build tools (the dx image does); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
@@ -523,7 +654,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the VM-hosting set moved out of the default image too, see stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
+- **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
 - **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
@@ -623,7 +754,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
   | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
-  | | caffeine, blur-my-shell, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, blur-my-shell and the dock are visual, caffeine adds a panel icon, user-theme is useless without a theme) |
+  | | caffeine, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, the dock is visual, caffeine adds a panel icon, user-theme is useless without a theme) |
+  blur-my-shell is no longer shipped at all (removed 2026-11-13; the owner installs the upstream release as a user extension, which shadows a system copy and which Extension Manager refuses to install over). On an existing machine the system copy disappears with the image update; a user copy and the dconf settings under `/org/gnome/shell/extensions/blur-my-shell/` stay untouched, and if it was enabled from the system copy with no user copy GNOME just lists it as missing. Nothing else in the image referenced the package (no dconf default, schema override, extension-enable list, preset or test).
   | | GPaste (`gpaste`, `gnome-shell-extension-gpaste`, extension `GPaste@gnome-shell-extensions.gnome.org`) | shipped, not enabled | optional `misc` group; the daemon is D-Bus activated (no unit to enable); switch on with `gnome-extensions enable GPaste@gnome-shell-extensions.gnome.org`; default shortcuts Ctrl+Alt+H (history) and Ctrl+Alt+G (UI) |
   | | Just Perfection, ddterm, Freon (`gnome-shell-extension-just-perfection`, `-ddterm`, `-freon`; UUIDs `just-perfection-desktop@just-perfection`, `ddterm@amezin.github.com`, `freon@UshakovVasilii_Github.yahoo.com`) | shipped, not enabled | optional `misc` group, switch on with `gnome-extensions enable <uuid>`; ddterm toggles on F12 by default; Freon reads lm_sensors (in the same group; may need `sensors-detect` for extra sensors) |
   | | arcmenu, hotedge, coverflow, tiling shell | excluded | not shipped |
@@ -888,6 +1020,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 ## `ujust hardware-setup`
 
+Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is entered or started, because `distrobox enter` starts a stopped container. The `rocm` probe in hardware-setup and the existing-box check of the dev `cuda` step say "not checked in plan mode" instead; a real run probes as before. Tests: `tests/hardware-setup.sh`, `tests/dev-setup.sh` (no `distrobox enter` or `podman start` in the log).
+
 - One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
   A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
   calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
@@ -961,6 +1095,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   built by `build-nvidia-dx.yml` (see "NVIDIA dx image"); its repository is in the signature policy that `build_files/build.sh` generates
   (`tests/nvidia-variant.sh` and `tests/dx-image.sh` check the policy for each repository), so the recipe needed no change except a hint
   printed for `nvidia-dx` (a machine whose image predates the rule gets a signature-policy error from bootc).
+- Staged images: the recipe also reads the STAGED deployment (`rpm-ostree status --json`, `staged: true`; test hook `OCTARINE_SWITCH_STAGED_REF`). When it equals the target (digest ignored) it says "already staged: reboot to use it" and calls nothing (no second `bootc switch`, no second security-key touch); a different staged image is named and replaced. The hardware-setup `nvidia` step goes through this recipe, so its probe (`/sys/module/nvidia`, false until the reboot) cannot cause a second switch.
 - Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
 
 ## NVIDIA variant (`octarine-os-nvidia`)
@@ -1084,9 +1219,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   "Developer menu" below.
 - **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
   (Microsoft is only listed as developer). The owner chose it knowingly; it is installed only by the `vscode` step of `ujust dev` (which says so), never preinstalled.
-- **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
-  other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
-  and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).
+- **Kernel argument.** None since 2026-11-13: the dx image no longer ships `10-iommu.toml`; `iommu=pt` is opt-in (see "Kernel argument" under the default image notes).
 - **Stage 3 (done, `feat/vm-host-to-dx`).** The VM-hosting set moved out of the default image and lives only in dx and nvidia-dx
   (`variants/dx/packages/extras.txt`: `libvirt` and `qemu-kvm` meta packages, `cockpit-machines`, `virt-install`, `virtiofsd`, `swtpm`,
   `swtpm-tools`, `dnsmasq`, `edk2-ovmf`, `virt-manager`, `virt-viewer`, `libvirt-nss`, ...). `build.sh` no longer lists `libvirt` and
@@ -1106,7 +1239,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `-dx` image id); `dx-smoke.sh` asserts the full set, the `libvirtd`, `virtqemud`, `virtnetworkd` and `virtstoraged` units and
   `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). The root `Justfile` recipe `test-vm`
   needs libvirt on the host, so it runs on a dx machine. Switching a machine from dx to the default image removes VM hosting
-  (`ujust dev --only libvirt` and the hardware-setup `virtualization` step are dx-only; the user's `libvirt` group membership stays
+  (`ujust dev --only libvirt` and `ujust virthost-setup` are dx-only; the hardware-setup `virtualization` step was removed; the user's `libvirt` group membership stays
   in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
   2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default

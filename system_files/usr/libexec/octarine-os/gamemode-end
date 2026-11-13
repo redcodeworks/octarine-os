@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# GameMode `end` hook: the tuned profile back to balanced (as before) and, when the start hook switched the scheduler, back to the
+# boot choice (the instance `systemctl is-enabled` reports enabled, or the kernel default when none is). Independent steps, always
+# exits 0, bounded in time.
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=gamemode-lib.sh
+. "${here}/gamemode-lib.sh"
+(
+    if command -v tuned-adm > /dev/null 2>&1; then
+        timeout 5 tuned-adm profile balanced > /dev/null 2>&1 || log "tuned-adm profile balanced failed"
+    fi
+) &
+with_lock scheduler_end || true
+wait
+exit 0
