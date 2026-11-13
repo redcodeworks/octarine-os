@@ -17,7 +17,7 @@ check "workflow: bash syntax of every run block" python3 - "$wf" <<'PY'
 import subprocess, sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 for name, job in w["jobs"].items():
-    for s in job["steps"]:
+    for s in job.get("steps", []):
         if "run" in s:
             r = subprocess.run(["bash", "-n"], input=s["run"], text=True, capture_output=True)
             assert r.returncode == 0, (name, s.get("name"), r.stderr)

@@ -1,0 +1,19 @@
+# The schedulers binaries/scx builds and carries (source of truth for the scheduler list), one per line, tab separated:  name <TAB> minimum kernel <TAB> description
+# Adding one is a one-line change here (build.sh adds -p <name>, installs target/release/<name> as bin/<name>, copies the
+# LICENSE of its directory under scheds/, runs <name> --version and lists it in the image's /schedulers.tsv).
+#   name            the cargo package of the scheduler (a directory under scheds/rust or scheds/experimental of the scx source)
+#   minimum kernel  MAJOR.MINOR, ONLY where the scheduler's README at the pinned tag states a minimum kernel; otherwise empty
+#                   (scx_p2dq's README names 6.12 only for its optional --atq-enabled flag, so that is not a minimum)
+#   description     one line of about 100 characters taken from the scheduler's README overview, no claims of our own
+# Check the READMEs again when the pin in upstream.env is bumped. Rust schedulers: scx_beerland scx_bpfland scx_cake scx_chaos
+# scx_cosmos scx_eevdf scx_flash scx_forge scx_lavd scx_layered scx_mitosis scx_p2dq scx_pandemonium scx_rusty (scheds/rust);
+# scx_flow scx_mavd scx_mlfq scx_nitosis scx_rburst scx_reevdf scx_rlfifo scx_rlocal scx_rustland scx_rvtime scx_tickless
+# (scheds/experimental). There is no scheds/c any more: the C example schedulers now live only in the Linux kernel tree
+# (tools/sched_ext) and are not built here.
+scx_rusty		Multi-domain BPF and user space hybrid scheduler, flexible across architectures and workloads
+scx_lavd		Latency-criticality Aware Virtual Deadline scheduler, initially motivated by gaming workloads
+scx_cake		CPU scheduler focused on gaming responsiveness and general-purpose use
+scx_bpfland		Vruntime-based scheduler that prioritizes interactive workloads
+scx_cosmos		Lightweight scheduler optimized for preserving task-to-CPU locality
+scx_flash		Earliest-deadline-first scheduler focused on fairness among tasks and performance predictability
+scx_p2dq		General purpose pick-two load balancing scheduler with multi-layer queueing across LLCs and NUMA nodes

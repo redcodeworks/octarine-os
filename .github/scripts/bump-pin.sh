@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Decides whether the digest pin of one prebuilt image (built by the fedora-toolbox repository) has to move to its
+# Decides whether the digest pin of an external image (today only dev-packages, built by the fedora-toolbox repository) has to move to its
 # `latest` tag, and rewrites the pin when it has. Used by the weekly workflow bump-pins.yml; tested with fake skopeo and
 # cosign by tests/bump-pins.sh. Run from the repository root.
 #
-#   bump-pin.sh scx-bin|extest-bin|dev-packages
+#   bump-pin.sh dev-packages
 #
 # Steps: resolve the digest of <image>:latest (skopeo inspect --raw, sha256 of the manifest, the way the pins are made),
 # verify its cosign signature with keys/redcodeworks-toolbox-cosign.pub, compare it with the pin, and when it differs
@@ -19,10 +19,8 @@
 set -uo pipefail
 image=${1:-}
 case "${image}" in
-    scx-bin) file=Containerfile; prefix=SCX_BIN ;;
-    extest-bin) file=Containerfile; prefix=EXTEST_BIN ;;
     dev-packages) file=variants/dx/Containerfile; prefix=DEV_PACKAGES ;;
-    *) echo "::error::unknown image '${image}' (scx-bin, extest-bin or dev-packages)"; exit 3 ;;
+    *) echo "::error::unknown image '${image}' (dev-packages)"; exit 3 ;;
 esac
 key=${COSIGN_KEY_FILE:-keys/redcodeworks-toolbox-cosign.pub}
 repo=ghcr.io/redcodeworks/${image}

@@ -78,59 +78,95 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
   the CI steps and the smoke assertions; existing prefixes stay untouched.
 
-## Prebuilt binaries (scx-bin, extest-bin)
+## Prebuilt binaries (binaries/)
 
-Two tiny signed `FROM scratch` images, built and published by the fedora-toolbox repository (public, readable anonymously), carry
-binaries the image ships without compiling them: `ghcr.io/redcodeworks/scx-bin` and `ghcr.io/redcodeworks/extest-bin`. The
-DEFAULT image installs both (nvidia and the dx variants inherit them from it).
+The default image ships binaries that are built in this repository, not compiled in the image build and not taken from a foreign
+registry: the sched_ext schedulers (`scx_*`) and the extest libraries. They are built from pinned upstream commits into ONE
+signed `FROM scratch` image, `ghcr.io/redcodeworks/octarine-os-binaries`, which the image build copies from. nvidia and the dx
+variants inherit them from the default image. (History: #61 first consumed two images built by the fedora-toolbox repository,
+pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries are built for this environment.)
 
-- **Contents.** `scx-bin`: `/bin/scx_rusty scx_lavd scx_cake scx_bpfland scx_cosmos scx_flash scx_p2dq` (sched-ext/scx tag v1.1.4,
-  GPL-2.0), `/schedulers.tsv` (one line per scheduler, four tab-separated fields: name, `bin/<name>`, minimum kernel (empty for
-  all seven so far), description up to 120 characters, no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`,
-  which collapses the empty field), `/LICENSES/`, `/SOURCE`, `/BUILDINFO` (the shared libraries each binary needs: libelf, libz,
-  libzstd, libgcc_s, libc). `extest-bin`: `/lib/libextest.so` (32-bit ELF) and `/lib64/libextest.so` (64-bit ELF), built from the
-  owner's fork `redcodeworks/extest` at commit `cb77cd4f...` (MIT; the highest GLIBC symbol version needed is 2.34, fine for
-  Flatpak runtimes), `/LICENSES/extest-LICENSE`, `/SOURCE`, `/BUILDINFO`.
-- **Pins.** `ARG SCX_BIN_TAG`/`SCX_BIN_DIGEST` and `ARG EXTEST_BIN_TAG`/`EXTEST_BIN_DIGEST` at the top of the `Containerfile` (global ARGs
-  before the first FROM, like brew's; the two FROM lines come after the brew stage so the base ARGs stay in scope), stages `scxbin` and `extestbin`. The digest decides; the tag is a label for humans
-  (`testing-<sha7>`, `latest-<YYYYMMDD>-<sha7>`, `testing`, `latest`). Pinned 2026-11-13 to the immutable build tags
-  `testing-fcede79` (scx-bin, `sha256:e5669977...`) and `testing-05f2e35` (extest-bin, `sha256:de9f2951...`), the newest builds
-  then; the `testing` tags pointed at the same digests and the signatures verified with the toolbox key. Once the binary
-  repository publishes `latest` (same digest as the promoted build), the weekly bump moves the pins there.
-- **Verification.** `.github/scripts/check-binary-pins.sh --verify` (a step in `build.yml` and `build-beta.yml`, on every build) checks the
-  tag and digest format and runs `cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/<image>@<digest>`
-  (the toolbox key also signs `dev-packages`); the reference is logged as the record of what the build used. A hand-edited or
-  unsigned digest fails the build.
-- **Installation.** The build step bind-mounts both images at `/binaries/<name>`; `build_files/install-binaries.sh` (called by
-  `build.sh`; `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways, then installs the
-  schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
+- **Sources.** `binaries/Containerfile` (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
+  `stage.sh`, `assemble.sh`), and per component `binaries/scx/` and `binaries/extest/`: `upstream.env` (`UPSTREAM_REPO`, optional
+  `UPSTREAM_WATCH`, `UPSTREAM_TAG`, `UPSTREAM_COMMIT`; parsed, never sourced), `build.sh`, and for scx `schedulers.tsv`.
+  `binaries/scx/schedulers.tsv` (name, minimum kernel (empty for all seven), description up to 120 characters, curated from the scheduler
+  READMEs at v1.1.4) is the source of truth for the scheduler list: adding a scheduler is one line there plus the next bump (check the READMEs
+  again then). scx: github.com/sched-ext/scx tag v1.1.4, peeled commit `e7b3a219...`, GPL-2.0; `scx_cake` has no LICENSE of its
+  own (a note, the repository LICENSE ships). extest: OUR FORK `redcodeworks/extest` at commit `cb77cd4f...` (a plain mirror, MIT; pin by
+  commit, the tag is a label, fork sync does not always bring tags), upstream watched is `Supreeeme/extest`.
+- **Build.** Builder: `registry.fedoraproject.org/fedora:45@sha256:e15959f3...` (a manifest-list digest, the release of the image the binaries
+  go into; re-resolve with `skopeo inspect --raw docker://registry.fedoraproject.org/fedora:45 | sha256sum` to move it; it is part of `binaries/`, so
+  a new builder digest changes the tree hash and rebuilds). Toolchain from Fedora's repositories (at the first build: rustc and cargo 1.99.1,
+  clang 23.1.5, glibc 2.44; recorded in each build's `BUILDINFO`). scx dependencies: `git-core rust cargo clang llvm lld libbpf-devel
+  elfutils-libelf-devel zlib-devel libzstd-devel pkgconf-pkg-config bpftool make gcc binutils`; one `cargo build --release --locked -p <each
+  scheduler of the tsv>` (about 5.5 minutes). extest: `git-core rust cargo gcc binutils rust-std-static-i686-unknown-linux-gnu
+  glibc-devel.i686 libgcc.i686`, `cargo build --release --locked` for `x86_64-unknown-linux-gnu` and `i686-unknown-linux-gnu` (upstream's
+  `.cargo/config.toml` defaults to i686, so both are named); the highest GLIBC symbol version needed is 2.34 (fine for Flatpak runtimes).
+  `fetch-source.sh` fetches the tag (or, for the fork, the commit) and FAILS unless it resolves to exactly the pinned commit (a moved tag
+  cannot slip in). `stage.sh` smoke-runs each scheduler's `--version`, checks the ELF class of the extest libraries and writes
+  `SOURCE` and `BUILDINFO` (rustc, cargo, clang, glibc, both extest targets, the shared libraries each file needs; a 64-bit file must
+  resolve with `ldd`; the libraries are libelf, libz, libzstd, libgcc_s, libc).
+- **The image.** `/scx/bin/<name>`, `/scx/schedulers.tsv` (FOUR tab-separated fields: name, `bin/<name>`, minimum kernel (empty today),
+  description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
+  `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
+  `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
+- **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
+  `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
+  (small).
+- **Workflow** `.github/workflows/binaries.yml` (reusable, also `workflow_dispatch`), called by the `binaries` job of `build.yml` (only when the
+  plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the build job `needs` it. Jobs:
+  `check` (tree hash; `binaries-lookup.sh`: the tag exists and `cosign verify --key cosign.pub` accepts its digest: green "binaries
+  unchanged, nothing to build"; a missing tag, or an existing one whose signature fails, is built again), `build` (`podman build` in the pinned
+  builder, `binaries-layout.sh` checks the exported file list, then `push-tags.sh` pushes ONE manifest digest), `sign` (environment `signing`,
+  the same `SIGNING_SECRET`, old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
+  `main` publish; on any other ref (a validation dispatch) the binaries are built and checked but never pushed or signed, no digest is
+  handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully exercised by the
+  merge into `testing` (validate the binaries build alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no
+  required check name; `Build and push image`, `Sign and verify images` and `Build dx and push image` are unchanged, and a failed binaries
+  job fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
+  (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the
+  hash tag of the checked-out tree, and labels the image `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for
+  `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public (the GPL source records ship in
+  the image either way).
+- **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
+  `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
+  the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
   `/usr/lib/extest/lib/libextest.so` and `/usr/lib/extest/lib64/libextest.so`, and the license texts, `SOURCE` and `BUILDINFO` to
-  `/usr/share/licenses/octarine-os-binaries/<image>/` (it fails when the GPL or MIT text is missing). Nothing is enabled or started:
+  `/usr/share/licenses/octarine-os-binaries/<scx|extest>/` (it fails when the GPL or MIT text is missing). Nothing is enabled or started:
   no unit, no preset.
-- **Smoke test** (`build.yml`, copied into `build-beta.yml`, `tests/binary-images.sh` fails when they drift): the manifest exists;
-  per scheduler it is executable, `--version` runs, and `ldd` shows no `not found`; the extest libraries are executable and
-  `file` shows a 32-bit and a 64-bit ELF respectively; the GPL-2.0 and MIT texts and the `SOURCE` and `BUILDINFO` records ship.
-- **Weekly bump.** `.github/workflows/bump-pins.yml` (Tuesday 07:00 UTC, after the binary repository's Monday check, plus
-  `workflow_dispatch`; scheduled workflows run only from `main`, so the schedule starts after the first promotion). A job per image
-  (`scx-bin`, `extest-bin`, and `dev-packages`, which goes through the same script `.github/scripts/bump-pin.sh` with the
-  `DEV_PACKAGES` pin of `variants/dx/Containerfile`): resolve the digest of `:latest` (`skopeo inspect --raw | sha256sum`), verify its
-  signature, compare. Decisions (exit code, result): equal (0, `equal`: green, "nothing to bump", also when the signature verifies);
-  different (10, `different`: rewrite the digest line and the tag line, the dated tag with the same digest or `latest`, and nothing
-  else); registry unreachable, `latest` missing or an empty answer (1, `unreachable`: the job fails, nothing changes); bad signature
-  (2, `badsignature`: fails, nothing changes, even when the digest is equal); malformed pin or unknown image (3). On `different` the
-  job creates or updates ONE pull request per image from `bump/<image>-digest` into `testing`; an existing branch is kept current by
-  merging `testing` into it (never a force-push). The owner merges bump pull requests. **Token:** pushes and pull requests made with the default
-  `GITHUB_TOKEN` start no workflows, so `test` and `secrets` (required into `testing`) would not run. The job uses the repository
-  secret `BUMP_TOKEN` (a token that may push branches and open pull requests) when it is set; otherwise it falls back to the default token and says
-  in the pull request body and the job summary that the checks must be started by closing and reopening the pull request or by running the Test
-  workflow on the branch. No step prints a token. **Setting:** "Allow GitHub Actions to create and approve pull requests" (Settings,
-  Actions, General) must be on, or opening the pull request fails with that hint. The first real run, the PR creation and the token
-  path are UNVERIFIED until the workflow is on `main` and has run.
-- **Unverified.** That a scheduler loads on a real kernel (CI cannot load BPF; only `--version` and `ldd` run); the `$LIB` expansion
-  inside Steam's Flatpak and a real Steam run (see "Recipe conventions"/gaming-setup above). The runtime recipe for the schedulers
-  is separate work.
-- **Undo.** Remove the two stages and ARG pairs, the bind mounts, the `install-binaries.sh` call, the smoke assertions, the pin check
-  steps, `bump-pins.yml`, the tests, and restore the cargo build in the `extest` step from git history.
+- **Smoke test** (`build.yml`, copied into `build-beta.yml`; `tests/binary-images.sh` fails when they drift): the manifest exists; per scheduler
+  it is executable, `--version` runs, and `ldd` shows no `not found`; the extest libraries are executable and `file` shows a 32-bit and
+  a 64-bit ELF; the GPL-2.0 and MIT texts and the `SOURCE` and `BUILDINFO` records ship.
+- **Weekly upstream check** `.github/workflows/upstream-check.yml` (Monday 07:00 UTC plus `workflow_dispatch`; scheduled workflows run only from
+  `main`, so the schedule starts after the first promotion). `upstream-check.sh` per `binaries/<name>/upstream.env`: scx asks `releases/latest`
+  (not prereleases); extest asks the watched project and counts a release or tag only when it is NOT an ancestor of the pinned commit
+  (compare API on the fork); when the fork lacks the new commit it ends green with the notice "the fork is behind upstream: sync it
+  (`gh repo sync redcodeworks/extest`) and rerun" and never writes to the fork. On a newer release `bump-upstream.sh` opens or updates ONE pull request per
+  component on `bump/<name>` into `testing`, changing only `UPSTREAM_TAG` and `UPSTREAM_COMMIT` (an existing branch gets a new commit, never a
+  force-push), body with the release notes and compare links; nothing is published from this workflow (the merge into `testing` changes the tree
+  hash, and the build after it builds and signs the new binaries). The owner merges bump pull requests. Tests: `tests/upstream-check.sh`.
+- **Token (both bump workflows).** Only the default `GITHUB_TOKEN` (job permissions `contents`, `pull-requests`, `actions` write; no personal
+  token, no `BUMP_TOKEN`). GitHub starts no `push` or `pull_request` workflow for events made with it, except `workflow_dispatch`, so after each push
+  to the bump branch the script runs `gh workflow run test.yml --ref bump/<name>`: the jobs of `test.yml` (named `test` and `secrets`, no
+  `if:`) run on the branch tip. Fail soft: a failed dispatch is a warning and the PR body says to run that command by hand. The setting "Allow GitHub Actions
+  to create and approve pull requests" must be on (the hub turned it on 2026-11-13). UNVERIFIED on GitHub: whether a dispatched run satisfies the
+  required checks of the pull request, and the first real run of either workflow (they must be on `main` first).
+- **dev-packages.** The only image still pinned by digest from outside is `dev-packages` (`variants/dx/Containerfile`, key
+  `keys/redcodeworks-toolbox-cosign.pub`). `.github/workflows/bump-pins.yml` (Tuesday 07:00 UTC plus dispatch) runs `.github/scripts/bump-pin.sh dev-packages`:
+  resolve `:latest` (`skopeo inspect --raw | sha256sum`), verify the signature, compare. Decisions (exit code, result): equal (0, `equal`,
+  "nothing to bump"; the signature is still verified); different (10, `different`: the digest line and the tag line, the dated tag with the same
+  digest or `latest`, nothing else; ONE pull request on `bump/dev-packages-digest` into `testing`); registry unreachable, `latest` missing or an
+  empty answer (1, `unreachable`: the job fails, nothing changes); bad signature (2, `badsignature`: fails, even when the digest is equal); malformed
+  pin or unknown image (3). Tests: `tests/bump-pins.sh`; `just dev-packages-bump` stays for a manual bump.
+- **Tests.** `tests/binaries-build.sh` (parser, commit verification with local repositories, `stage.sh`, the scheduler list driving `scx/build.sh`,
+  `assemble.sh`, the real files), `tests/binary-images.sh` (lookup, gate, layout, installer, smoke text, workflow wiring), `tests/upstream-check.sh`,
+  `tests/bump-pins.sh`.
+- **Unverified.** The first real binaries build (it first runs on a push to `testing` or by dispatching `binaries.yml`); that a scheduler loads
+  on a real kernel (CI cannot load BPF; only `--version` and `ldd` run); the `$LIB` expansion inside Steam's Flatpak and a real Steam run (see
+  the gaming-setup notes). The scheduler runtime (units, recipe) is separate work.
+- **Undo.** Remove `binaries/`, the three `binaries-*.sh` scripts, `binaries.yml`, `upstream-check.yml`, the `binaries` jobs and steps, the
+  `BINARIES_IMAGE` argument and mount, `install-binaries.sh`, the smoke assertions and the tests; restore the cargo build in the `extest`
+  step from git history.
 
 ## Branches and releases
 
@@ -238,7 +274,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
-- `tests/binary-images.sh` tests the prebuilt binary images (pins, CI pin check, installer, smoke assertions, the bump workflow and its decision table with fake skopeo and cosign; see "Prebuilt binaries").
+- `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries").
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.

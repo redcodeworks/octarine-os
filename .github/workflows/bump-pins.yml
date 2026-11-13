@@ -1,22 +1,23 @@
 name: Bump prebuilt image pins
-# Weekly check of the images the Containerfiles pin by digest and that the fedora-toolbox repository publishes: scx-bin and
-# extest-bin (Containerfile) and dev-packages (variants/dx/Containerfile). For each one the job resolves the digest of
-# `:latest`, verifies its cosign signature (keys/redcodeworks-toolbox-cosign.pub) and compares it with the pin
-# (.github/scripts/bump-pin.sh holds the decision, tests/bump-pins.sh tests it). Equal: the job ends green, "nothing to bump".
-# Different: ONE pull request per image from `bump/<image>-digest` into `testing` that changes only the pin (digest line, and
-# the tag line that labels it), created or updated in place. A registry that cannot be reached, a missing `latest` tag or
-# a signature that does not verify fails the job and changes nothing. Bump pull requests are merged by the owner.
+# Weekly check of the one external image the Containerfiles still pin by digest: dev-packages (variants/dx/Containerfile), the shared
+# developer package list built and signed by the fedora-toolbox repository. (The sched_ext schedulers and extest are built in this
+# repository from binaries/ and followed by upstream-check.yml instead.) The job resolves the digest of `:latest`, verifies its cosign
+# signature (keys/redcodeworks-toolbox-cosign.pub) and compares it with the pin (.github/scripts/bump-pin.sh holds the decision,
+# tests/bump-pins.sh tests it). Equal: the job ends green, "nothing to bump". Different: ONE pull request from
+# `bump/dev-packages-digest` into `testing` that changes only the pin (digest line, and the tag line that labels it), created or
+# updated in place. A registry that cannot be reached, a missing `latest` tag or a signature that does not verify fails the job and
+# changes nothing. Bump pull requests are merged by the owner.
 #
-# Monday is the binary repository's own check, Tuesday 07:00 UTC is ours. Scheduled workflows run only from the default
-# branch, so the schedule starts after the first promotion of this file into `main`; workflow_dispatch works from any branch
-# that has the file.
+# Tuesday 07:00 UTC. Scheduled workflows run only from the default branch, so the schedule starts after the first promotion of this
+# file into `main`; workflow_dispatch works from any branch that has the file.
 #
-# Token: pull requests and pushes made with the default GITHUB_TOKEN do not start other workflows, so the required checks
-# `test` and `secrets` would not run on a bump pull request. When the repository secret BUMP_TOKEN is set (a token that may
-# push branches and open pull requests, and does trigger workflows) the job uses it; otherwise it falls back to
-# GITHUB_TOKEN and says so in the pull request body and the job summary: start the checks by closing and reopening the pull
-# request, or run the Test workflow on the branch. The repository setting "Allow GitHub Actions to create and approve pull
-# requests" (Settings, Actions, General) must be on for either token to open the pull request.
+# Token: only the default GITHUB_TOKEN, no personal token. Its pushes and pull requests start no push or pull_request workflow,
+# except workflow_dispatch, so right after each push the job dispatches the Test workflow on the branch
+# (`gh workflow run test.yml --ref bump/dev-packages-digest`, hence `actions: write`): a run on the branch tip whose jobs are named
+# `test` and `secrets`, the checks the ruleset requires into `testing`. If the dispatch fails or no run shows up the job stays
+# green and the pull request body and the job summary say how to start the checks by hand. UNVERIFIED on GitHub: whether a
+# dispatched run satisfies the required checks of the pull request. The repository setting "Allow GitHub Actions to create and
+# approve pull requests" must be on (it is).
 on:
   schedule:
     - cron: '0 7 * * 2'  # Tuesday 07:00 UTC
@@ -29,6 +30,8 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
+  packages: read
 
 jobs:
   bump:
@@ -38,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [scx-bin, extest-bin, dev-packages]
+        image: [dev-packages]
     env:
       IMAGE: ${{ matrix.image }}
       GH_REPO: ${{ github.repository }}
@@ -49,7 +52,6 @@ jobs:
         with:
           ref: testing
           fetch-depth: 0
-          token: ${{ secrets.BUMP_TOKEN || github.token }}
 
       - name: Set up cosign
         uses: ./.github/actions/setup-tool
@@ -77,8 +79,7 @@ jobs:
       - name: Create or update the bump pull request
         if: steps.decide.outputs.result == 'different'
         env:
-          GH_TOKEN: ${{ secrets.BUMP_TOKEN || github.token }}
-          HAVE_BUMP_TOKEN: ${{ secrets.BUMP_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
           OLD: ${{ steps.decide.outputs.previous }}
           NEW: ${{ steps.decide.outputs.digest }}
           TAG: ${{ steps.decide.outputs.tag }}
@@ -107,15 +108,30 @@ jobs:
             git add -- "${file}"
             git commit -m "Bump the ${IMAGE} pin to its latest digest ${NEW}: ${IMAGE} is built and signed by the fedora-toolbox repository, and its pin moves only through this reviewed change."
             git push origin "${branch}"
+            pushed=true
           fi
+          # Pushes by GITHUB_TOKEN start no workflow, workflow_dispatch is the exception: run Test on the branch tip so that
+          # `test` and `secrets` report on the pull request's head commit. Fail soft: a note tells how to start them by hand.
           note=""
-          if [[ "${HAVE_BUMP_TOKEN}" != true ]]; then
-            note=$'\n\n**The required checks `test` and `secrets` did not start:** this pull request was made with the default token (the repository secret `BUMP_TOKEN` is not set), and GitHub does not start workflows for it. Close and reopen the pull request, or run the Test workflow on the branch `'"${branch}"'`.'
+          if [[ "${pushed:-false}" == true ]]; then
+            tip=$(git rev-parse HEAD)
+            started=false
+            if gh workflow run test.yml --ref "${branch}"; then
+              for _ in 1 2 3 4 5 6; do
+                sleep 5
+                if [[ -n "$(gh run list --workflow test.yml --branch "${branch}" --event workflow_dispatch --commit "${tip}" --json databaseId --jq '.[0].databaseId // empty')" ]]; then started=true; break; fi
+              done
+            fi
+            if [[ "${started}" != true ]]; then
+              note=$'\n\n**The required checks `test` and `secrets` may not have started:** the Test workflow could not be dispatched or its run did not show up. Start them with `gh workflow run test.yml --ref '"${branch}"'` (or Actions, Test, Run workflow, branch `'"${branch}"'`).'
+              echo "::warning::could not confirm the Test run on ${branch}"
+            fi
           fi
           {
             echo "Moves the ${IMAGE} pin from \`${OLD}\` to \`${NEW}\` (tag \`${TAG}\`): the digest of \`ghcr.io/redcodeworks/${IMAGE}:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`."
             echo
             echo "Only ${file} changes: the digest line and the tag line. Not verified: nothing was built or booted here; the image build after the merge into \`testing\` is the first build with this pin."
+            echo "The checks \`test\` and \`secrets\` run through a dispatched Test workflow on the branch (the default token starts no workflow by itself). Not verified on GitHub: whether a dispatched run satisfies the required checks of this pull request."
             printf '%s\n' "${note}"
           } > "${RUNNER_TEMP}/body.md"
           number=$(gh pr list --head "${branch}" --base testing --state open --json number --jq '.[0].number // empty')
@@ -134,8 +150,8 @@ jobs:
             echo "### ${IMAGE}: ${url}"
             echo
             echo "Pin \`${OLD}\` to \`${NEW}\` (\`${TAG}\`), signature valid."
-            if [[ "${HAVE_BUMP_TOKEN}" != true ]]; then
+            if [[ -n "${note}" ]]; then
               echo
-              echo "BUMP_TOKEN is not set: the pull request was made with the default token, so the required checks did not start. Close and reopen it, or run the Test workflow on \`${branch}\`."
+              echo "The Test run could not be confirmed: start it with \`gh workflow run test.yml --ref ${branch}\`."
             fi
           } >> "${GITHUB_STEP_SUMMARY}"

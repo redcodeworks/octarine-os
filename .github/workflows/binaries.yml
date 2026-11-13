@@ -1,0 +1,213 @@
+name: Prebuilt binaries
+# Builds ghcr.io/redcodeworks/octarine-os-binaries from the binaries/ directory (sched_ext schedulers and libextest.so, built
+# from pinned upstream commits, see binaries/Containerfile) and hands its digest to the image build. Called by build.yml and
+# build-beta.yml before their image build (the dx and NVIDIA variants inherit the binaries from the default image); it can
+# also be dispatched by hand to validate a change on a branch.
+#
+# The image tag is the git tree hash of binaries/ (`git rev-parse HEAD:binaries`): content-addressed, so the same content is built
+# once and reused by testing and main. When that tag exists and its signature verifies with cosign.pub, nothing is built
+# ("binaries unchanged, nothing to build"). Otherwise it is built in the pinned builder; on testing and main it is pushed once
+# (one manifest digest, push-tags.sh), signed with the same key and secret as the images (environment `signing`, which only
+# those two branches may use) and verified. On any other ref (a validation dispatch) it is built and checked but never pushed or
+# signed, and no digest is handed over: the image build then stops with a message, because an unpublished image cannot be used.
+# The jobs carry no required check name; they only gate the image build.
+on:
+  workflow_call:
+    outputs:
+      digest:
+        description: "manifest digest of the published, signed binaries image (empty when it was only built for validation)"
+        value: ${{ jobs.result.outputs.digest }}
+      image:
+        description: registry path of the binaries image
+        value: ${{ jobs.result.outputs.image }}
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: octarine-os-binaries
+
+jobs:
+  check:
+    name: Look for the binaries image
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      hash: ${{ steps.hash.outputs.hash }}
+      image: ${{ steps.hash.outputs.image }}
+      usable: ${{ steps.lookup.outputs.usable }}
+      digest: ${{ steps.lookup.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Tree hash of binaries/
+        id: hash
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "hash=$(git rev-parse HEAD:binaries)" >> "${GITHUB_OUTPUT}"
+          echo "image=ghcr.io/${owner}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Published and signed already?
+        id: lookup
+        run: .github/scripts/binaries-lookup.sh "${{ steps.hash.outputs.image }}" "${{ steps.hash.outputs.hash }}"
+
+  build:
+    name: Build the binaries image
+    needs: check
+    if: needs.check.outputs.usable != 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      published: ${{ steps.channel.outputs.publish }}
+      digest: ${{ steps.push.outputs.digests }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Choose channel
+        id: channel
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          publish=false
+          case "${REF}" in
+            refs/heads/main | refs/heads/testing) publish=true ;;
+          esac
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+          echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
+
+      - name: Build
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+        run: |
+          set -euo pipefail
+          podman build \
+            --build-arg "IMAGE_VERSION=${HASH}" \
+            --build-arg "IMAGE_REVISION=${GITHUB_SHA}" \
+            --build-arg "IMAGE_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag "${IMAGE_NAME}:${HASH}" \
+            --file binaries/Containerfile binaries
+
+      - name: Check the layout of the built image
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+        run: |
+          set -euo pipefail
+          id=$(podman create "${IMAGE_NAME}:${HASH}" /nonexistent)
+          podman export "${id}" | tar -t > "${RUNNER_TEMP}/listing.txt"
+          podman rm "${id}" > /dev/null
+          .github/scripts/binaries-layout.sh "${RUNNER_TEMP}/listing.txt" binaries/scx/schedulers.tsv
+
+      - name: Login to GitHub Container Registry
+        if: steps.channel.outputs.publish == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One push under the hash tag: one manifest digest, which the signature belongs to
+      - name: Push
+        id: push
+        if: steps.channel.outputs.publish == 'true'
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+          IMAGE: ${{ needs.check.outputs.image }}
+        run: .github/scripts/push-tags.sh "${IMAGE_NAME}:${HASH}" "${IMAGE}" "${HASH}"
+
+  sign:
+    name: Sign the binaries image
+    needs: [check, build]
+    if: needs.build.result == 'success' && needs.build.outputs.published == 'true'
+    runs-on: ubuntu-26.04
+    environment: signing
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Sign and verify
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.check.outputs.image }}
+          HASH: ${{ needs.check.outputs.hash }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::No pushed digest to sign"; exit 1; }
+          # the old bundle format, as for the images (https://github.com/containers/container-libs/issues/388)
+          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
+          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          cosign verify --key cosign.pub "${IMAGE}:${HASH}" > /dev/null
+          echo "signed: ${IMAGE}:${HASH} = ${DIGEST}"
+
+  result:
+    name: Binaries image digest
+    needs: [check, build, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.pick.outputs.digest }}
+      image: ${{ needs.check.outputs.image }}
+    steps:
+      - name: Pick the digest
+        id: pick
+        env:
+          CHECK: ${{ needs.check.result }}
+          USABLE: ${{ needs.check.outputs.usable }}
+          CHECK_DIGEST: ${{ needs.check.outputs.digest }}
+          BUILD: ${{ needs.build.result }}
+          PUBLISHED: ${{ needs.build.outputs.published }}
+          BUILD_DIGEST: ${{ needs.build.outputs.digest }}
+          SIGN: ${{ needs.sign.result }}
+        run: |
+          set -euo pipefail
+          err() { echo "::error::$*"; exit 1; }
+          [[ "${CHECK}" == success ]] || err "The lookup of the binaries image failed (${CHECK})"
+          if [[ "${USABLE}" == true ]]; then
+            echo "digest=${CHECK_DIGEST}" >> "${GITHUB_OUTPUT}"
+            echo "### Prebuilt binaries: unchanged, nothing to build (${CHECK_DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+          [[ "${BUILD}" == success ]] || err "The binaries build failed (${BUILD})"
+          if [[ "${PUBLISHED}" == true ]]; then
+            [[ "${SIGN}" == success ]] || err "Signing the binaries image failed (${SIGN})"
+            echo "digest=${BUILD_DIGEST}" >> "${GITHUB_OUTPUT}"
+            echo "### Prebuilt binaries: built, pushed and signed (${BUILD_DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            echo "digest=" >> "${GITHUB_OUTPUT}"
+            echo "### Prebuilt binaries: built for validation only (this ref does not publish); nothing was pushed" >> "${GITHUB_STEP_SUMMARY}"
+          fi

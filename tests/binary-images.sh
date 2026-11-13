@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Tests for the prebuilt binary images (scx-bin, extest-bin from the fedora-toolbox repository): the pins in the
-# Containerfile, the CI pin check (.github/scripts/check-binary-pins.sh), the installer (build_files/install-binaries.sh),
-# the smoke assertions and the weekly bump workflow with its decision script (.github/scripts/bump-pin.sh), all with fake
-# skopeo and cosign. Nothing is pulled, built or booted. Needs: bash, python3 with PyYAML, awk. Run: tests/binary-images.sh
+# Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the Containerfile wiring, the
+# lookup of the hash-tagged image (.github/scripts/binaries-lookup.sh: published and signed, missing, bad signature), the gate of
+# the image build (binaries-use.sh), the layout check of a built image (binaries-layout.sh), the installer
+# (build_files/install-binaries.sh), the smoke assertions and the binaries workflow with its place in build.yml and build-beta.yml.
+# All with fake skopeo and cosign; nothing is pulled, built or booted. The build side is tests/binaries-build.sh.
+# Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -15,21 +17,6 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/   
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 cf="$here/Containerfile"
 
-# ---- the pins in the real Containerfile
-for p in SCX_BIN EXTEST_BIN; do
-    tag=$(sed -n "s/^ARG ${p}_TAG=//p" "$cf")
-    dig=$(sed -n "s/^ARG ${p}_DIGEST=//p" "$cf")
-    check "Containerfile: ${p}_TAG is a testing or latest tag with date and sha7 (or bare)" bash -c "printf '%s' '$tag' | grep -qE '^(latest|testing)(-[0-9]{8})?(-[0-9a-f]{7})?\$'"
-    check "Containerfile: ${p}_DIGEST is sha256: plus 64 hex characters" bash -c "printf '%s' '$dig' | grep -qE '^sha256:[0-9a-f]{64}\$'"
-done
-check "Containerfile: both images are pulled by digest, as stages scxbin and extestbin, after the base ARGs" bash -c "
-  grep -qx 'FROM ghcr.io/redcodeworks/scx-bin@\${SCX_BIN_DIGEST} AS scxbin' '$cf' &&
-  grep -qx 'FROM ghcr.io/redcodeworks/extest-bin@\${EXTEST_BIN_DIGEST} AS extestbin' '$cf' &&
-  [ \$(grep -n '^ARG FEDORA_VERSION' '$cf' | cut -d: -f1) -lt \$(grep -n '^FROM ghcr.io/redcodeworks/scx-bin' '$cf' | cut -d: -f1) ]"
-check "Containerfile: the build step bind-mounts both images at /binaries/<name>" bash -c "grep -q 'from=scxbin,source=/,target=/binaries/scx-bin' '$cf' && grep -q 'from=extestbin,source=/,target=/binaries/extest-bin' '$cf'"
-check "build.sh runs install-binaries.sh; nothing in them enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && ! grep -qiE 'systemctl .*scx|scx.*(\.service|\.preset)' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh'"
-check "no scx unit or preset ships in system_files" bash -c "! find '$here/system_files' -iname '*scx*' | grep -q ."
-
 # ---- stubs
 bin="$root/bin"; mkdir -p "$bin"
 cat >"$bin/skopeo" <<'F'
@@ -37,10 +24,9 @@ cat >"$bin/skopeo" <<'F'
 echo "skopeo $*" >>"$LOG"
 case "$1" in
     inspect)
-        [ "${SKOPEO_FAIL:-0}" = 1 ] && { echo "unauthorized or unreachable" >&2; exit 1; }
+        [ "${SKOPEO_FAIL:-0}" = 1 ] && { echo "manifest unknown" >&2; exit 1; }
         [ "${SKOPEO_EMPTY:-0}" = 1 ] && exit 0
         printf 'manifest of %s' "${@: -1}" ;;
-    list-tags) echo "${TAGS_JSON:-{\"Tags\":[]}}" ;;
 esac
 F
 cat >"$bin/cosign" <<'F'
@@ -50,63 +36,98 @@ exit "${COSIGN_RC:-0}"
 F
 chmod +x "$bin"/*
 export LOG="$root/log"
-dg() { printf 'manifest of docker://ghcr.io/redcodeworks/%s:%s' "$1" "$2" | sha256sum | sed 's/ .*//'; }
+IMG=ghcr.io/redcodeworks/octarine-os-binaries
+H40=$(printf 'a%.0s' {1..40})
+dg() { printf 'manifest of docker://%s:%s' "$1" "$2" | sha256sum | sed 's/ .*//'; }
+echo key >"$root/cosign.pub"
 
-# ---- check-binary-pins.sh
-work="$root/pins"; mkdir -p "$work/keys"; echo key >"$work/keys/redcodeworks-toolbox-cosign.pub"
-cp "$cf" "$work/Containerfile"
-pins() { : >"$LOG"; (cd "$work" && PATH="$bin:$PATH" GITHUB_ENV="$root/env" bash "$here/.github/scripts/check-binary-pins.sh" "$@") >"$root/run" 2>&1; rc=$?; }
-: >"$root/env"
-pins
-check "pin check, format only: passes on the real pins, no cosign call" bash -c "[ $rc = 0 ] && ! grep -q cosign '$LOG' && grep -q 'scx-bin pinned: ' '$root/run'"
-pins --verify
-check "pin check --verify: cosign verifies each pinned digest with the toolbox key" bash -c "[ $rc = 0 ] && [ \$(grep -c '^cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/' '$LOG') = 2 ] && grep -q 'scx-bin@sha256:' '$LOG' && grep -q 'extest-bin@sha256:' '$LOG' && grep -q '(signature valid)' '$root/run'"
-check "pin check exports the two references for the log and labels" bash -c "grep -q '^SCX_BIN_REF=ghcr.io/redcodeworks/scx-bin@sha256:' '$root/env' && grep -q '^EXTEST_BIN_REF=ghcr.io/redcodeworks/extest-bin@sha256:' '$root/env'"
-COSIGN_RC=1 pins --verify
-check "pin check --verify: a bad signature fails the build and names the reference" bash -c "[ $rc != 0 ] && grep -q 'cosign verification failed for ghcr.io/redcodeworks/scx-bin@sha256:' '$root/run'"
-sed -i 's/^ARG SCX_BIN_DIGEST=sha256:\(.\{60\}\).*/ARG SCX_BIN_DIGEST=sha256:\1/' "$work/Containerfile"
-pins
-check "pin check: a digest that is not 64 hex characters fails" bash -c "[ $rc != 0 ] && grep -q 'SCX_BIN_DIGEST missing or not sha256' '$root/run'"
-cp "$cf" "$work/Containerfile"; sed -i 's/^ARG EXTEST_BIN_TAG=.*/ARG EXTEST_BIN_TAG=v1.2/' "$work/Containerfile"
-pins
-check "pin check: a tag of the wrong shape fails" bash -c "[ $rc != 0 ] && grep -q 'EXTEST_BIN_TAG missing or not' '$root/run'"
-cp "$cf" "$work/Containerfile"; sed -i '/^ARG SCX_BIN_TAG=/d' "$work/Containerfile"
-pins
-check "pin check: a missing tag line fails" test "$rc" != 0
-for w in build.yml build-beta.yml; do
-    check "$w: runs the pin check with --verify" grep -q '\.github/scripts/check-binary-pins.sh --verify' "$here/.github/workflows/$w"
-done
+# ---- binaries-lookup.sh: the hash tag exists and is signed, or not
+look() { : >"$LOG"; : >"$root/gho"; env "$@" PATH="$bin:$PATH" COSIGN_KEY_FILE="$root/cosign.pub" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-lookup.sh" "$IMG" "$H40" >"$root/run" 2>&1; rc=$?; }
+look X=1
+check "lookup: published and signed: usable=true with the digest of the tag, signature verified with the repo key" bash -c "[ $rc = 0 ] && grep -qx 'usable=true' '$root/gho' && grep -qx 'digest=sha256:$(dg $IMG $H40)' '$root/gho' && grep -q 'binaries unchanged, nothing to build' '$root/run' && grep -qF 'cosign verify --key $root/cosign.pub $IMG@sha256:$(dg $IMG $H40)' '$LOG'"
+look SKOPEO_FAIL=1
+check "lookup: tag missing: usable=false (reason missing), exit 0, no cosign call" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=missing' '$root/gho' && ! grep -q cosign '$LOG'"
+look SKOPEO_EMPTY=1
+check "lookup: an empty answer counts as missing" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho'"
+look COSIGN_RC=1
+check "lookup: the tag exists but the signature does not verify: usable=false (reason badsignature), a warning, rebuild" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=badsignature' '$root/gho' && grep -q '::warning::' '$root/run'"
+PATH="$bin:$PATH" bash "$here/.github/scripts/binaries-lookup.sh" "$IMG" notahash >"$root/run" 2>&1
+check "lookup: a tag that is not a 40-hex tree hash is refused" test "$?" != 0
 
-# ---- install-binaries.sh against a fake pair of images
+# ---- binaries-use.sh: the gate of the image build
+use() { : >"$LOG"; : >"$root/genv"; env "$@" PATH="$bin:$PATH" COSIGN_KEY_FILE="$root/cosign.pub" GITHUB_ENV="$root/genv" bash "$here/.github/scripts/binaries-use.sh" "$IMG" "$DIGEST_ARG" >"$root/run" 2>&1; rc=$?; }
+D=sha256:$(printf 'b%.0s' {1..64})
+DIGEST_ARG=$D use X=1
+check "use: a verified digest is logged and exported as BINARIES_IMAGE=<image>@<digest>" bash -c "[ $rc = 0 ] && grep -qx 'BINARIES_IMAGE=$IMG@$D' '$root/genv' && grep -q 'Binaries image used: $IMG@$D (signature valid)' '$root/run'"
+DIGEST_ARG=$D use COSIGN_RC=1
+check "use: a digest that does not verify fails the build and exports nothing" bash -c "[ $rc != 0 ] && [ ! -s '$root/genv' ]"
+DIGEST_ARG="" use X=1
+check "use: an empty digest (validation-only binaries) fails with the instruction to push through testing" bash -c "[ $rc != 0 ] && grep -q 'push the change to testing first' '$root/run' && ! grep -q cosign '$LOG'"
+DIGEST_ARG="sha256:short" use X=1
+check "use: a malformed digest fails" test "$rc" != 0
+
+# ---- binaries-layout.sh: the listing of a built image against the manifest
+lay="$root/lay"; mkdir -p "$lay"
+tsvf="$here/binaries/scx/schedulers.tsv"
+{ for n in $(grep -vE '^[[:space:]]*(#|$)' "$tsvf" | cut -f1); do echo "scx/bin/$n"; done
+  printf '%s\n' scx/schedulers.tsv extest/lib/libextest.so extest/lib64/libextest.so scx/SOURCE scx/BUILDINFO extest/SOURCE extest/BUILDINFO SOURCE BUILDINFO LICENSES/scx-LICENSE scx/LICENSES/scx-LICENSE extest/LICENSES/extest-LICENSE; } >"$lay/full"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/full" "$tsvf" >"$root/run" 2>&1
+check "layout: a complete listing passes, for all seven schedulers of the real manifest" bash -c "[ $? = 0 ] || exit 1; true"
+grep -v 'scx/bin/scx_cake' "$lay/full" >"$lay/nocake"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/nocake" "$tsvf" >"$root/run" 2>&1
+check "layout: a scheduler of the manifest missing from the image fails and is named" bash -c "[ $? != 0 ] && grep -q 'lacks scx/bin/scx_cake' '$root/run'"
+grep -v 'extest/lib/libextest.so' "$lay/full" >"$lay/no32"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/no32" "$tsvf" >"$root/run" 2>&1
+check "layout: a missing 32-bit library fails" test "$?" != 0
+grep -vE '^(SOURCE|BUILDINFO|LICENSES/)' "$lay/full" >"$lay/notop"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/notop" "$tsvf" >"$root/run" 2>&1
+check "layout: missing top-level SOURCE, BUILDINFO and LICENSES fail" test "$?" != 0
+sed 's#^#./#' "$lay/full" >"$lay/dotted"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/dotted" "$tsvf" >"$root/run" 2>&1
+check "layout: tar listings with a leading ./ are accepted" test "$?" = 0
+
+
+# ---- the Containerfile and the Justfile
+check "Containerfile: the binaries image comes from BINARIES_IMAGE (no default, no foreign digest pins), bind-mounted at /binaries" bash -c "
+  grep -qx 'ARG BINARIES_IMAGE' '$cf' && grep -qx 'FROM \${BINARIES_IMAGE} AS binaries' '$cf' && grep -q 'from=binaries,source=/,target=/binaries' '$cf' &&
+  ! grep -qE 'SCX_BIN|EXTEST_BIN|scx-bin|extest-bin' '$cf' &&
+  [ \$(grep -n '^ARG FEDORA_VERSION' '$cf' | cut -d: -f1) -lt \$(grep -n '^FROM \${BINARIES_IMAGE}' '$cf' | cut -d: -f1) ]"
+check "build.sh runs install-binaries.sh and nothing enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && ! grep -qiE 'systemctl .*scx|scx.*(\.service|\.preset)' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh'"
+check "no scx unit or preset ships in system_files" bash -c "! find '$here/system_files' -iname '*scx*' | grep -q ."
+check "Justfile: build passes BINARIES_IMAGE (default: the tree-hash tag of binaries/) and labels the image with it" bash -c "grep -q 'BINARIES_IMAGE=\${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:\$(git rev-parse HEAD:binaries)}' '$here/Justfile' && grep -q 'io.github.redcodeworks.octarine-os.binaries=' '$here/Justfile'"
+check "the old foreign-image machinery is gone (pin check script, toolbox-key paragraph, foreign tests)" bash -c "! test -e '$here/.github/scripts/check-binary-pins.sh' && ! grep -rq 'check-binary-pins' '$here/.github' '$here/CLAUDE.md' && ! grep -q 'scx-bin' '$here/keys/README.md'"
+
+
+# ---- install-binaries.sh against a fake binaries image
 mk_images() { # dir
-    rm -rf "$1"; mkdir -p "$1/scx-bin/bin" "$1/scx-bin/LICENSES" "$1/extest-bin/lib" "$1/extest-bin/lib64" "$1/extest-bin/LICENSES"
-    for n in scx_rusty scx_cake; do printf '#!/bin/sh\necho %s 1.1.4\n' "$n" >"$1/scx-bin/bin/$n"; done
+    rm -rf "$1"; mkdir -p "$1/scx/bin" "$1/scx/LICENSES" "$1/extest/lib" "$1/extest/lib64" "$1/extest/LICENSES"
+    for n in scx_rusty scx_cake; do printf '#!/bin/sh\necho %s 1.1.4\n' "$n" >"$1/scx/bin/$n"; done
     # the third field (minimum kernel) is empty on purpose
-    printf 'scx_rusty\tbin/scx_rusty\t\tHybrid scheduler\nscx_cake\tbin/scx_cake\t\tGaming scheduler\n' >"$1/scx-bin/schedulers.tsv"
-    printf '                    GNU GENERAL PUBLIC LICENSE\n' >"$1/scx-bin/LICENSES/scx-LICENSE"
-    printf 'MIT License\n' >"$1/extest-bin/LICENSES/extest-LICENSE"
-    echo 32 >"$1/extest-bin/lib/libextest.so"; echo 64 >"$1/extest-bin/lib64/libextest.so"
-    for i in scx-bin extest-bin; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
+    printf 'scx_rusty\tbin/scx_rusty\t\tHybrid scheduler\nscx_cake\tbin/scx_cake\t\tGaming scheduler\n' >"$1/scx/schedulers.tsv"
+    printf '                    GNU GENERAL PUBLIC LICENSE\n' >"$1/scx/LICENSES/scx-LICENSE"
+    printf 'MIT License\n' >"$1/extest/LICENSES/extest-LICENSE"
+    echo 32 >"$1/extest/lib/libextest.so"; echo 64 >"$1/extest/lib64/libextest.so"
+    for i in scx extest; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
 }
 imgs="$root/imgs"; dest="$root/dest"
 inst() { rm -rf "$dest"; (BINARIES_ROOT="$imgs" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") >"$root/run" 2>&1; rc=$?; }
 mk_images "$imgs"; inst
 check "install: schedulers in /usr/bin, executable" bash -c "[ $rc = 0 ] && test -x '$dest/usr/bin/scx_rusty' && test -x '$dest/usr/bin/scx_cake'"
-check "install: manifest at /usr/share/octarine-os/schedulers.tsv, unchanged" cmp "$imgs/scx-bin/schedulers.tsv" "$dest/usr/share/octarine-os/schedulers.tsv"
+check "install: manifest at /usr/share/octarine-os/schedulers.tsv, unchanged" cmp "$imgs/scx/schedulers.tsv" "$dest/usr/share/octarine-os/schedulers.tsv"
 check "install: extest libraries under /usr/lib/extest/lib and lib64, executable, not swapped" bash -c "[ \"\$(cat '$dest/usr/lib/extest/lib/libextest.so')\" = 32 ] && [ \"\$(cat '$dest/usr/lib/extest/lib64/libextest.so')\" = 64 ] && test -x '$dest/usr/lib/extest/lib/libextest.so'"
-check "install: licenses, source and build info under /usr/share/licenses/octarine-os-binaries/<image>" bash -c "d='$dest/usr/share/licenses/octarine-os-binaries'; test -s \$d/scx-bin/scx-LICENSE && test -s \$d/scx-bin/SOURCE && test -s \$d/scx-bin/BUILDINFO && test -s \$d/extest-bin/extest-LICENSE && test -s \$d/extest-bin/SOURCE && test -s \$d/extest-bin/BUILDINFO"
+check "install: licenses, source and build info under /usr/share/licenses/octarine-os-binaries/<name>" bash -c "d='$dest/usr/share/licenses/octarine-os-binaries'; test -s \$d/scx/scx-LICENSE && test -s \$d/scx/SOURCE && test -s \$d/scx/BUILDINFO && test -s \$d/extest/extest-LICENSE && test -s \$d/extest/SOURCE && test -s \$d/extest/BUILDINFO"
 check "install: nothing under systemd paths" bash -c "! find '$dest' -path '*systemd*' | grep -q ."
-mk_images "$imgs"; rm "$imgs/scx-bin/bin/scx_cake"; inst
+mk_images "$imgs"; rm "$imgs/scx/bin/scx_cake"; inst
 check "install: a scheduler listed but missing fails" bash -c "[ $rc != 0 ] && grep -q 'scx_cake is listed in schedulers.tsv but missing' '$root/run'"
-mk_images "$imgs"; echo '#!/bin/sh' >"$imgs/scx-bin/bin/scx_extra"; inst
+mk_images "$imgs"; echo '#!/bin/sh' >"$imgs/scx/bin/scx_extra"; inst
 check "install: a binary that is not in the manifest fails" bash -c "[ $rc != 0 ] && grep -q 'scx_extra is not listed' '$root/run'"
-mk_images "$imgs"; printf 'scx_rusty\tbin/scx_rusty\tHybrid scheduler\n' >"$imgs/scx-bin/schedulers.tsv"; inst
+mk_images "$imgs"; printf 'scx_rusty\tbin/scx_rusty\tHybrid scheduler\n' >"$imgs/scx/schedulers.tsv"; inst
 check "install: a manifest line with three fields (the empty one collapsed) fails" bash -c "[ $rc != 0 ] && grep -q 'must be name, bin/name' '$root/run'"
-mk_images "$imgs"; rm "$imgs/scx-bin/LICENSES/scx-LICENSE"; inst
+mk_images "$imgs"; rm "$imgs/scx/LICENSES/scx-LICENSE"; inst
 check "install: no GPL text fails" bash -c "[ $rc != 0 ] && grep -q 'no GPL text' '$root/run'"
-mk_images "$imgs"; rm "$imgs/extest-bin/LICENSES/extest-LICENSE"; inst
+mk_images "$imgs"; rm "$imgs/extest/LICENSES/extest-LICENSE"; inst
 check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text' '$root/run'"
-mk_images "$imgs"; rm "$imgs/extest-bin/lib/libextest.so"; inst
+mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
 
 # ---- the smoke assertions are in build.yml and build-beta.yml, identical
@@ -116,7 +137,7 @@ root = sys.argv[1]
 blocks = []
 for w in ("build.yml", "build-beta.yml"):
     s = open(f"{root}/.github/workflows/{w}").read()
-    a = s.index("# prebuilt binaries (scx-bin, extest-bin)")
+    a = s.index("# prebuilt binaries (binaries/: scx, extest)")
     b = s.index("\n", s.index("source and build records ship for both binary images"))
     blocks.append(s[a:b])
 assert blocks[0] == blocks[1], "the smoke assertions drifted between build.yml and build-beta.yml"
@@ -127,105 +148,56 @@ for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-
 assert "'" not in t, "a single quote would end the podman run bash -c string"
 PY
 
-# ---- bump-pin.sh: the decision table
-bw="$root/bump"; rm -rf "$bw"; mkdir -p "$bw/keys" "$bw/variants/dx"
-echo key >"$bw/keys/redcodeworks-toolbox-cosign.pub"
-reset_bump() { cp "$cf" "$bw/Containerfile"; cp "$here/variants/dx/Containerfile" "$bw/variants/dx/Containerfile"; : >"$LOG"; : >"$root/gho"; }
-bump() { local img=$1; shift; (cd "$bw" && env "$@" PATH="$bin:$PATH" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/bump-pin.sh" "$img") >"$root/run" 2>&1; rc=$?; }
-pin_digest() { sed -n "s/^ARG $2_DIGEST=//p" "$bw/$1"; }
-ARGLINES='^ARG (SCX_BIN|EXTEST_BIN|DEV_PACKAGES)_(TAG|DIGEST)='
 
-reset_bump
-cur=$(pin_digest Containerfile SCX_BIN)
-sed -i "s/^ARG SCX_BIN_DIGEST=.*/ARG SCX_BIN_DIGEST=sha256:$(dg scx-bin latest)/" "$bw/Containerfile"
-cp "$bw/Containerfile" "$root/before"
-bump scx-bin
-check "decision equal: exit 0, 'nothing to bump', file untouched, cosign still verified latest" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && cmp -s '$root/before' '$bw/Containerfile' && grep -q 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/scx-bin@sha256:$(dg scx-bin latest)' '$LOG' && grep -qx 'result=equal' '$root/gho'"
-
-reset_bump
-bump scx-bin TAGS_JSON='{"Tags":["latest","testing","latest-20261109-1111111","latest-20261117-2222222"]}'
-new="sha256:$(dg scx-bin latest)"
-check "decision different, no dated tag matches: pin moves to latest, exit 10, only the pin lines change" bash -c "[ $rc = 10 ] && grep -qx 'ARG SCX_BIN_DIGEST=$new' '$bw/Containerfile' && grep -qx 'ARG SCX_BIN_TAG=latest' '$bw/Containerfile' && diff <(grep -vE '$ARGLINES' '$cf') <(grep -vE '$ARGLINES' '$bw/Containerfile') && grep -qx 'result=different' '$root/gho' && grep -qx 'previous=$cur' '$root/gho'"
-check "decision different: the other image's pin is untouched" bash -c "diff <(grep -E '^ARG EXTEST_BIN_' '$cf') <(grep -E '^ARG EXTEST_BIN_' '$bw/Containerfile')"
-# a dated tag with the same digest: the stub hashes the reference, so only the :latest reference hashes to the digest of latest
-# unless the tag is asked for under that name; use a stub variant that answers the dated tag like latest
-reset_bump
-mv "$bin/skopeo" "$bin/skopeo.real"
-cat >"$bin/skopeo" <<'F'
-#!/usr/bin/env bash
-echo "skopeo $*" >>"$LOG"
-case "$1" in
-    inspect) ref="${@: -1}"; printf 'manifest of %s' "${ref/:latest-20261117-2222222/:latest}" ;;
-    list-tags) echo '{"Tags":["latest","latest-20261109-1111111","latest-20261117-2222222","testing-20261117-3333333"]}' ;;
-esac
-F
-chmod +x "$bin/skopeo"
-bump extest-bin
-check "decision different, a dated tag has the same digest: the tag line records it" bash -c "[ $rc = 10 ] && grep -qx 'ARG EXTEST_BIN_TAG=latest-20261117-2222222' '$bw/Containerfile' && grep -qx 'ARG EXTEST_BIN_DIGEST=sha256:$(dg extest-bin latest)' '$bw/Containerfile'"
-rm "$bin/skopeo"; mv "$bin/skopeo.real" "$bin/skopeo"; 
-
-reset_bump
-bump dev-packages
-check "dev-packages goes through the same code (variants/dx/Containerfile, DEV_PACKAGES pin)" bash -c "[ $rc = 10 ] && grep -qx 'ARG DEV_PACKAGES_DIGEST=sha256:$(dg dev-packages latest)' '$bw/variants/dx/Containerfile' && cmp -s '$cf' '$bw/Containerfile'"
-
-reset_bump; cp "$bw/Containerfile" "$root/before"
-bump scx-bin SKOPEO_FAIL=1
-check "decision unreachable registry: exit 1, file untouched, no cosign call, result=unreachable" bash -c "[ $rc = 1 ] && cmp -s '$root/before' '$bw/Containerfile' && ! grep -q cosign '$LOG' && grep -qx 'result=unreachable' '$root/gho' && grep -q 'cannot resolve' '$root/run'"
-bump scx-bin SKOPEO_EMPTY=1
-check "decision empty answer (latest missing): exit 1, file untouched" bash -c "[ $rc = 1 ] && cmp -s '$root/before' '$bw/Containerfile'"
-
-reset_bump; cp "$bw/Containerfile" "$root/before"
-bump scx-bin COSIGN_RC=1
-check "decision bad signature: exit 2, file untouched, result=badsignature" bash -c "[ $rc = 2 ] && cmp -s '$root/before' '$bw/Containerfile' && grep -qx 'result=badsignature' '$root/gho' && grep -q 'cosign verification failed' '$root/run'"
-# equal digest does not excuse a bad signature
-sed -i "s/^ARG SCX_BIN_DIGEST=.*/ARG SCX_BIN_DIGEST=sha256:$(dg scx-bin latest)/" "$bw/Containerfile"
-bump scx-bin COSIGN_RC=1
-check "decision bad signature with an equal digest still fails" test "$rc" = 2
-
-reset_bump; sed -i 's/^ARG SCX_BIN_DIGEST=.*/ARG SCX_BIN_DIGEST=sha256:short/' "$bw/Containerfile"
-bump scx-bin
-check "a malformed pin in the file: exit 3, no registry call" bash -c "[ $rc = 3 ] && ! grep -q skopeo '$LOG'"
-bump nothing
-check "an unknown image name: exit 3" test "$rc" = 3
-
-# ---- the weekly workflow
-wf="$here/.github/workflows/bump-pins.yml"
-check "bump-pins.yml: Tuesday 07:00 UTC schedule plus workflow_dispatch, nothing else" python3 -I - "$wf" <<'PY'
+# ---- the binaries workflow and its place in the image builds
+wfb="$here/.github/workflows/binaries.yml"
+check "binaries.yml: reusable (workflow_call with digest and image outputs) and dispatchable, nothing else" python3 -I - "$wfb" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
+assert set(on) == {"workflow_call", "workflow_dispatch"}, set(on)
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image"}
+PY
+check "binaries.yml: no job carries a required check name; the signing job is the only one with the signing environment" python3 -I - "$wfb" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-on = w.get(True) or w.get("on")
-assert set(on) == {"schedule", "workflow_dispatch"}, set(on)
-assert on["schedule"] == [{"cron": "0 7 * * 2"}], on["schedule"]
+names = {j["name"] for j in w["jobs"].values()}
+assert not names & {"test", "secrets", "Build and push image", "Sign and verify images", "Build dx and push image", "require-testing-branch"}, names
+assert [k for k, j in w["jobs"].items() if j.get("environment") == "signing"] == ["sign"]
 PY
-check "bump-pins.yml: a job per image (scx-bin, extest-bin, dev-packages), no fail-fast, runs on testing, permissions contents and pull-requests write" python3 -I - "$wf" <<'PY'
+check "binaries.yml: only testing and main publish, any other ref builds for validation and never pushes or signs" bash -c "
+  grep -q 'refs/heads/main | refs/heads/testing) publish=true' '$wfb' && grep -q \"if: steps.channel.outputs.publish == 'true'\" '$wfb' &&
+  grep -q \"needs.build.outputs.published == 'true'\" '$wfb'"
+check "binaries.yml: the tag is the tree hash of binaries/, a usable image skips the build, the build uses the pinned Containerfile and push-tags.sh" bash -c "
+  grep -q 'git rev-parse HEAD:binaries' '$wfb' && grep -q \"needs.check.outputs.usable != 'true'\" '$wfb' && grep -q 'binaries-lookup.sh' '$wfb' &&
+  grep -q -- '--file binaries/Containerfile binaries' '$wfb' && grep -q 'binaries-layout.sh' '$wfb' && grep -q 'push-tags.sh \"\${IMAGE_NAME}:\${HASH}\" \"\${IMAGE}\" \"\${HASH}\"' '$wfb'"
+check "binaries.yml: signed the way the images are (same key and secret, old bundle format), then verified by digest and by tag" bash -c "
+  grep -q 'COSIGN_PRIVATE_KEY: \${{ secrets.SIGNING_SECRET }}' '$wfb' && grep -q -- 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wfb' &&
+  grep -q 'cosign verify --key cosign.pub \"\${IMAGE}@\${DIGEST}\"' '$wfb' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${HASH}\"' '$wfb'"
+check "binaries.yml: the result job hands over the digest of a usable image, of a signed new one, or nothing for a validation build" bash -c "grep -q 'digest=\${CHECK_DIGEST}' '$wfb' && grep -q 'digest=\${BUILD_DIGEST}' '$wfb' && grep -q 'digest=\" >> ' '$wfb'"
+check "build.yml and build-beta.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
 import sys, yaml
-w = yaml.safe_load(open(sys.argv[1]))
-j = w["jobs"]["bump"]
-assert j["strategy"]["matrix"]["image"] == ["scx-bin", "extest-bin", "dev-packages"], j["strategy"]
-assert j["strategy"]["fail-fast"] is False
-assert w["permissions"] == {"contents": "write", "pull-requests": "write"}, w["permissions"]
-co = [s for s in j["steps"] if s.get("uses", "").startswith("actions/checkout@")][0]
-assert co["with"]["ref"] == "testing" and co["with"]["fetch-depth"] == 0
-import re
-assert re.search(r"@[0-9a-f]{40}$", co["uses"]), co["uses"]
+root = sys.argv[1]
+for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
+    w = yaml.safe_load(open(f"{root}/.github/workflows/{f}"))
+    j = w["jobs"]["binaries"]
+    assert j["uses"] == "./.github/workflows/binaries.yml", f
+    assert j["permissions"] == {"contents": "read", "packages": "write"}, f
+    needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
+    assert "binaries" in needs, f
+    text = open(f"{root}/.github/workflows/{f}").read()
+    assert 'binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"' in text, f
+    assert "check-binary-pins" not in text, f
+    if f == "build.yml":
+        assert j["if"] == "needs.plan.outputs.build == 'true'", "binaries only when an image is built (not for a promotion or a docs-only push)"
 PY
-check "bump-pins.yml: BUMP_TOKEN is used when set, the default token otherwise; no step prints a token" python3 -I - "$wf" <<'PY'
-import re, sys
-s = open(sys.argv[1]).read()
-assert s.count("secrets.BUMP_TOKEN || github.token") == 2, s.count("secrets.BUMP_TOKEN || github.token")
-for line in s.splitlines():
-    code = line.strip()
-    if code.startswith("#"):
-        continue
-    assert not re.search(r"\b(echo|printf)\b.*(\$\{?(GH_TOKEN|BUMP_TOKEN)|secrets\.BUMP_TOKEN|github\.token)", code), line
-    assert "set -x" not in code, line
-assert "HAVE_BUMP_TOKEN" in s and "did not start" in s, "the fallback notice is missing"
+check "build.yml: the required aggregate checks keep their names and the binaries job is not among their needs" python3 -I - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+assert w["jobs"]["build_result"]["name"] == "Build and push image"
+assert w["jobs"]["sign"]["name"] == "Sign and verify images"
+assert "binaries" not in w["jobs"]["build_result"]["needs"] and "binaries" not in w["jobs"]["sign"]["needs"]
+assert "pull_request" not in (w.get(True) or w.get("on"))
 PY
-check "bump-pins.yml: one branch per image bump/<image>-digest into testing, updated by merge not force-push, created or edited PR" bash -c "
-  grep -q 'branch=\"bump/\${IMAGE}-digest\"' '$wf' && grep -q -- '--base testing' '$wf' && grep -q 'gh pr create' '$wf' && grep -q 'gh pr edit' '$wf' &&
-  grep -q 'git merge --no-edit -X theirs origin/testing' '$wf' && ! grep -qE 'git push.*(--force|-f |--force-with-lease)' '$wf' && ! grep -qi 'co-authored-by' '$wf'"
-check "bump-pins.yml: the job runs bump-pin.sh and fails on every exit code but 0 and 10" bash -c "grep -q 'bump-pin.sh \"\${IMAGE}\"' '$wf' && grep -q '0 | 10) ;;' '$wf'"
-check "bump-pins.yml: every script it uses exists and parses" bash -c "for f in .github/scripts/bump-pin.sh .github/scripts/check-binary-pins.sh build_files/install-binaries.sh; do bash -n '$here'/\$f || exit 1; done"
 
 echo
 echo "passed: $pass, failed: $failn"

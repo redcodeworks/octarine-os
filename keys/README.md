@@ -17,7 +17,3 @@ as a warning in the build, never skipped silently).
 README of `ghcr.io/redcodeworks/dev-packages`). It signs `ghcr.io/redcodeworks/dev-packages`, the developer package list
 the `octarine-os-dx` image installs; `build-dx.yml` verifies the digest pinned in `variants/dx/Containerfile` against it
 before every build and `just dev-packages-bump` verifies a new digest with it. Not this image's own signing key.
-
-The same key also verifies `ghcr.io/redcodeworks/scx-bin` and `ghcr.io/redcodeworks/extest-bin` (the prebuilt binary images the
-default image installs, built by the same repository): `.github/scripts/check-binary-pins.sh --verify` checks the digests pinned in the
-`Containerfile` on every build, and `bump-pins.yml` checks `latest` before it opens a bump pull request.
