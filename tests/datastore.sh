@@ -85,7 +85,8 @@ case "$1 $2" in
     "volume exists") [ -d "$VOLS/$3" ]; exit $? ;;
     "volume inspect") echo "$VOLS/$3/_data"; exit 0 ;;
     "volume export")
-        [ "${FAKE_EXPORT_FAIL:-}" = "$3" ] && exit 1
+        [ "${FAKE_EXPORT_FAIL:-}" = "$3" ] && { echo partial >"${5}"; exit 1; }
+        [ "${FAKE_EXPORT_SIGNAL:-}" = "$3" ] && { echo partial >"${5}"; kill -TERM "$PPID"; exit 0; }
         echo "tar of $3" >"${5}"; exit 0 ;;
     "info --format") echo "${FAKE_GRAPHROOT:-/mnt/data/containers/storage}"; exit 0 ;;
     "unshare cat") cat "$3" 2>/dev/null; exit $? ;;
@@ -128,7 +129,7 @@ chmod +x "$bin"/*
 export RUNNING="" ACTIVE=""
 reset() {
     rm -rf "${root:?}/secrets" "${root:?}/vols" "${root:?}/home/.config"; mkdir -p "$root/secrets" "$root/vols" "$root/home"
-    : >"$LOG"; export RUNNING="" ACTIVE=""; unset FAKE_UID FAKE_SECRET_FAIL FAKE_EXPORT_FAIL FAKE_PULL_FAIL FAKE_START_FAIL FAKE_GRAPHROOT
+    : >"$LOG"; export RUNNING="" ACTIVE=""; unset FAKE_UID FAKE_SECRET_FAIL FAKE_EXPORT_SIGNAL FAKE_EXPORT_FAIL FAKE_PULL_FAIL FAKE_START_FAIL FAKE_GRAPHROOT
 }
 run() { # recipe, args...
     local r=$1; shift
@@ -269,6 +270,20 @@ reset; mkvol kafka-data; ACTIVE="kafka-pod.service"; export ACTIVE; run datastor
 check "backup: a running Kafka pod is refused without --stop" bash -c "[ $rc = 1 ] && grep -q 'kafka-pod.service' '$root/out'"
 reset; mkvol valkey-data; FAKE_EXPORT_FAIL=valkey-data run datastore-setup --backup "$bk-5"
 check "backup: a failing export is reported, the partial file removed, exit 1" bash -c "[ $rc = 1 ] && grep -q 'Failed: podman volume export valkey-data' '$root/out' && ! ls '$bk-5'/valkey-data-*.tar 2>/dev/null"
+# idempotency: a second backup (even in the same second) keeps the first; a failing export never deletes a good backup; an interrupted --stop run starts the pod again
+reset; mkvol valkey-data; mkvol seaweed-data; bk8="$root/backup-8"
+run datastore-setup --backup "$bk8"; run datastore-setup --backup "$bk8"
+check "backup twice: both runs keep their files (unique names, nothing overwritten), no .part left" bash -c "[ \$(ls '$bk8'/valkey-data-*.tar | wc -l) = 2 ] && [ \$(ls '$bk8'/seaweed-data-*.tar | wc -l) = 2 ] && ! ls '$bk8'/*.part 2>/dev/null"
+first=$(ls "$bk8"/valkey-data-*.tar | head -n1); sum=$(cksum <"$first")
+FAKE_EXPORT_FAIL=valkey-data run datastore-setup --backup "$bk8"
+check "backup: a failing second export keeps every earlier backup byte for byte and leaves no .part, exit 1" bash -c "[ $rc = 1 ] && [ \$(ls '$bk8'/valkey-data-*.tar | wc -l) = 2 ] && [ \"\$(cksum <'$first')\" = '$sum' ] && ! ls '$bk8'/*.part 2>/dev/null && grep -q 'earlier backup is untouched' '$root/out'"
+reset; mkvol valkey-data; mkvol seaweed-data; ACTIVE="datastore-pod.service"; export ACTIVE; : >"$LOG"; bk9="$root/backup-9"
+FAKE_EXPORT_SIGNAL=valkey-data run datastore-setup --backup "$bk9" --stop
+check "backup --stop interrupted (SIGTERM during an export): the pod this run stopped is started again, the partial file is removed, the exit is not 0" bash -c "[ $rc != 0 ] && grep -qx 'systemctl --user stop datastore-pod.service' '$LOG' && grep -qx 'systemctl --user start datastore-pod.service' '$LOG' && ! ls '$bk9'/*.part '$bk9'/valkey-data-*.tar 2>/dev/null"
+reset; mkvol valkey-data; ACTIVE="datastore-pod.service"; export ACTIVE; : >"$LOG"; bk10="$root/backup-10"
+FAKE_START_FAIL=0 FAKE_EXPORT_FAIL=valkey-data run datastore-setup --backup "$bk10" --stop
+check "backup --stop with a failing export: the pod is started again (only the one this run stopped), exit 1" bash -c "[ $rc = 1 ] && [ \$(grep -c '^systemctl --user start datastore-pod.service' '$LOG') = 1 ] && ! grep -qE '(start|stop) kafka-pod' '$LOG'"
+unset ACTIVE
 reset; run datastore-setup --backup "$bk-6"
 check "backup with no volumes: nothing to do, exit 0, no directory created" bash -c "[ $rc = 0 ] && grep -q 'nothing to back up' '$root/out' && [ ! -d '$bk-6' ]"
 reset; mkvol valkey-data; run datastore-setup --backup "$bk-7" --no

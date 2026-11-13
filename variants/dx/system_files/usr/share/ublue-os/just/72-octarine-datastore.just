@@ -204,7 +204,7 @@ datastore-setup *args:
     fi
 
     if [ "$action" = backup ]; then
-        today=$(date +%Y%m%d)
+        stamp=$(date +%Y%m%d-%H%M%S)
         pods_running=""
         for p in datastore-pod.service kafka-pod.service; do if [ "$(systemctl --user is-active "$p" 2>/dev/null)" = active ]; then pods_running="$pods_running $p"; fi; done
         pg_running=0
@@ -212,8 +212,8 @@ datastore-setup *args:
         plan=()
         for v in $DS_VOLUMES; do
             podman volume exists "$v" 2>/dev/null || continue
-            if [ "$v" = postgresql-data ] && [ "$pg_running" = 1 ]; then plan+=("postgresql-data: pg_dumpall (online, consistent) -> $backup_dir/postgresql-$today.sql"); continue; fi
-            plan+=("$v: podman volume export -> $backup_dir/$v-$today.tar")
+            if [ "$v" = postgresql-data ] && [ "$pg_running" = 1 ]; then plan+=("postgresql-data: pg_dumpall (online, consistent) -> $backup_dir/postgresql-$stamp.sql (a name that exists is never overwritten: -2, -3 ...)"); continue; fi
+            plan+=("$v: podman volume export -> $backup_dir/$v-$stamp.tar")
         done
         if [ "${#plan[@]}" -eq 0 ]; then echo "No datastore volumes exist yet: nothing to back up."; exit 0; fi
         echo "Backup plan:"
@@ -236,18 +236,43 @@ datastore-setup *args:
         mkdir -p "$backup_dir" || { echo "Cannot create $backup_dir" >&2; exit 1; }
         umask 077
         rc=0
-        for p in $need_stop; do echo "Stopping $p"; systemctl --user stop "$p" || { echo "Failed to stop $p" >&2; exit 1; }; done
+        stopped=""
+        cur_part=""
+        # A name that exists (a file or a leftover .part) is never reused: -2, -3 ... is appended.
+        pick() { # base ext
+            local n="${backup_dir:?}/$1-${stamp:?}" i=1 c
+            c="$n.$2"
+            while [ -e "$c" ] || [ -e "$c.part" ]; do i=$((i + 1)); c="$n-$i.$2"; done
+            printf '%s' "$c"
+        }
+        # Pods this run stopped are started again on any exit, Ctrl-C and early failure included; only the .part file of an interrupted export is removed.
+        restore_stopped() {
+            [ -n "$cur_part" ] && rm -f -- "${cur_part:?}"
+            cur_part=""
+            local q
+            for q in $stopped; do echo "Starting $q again"; systemctl --user start "$q" || { echo "Failed to restart $q: ujust datastore start" >&2; rc=1; }; done
+            stopped=""
+        }
+        trap 'restore_stopped' EXIT
+        trap 'exit 130' INT
+        trap 'exit 143' TERM
+        for p in $need_stop; do stopped="$stopped $p"; echo "Stopping $p"; systemctl --user stop "$p" || { echo "Failed to stop $p" >&2; exit 1; }; done
         for v in $DS_VOLUMES; do
             podman volume exists "$v" 2>/dev/null || continue
             if [ "$v" = postgresql-data ] && [ "$pg_running" = 1 ] && [ "${need_stop#*datastore-pod}" = "$need_stop" ]; then
-                out="${backup_dir:?}/postgresql-${today:?}.sql"
-                if podman exec "$(ds_container postgresql)" pg_dumpall -U postgres >"$out"; then echo "Wrote $out"; else echo "Failed: pg_dumpall" >&2; rm -f -- "$out"; rc=1; fi
+                out=$(pick postgresql sql)
+                cur_part="$out.part"
+                if podman exec "$(ds_container postgresql)" pg_dumpall -U postgres >"$cur_part" && mv -- "$cur_part" "$out"; then echo "Wrote $out"; else echo "Failed: pg_dumpall (an earlier backup is untouched)" >&2; rm -f -- "${cur_part:?}"; rc=1; fi
+                cur_part=""
                 continue
             fi
-            out="${backup_dir:?}/${v:?}-${today:?}.tar"
-            if podman volume export "$v" --output "$out"; then echo "Wrote $out"; else echo "Failed: podman volume export $v" >&2; rm -f -- "$out"; rc=1; fi
+            out=$(pick "${v:?}" tar)
+            cur_part="$out.part"
+            if podman volume export "$v" --output "$cur_part" && mv -- "$cur_part" "$out"; then echo "Wrote $out"; else echo "Failed: podman volume export $v (an earlier backup is untouched)" >&2; rm -f -- "${cur_part:?}"; rc=1; fi
+            cur_part=""
         done
-        for p in $need_stop; do echo "Starting $p again"; systemctl --user start "$p" || { echo "Failed to restart $p: ujust datastore start" >&2; rc=1; }; done
+        restore_stopped
+        trap - EXIT INT TERM
         exit "$rc"
     fi
 
