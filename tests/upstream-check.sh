@@ -16,6 +16,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
+unset GITHUB_STEP_SUMMARY   # the runner sets it to a file the test user cannot write
 sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 
 # --- the weekly upstream check with a stub gh (replies from files named after the API path)
