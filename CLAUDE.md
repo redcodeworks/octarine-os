@@ -529,7 +529,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
   | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
   | | caffeine, blur-my-shell, dash-to-dock, auto-move-windows, user-theme | excluded | shipped but change the look or need personal data (Auto Move needs an app list, blur-my-shell and the dock are visual, caffeine adds a panel icon, user-theme is useless without a theme) |
-  | | arcmenu, hotedge, coverflow, clipboard-indicator, tiling shell | excluded | not shipped |
+  | | GPaste (`gpaste`, `gnome-shell-extension-gpaste`, extension `GPaste@gnome-shell-extensions.gnome.org`) | shipped, not enabled | optional `misc` group; the daemon is D-Bus activated (no unit to enable); switch on with `gnome-extensions enable GPaste@gnome-shell-extensions.gnome.org`; default shortcuts Ctrl+Alt+H (history) and Ctrl+Alt+G (UI) |
+  | | arcmenu, hotedge, coverflow, tiling shell | excluded | not shipped |
   | `10-app-folders.dconf` | folder layout | excluded | layout taste, replaces GNOME's own default folders (category-based, so a candidate if the owner wants it) |
   | `31-shell-keybindings`, `42-tiling-shell`, `43-arcmenu` | all | excluded | shortcut model, extensions not shipped |
   | `40-dash-to-dock`, `41-auto-move-windows`, `50-shell-theme` | all | excluded | look, owner's app list, Gruvbox shell theme |

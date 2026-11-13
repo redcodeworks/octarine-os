@@ -36,6 +36,8 @@ else
 fi
 check "enabled-extensions keeps the packaged default (background-logo) first" grep -q "^enabled-extensions=\['background-logo@fedorahosted.org'," "$keyfile"
 check "extensions enabled are only ones the image ships (appindicator, gsconnect)" bash -c "grep '^enabled-extensions=' '$keyfile' | grep -o '[A-Za-z0-9.-]*@[a-zA-Z0-9.-]*' | sort | tr '\n' ' ' | grep -qx 'appindicatorsupport@rgcjonas.gmail.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io '"
+check "GPaste is shipped but not enabled by default" bash -c "! grep -qi gpaste '$keyfile'"
+check "GPaste is in the misc optional group of build.sh" grep -q "^    \"misc:.* gpaste gnome-shell-extension-gpaste " "$here/build_files/build.sh"
 
 # fish syntax and behavior
 if command -v fish >/dev/null; then
