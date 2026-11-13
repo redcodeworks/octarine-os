@@ -295,7 +295,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
 
 - **`hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`:** one checklist of vendor and hardware specific steps that
   calls the standalone recipes (`sensors-setup`, `switch-image`, `luks-tpm-unlock`, `gaming-setup gamemode`, `dev --only cuda`,
-  `enroll-secure-boot-key`) and adds the AMD GPU tool (LACT), the optional `amdgpu.ppfeaturemask` kernel argument and the security
+  `enroll-secure-boot-key`) and adds the AMD GPU tool (LACT), ROCm in a rootless distrobox (the dx images no longer carry ROCm), opt-in `--export` of `nvcc` or `hipcc`, `rocminfo` and `rocm-smi` to `~/.local/bin`, the optional `amdgpu.ppfeaturemask` kernel argument and the security
   key registration for `sudo`. A step is listed only when the machine has the hardware; `--list` shows why one is hidden.
 - **`user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`:** an interactive checklist, one y/n question per step,
   in this order: `groups` (join `gamemode`, `input` and `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies

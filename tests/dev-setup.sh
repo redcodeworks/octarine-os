@@ -18,6 +18,7 @@ bin="$root/bin"        # stubs that are always on PATH
 sysbin="$root/sysbin"  # the few real commands
 pbin="$root/state/pbin" # tools a stub brew "installs" (on PATH only once installed)
 mkdir -p "$bin" "$sysbin"
+export DEV_EXPORT_DIR="$root/exportbin" OCTARINE_BOX_EXPORT_LIB="$repo/system_files/usr/share/octarine-os/lib/box-export.sh"
 export LOG="$root/log" HOME="$root/home" STATE="$root/state" GUMQ="$root/gumq"
 export OCTARINE_MENU_LIB="$repo/system_files/usr/share/octarine-os/lib/menu.sh"
 export OCTARINE_SDK_WRAPPER="$bin/sdkstub" DEV_RETRY_WAIT=0 DEV_ETC_GROUP="$root/etc-group" DEV_USR_GROUP="$root/usr-group"
@@ -188,6 +189,12 @@ case "$1" in
         cmd="$*"
         echo "in-container: $cmd" >>"$LOG"
         case "$cmd" in
+            "bash -lc command -v nvcc") [ -f "$STATE/cuda-toolkit" ] && echo /usr/local/cuda/bin/nvcc; exit 0 ;;
+            "distrobox-export --bin "*)
+                set -- $cmd; path=$3; dir=$5; act=${6:-}
+                if [ "$act" = --unexport ]; then rm -f "$dir/$(basename "$path")"; else mkdir -p "$dir"; printf '#!/bin/sh\n# distrobox_binary\n# name: cuda\n' >"$dir/$(basename "$path")"; fi
+                exit 0
+                ;;
             *"tee /etc/profile.d/cuda.sh"*) flagged profile && exit 1; : >"$STATE/cuda-profile" ;;
             *"test -f /etc/profile.d/cuda.sh"*) [ -f "$STATE/cuda-profile" ]; exit $? ;;
             *"nvcc"*) [ -f "$STATE/cuda-toolkit" ]; exit $? ;;
@@ -272,7 +279,7 @@ mk_netxml() { echo '<network><name>default</name></network>' >"$root/net-default
 
 reset() {
     rm -rf "$HOME" "$STATE/formulae" "$STATE/casks" "$STATE/flatpaks" "$STATE/pbin" "$STATE/sockets" "$STATE/brewprefix" "$root"/gumq.* "$LOG"
-    rm -rf "$root/cdi"; rm -f "$STATE"/nvidia "$STATE"/cuda-container "$STATE"/cuda-toolkit "$STATE"/cuda-profile "$STATE"/cuda-repo
+    rm -rf "$root/cdi" "$root/exportbin"; rm -f "$STATE"/nvidia "$STATE"/cuda-container "$STATE"/cuda-toolkit "$STATE"/cuda-profile "$STATE"/cuda-repo
     rm -f "$STATE"/fail-* "$STATE"/failn-* "$STATE"/components "$STATE"/fnm-list "$STATE"/fnm-env-count "$STATE"/uvlist "$STATE"/groups "$STATE"/members "$STATE"/net "$STATE"/pinned
     unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC SUDO_RC
     mkdir -p "$HOME" "$STATE/formulae" "$STATE/casks" "$STATE/flatpaks" "$STATE/pbin" "$STATE/sockets" "$STATE/brewprefix" "$STATE/multishell"
@@ -828,6 +835,31 @@ check "the sdk wrapper is executable and shell-valid in the repo" bash -c "[ -x 
 
 # ---- the dx smoke script knows the dev files
 check "the dx smoke test checks the dev recipe, its import, the sdk wrapper and the cargo snippet" bash -c "grep -q 'lists_dev' '$repo/.github/scripts/dx-smoke.sh' && grep -q '70-octarine-dev.just' '$repo/.github/scripts/dx-smoke.sh' && grep -q 'octarine-dx-cargo.sh' '$repo/.github/scripts/dx-smoke.sh' && grep -q 'bin_dir}/sdk' '$repo/.github/scripts/dx-smoke.sh'"
+
+# ---- cuda export (opt-in)
+cuda_world
+run '' --yes --only cuda
+check "cuda: a plain run exports nothing (no distrobox-export, no wrapper)" bash -c "! grep -q 'distrobox-export' '$LOG' && [ ! -e '$root/exportbin/nvcc' ]"
+run '' --yes --only cuda --export
+check "cuda --export: exactly nvcc is exported, path resolved in the box" bash -c "[ -f '$root/exportbin/nvcc' ] && grep -q 'distrobox-export --bin /usr/local/cuda/bin/nvcc --export-path $root/exportbin' '$LOG' && [ \$(ls '$root/exportbin' | wc -l) = 1 ] && grep -q 'nvidia-smi' '$root/out' && ! grep -q 'export-path.*nvidia-smi' '$LOG'"
+check "cuda --export: the undo is printed with the step" bash -c "grep -q 'ujust dev --only cuda --unexport' '$root/out'"
+: >"$LOG"
+run '' --yes --only cuda --export
+check "cuda --export again: already exported, no second export" bash -c "grep -q 'already exported' '$root/out' && [ \$(grep -c 'distrobox-export --bin' '$LOG') = 0 ]"
+run '' --yes --only cuda --unexport
+check "cuda --unexport removes the wrapper" bash -c "[ ! -e '$root/exportbin/nvcc' ] && grep -q 'unexported' '$root/out'"
+check "cuda --unexport does not touch the box" notlogged "distrobox rm"
+mkdir -p "$root/exportbin"; echo "my own nvcc script" >"$root/exportbin/nvcc"
+: >"$LOG"
+run '' --yes --only cuda --export
+check "a foreign file in the export dir is shown and never overwritten" bash -c "grep -q 'not ours' '$root/out' && grep -q 'my own nvcc script' '$root/out' && [ \"\$(cat '$root/exportbin/nvcc')\" = 'my own nvcc script' ] && ! grep -q 'distrobox-export --bin' '$LOG'"
+run '' --yes --only cuda --unexport
+check "--unexport leaves a foreign file alone" bash -c "[ \"\$(cat '$root/exportbin/nvcc')\" = 'my own nvcc script' ] && grep -q 'not ours' '$root/out'"
+rm -f "$root/exportbin/nvcc" "$STATE/cuda-toolkit"
+run '' --yes --only cuda-export
+check "a missing nvcc in the box is skipped with a message" bash -c "grep -q 'skipped: nvcc is not installed' '$root/out'"
+run '' --export --yes
+check "--export without --only cuda is rejected (exit 2)" test "$rc" = 2
 
 echo
 echo "passed: $pass, failed: $failn"

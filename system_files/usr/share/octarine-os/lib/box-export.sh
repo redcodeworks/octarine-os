@@ -16,7 +16,7 @@ box_export() {
     local dbx=${DISTROBOX_CMD:-distrobox}
     for b in "$@"; do
         wrapper="$dir/$b"
-        real=$("$dbx" enter "$box" -- bash -lc "command -v $b" </dev/null 2>/dev/null | tail -n 1)
+        real=$("$dbx" enter --name "$box" --no-tty -- bash -lc "command -v $b" </dev/null 2>/dev/null | tail -n 1)
         case "$action" in
             export)
                 if [ -z "$real" ]; then
@@ -33,7 +33,7 @@ box_export() {
                     continue
                 fi
                 mkdir -p "$dir"
-                if "$dbx" enter "$box" -- distrobox-export --bin "$real" --export-path "$dir" </dev/null; then
+                if "$dbx" enter --name "$box" --no-tty -- distrobox-export --bin "$real" --export-path "$dir" </dev/null; then
                     echo "  exported: $b ($real in $box) -> $wrapper"
                 else
                     echo "  FAILED: could not export $b" >&2
@@ -49,7 +49,7 @@ box_export() {
                     echo "  skipped: $wrapper is not an export of the box $box (not ours); left alone"
                     continue
                 fi
-                if [ -n "$real" ] && "$dbx" enter "$box" -- distrobox-export --bin "$real" --export-path "$dir" --unexport </dev/null; then
+                if [ -n "$real" ] && "$dbx" enter --name "$box" --no-tty -- distrobox-export --bin "$real" --export-path "$dir" --unexport </dev/null; then
                     echo "  unexported: $b"
                 elif rm -f -- "$wrapper"; then
                     echo "  unexported: $b (wrapper file removed)"
