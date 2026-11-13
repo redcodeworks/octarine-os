@@ -161,16 +161,21 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
+            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
               check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
             done
+            # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
+            for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
+              check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
+            done
+            check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
             for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
                      gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon \
-                     nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
+                     nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
                      restic rclone guestfs-tools libguestfs \

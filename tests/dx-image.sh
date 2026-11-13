@@ -248,7 +248,7 @@ exit "${PKGCONF_RC:-0}"
 F
     chmod +x "$sb/bin"/*
     echo initramfs >"$sb/modules/$1/initramfs.img"
-    touch "$sb/units/libvirtd.service" "$sb/units/virtqemud.service"
+    touch "$sb/units/libvirtd.service" "$sb/units/virtqemud.service" "$sb/units/virtnetworkd.service" "$sb/units/virtstoraged.service"
     printf '[Flatpak Preinstall io.github.kolunmi.Bazaar]\nBranch=stable\n' >"$sb/pre/tools.preinstall"
     printf '[Flatpak Preinstall org.gnome.Example]\nBranch=stable\n' >"$sb/pre/gnome.preinstall"
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
@@ -258,7 +258,7 @@ F
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
     echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"ghcr.io/redcodeworks/octarine-os-nvidia-dx":[],"":[]}}}' >"$sb/policy.json"
-    printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virtiofsd swtpm edk2-ovmf glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
+    printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virt-manager virt-viewer virtiofsd swtpm swtpm-tools edk2-ovmf libvirt-nss dnsmasq glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
 }
 smoke_run() { # BASE_KERNEL
     PATH="$sb/bin:$sb/sys" RPM_LIST="$sb/rpms" MODULES_DIR="$sb/modules" UNIT_DIR="$sb/units" PREINSTALL_DIR="$sb/pre" \
@@ -280,6 +280,9 @@ mk_world "$K"; smoke_run "$K"; check "smoke: a rustup command is not required (o
 mk_world "$K"; grep -vx glib2-devel "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing -devel package fails" test $? -ne 0
 mk_world "$K"; rm "$sb/units/virtqemud.service"; smoke_run "$K"; check "smoke: a missing virtqemud unit fails" test $? -ne 0
 mk_world "$K"; rm "$sb/units/libvirtd.service"; smoke_run "$K"; check "smoke: a missing libvirtd unit fails" test $? -ne 0
+mk_world "$K"; rm "$sb/units/virtnetworkd.service"; smoke_run "$K"; check "smoke: a missing virtnetworkd unit fails" test $? -ne 0
+mk_world "$K"; grep -vx libvirt-nss "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing libvirt-nss fails" test $? -ne 0
+mk_world "$K"; grep -vx cockpit-machines "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing cockpit-machines fails" test $? -ne 0
 mk_world "$K"; rm "$sb/bin/qemu-kvm"; smoke_run "$K"; check "smoke: no qemu-kvm binary fails" test $? -ne 0
 mk_world "$K"; mkdir "$sb/modules/7.2.16-300.fc45.x86_64"; smoke_run "$K"; check "smoke: two kernels fail" test $? -ne 0
 mk_world "7.2.14-300.fc45.x86_64"; smoke_run "$K"; check "smoke: a kernel that differs from the base fails" test $? -ne 0

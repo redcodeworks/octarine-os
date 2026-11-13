@@ -126,7 +126,7 @@ fi
 #
 # CRITICAL (keep in step with the smoke test in .github/workflows/build.yml):
 dnf5 install -y \
-    pam-u2f snapper libvirt qemu-kvm fuse-libs tailscale \
+    pam-u2f snapper fuse-libs tailscale \
     gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
@@ -140,7 +140,7 @@ missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
 optional_groups=(
     "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
-    "cockpit:cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
+    "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
     "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
     "pcp:pcp python3-pcp"
     "containers:podman-compose kind podman-docker podman-tui"
@@ -265,8 +265,8 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # Only what has to run by default. sshd, tailscaled, cockpit.socket and the snapper
 # timers are installed but left off; enable them on demand, e.g.
 #   sudo systemctl enable --now tailscaled
-# libvirt relies on its packaged presets and socket activation, and the base image
-# already enables automatic update staging (rpm-ostreed-automatic.timer).
+# The VM-hosting set (libvirt, QEMU, cockpit-machines) is not in this image; the dx variant installs it and relies on
+# libvirt's packaged presets and socket activation. The base image already enables automatic update staging (rpm-ostreed-automatic.timer).
 # The Flatpak preinstall list is installed by `ujust flatpak-preinstall` from a desktop session, not by a boot unit:
 # a root service has no session bus, and on a stock-installed machine the fedora OCI remote needs one.
 # pcp is an optional package: enable its units only when it was installed
