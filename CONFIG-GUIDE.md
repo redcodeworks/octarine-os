@@ -108,7 +108,7 @@ timers are installed but not enabled. Turn on what you use.
 - CI, dx image: the developer image (`octarine-os-dx`) is built after the default image on `testing` (tags `testing`,
   `testing-<sha>`) and promoted to `latest` on `main` when its base digest and dx inputs match, instead of being rebuilt.
   A change that touches only the dx files does not rebuild the default image, and a docs-only change builds nothing.
-  The result of the dx run is the status `Build dx and push image` on the commit; details in `CLAUDE.md`.
+  The dx image is built by the same pipeline run, right after the default image; its result is the check `Build dx and push image` on the commit; details in `CLAUDE.md`.
 - CI, NVIDIA dx image: `octarine-os-nvidia-dx` is the same developer layer on the NVIDIA variant. It is built by its own workflow after
   the weekly NVIDIA build on `main` (or by hand), has only `latest` and the dated tags, and is skipped when the NVIDIA base and the dx files are
   unchanged. It does not take part in the required checks. The CUDA toolkit is not in any image (NVIDIA's license): on an NVIDIA machine

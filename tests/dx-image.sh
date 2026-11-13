@@ -25,43 +25,50 @@ for name, job in w["jobs"].items():
             r = subprocess.run(["bash", "-n"], input=s["run"], text=True, capture_output=True)
             assert r.returncode == 0, (name, s.get("name"), r.stderr)
 PY
-check "workflow: triggers are workflow_run (both builds, completed, main and testing) and dispatch only; no schedule, push, pull request or feature branch" python3 - "$wf" <<'PY'
+check "workflow: triggers are workflow_call and dispatch only (no workflow_run, push, schedule, pull request); the call takes channel and force and hands the job results back" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 on = w.get(True) or w.get("on")
-assert set(on) == {"workflow_run", "workflow_dispatch"}, set(on)
-wr = on["workflow_run"]
-assert wr["workflows"] == ["Build container image", "Build beta image"], wr
-assert wr["types"] == ["completed"] and wr["branches"] == ["main", "testing"], wr
+assert set(on) == {"workflow_call", "workflow_dispatch"}, set(on)
+wc = on["workflow_call"]
+assert set(wc["inputs"]) == {"channel", "force"}, wc["inputs"]
+assert wc["inputs"]["channel"]["required"] is True and wc["inputs"]["force"]["default"] is False
+assert set(wc["outputs"]) == {"plan", "build_wanted", "promote_wanted", "build", "promote", "sign"}, set(wc["outputs"])
+for o in wc["outputs"].values():
+    assert o["value"].startswith("${{ jobs.collect.outputs."), o
+assert "secrets" not in wc, "secrets come from the caller's secrets: inherit"
 inp = on["workflow_dispatch"]["inputs"]
 assert set(inp) == {"channel", "force"}, inp
 assert inp["channel"]["options"] == ["latest", "beta"] and inp["channel"]["default"] == "latest"
 assert inp["force"]["type"] == "boolean" and inp["force"]["default"] is False
+assert "workflow_run" not in open(sys.argv[1]).read().replace("workflow_run version", ""), "no workflow_run trigger or use left"
 PY
-check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml' && grep -qx 'name: Build beta image' '$here/.github/workflows/build-beta.yml'"
-check "workflow: the plan job runs from main's file, after a successful schedule/push/dispatch run of main or of testing (testing: the default build only), never a pull request" python3 - "$wf" <<'PY'
+check "workflow: the callers are the real workflows (names kept for people and docs)" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml' && grep -qx 'name: Build beta image' '$here/.github/workflows/build-beta.yml'"
+check "workflow: the plan job runs only for a push, schedule or dispatch of testing (channel testing) or main (latest, beta), never a pull request or a feature branch; the later jobs follow the plan" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 cond = " ".join(w["jobs"]["plan"]["if"].split())
-for part in ("github.ref == 'refs/heads/main'", "github.event.workflow_run.conclusion == 'success'",
-             "contains(fromJSON('[\"schedule\",\"push\",\"workflow_dispatch\"]'), github.event.workflow_run.event)",
-             "github.event.workflow_run.head_branch == 'main'", "github.event_name == 'workflow_dispatch'",
-             "(github.event.workflow_run.head_branch == 'testing' && github.event.workflow_run.name == 'Build container image')"):
+for part in ("contains(fromJSON('[\"push\",\"schedule\",\"workflow_dispatch\"]'), github.event_name)",
+             "github.ref == 'refs/heads/testing' && inputs.channel == 'testing'",
+             "github.ref == 'refs/heads/main' && contains(fromJSON('[\"latest\",\"beta\"]'), inputs.channel)"):
     assert part in cond, (part, cond)
-assert "pull_request" not in cond
+assert "pull_request" not in cond and "feat" not in cond
 assert w["jobs"]["build"]["needs"] == "plan" and w["jobs"]["build"]["if"] == "needs.plan.outputs.build == 'true'"
 assert w["jobs"]["promote"]["needs"] == "plan" and w["jobs"]["promote"]["if"] == "needs.plan.outputs.promote == 'true'"
 assert w["jobs"]["sign"]["needs"] == ["build", "promote"]
-assert "feat" not in cond and "refs/heads/testing" not in cond
 PY
-check "workflow: the channel is testing after a build of testing, beta after the beta build, latest after the default build of main, the input on dispatch" python3 - "$wf" <<'PY'
+check "workflow: the channel is the input; the concurrency group build-dx-<channel> is the same name the workflow_run version used (they serialize during the transition) and never cancels a running build" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-expect = "github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest'))"
-assert expect in w["env"]["CHANNEL"], w["env"]
-assert w["env"]["FORCE"].startswith("${{ github.event_name == 'workflow_dispatch' && inputs.force")
-assert w["concurrency"]["group"] == "build-dx-${{ " + expect + " }}", w["concurrency"]
+assert w["env"]["CHANNEL"] == "${{ inputs.channel }}", w["env"]
+assert w["env"]["FORCE"] == "${{ inputs.force || false }}", w["env"]
+assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel }}", w["concurrency"]
 assert w["concurrency"]["cancel-in-progress"] is False
+# the caller's own group is ${{ github.workflow }}-${{ github.ref }} (build.yml) or ${{ github.workflow }} (beta): never equal, no deadlock
+import re
+for f in ("build", "build-beta"):
+    c = yaml.safe_load(open(sys.argv[1].replace("build-dx", f)))["concurrency"]["group"]
+    assert "build-dx" not in c, c
 # the build and the later jobs take the channel from the plan job
 assert w["jobs"]["build"]["env"]["CHANNEL"] == "${{ needs.plan.outputs.channel }}"
 assert w["jobs"]["build"]["env"]["BASE_DIGEST"] == "${{ needs.plan.outputs.base_digest }}"
@@ -75,8 +82,8 @@ assert w["permissions"] == {"contents": "read"}
 assert w["jobs"]["plan"]["permissions"] == {"contents": "read", "packages": "read"}
 for n in ("build", "promote", "sign"):
     assert w["jobs"][n]["permissions"] == {"contents": "read", "packages": "write"}, n
-assert w["jobs"]["dx_result"]["permissions"] == {"contents": "read", "statuses": "write"}
-assert "environment" not in w["jobs"]["promote"] and "environment" not in w["jobs"]["dx_result"]
+assert "environment" not in w["jobs"]["promote"] and "environment" not in w["jobs"]["collect"]
+assert "statuses" not in open(sys.argv[1]).read().replace("statuses are", "")
 assert w["jobs"]["sign"]["environment"] == "signing"
 assert "environment" not in w["jobs"]["build"] and "environment" not in w["jobs"]["plan"]
 PY
@@ -128,28 +135,83 @@ check "workflow: the build is by digest and has explicit labels (base name and d
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.base-index-digest' '$wf'
   grep -q 'io.github.redcodeworks.octarine-os.dx-tree=' '$wf' && grep -q 'io.github.redcodeworks.octarine-os.dx-inputs=\${DX_INPUTS}' '$wf'
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs' '$wf'"
-check "the other workflows do not mention the dx workflow, and the default build does not build dx" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml' '$here/.github/workflows/build-nvidia.yml'"
+check "the NVIDIA variant workflow does not mention the dx workflow; build.yml and build-beta.yml only call it (no dx build steps of their own)" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && [ \$(grep -c 'uses: ./.github/workflows/build-dx.yml' '$here/.github/workflows/build.yml') = 1 ] && [ \$(grep -c 'uses: ./.github/workflows/build-dx.yml' '$here/.github/workflows/build-beta.yml') = 1 ] && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml'"
 
 # ---- the plan: the decision table is tested in tests/plan-dx.sh (stub skopeo and cosign, temporary repository)
 check "plan: tests/plan-dx.sh passes (skip, promote, build per channel and the aggregate result)" bash "$here/tests/plan-dx.sh"
-check "workflow: the aggregate job is named 'Build dx and push image', always runs, needs plan, build, promote and sign, and posts the commit status of the same name only for testing" python3 - "$wf" <<'PY'
+check "workflow: the last job collect always runs and hands plan, build, promote, sign and the plan decision to the caller" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-j = w["jobs"]["dx_result"]
-assert j["name"] == "Build dx and push image" and j["if"] == "always()", j
-assert j["needs"] == ["plan", "build", "promote", "sign"], j["needs"]
-post = next(s for s in j["steps"] if "commit status" in s.get("name", ""))
-assert "github.event.workflow_run.head_branch == 'testing'" in post["if"] and "needs.plan.result != 'skipped'" in post["if"], post["if"]
-assert 'context="Build dx and push image"' in post["run"]
-assert any(s.get("run") == ".github/scripts/aggregate-dx.sh" for s in j["steps"])
+j = w["jobs"]["collect"]
+assert j["if"] == "always()" and j["needs"] == ["plan", "build", "promote", "sign"], j
+assert j["outputs"] == {"plan": "${{ needs.plan.result }}", "build_wanted": "${{ needs.plan.outputs.build }}",
+                        "promote_wanted": "${{ needs.plan.outputs.promote }}", "build": "${{ needs.build.result }}",
+                        "promote": "${{ needs.promote.result }}", "sign": "${{ needs.sign.result }}"}, j["outputs"]
+assert "dx_result" not in w["jobs"] and "Build dx and push image" not in {x.get("name") for x in w["jobs"].values()}
+text = open(sys.argv[1]).read()
+assert "/statuses/" not in text and 'context="Build dx and push image"' not in text, "no commit status any more"
 PY
-check "workflow: every checkout takes the commit the triggering build ran for (head_sha), the plan with full history" python3 - "$wf" <<'PY'
+check "build.yml: the dx call is guarded (main and testing only, after the base's aggregate succeeded), inherits secrets, and nothing of the base needs it (one-way)" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+d = w["jobs"]["dx"]
+assert d["uses"] == "./.github/workflows/build-dx.yml" and d["secrets"] == "inherit", d
+assert d["needs"] == "build_result" and "needs.build_result.result == 'success'" in d["if"], d
+assert "github.ref == 'refs/heads/main'" in d["if"] and "github.ref == 'refs/heads/testing'" in d["if"] and "pull_request" not in d["if"]
+assert d["with"]["channel"] == "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}"
+assert d["permissions"] == {"contents": "read", "packages": "write"}
+for n, j in w["jobs"].items():
+    needs = j.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else needs
+    if n not in ("dx", "dx_result"):
+        assert "dx" not in needs and "dx_result" not in needs, (n, needs)
+PY
+check "build.yml: the REQUIRED check job is named exactly 'Build dx and push image', always runs (main and testing), needs the base aggregate and the dx call, and feeds aggregate-dx.sh from the call's outputs" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+j = w["jobs"]["dx_result"]
+assert j["name"] == "Build dx and push image", j["name"]
+assert j["if"].startswith("always() &&") and "refs/heads/main" in j["if"] and "refs/heads/testing" in j["if"], j["if"]
+assert j["needs"] == ["build_result", "dx"], j["needs"]
+step = next(s for s in j["steps"] if s.get("run") == ".github/scripts/aggregate-dx.sh")
+env = step["env"]
+assert env["BASE"] == "${{ needs.build_result.result }}"
+for k in ("plan", "build", "promote", "sign"):
+    assert env[k.upper()] == "${{ needs.dx.outputs.%s }}" % k, (k, env)
+assert env["BUILD_WANTED"] == "${{ needs.dx.outputs.build_wanted }}" and env["PROMOTE_WANTED"] == "${{ needs.dx.outputs.promote_wanted }}"
+names = [x.get("name") for x in w["jobs"].values()]
+assert names.count("Build dx and push image") == 1
+text = open(sys.argv[1] + "/.github/workflows/build.yml").read()
+assert "statuses" not in text.replace("statuses are", ""), "no commit status POST any more"
+PY
+check "build-beta.yml: the dx call follows the beta sign job, only on main, inherits secrets; nothing of the beta base needs it; it does not reuse the required check name" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-beta.yml"))
+d = w["jobs"]["dx"]
+assert d["uses"] == "./.github/workflows/build-dx.yml" and d["secrets"] == "inherit" and d["with"] == {"channel": "beta"}, d
+assert d["needs"] == "sign" and "needs.sign.result == 'success'" in d["if"] and "github.ref == 'refs/heads/main'" in d["if"], d
+for n, j in w["jobs"].items():
+    needs = j.get("needs") or []
+    needs = [needs] if isinstance(needs, str) else needs
+    assert n == "dx" or "dx" not in needs, (n, needs)
+assert "Build dx and push image" not in {x.get("name") for x in w["jobs"].values()}
+PY
+check "every workflow job that calls a workflow passes secrets: inherit (the signing secret is a repository secret)" python3 - "$here" <<'PY'
+import sys, glob, yaml
+n = 0
+for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
+    for name, j in yaml.safe_load(open(f))["jobs"].items():
+        if "uses" in j:
+            n += 1
+            assert j.get("secrets") == "inherit", (f, name)
+assert n >= 4, n
+PY
+check "workflow: every checkout takes the caller's commit (no ref override, no workflow_run head_sha), the plan with full history" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-ref = "${{ github.event.workflow_run.head_sha || github.sha }}"
 for n in ("plan", "build", "promote", "sign"):
     co = w["jobs"][n]["steps"][0]
-    assert co["uses"].startswith("actions/checkout@") and co["with"]["ref"] == ref, (n, co)
+    assert co["uses"].startswith("actions/checkout@") and "ref" not in co.get("with", {}), (n, co)
 assert w["jobs"]["plan"]["steps"][0]["with"]["fetch-depth"] == 0
 PY
 check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and after" bash -c "
