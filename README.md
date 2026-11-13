@@ -113,6 +113,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
+| `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |
 
