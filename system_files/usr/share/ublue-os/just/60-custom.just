@@ -2764,7 +2764,7 @@ scheduler *args:
             --list) action=list ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now (system setting, sudo once, a security-key touch; never retried, the exact command is printed when it fails). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --restore puts the machine back on the boot choice (start the enabled instance and stop any other one, or stop every running scheduler when none is enabled), for the case that gamemoded died during a game and the game-time scheduler stayed active; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now and checked: it counts as applied only when it really runs (system setting; sudo is primed once, a security-key touch per command is possible; never retried, the exact command is printed when it fails; the previous scheduler is switched off only after the new one runs, and is restored if it does not). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --restore puts the machine back on the boot choice (start the enabled instance and stop any other one, or stop every running scheduler when none is enabled), for the case that gamemoded died during a game and the game-time scheduler stayed active; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
             *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
         esac
         shift
@@ -2934,34 +2934,119 @@ scheduler *args:
         exit 0
     fi
 
-    # step 1: the boot choice (system unit, sudo once)
+    # step 1: the boot choice (system unit; sudo is primed once with sudo -v, then one command per call, never retried)
     if [ -n "$boot_want" ]; then
         echo
         echo "== scheduler at boot"
         already=0
+        # "already set" means enabled AND really running: the kernel reports that scheduler, and systemd says the unit is active
+        sched_active_ok() {
+            [ "$(systemctl is-active "scx@$1.service" 2>/dev/null)" = active ] || return 1
+            [ "$(sched_state)" = enabled ] && [ "$(cat "$sysfs/root/ops" 2>/dev/null)" = "$1" ]
+        }
+        wait_active() {
+            local t=${SCHEDULER_WAIT:-5} n=0
+            while ! sched_active_ok "$1"; do
+                n=$((n + 1))
+                [ "$n" -gt "$t" ] && return 1
+                sleep 1
+            done
+            return 0
+        }
+        # why_inactive NAME: sets why_kind (btf, marker or other) and prints the reason
+        why_inactive() {
+            local m="$state_dir/scx-disabled/$1" kern=${SCHEDULER_KERNEL:-$(uname -r)}
+            why_kind=other
+            if [ ! -e "${SCHEDULER_BTF:-/sys/kernel/btf/vmlinux}" ]; then
+                why_kind=btf
+                echo "  Why: this kernel exposes no BTF (${SCHEDULER_BTF:-/sys/kernel/btf/vmlinux} is missing), so scx@$1 skips itself quietly."
+            elif [ -f "$m" ] && [ "$(head -c 200 "$m")" = "$kern" ]; then
+                why_kind=marker
+                echo "  Why: scx@$1 is disabled for this kernel ($kern) after repeated load failures (marker $m)."
+            else
+                echo "  Why: the unit did not become active; the last journal lines of scx@$1.service:"
+                journalctl -u "scx@$1.service" -n 5 --no-pager 2>&1 | sed 's/^/    /'
+            fi
+        }
         if [ "$boot_want" = none ] && [ -z "$boot_cur" ]; then already=1; fi
-        if [ "$boot_want" != none ] && [ "$boot_cur" = "$boot_want" ] && [ "$(enabled_insts | wc -l)" -eq 1 ]; then already=1; fi
+        if [ "$boot_want" != none ] && [ "$boot_cur" = "$boot_want" ] && [ "$(enabled_insts | wc -l)" -eq 1 ] && sched_active_ok "$boot_want"; then already=1; fi
         if [ "$already" = 1 ]; then
             echo "Already set: ${boot_want}."
             record "boot" "already done"
         else
+            others=()
+            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] || others+=("$i"); done
+            was_enabled=0
+            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] && was_enabled=1; done
             cmds=()
-            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] || cmds+=("sudo systemctl disable --now scx@$i.service"); done
-            if [ "$boot_want" != none ]; then cmds+=("sudo systemctl enable --now scx@$boot_want.service"); fi
-            echo "Sets $( [ "$boot_want" = none ] && echo 'the kernel default scheduler (EEVDF)' || echo "scx_$boot_want ($(short "$(desc_of "$boot_want")" 90))") at boot. System setting: uses sudo once (a security-key touch); never retried."
+            if [ "$boot_want" = none ]; then
+                for i in "${others[@]}"; do cmds+=("sudo systemctl disable --now scx@$i.service"); done
+            else
+                cmds+=("sudo systemctl enable --now scx@$boot_want.service")
+                for i in "${others[@]}"; do cmds+=("sudo systemctl disable --now scx@$i.service  (only after scx@$boot_want is verified running)"); done
+            fi
+            echo "Sets $( [ "$boot_want" = none ] && echo 'the kernel default scheduler (EEVDF)' || echo "scx_$boot_want ($(short "$(desc_of "$boot_want")" 90))") at boot. System setting: uses sudo (a security-key touch is likely for each command: one shared touch is not guaranteed, it depends on the sudo configuration); never retried."
+            if [ "$was_enabled" = 1 ] && [ "$boot_want" != none ]; then echo "scx@$boot_want is enabled but not running: it is started now and the reason is reported if it does not run."; fi
             for c in "${cmds[@]}"; do echo "  $c"; done
             if [ "$mode" = no ]; then
                 record "boot" "plan only"
             else
                 okc=1
-                for c in "${cmds[@]}"; do
-                    if ! $c; then okc=0; echo "Failed: $c" >&2; echo "Run the commands above yourself when ready." >&2; break; fi
-                done
+                note=""
+                if [ "$boot_want" = none ]; then
+                    sudo -v || { okc=0; echo "Failed: sudo -v (no administrator rights)" >&2; }
+                    for i in "${others[@]}"; do
+                        [ "$okc" = 1 ] || break
+                        if ! sudo systemctl disable --now "scx@$i.service"; then okc=0; echo "Failed: sudo systemctl disable --now scx@$i.service" >&2; echo "Run the commands above yourself when ready." >&2; fi
+                    done
+                    note="run: ${cmds[*]}"
+                else
+                    old_running=()
+                    for i in "${others[@]}"; do [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ] && old_running+=("$i"); done
+                    enable_ok=0
+                    if ! sudo -v; then
+                        okc=0
+                        echo "Failed: sudo -v (no administrator rights)" >&2
+                    else
+                        # the new instance is enabled and started FIRST; its Conflicts= stops the running one, the old one stays enabled until the new one is verified
+                        if sudo systemctl enable --now "scx@$boot_want.service"; then enable_ok=1; else okc=0; echo "Failed: sudo systemctl enable --now scx@$boot_want.service" >&2; fi
+                        if [ "$enable_ok" = 1 ] && ! wait_active "$boot_want"; then
+                            okc=0
+                            echo "scx@$boot_want is NOT running: sched_ext reports '$(sched_state)', scheduler '$(active_sched)'." >&2
+                            why_inactive "$boot_want" >&2
+                            if [ "$why_kind" = marker ]; then
+                                m="$state_dir/scx-disabled/$boot_want"
+                                if [ "$mode" = ask ] && menu_confirm "Remove the marker ($m) and start scx@$boot_want again?" n; then
+                                    if sudo rm -- "$m" && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
+                                else
+                                    echo "  To try again anyway: sudo rm -- $m   (then: ujust scheduler --boot $boot_want). Nothing was removed." >&2
+                                fi
+                            fi
+                        fi
+                        if [ "$okc" = 1 ]; then
+                            for i in "${others[@]}"; do
+                                if ! sudo systemctl disable --now "scx@$i.service"; then okc=0; note="scx@$boot_want runs, but scx@$i is still enabled: run sudo systemctl disable --now scx@$i.service"; echo "Failed: sudo systemctl disable --now scx@$i.service" >&2; fi
+                            done
+                        else
+                            # roll back: the boot choice stays as it was (undo what this run enabled, start the old instance again)
+                            if [ "$was_enabled" = 0 ] && [ "$(systemctl is-enabled "scx@$boot_want.service" 2>/dev/null)" = enabled ]; then sudo systemctl disable --now "scx@$boot_want.service" || echo "Failed: sudo systemctl disable --now scx@$boot_want.service (run it yourself)" >&2; fi
+                            rest=""
+                            for i in "${old_running[@]}"; do
+                                if [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" != active ]; then
+                                    if sudo systemctl start "scx@$i.service"; then rest="$rest $i"; else echo "Failed: sudo systemctl start scx@$i.service (run it yourself)" >&2; fi
+                                fi
+                            done
+                            [ -n "$rest" ] && echo "Restored the previous scheduler:$rest (scx@$boot_want is not kept at boot)." >&2
+                            [ "$was_enabled" = 0 ] && [ "$(systemctl is-enabled "scx@$boot_want.service" 2>/dev/null)" != enabled ] && echo "scx@$boot_want was disabled again; the boot choice is as before." >&2
+                        fi
+                    fi
+                    [ -n "$note" ] || note="run: ${cmds[0]#sudo }"
+                fi
                 if [ "$okc" = 1 ]; then
-                    record "boot" applied "ujust scheduler --boot ${boot_cur:-none}"
+                    record "boot" "applied" "ujust scheduler --boot ${boot_cur:-none}"
                 else
                     failed=1
-                    record "boot" FAILED "run: ${cmds[*]}"
+                    record "boot" FAILED "$note"
                 fi
             fi
         fi
