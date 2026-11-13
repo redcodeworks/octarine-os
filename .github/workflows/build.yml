@@ -401,7 +401,7 @@ jobs:
             else
               echo "INFO GPaste not installed (listed in optional-packages-missing)"
             fi
-            for e in just-perfection-desktop@just-perfection:just-perfection ddterm@amezin.github.com:ddterm freon@UshakovVasilii_Github.yahoo.com:sensors; do
+            for e in just-perfection-desktop@just-perfection:just-perfection ddterm@amezin.github.com:ddterm freon@UshakovVasilii_Github.yahoo.com:freon; do
               u=${e%%:*}; k=${e#*:}
               if [ -d /usr/share/gnome-shell/extensions/$u ]; then
                 check "extension $u: UUID in metadata.json" "grep -qF $u /usr/share/gnome-shell/extensions/$u/metadata.json"
