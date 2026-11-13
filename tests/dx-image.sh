@@ -255,7 +255,7 @@ F
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
     printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
     rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" >/dev/null
-    echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
+    echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/ublue-os/just/75-octarine-virthost.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"

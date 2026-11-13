@@ -112,7 +112,9 @@ check "amd-gpu available with an AMD GPU and amdgpu loaded" bash -c "grep -E '^a
 check "amd-cpu-gaming available with amd-pstate active" bash -c "grep -E '^amd-cpu-gaming +available' '$root/out'"
 check "nvidia not applicable: no NVIDIA GPU" bash -c "grep -E '^nvidia +not applicable \(no NVIDIA GPU\)' '$root/out'"
 check "cuda not applicable without the driver" bash -c "grep -E '^cuda +not applicable' '$root/out'"
-check "virtualization not applicable without dx" bash -c "grep -E '^virtualization +not applicable \(needs the dx image\)' '$root/out'"
+check "iommu not applicable without dx" bash -c "grep -E '^iommu +not applicable \(needs the dx image' '$root/out'"
+check "the virtualization step is gone (virthost-setup owns libvirt)" bash -c "! grep -q '^virtualization' '$root/out'"
+check "wake-on-lan hidden without a NIC that reports magic-packet wake" bash -c "grep -E '^wake-on-lan +not applicable \(no wired NIC' '$root/out'"
 check "secure-boot available (enabled, key present)" bash -c "grep -E '^secure-boot +available' '$root/out'"
 check "tpm-luks available (TPM and a LUKS volume)" bash -c "grep -E '^tpm-luks +available' '$root/out'"
 check "fido-key available with a Yubico device" bash -c "grep -E '^fido-key +available' '$root/out'"
@@ -135,10 +137,25 @@ OCTARINE_SYSFS_DRM="$root/m/none" run --list
 check "amd-gpu and amd-kargs hidden without an AMD GPU" bash -c "grep -E '^amd-gpu +not applicable \(no AMD GPU\)' '$root/out' && grep -E '^amd-kargs +not applicable' '$root/out'"
 rm -rf "$root/m/dx"; mkdir -p "$root/m/dx"; : >"$root/m/dx/kvm"; : >"$root/m/dx/dev.just"; mkdir -p "$root/m/nvmod"
 echo 'IMAGE_ID="octarine-os-dx"' >"$root/os-release-dx"
-OCTARINE_OS_RELEASE="$root/os-release-dx" HW_KVM="$root/m/dx/kvm" run --list
-check "virtualization available on dx with /dev/kvm" bash -c "grep -E '^virtualization +available' '$root/out'"
-OCTARINE_OS_RELEASE="$root/os-release-dx" run --list
-check "virtualization hidden on dx without /dev/kvm" bash -c "grep -E '^virtualization +not applicable \(no /dev/kvm' '$root/out'"
+mkdir -p "$root/m/dx/iommu"; : >"$root/m/dx/iommu/dmar0"; mkdir -p "$root/m/dx/noiommu"
+OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" run --list
+check "iommu available on dx with an IOMMU" bash -c "grep -E '^iommu +available' '$root/out'"
+OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/noiommu" run --list
+check "iommu hidden on dx without an IOMMU" bash -c "grep -E '^iommu +not applicable \(no IOMMU found' '$root/out'"
+OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" HW_CMDLINE="$root/m/cmdline-pt" run --list
+echo "quiet iommu=pt" >"$root/m/cmdline-pt"
+OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" HW_CMDLINE="$root/m/cmdline-pt" run --list
+check "iommu done when iommu=pt is in the command line" bash -c "grep -E '^iommu +done' '$root/out'"
+# wake-on-lan: stubs that only answer when FAKE_WOL_NIC is set
+mk ip '[ "${FAKE_WOL_NIC:-}" = 1 ] && echo "default via 192.168.1.1 dev enp8s0 proto dhcp"; exit 0'
+mk ethtool '[ "${FAKE_WOL_NIC:-}" = 1 ] || exit 1; case "${FAKE_ETHTOOL:-g}" in g) echo "Supports Wake-on: pumbg" ;; none) echo "Supports Wake-on: d" ;; esac'
+mk nmcli 'case "$*" in *GENERAL.CONNECTION*) echo "br0-enp8s0" ;; *802-3-ethernet.wake-on-lan*) echo "${FAKE_WOL:-ignore}" ;; esac; exit 0'
+FAKE_WOL_NIC=1 run --list
+check "wake-on-lan available when the NIC supports magic packets and the setting is not yet magic" bash -c "grep -E '^wake-on-lan +available' '$root/out'"
+FAKE_WOL_NIC=1 FAKE_WOL=magic run --list
+check "wake-on-lan done when the profile of the physical NIC already says magic" bash -c "grep -E '^wake-on-lan +done' '$root/out'"
+FAKE_WOL_NIC=1 FAKE_ETHTOOL=none run --list
+check "wake-on-lan hidden when ethtool shows no g" bash -c "grep -E '^wake-on-lan +not applicable' '$root/out'"
 card card1 0x10de
 HW_NVIDIA_MODULE="$root/m/nvmod" HW_DEV_JUST="$root/m/dx/dev.just" run --list
 check "nvidia available with an NVIDIA GPU and done with the module loaded" bash -c "grep -E '^nvidia +done' '$root/out'"
@@ -213,8 +230,10 @@ OCTARINE_OS_RELEASE="$root/os-release-dx" run --only nvidia --yes
 check "dx image: nvidia step runs switch-image nvidia-dx" logged "ujust switch-image nvidia-dx --yes"
 HW_NVIDIA_MODULE="$root/m/nvmod" HW_DEV_JUST="$root/m/dx/dev.just" run --only cuda --yes
 check "cuda step runs ujust dev --only cuda" logged "ujust dev --only cuda --yes"
-OCTARINE_OS_RELEASE="$root/os-release-dx" HW_KVM="$root/m/dx/kvm" run --only virtualization --yes
-check "virtualization step runs ujust dev --only libvirt" logged "ujust dev --only libvirt --yes"
+OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" run --only iommu --yes
+check "iommu step only delegates: ujust virthost-setup --only iommu" logged "ujust virthost-setup --only iommu --yes"
+FAKE_WOL_NIC=1 run --only wake-on-lan --yes
+check "wake-on-lan step only delegates: ujust wake-on-lan" logged "ujust wake-on-lan --yes"
 rm -rf "$root/m/drm/card1"
 
 # ---- rocm and the opt-in export

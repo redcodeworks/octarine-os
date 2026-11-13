@@ -52,6 +52,10 @@ store_import='import? "/usr/share/ublue-os/just/72-octarine-datastore.just"'
 test -s /usr/share/ublue-os/just/72-octarine-datastore.just
 if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >> "${ujust_main}"; fi
 grep -qxF "${store_import}" "${ujust_main}"
+virthost_import='import? "/usr/share/ublue-os/just/75-octarine-virthost.just"'
+test -s /usr/share/ublue-os/just/75-octarine-virthost.just
+if ! grep -qxF "${virthost_import}" "${ujust_main}"; then echo "${virthost_import}" >> "${ujust_main}"; fi
+grep -qxF "${virthost_import}" "${ujust_main}"
 
 # Docker-compatible API socket for developer tools (rootful); the default image already enables the user one globally
 systemctl enable podman.socket

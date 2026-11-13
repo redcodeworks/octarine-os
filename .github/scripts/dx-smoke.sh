@@ -98,7 +98,7 @@ check "no Quadlet has an [Install] section (nothing starts by itself)" quadlet_h
 check "every Quadlet image is an exact version tag with a sha256 digest, one Image= per container" quadlet_images_exact
 check "no latest tag, no AutoUpdate=, no host path and no local image in the Quadlets" quadlet_clean
 check "every published port is bound to 127.0.0.1" quadlet_loopback_only
-check "the datastore recipe file and its helper ship" "test -s ${share_dir}/ublue-os/just/72-octarine-datastore.just && test -s ${share_dir}/octarine-os/lib/datastore.sh"
+check "the datastore and virthost recipe files and the datastore helper ship" "test -s ${share_dir}/ublue-os/just/72-octarine-datastore.just && test -s ${share_dir}/ublue-os/just/75-octarine-virthost.just && test -s ${share_dir}/octarine-os/lib/datastore.sh"
 if [ -x "${QUADLET_GENERATOR:-/usr/libexec/podman/quadlet}" ]; then
     qgen() { local o; o=$(HOME=/tmp "${QUADLET_GENERATOR:-/usr/libexec/podman/quadlet}" --user --dryrun 2>&1) || return 1; for u in datastore-pod.service kafka-pod.service postgresql.service valkey.service seaweedfs.service kafka.service; do [[ "${o}" == *"---${u}---"* ]] || return 1; done; }
     check "the user Quadlet generator reads /usr/share/containers/systemd/users and produces the pod and container units (dry run)" qgen

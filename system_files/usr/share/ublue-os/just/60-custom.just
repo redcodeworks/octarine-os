@@ -2345,7 +2345,7 @@ hardware-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
-    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization "
+    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan "
     mode=ask
     list=0
     only_list=""
@@ -2355,7 +2355,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), virtualization (libvirt access; runs ujust dev --only libvirt, dx image). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2406,7 +2406,7 @@ hardware-setup *args:
     cmdline_file=${HW_CMDLINE:-/proc/cmdline}
     gm_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
 
-    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key virtualization)
+    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan)
     declare -A text=(
         [sensors]="Fan and temperature chip driver (sensors-detect; sudo)"
         [amd-gpu]="AMD GPU: LACT Flatpak and its daemon lactd"
@@ -2420,8 +2420,23 @@ hardware-setup *args:
         [secure-boot]="Secure Boot: enroll the image key"
         [tpm-luks]="TPM2 auto-unlock for LUKS volumes (sudo)"
         [fido-key]="Security key: register it for sudo and polkit (touch)"
-        [virtualization]="Virtualization: libvirt access for your user (sudo)"
+        [iommu]="Passthrough: kernel argument iommu=pt (optional; sudo, reboot)"
+        [wake-on-lan]="Wake-on-LAN for the wired NIC (sudo)"
     )
+
+    # Wake-on-LAN helpers: the physical NIC (the port when the default route is a bridge), its capability, the active profile
+    wol_nic() {
+        local n port
+        n=$(ip -o route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}')
+        if [ -n "$n" ] && [ -d "${WOL_NET_DIR:-/sys/class/net}/$n/bridge" ]; then port=$(ls "${WOL_NET_DIR:-/sys/class/net}/$n/brif" 2>/dev/null | head -n1); [ -n "$port" ] && n=$port; fi
+        echo "$n"
+    }
+    wol_capable() {
+        local n eo; n=$(wol_nic); [ -n "$n" ] || return 1
+        if command -v ethtool >/dev/null 2>&1 && eo=$(ethtool "$n" 2>/dev/null) && [ -n "$eo" ]; then grep -E 'Supports Wake-on:' <<<"$eo" | grep -q g; return; fi
+        [ -e "${WOL_NET_DIR:-/sys/class/net}/$n/device/power/wakeup" ]
+    }
+    wol_profile() { nmcli -g GENERAL.CONNECTION device show "$(wol_nic)" 2>/dev/null; }
 
     # reason_of <step>: prints why the step does not apply (nothing when it does)
     reason_of() {
@@ -2454,9 +2469,11 @@ hardware-setup *args:
             fido-key)
                 if ! command -v pamu2fcfg >/dev/null 2>&1; then echo "pamu2fcfg (pam-u2f) is not installed"
                 elif ! fido_present; then echo "no security key found"; fi ;;
-            virtualization)
-                case "$image_id" in *-dx) ;; *) echo "needs the dx image"; return ;; esac
-                [ -e "$kvm_dev" ] || echo "no /dev/kvm (virtualization is off in the firmware or this is a VM)" ;;
+            iommu)
+                case "$image_id" in *-dx) ;; *) echo "needs the dx image (ujust virthost-setup)"; return ;; esac
+                [ -n "$(ls -A "${HW_IOMMU_DIR:-/sys/class/iommu}" 2>/dev/null)" ] || echo "no IOMMU found (enable VT-d or AMD-Vi in the UEFI firmware)" ;;
+            wake-on-lan)
+                if ! wol_capable; then echo "no wired NIC that reports magic-packet wake"; fi ;;
         esac
     }
     fido_present() {
@@ -2491,12 +2508,14 @@ hardware-setup *args:
             secure-boot) mokutil --test-key "$sb_key" 2>&1 | grep -qi 'already enrolled' ;;
             tpm-luks) return 1 ;;
             fido-key) [ -s "$u2f_file" ] ;;
-            virtualization) id -nG 2>/dev/null | tr ' ' '\n' | grep -qx libvirt ;;
+            iommu) grep -qw 'iommu=pt' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -qw 'iommu=pt' ;;
+            wake-on-lan) [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(wol_profile)" 2>/dev/null | head -n1)" = magic ] ;;
         esac
     }
     default_of() { # 1 when ticked by default
         case "$1" in
             sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
+            iommu | wake-on-lan) echo 0 ;;
             rocm | rocm-export | cuda-export) echo 0 ;;
             secure-boot)
                 case "$image_id" in *nvidia*) echo 1 ;; *) echo 0 ;; esac ;;
@@ -2517,7 +2536,8 @@ hardware-setup *args:
             secure-boot) echo "sudo mokutil --delete $sb_key" ;;
             tpm-luks) echo "ujust luks-tpm-unlock remove" ;;
             fido-key) echo "rm $u2f_file" ;;
-            virtualization) echo "sudo gpasswd -d $(id -un) libvirt" ;;
+            iommu) echo "sudo rpm-ostree kargs --delete-if-present=iommu=pt (and --delete-if-present=intel_iommu=on on Intel) and reboot" ;;
+            wake-on-lan) echo "ujust wake-on-lan --off" ;;
         esac
     }
     ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
@@ -2584,7 +2604,8 @@ hardware-setup *args:
                     return 1
                 fi
                 ;;
-            virtualization) "$ujust_cmd" dev --only libvirt "${yes[@]}" ;;
+            iommu) "$ujust_cmd" virthost-setup --only iommu "${yes[@]}" ;;
+            wake-on-lan) "$ujust_cmd" wake-on-lan "${yes[@]}" ;;
         esac
     }
 
@@ -2973,6 +2994,81 @@ scheduler *args:
     echo "To undo:"
     for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
     exit "$failed"
+
+# Turn on Wake-on-LAN (magic packet) for the wired NIC through NetworkManager
+[group('Setup')]
+[positional-arguments]
+wake-on-lan *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    usage="Usage: ujust wake-on-lan [--yes|--no] [--status] [--off] [--nic IFACE] [-h]"
+    mode=ask
+    action=on
+    nic_want=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            --status) action=status ;;
+            --off) action=off ;;
+            --nic) shift; if [ "$#" -eq 0 ]; then echo "--nic needs an interface" >&2; exit 2; fi; nic_want=$1 ;;
+            --nic=*) nic_want=${1#--nic=} ;;
+            help | --help | -h) printf '%s\n' 'Wake-on-LAN for the wired NIC, set through NetworkManager so it persists: `ujust wake-on-lan [--yes|--no] [--status] [--off] [--nic IFACE]`. Finds the NIC with the default route (or --nic), reads whether it supports magic-packet wake (ethtool Wake-on contains g; without ethtool or without the right to read it, the sysfs power/wakeup file is used), takes the profile that is active on the PHYSICAL device (when the NIC is a bridge port that is the port profile, not the bridge), and runs `sudo nmcli connection modify "<profile>" 802-3-ethernet.wake-on-lan magic` and `sudo nmcli device reapply <iface>` (sudo, a security-key touch, never retried; the exact commands are printed when one fails). --off sets the value ignore. --status shows the setting and the MAC address. Undo: ujust wake-on-lan --off. This only configures the operating system: also enable Wake on LAN (often named Power On By PCI-E) in the BIOS or UEFI, and switch off ErP or EuP deep-sleep savings if the machine does not wake from a full shutdown (names vary). The real test is yours: shut down, then send a magic packet from another machine (wakeonlan MAC or etherwake MAC). Some drivers reset the setting at shutdown: not verified here. No tools are installed.'; exit 0 ;;
+            *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
+        esac
+        shift
+    done
+    if [ "$(id -u)" = 0 ]; then echo "Run this as your user, not as root: sudo is used for the one change." >&2; exit 1; fi
+    net_dir="${WOL_NET_DIR:-/sys/class/net}"
+    nic="$nic_want"
+    if [ -z "$nic" ]; then nic=$(ip -o route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'); fi
+    if [ -z "$nic" ]; then echo "No wired NIC found (no default route). Name one with --nic IFACE." >&2; exit 1; fi
+    # a bridge is not the physical device: look for its port
+    if [ -d "$net_dir/$nic/bridge" ]; then
+        port=$(ls "$net_dir/$nic/brif" 2>/dev/null | head -n1)
+        if [ -n "$port" ]; then echo "$nic is a bridge: the physical port is $port."; nic=$port; fi
+    fi
+    capable=0
+    if command -v ethtool >/dev/null 2>&1 && eout=$(ethtool "$nic" 2>/dev/null) && [ -n "$eout" ]; then
+        grep -E 'Supports Wake-on:' <<<"$eout" | grep -q 'g' && capable=1
+    elif [ -e "$net_dir/$nic/device/power/wakeup" ]; then
+        echo "(ethtool is missing or not readable as your user: using $net_dir/$nic/device/power/wakeup as the capability hint)"
+        capable=1
+    fi
+    if [ "$capable" = 0 ]; then echo "$nic does not report magic-packet wake support: nothing to do." ; exit 0; fi
+    prof=$(nmcli -g GENERAL.CONNECTION device show "$nic" 2>/dev/null)
+    if [ -z "$prof" ] || [ "$prof" = "--" ]; then echo "No active NetworkManager profile on $nic." >&2; exit 1; fi
+    cur=$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$prof" 2>/dev/null | head -n1)
+    mac=$(cat "$net_dir/$nic/address" 2>/dev/null)
+    if [ "$action" = status ]; then
+        echo "NIC $nic, profile '$prof', wake-on-lan setting: ${cur:-unknown}, MAC ${mac:-unknown}"
+        exit 0
+    fi
+    want=magic; [ "$action" = off ] && want=ignore
+    echo "NIC $nic (MAC ${mac:-unknown}), profile '$prof': wake-on-lan is '${cur:-unknown}', wanted '$want'."
+    if [ "$cur" = "$want" ]; then echo "Already done."; exit 0; fi
+    undo_val=ignore; [ "$action" = off ] && undo_val=magic
+    echo "Undo: ujust wake-on-lan$([ "$action" = off ] || echo ' --off')"
+    c1=(sudo nmcli connection modify "$prof" 802-3-ethernet.wake-on-lan "$want")
+    c2=(sudo nmcli device reapply "$nic")
+    echo "Commands (sudo, a security-key touch, never retried):"
+    echo "  ${c1[*]}"
+    echo "  ${c2[*]}"
+    if [ "$mode" = no ]; then echo "Plan only."; exit 0; fi
+    if [ "$mode" != yes ]; then
+        menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+        # shellcheck source=/dev/null
+        if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+        if ! declare -F menu_confirm >/dev/null || ! menu_confirm "Apply?" y; then echo "Nothing changed."; exit 0; fi
+    fi
+    if ! "${c1[@]}"; then echo "FAILED: ${c1[*]}" >&2; exit 1; fi
+    if ! "${c2[@]}"; then echo "FAILED: ${c2[*]}" >&2; echo "The setting is saved in the profile; it applies at the next connection." >&2; exit 1; fi
+    echo "Done. Check: nmcli -g 802-3-ethernet.wake-on-lan connection show '$prof'; ethtool $nic | grep Wake-on"
+    if [ "$action" = on ]; then
+        echo "Reminder: this is the operating-system side only. Enable Wake on LAN (Power On By PCI-E) in the BIOS or UEFI, and switch off ErP or EuP if the machine does not wake from a full shutdown."
+        echo "Test it: shut down, then from another machine: wakeonlan ${mac:-<MAC>}  (or etherwake ${mac:-<MAC>})"
+    fi
+    exit 0
 
 # Create and manage toolboxes (distrobox images with tools); no arguments opens a menu (--help for usage)
 [group('Toolbox')]

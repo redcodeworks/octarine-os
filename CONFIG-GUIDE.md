@@ -311,7 +311,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   replaced). Each step is skipped when the app is not installed or the change is already in place; Enter takes the
   default. `--yes` takes the defaults without asking, `--no` changes nothing and prints the plan. The summary lists how
   to undo each applied step.
-- **`dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]` (dx image only):** a checklist of developer setup steps: `libvirt` (system
+- **`dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]` (dx image only):** a checklist of developer setup steps: `libvirt` (delegates to `ujust virthost-setup --only daemons,connection`; the rest of the VM host setup, the bridge, IOMMU and images, is that recipe; system
   libvirt; the one `sudo` command), `tools` (Homebrew developer tools in groups), `vscode` (Flathub, not verified),
   `jetbrains` (official Homebrew cask plus a launcher), `rust` (rustup, rust-analyzer, rust-src), `java` (SDKMAN from the
   Homebrew tap, Zulu 8, 11, 17, 21, 25), `node` (fnm and the latest LTS), `python` (uv-managed 3.12 to 3.14) and, only on a machine with an NVIDIA driver, `cuda` (a

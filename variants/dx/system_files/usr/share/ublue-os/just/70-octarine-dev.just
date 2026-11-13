@@ -25,9 +25,9 @@ dev *args:
     Developer setup for the octarineOS dx image, a checklist of steps. `ujust dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE] [--export|--unexport]`.
     On a terminal, `ujust dev` alone opens a checklist; nothing runs that you did not tick.
     Steps, in order:
-      libvirt    use the system libvirt: join the libvirt group (sudo, once; takes effect at your next login), default URI
-                 qemu:///system in ~/.config/libvirt/libvirt.conf, the modular daemon sockets enabled, the default network
-                 set to autostart
+      libvirt    use the system libvirt: runs ujust virthost-setup --only daemons,connection (the libvirt group, sudo once and
+                 effective at your next login; default URI qemu:///system in ~/.config/libvirt/libvirt.conf; the modular daemon
+                 sockets). The bridge, IOMMU, images and the rest: ujust virthost-setup
       tools      Homebrew developer tools, in groups you pick: Editor (helix), Python (ruff, ty, sqlfluff), Web (prettier,
                  typescript-language-server, vscode-langservers-extracted, yaml-language-server, marksman), Java (jdtls,
                  google-java-format), Lua (lua-language-server, stylua), TOML (taplo), SQL (sql-language-server), GitHub (gh)
@@ -269,124 +269,26 @@ dev *args:
 
     # ---- step: libvirt
     step_libvirt() {
-        local user grp_ok=0 grp_cfg=0 s missing_socks=() root_cmds=() root_script="" net_out net_rc conf_src conf_state=new needs_work=0 sudo_ok=1 undo parts=()
-        local etc_group="${DEV_ETC_GROUP:-/etc/group}" usr_group="${DEV_USR_GROUP:-/usr/lib/group}" conf="$cfg/libvirt/libvirt.conf"
-        local net_xml="${DEV_LIBVIRT_NET_XML:-/usr/share/libvirt/networks/default.xml}"
         echo
         echo "== libvirt"
-        echo "Uses the SYSTEM libvirt (qemu:///system): group libvirt for your user, the default URI in ${conf}, the modular daemon sockets (virtqemud, virtnetworkd, virtstoraged) enabled and the default network on autostart. The only sudo use of this recipe is one command here (a security-key touch); it is never retried."
-        user=$(id -un)
-        if ! [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]]; then echo "  '$user' is not a plain user name; stopping." >&2; fail_step libvirt; return; fi
-        in_session_group libvirt && grp_ok=1
-        case ",$(getent group libvirt 2>/dev/null | cut -d: -f4)," in *",$user,"*) grp_cfg=1 ;; esac
-        for s in virtqemud virtnetworkd virtstoraged; do
-            systemctl is-enabled --quiet "$s.socket" 2>/dev/null || missing_socks+=("$s.socket")
-        done
-        if [ "$grp_cfg" = 0 ] && [ "$grp_ok" = 0 ]; then
-            if ! grep -q '^libvirt:' "$etc_group" 2>/dev/null; then
-                root_cmds+=("grep '^libvirt:' $usr_group >> $etc_group")
-            fi
-            root_cmds+=("usermod -aG libvirt $user")
+        echo "Delegates to ujust virthost-setup --only daemons,connection (one implementation: the libvirt group, the default URI qemu:///system and the modular daemon sockets). The bridge, IOMMU, image directory and the rest are steps of that recipe: ujust virthost-setup --help."
+        # under --yes the sudo steps only run when this step was named with --only
+        if [ "$mode" = yes ]; then
+            case ",$only_list," in
+                *",libvirt,"*) ;;
+                *)
+                    echo "  This step needs sudo, so --yes alone does not run it. Run: ujust dev --only libvirt --yes"
+                    record libvirt "skipped (needs sudo; name it with --only libvirt)"
+                    return
+                    ;;
+            esac
         fi
-        if [ "${#missing_socks[@]}" -gt 0 ]; then root_cmds+=("systemctl enable --now ${missing_socks[*]}"); fi
-        conf_src="$work/libvirt.conf"
-        printf '# octarineOS (ujust dev): use the system libvirt by default, so virsh and virt-manager see the same VMs.\nuri_default = "qemu:///system"\n' >"$conf_src"
-        if [ -f "$conf" ] && grep -Eq '^[[:space:]]*uri_default[[:space:]]*=[[:space:]]*"qemu:///system"' "$conf"; then
-            echo "  libvirt.conf: $conf already sets uri_default to qemu:///system (already done)."
-            conf_state=already
-        fi
-        if [ "${#root_cmds[@]}" -gt 0 ] || [ "$conf_state" != already ]; then needs_work=1; fi
-        if [ "$needs_work" = 1 ]; then
-            if [ "${#root_cmds[@]}" -gt 0 ]; then
-                root_script=$(printf '%s && ' "${root_cmds[@]}")
-                root_script=${root_script% && }
-                # under --yes the sudo command only runs when this step was named with --only
-                if [ "$mode" = yes ]; then
-                    case ",$only_list," in
-                        *",libvirt,"*) ;;
-                        *)
-                            echo "  This step needs sudo, so --yes alone does not run it. Run: ujust dev --only libvirt --yes"
-                            record libvirt "skipped (needs sudo; name it with --only libvirt)"
-                            return
-                            ;;
-                    esac
-                fi
-                echo "  Needs root (one command):  sudo sh -c '$root_script'"
-            fi
-            if [ "$mode" = no ]; then
-                [ "$conf_state" != already ] && { file_results=(); place libvirt.conf "$conf_src" "$conf"; }
-                echo "  Plan: the root command above (when shown), the user file, then the default network check."
-                record libvirt planned
-                return
-            fi
-            gate libvirt || return
-            if [ "${#root_cmds[@]}" -gt 0 ]; then
-                if sudo sh -c "$root_script"; then
-                    echo "  Done: ${root_cmds[*]}"
-                    parts+=(applied)
-                    if [ "$grp_cfg" = 0 ] && [ "$grp_ok" = 0 ]; then echo "  Log out and back in for the libvirt group to take effect."; fi
-                else
-                    echo "  FAILED: the sudo command did not succeed (it is not retried). Run it yourself:  sudo sh -c '$root_script'" >&2
-                    parts+=(failed)
-                    sudo_ok=0
-                fi
-            fi
-            if [ "$conf_state" != already ]; then
-                file_results=()
-                place libvirt.conf "$conf_src" "$conf"
-                file_results+=("$place_result")
-                fold_results
-                case "$fold" in failed) parts+=(failed) ;; applied) parts+=(applied) ;; kept) parts+=(kept) ;; esac
-            fi
-        fi
-        # the default network, once the group is in effect (virsh talks to qemu:///system)
-        if [ "$sudo_ok" = 1 ] && command -v virsh >/dev/null 2>&1; then
-            if ! in_session_group libvirt; then
-                notes+=("libvirt: log out and back in, then run 'ujust dev --only libvirt' again to check the default network")
-                parts+=(pending)
-            else
-                net_out=$(virsh -c qemu:///system net-info default 2>&1); net_rc=$?
-                if [ "$net_rc" = 0 ]; then
-                    if grep -Eq '^Autostart:[[:space:]]+yes' <<<"$net_out"; then
-                        echo "  default network: exists and autostarts (already done)."
-                    elif [ "$mode" = no ]; then
-                        echo "  Plan: virsh -c qemu:///system net-autostart default"
-                        parts+=(planned)
-                    elif virsh -c qemu:///system net-autostart default; then
-                        echo "  default network: autostart switched on."
-                        parts+=(applied)
-                    else
-                        echo "  FAILED: virsh -c qemu:///system net-autostart default" >&2
-                        parts+=(failed)
-                    fi
-                elif grep -qi 'not found' <<<"$net_out" && [ -r "$net_xml" ]; then
-                    if [ "$mode" = no ]; then
-                        echo "  Plan: define the default network from $net_xml, autostart and start it."
-                        parts+=(planned)
-                    else
-                        echo "  default network: missing; defining it from $net_xml."
-                        if virsh -c qemu:///system net-define "$net_xml" && virsh -c qemu:///system net-autostart default && virsh -c qemu:///system net-start default; then
-                            parts+=(applied)
-                        else
-                            echo "  FAILED: could not define, autostart and start the default network. Re-run: ujust dev --only libvirt" >&2
-                            parts+=(failed)
-                        fi
-                    fi
-                else
-                    echo "  default network: could not be checked (${net_out%%$'\n'*})." >&2
-                    notes+=("libvirt: the default network was not checked; run 'ujust dev --only libvirt' again once libvirtd answers")
-                fi
-            fi
-        elif [ "$sudo_ok" = 1 ]; then
-            echo "  virsh is not installed; the default network was not checked." >&2
-        fi
-        undo="sudo gpasswd -d $user libvirt; delete $conf; sudo systemctl disable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket; virsh -c qemu:///system net-autostart --disable default"
-        if [[ " ${parts[*]-} " == *" failed "* ]]; then fail_step libvirt
-        elif [[ " ${parts[*]-} " == *" applied "* ]]; then record libvirt applied "$undo"
-        elif [[ " ${parts[*]-} " == *" planned "* ]]; then record libvirt planned
-        elif [[ " ${parts[*]-} " == *" pending "* ]]; then record libvirt "pending (log in again, then re-run)"
-        elif [[ " ${parts[*]-} " == *" kept "* ]]; then record libvirt "skipped (kept your different file)"
-        else record libvirt "already done"
+        local args=(--only daemons,connection)
+        if [ "$mode" = no ]; then args+=(--no); elif [ "$mode" = yes ]; then args+=(--yes); fi
+        if "${OCTARINE_UJUST:-ujust}" virthost-setup "${args[@]}"; then
+            if [ "$mode" = no ]; then record libvirt planned; else record libvirt delegated "ujust virthost-setup (each step prints its undo)"; fi
+        else
+            fail_step libvirt
         fi
     }
 
