@@ -297,6 +297,12 @@ mk_world "$K"; rm "$sb/usr-bin/sdk"; smoke_run "$K"; check "smoke: the sdk wrapp
 mk_world "$K"; rm "$sb/etc/profile.d/octarine-dx-cargo.sh"; smoke_run "$K"; check "smoke: the cargo profile snippet is required" test $? -ne 0
 mk_world "$K"; SYSTEMCTL_FAIL=podman.socket smoke_run "$K"; check "smoke: a disabled podman.socket fails" test $? -ne 0
 mk_world "$K"; echo firefox >>"$sb/rpms"; smoke_run "$K"; check "smoke: firefox must stay removed" test $? -ne 0
+for rp in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
+    mk_world "$K"; echo "$rp" >>"$sb/rpms"; smoke_run "$K"; rc=$?
+    check "smoke: an installed ROCm package ($rp) fails the dx image" bash -c "[ $rc -ne 0 ] && grep -q 'FAIL ROCm package $rp is NOT installed' '$root/smoke.out'"
+done
+mk_world "$K"; smoke_run "$K"; check "smoke: a dx image without ROCm passes the ROCm checks" bash -c "[ \$(grep -c 'PASS ROCm package' '$root/smoke.out') = 5 ]"
+check "dx.sh excludes the five ROCm packages from the shared list and asserts they are absent" bash -c "grep -q 'EXCLUDE=\"rocminfo rocm-smi rocm-hip rocm-opencl hipcc\" bash /dev-packages/install.sh' '$here/variants/dx/dx.sh' && grep -q 'must not be installed in the dx image' '$here/variants/dx/dx.sh'"
 mk_world "$K"; PKGCONF_RC=1 smoke_run "$K"; check "smoke: pkgconf not finding glib-2.0 and openssl fails" test $? -ne 0
 mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release"; smoke_run "$K"; check "smoke: the default image's IMAGE_ID fails" test $? -ne 0
 mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
