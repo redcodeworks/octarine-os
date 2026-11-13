@@ -137,7 +137,7 @@ timers are installed but not enabled. Turn on what you use.
   `ujust gnome-candy install-icon` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
-  Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
+  Dock, Blur My Shell (not shipped by the image: install the upstream release as a user extension), User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
   and Auto Move Windows, which sends apps to fixed workspaces: general, browsers, media and chat,
   games.
 - **Keybindings for a keyboard with no arrow keys.** Right Command becomes Hyper and right Alt
