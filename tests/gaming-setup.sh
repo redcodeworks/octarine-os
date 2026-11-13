@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for `ujust gaming-setup` (system_files/usr/share/ublue-os/just/60-custom.just).
-# flatpak, cargo, git, distrobox and friends are fakes on a restricted PATH; nothing real is installed.
+# flatpak, git, distrobox and friends are fakes on a restricted PATH; nothing real is installed.
 # Needs: bash, just, gzip. Run: tests/gaming-setup.sh
 set -uo pipefail
 
@@ -21,7 +21,11 @@ done
 export LOG="$root/log" INSTALLED="$root/installed" REMOTE="$root/remote" HOME="$root/home"
 export GAMING_SETUP_APPSTREAM_DIRS="$root/appstream" GAMING_SETUP_GAMEMODE_SRC="$shipped_ini"
 export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
-export EXTEST_SRC="$root/extest-src" EXTEST_DEST="$root/extest-dest"
+export EXTEST_DEST="$root/extest-dest" GAMING_SETUP_EXTEST_SRC="$root/extest-img"
+# the image's /usr/lib/extest: two different stand-ins, so a wrong class copy is noticed
+mkdir -p "$root/extest-img/lib" "$root/extest-img/lib64"
+echo so32 >"$root/extest-img/lib/libextest.so"
+echo so64 >"$root/extest-img/lib64/libextest.so"
 unset XDG_DATA_HOME XDG_STATE_HOME XDG_CONFIG_HOME
 printf 'active\n' >"$root/pstate-active"
 printf 'passive\n' >"$root/pstate-passive"
@@ -56,12 +60,6 @@ cat >"$bin/git" <<'F'
 echo "git $*" >>"$LOG"
 if [ "$1" = clone ]; then mkdir -p "${@: -1}/.git"; fi
 exit 0
-F
-cat >"$bin/cargo" <<'F'
-#!/usr/bin/env bash
-echo "cargo $*" >>"$LOG"
-mkdir -p target/x86_64-unknown-linux-gnu/release
-echo so >target/x86_64-unknown-linux-gnu/release/libextest.so
 F
 cat >"$bin/distrobox" <<'F'
 #!/usr/bin/env bash
@@ -107,7 +105,7 @@ appstream() { # verified ids...
 }
 reset() {
     rm -f "$root"/gumq.* "$root"/ugumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC
-    rm -rf "$HOME" "$root/extest-src" "$root/extest-dest"
+    rm -rf "$HOME" "$root/extest-dest"
     mkdir -p "$HOME"
     : >"$LOG"; : >"$INSTALLED"; : >"$REMOTE"
     appstream
@@ -175,26 +173,30 @@ run '' --yes extensions
 check "extensions: second run changes nothing" notlogged "flatpak install"
 check "extensions: second run no override" notlogged "flatpak override"
 
-# extest build
+# extest: install the prebuilt libraries from the image
 reset
+run 'y\n' extest
+check "extest: 32-bit library installed as lib/libextest.so" cmp -s "$root/extest-img/lib/libextest.so" "$EXTEST_DEST/lib/libextest.so"
+check "extest: 64-bit library installed as lib64/libextest.so" cmp -s "$root/extest-img/lib64/libextest.so" "$EXTEST_DEST/lib64/libextest.so"
+check "extest: libraries are executable" test -x "$EXTEST_DEST/lib/libextest.so" -a -x "$EXTEST_DEST/lib64/libextest.so"
+check "extest: nothing is built or cloned" bash -c "! grep -qE '^(cargo|git|distrobox) ' '$LOG'"
 run '' extest
-check "extest: builds with host cargo" logged "cargo build --release --locked --target x86_64-unknown-linux-gnu"
-check "extest: pinned commit checked out" logged "checkout --quiet --detach cb77cd4f80f83393a24bae17dd975e14fa6eb1b2"
-check "extest: library installed" test -f "$EXTEST_DEST/lib64/libextest.so"
-: >"$LOG"
-run '' extest
-check "extest: second run already built" notlogged "cargo build"
+check "extest: second run, identical files, already done" has "already installed"
+check "extest: second run reports already done" has "already done"
+echo changed >"$EXTEST_DEST/lib64/libextest.so"
+run 'y\n' extest
+check "extest: a differing file is replaced" cmp -s "$root/extest-img/lib64/libextest.so" "$EXTEST_DEST/lib64/libextest.so"
+check "extest: the replaced file is kept with a timestamp" bash -c "[ \$(cat \$(ls '$EXTEST_DEST'/lib64/libextest.so.bak-*)) = changed ]"
 reset
-mv "$bin/cargo" "$root/cargo.off"
+rm "$root/extest-img/lib/libextest.so"
 run '' extest
-mv "$root/cargo.off" "$bin/cargo"
-check "extest: no host cargo uses the dev-toolbox" logged "distrobox enter -n dev-toolbox"
-reset
-EXTEST_COMMIT=nothex run '' extest
-check "extest: bad commit rejected" test "$rc" != 0
+check "extest: image without the 32-bit library fails clearly" bash -c "[ $rc != 0 ] && grep -q 'this image does not ship them' '$root/out'"
+echo so32 >"$root/extest-img/lib/libextest.so"
 reset
 run '' --yes
-check "extest: default no" notlogged "cargo build"
+check "extest: default no" test ! -e "$EXTEST_DEST/lib64/libextest.so"
+GAMING_SETUP_EXTEST_SRC="$root/none" run 'y\n' extest
+check "extest: missing image directory fails, nothing written" bash -c "[ $rc != 0 ] && [ ! -e '$EXTEST_DEST' ]"
 
 # desktop launchers
 reset
@@ -207,9 +209,25 @@ check "desktop: gamescope args from the display mode" grep -q -- '-f -W 2560 -H 
 : >"$LOG"
 GAMING_SETUP_RES=2560x1440@143.912 run '' desktop
 check "desktop: second run already up to date" has "already done"
-mkdir -p "$EXTEST_DEST/lib64"; echo so >"$EXTEST_DEST/lib64/libextest.so"
+mkdir -p "$EXTEST_DEST/lib64" "$EXTEST_DEST/lib"; echo so >"$EXTEST_DEST/lib64/libextest.so"
 GAMING_SETUP_RES=2560x1440@143.912 run '' desktop
-check "desktop: extest hooked in once built" grep -q -- "--env=LD_PRELOAD=$EXTEST_DEST/lib64/libextest.so" "$apps/octarine-gaming-steam.desktop"
+check "desktop: only one of the two libraries installed: no hook" bash -c "! grep -q LD_PRELOAD '$apps/octarine-gaming-steam.desktop'"
+echo so >"$EXTEST_DEST/lib/libextest.so"
+GAMING_SETUP_RES=2560x1440@143.912 run '' desktop
+# the generated text: the literal $LIB survives (escaped for the desktop entry spec: \\$ in the file)
+check "desktop: LD_PRELOAD uses the literal \$LIB, quoted and escaped, in the plain launcher" grep -qF -- "\"--env=LD_PRELOAD=$EXTEST_DEST/\\\\\$LIB/libextest.so\" com.valvesoftware.Steam %U" "$apps/octarine-gaming-steam.desktop"
+check "desktop: the same in the gamescope launcher" grep -qF -- "\"--env=LD_PRELOAD=$EXTEST_DEST/\\\\\$LIB/libextest.so\" com.valvesoftware.Steam -f" "$apps/octarine-gaming-steam-gamescope.desktop"
+check "desktop: no fixed lib64 path left in the launchers" bash -c "! grep -q 'lib64/libextest.so' '$apps'/octarine-gaming-*.desktop"
+# what a desktop environment makes of the Exec line: unescape the string, then split it like a shell (GLib does the same)
+exec_argv=$(python3 -I - "$apps/octarine-gaming-steam.desktop" <<'PYEOF'
+import re, shlex, sys
+line = [l for l in open(sys.argv[1]) if l.startswith("Exec=")][0][5:].rstrip("\n")
+line = line.replace("\\\\", "\\")        # string escape of the desktop file: two backslashes are one
+line = line.replace("\\$", "$")            # inside double quotes a backslash escapes the dollar sign (GLib's shell parser)
+print("\n".join(shlex.split(line)))
+PYEOF
+)
+check "desktop: after unescaping and word splitting the argument is --env=LD_PRELOAD=<dir>/\$LIB/libextest.so" bash -c "printf '%s\n' '$exec_argv' | grep -qxF -- '--env=LD_PRELOAD=$EXTEST_DEST/\$LIB/libextest.so'"
 check "desktop: extest filesystem read-only" grep -q -- "--filesystem=$EXTEST_DEST:ro" "$apps/octarine-gaming-steam-gamescope.desktop"
 rm "$apps/octarine-gaming-steam.desktop"; echo "[Desktop Entry]" >"$apps/octarine-gaming-steam.desktop"
 GAMING_SETUP_RES=2560x1440@143.912 run '' desktop
@@ -262,11 +280,11 @@ run '' reset --yes
 check "reset: generated launchers removed" test ! -f "$apps/octarine-gaming-steam.desktop"
 check "reset: other launchers kept" test -f "$apps/other.desktop"
 check "reset: PATH line removed, other override kept" bash -c "! grep -q '^PATH=' '$ovr' && grep -qx 'FOO=bar' '$ovr'"
-mkdir -p "$EXTEST_DEST/lib64"; echo so >"$EXTEST_DEST/lib64/libextest.so"
+mkdir -p "$EXTEST_DEST/lib64" "$EXTEST_DEST/lib"; echo so >"$EXTEST_DEST/lib64/libextest.so"; echo so >"$EXTEST_DEST/lib/libextest.so"
 run '' reset --yes
 check "reset: library kept under --yes" test -f "$EXTEST_DEST/lib64/libextest.so"
 run 'n\nn\ny\nn\n' reset
-check "reset: library removed when asked" test ! -f "$EXTEST_DEST/lib64/libextest.so"
+check "reset: libraries removed when asked" test ! -e "$EXTEST_DEST/lib64/libextest.so" -a ! -e "$EXTEST_DEST/lib/libextest.so"
 
 # ---- gum checklist (a terminal is faked with OCTARINE_MENU_FORCE_TTY)
 reset

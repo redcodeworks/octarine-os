@@ -30,6 +30,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
+- Prebuilt sched_ext schedulers (`scx_*`) and the extest libraries for Steam Input on Wayland (installed, not enabled)
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
 **Removed from the base**
@@ -106,7 +107,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 |---|---|
 | `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists |
 | `ujust user-setup` | Checklist for a new user: groups, login shell (zsh is opt-in), Flatpak access, fonts, a fish terminal profile, GNOME search providers |
-| `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, launchers and GameMode tuning |
+| `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, extest, launchers and GameMode tuning |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
 | `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia, nvidia-dx) or channel (latest, beta, testing); `--list` shows what exists |
@@ -134,8 +135,9 @@ The wordmark is set in JetBrains Mono (SIL OFL 1.1, © The JetBrains Mono Projec
 
 The shipped niri key bindings and defaults follow niri's own default configuration (GPL-3.0-or-later, by the niri authors).
 
-The experimental extest option of `ujust gaming-setup` builds [extest](https://github.com/Supreeeme/extest) by Supreeeme
-and contributors (MIT license) from a pinned upstream commit; this repo ships none of its source.
+The image ships prebuilt [extest](https://github.com/Supreeeme/extest) libraries (by Supreeeme and contributors, MIT license, built
+from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sched_ext schedulers](https://github.com/sched-ext/scx)
+(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`.
 
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 
