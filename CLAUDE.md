@@ -751,6 +751,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The base `update` also ran `rpm-ostree update`, `flatpak update` and `distrobox upgrade -a` unconditionally and checked
   for `uupd` (not installed here); both are replaced. Tests: `tests/update-services.sh`.
 
+## `ujust sensors-setup`
+
+- Opt-in recipe in `60-custom.just` (group System): the Super I/O driver is chip-specific (nct6775, it87, ...), so the image
+  never forces a module on (a missing chip would make `systemd-modules-load` log errors). It runs `sudo sensors-detect --auto`
+  (Fedora's `lm_sensors`; `--auto` writes `/etc/sysconfig/lm_sensors` with `BUS_MODULES`/`HWMON_MODULES`,
+  `/etc/modprobe.d/lm_sensors.conf` and enables `lm_sensors.service`, and leaves out autoloaded drivers), parses the two
+  variables from `/etc/sysconfig/lm_sensors` (module names validated), treats "no sensors were detected" and "No modules to load"
+  in the output as nothing to do, and writes `/etc/modules-load.d/octarine-sensors.conf` (static header, so an identical file means
+  "already done"). A different existing file: diff, default keep, `.bak-<timestamp>` on replace; the older hand-made
+  `nct6775.conf` is offered for a move to `.bak-<timestamp>`. `--no` is a plan and changes nothing (detection needs root), `--yes`
+  asks nothing. The files persist across image updates, so no re-run after an update. `acpi_enforce_resources=lax` is not set.
+  Tests: `tests/sensors-setup.sh` (fake `sudo`, `sensors-detect`, `modprobe`, `sensors`). Not verifiable in CI: a real chip.
+
 ## `ujust luks-tpm-unlock`
 
 - One recipe in `60-custom.just` replaces the base's `setup-luks-tpm-unlock` and `remove-luks-tpm-unlock` (which handled the
