@@ -39,7 +39,7 @@ check "the Variants table has exactly the three images" bash -c "awk '/^## Varia
 recipes() { grep -hE '^[a-z][a-z0-9-]* (\*args)?:$' "$@" | sed -E 's/ .*//; s/:$//'; }
 default_recipes=$(recipes "$repo/system_files/usr/share/ublue-os/just/60-custom.just" "$repo/system_files/usr/share/ublue-os/just/10-update.just")
 dx_recipes=$(recipes "$repo"/variants/dx/system_files/usr/share/ublue-os/just/*.just)
-check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$dx_recipes\" = dev ]"
+check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$(echo $dx_recipes | tr ' ' '\n' | sort | tr '\n' ' ')\" = \"datastore datastore-setup dev \" ]"
 for r in $default_recipes; do
     check "README lists ujust $r" grep -qF "ujust $r" "$readme"
 done
@@ -59,19 +59,18 @@ for img in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; 
     check "README has the URL of $img" grep -qF "ghcr.io/redcodeworks/$img:latest" "$readme"
 done
 check "the nvidia and dx variants have their own build files" test -f "$repo/variants/nvidia/nvidia.sh" -a -f "$repo/variants/dx/dx.sh"
-check "the README says dx has the iommu=pt karg and the file is in the dx tree" bash -c "grep -q 'iommu=pt' '$readme' && grep -qx 'kargs = \[\"iommu=pt\"\]' '$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml'"
+check "the README does not claim an iommu=pt kernel argument for dx and no dx tree file ships it" bash -c "! grep -q 'iommu=pt' '$readme' && ! grep -rqs iommu '$repo/variants/dx/system_files'"
 check "the README does not say VS Code or virt-manager is preinstalled" bash -c "! grep -qiE 'Visual Studio Code preinstalled|virt-manager, Vorta' '$readme'"
 
-# ---- iommu=pt: dx only
+# ---- iommu=pt: no image ships it (opt-in through ujust virthost-setup)
 check "the default image tree ships no kargs.d file with iommu" bash -c "! grep -rqs iommu '$repo/system_files/usr/lib/bootc'"
 check "the default image tree has no 10-iommu.toml" test ! -e "$repo/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "the dx image tree ships iommu=pt" grep -q 'iommu=pt' "$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "dx.sh copies the dx tree (so the karg file lands in /usr/lib/bootc/kargs.d)" grep -q 'cp -avf /ctx/system_files/. /' "$repo/variants/dx/dx.sh"
+check "the dx image tree has no kargs.d file at all" test ! -e "$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
 for wf in build.yml build-beta.yml; do
     check "$wf smoke test asserts the karg file is ABSENT" grep -qF '! test -e /usr/lib/bootc/kargs.d/10-iommu.toml' "$repo/.github/workflows/$wf"
     check "$wf smoke test no longer requires the karg file" bash -c "! grep -qF 'test -f /usr/lib/bootc/kargs.d/10-iommu.toml' '$repo/.github/workflows/$wf'"
 done
-check "dx-smoke.sh asserts the karg" grep -q 'iommu=pt karg file is shipped' "$repo/.github/scripts/dx-smoke.sh"
+check "dx-smoke.sh asserts that no kargs.d file mentions iommu" grep -q 'no image ships an iommu kernel argument' "$repo/.github/scripts/dx-smoke.sh"
 check "the README does not claim iommu=pt for the default image" bash -c "! grep -E 'zram swap tuning.*iommu' '$readme'"
 
 # ---- zsh: installed, not the default of new users

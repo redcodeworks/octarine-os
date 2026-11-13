@@ -42,6 +42,17 @@ fi
 grep -qxF "${dev_import}" "${ujust_main}"
 chmod 0755 /usr/bin/sdk
 
+# The opt-in datastore Quadlets (rootless, stopped by default, no [Install]): rendered from the one pin file
+# variants/dx/datastore/datastore.env into the directory the user generator reads (/usr/share/containers/systemd/users, verified with
+# `quadlet --user --dryrun` on the default image's podman 6.1). Nothing is enabled and nothing is pulled at build time.
+bash /ctx/datastore/render.sh /usr/share/containers/systemd/users /ctx/datastore
+! grep -rq '^\[Install\]' /usr/share/containers/systemd/users
+test -s /usr/share/octarine-os/lib/datastore.sh
+store_import='import? "/usr/share/ublue-os/just/72-octarine-datastore.just"'
+test -s /usr/share/ublue-os/just/72-octarine-datastore.just
+if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >> "${ujust_main}"; fi
+grep -qxF "${store_import}" "${ujust_main}"
+
 # Docker-compatible API socket for developer tools (rootful); the default image already enables the user one globally
 systemctl enable podman.socket
 

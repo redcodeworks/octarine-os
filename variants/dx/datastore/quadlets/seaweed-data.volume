@@ -1,0 +1,6 @@
+[Unit]
+Description=SeaweedFS object storage volume
+
+[Volume]
+VolumeName=seaweed-data
+Driver=local

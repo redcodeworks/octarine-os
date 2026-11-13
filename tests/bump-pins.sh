@@ -103,11 +103,11 @@ on = w.get(True) or w.get("on")
 assert set(on) == {"schedule", "workflow_dispatch"}, set(on)
 assert on["schedule"] == [{"cron": "0 7 * * 2"}], on["schedule"]
 PY
-check "bump-pins.yml: only dev-packages, no fail-fast, checks out testing, permissions contents, pull-requests and actions write, packages read" python3 -I - "$wf" <<'PY'
+check "bump-pins.yml: dev-packages plus the four datastore images, no fail-fast, checks out testing, permissions contents, pull-requests and actions write, packages read" python3 -I - "$wf" <<'PY'
 import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 j = w["jobs"]["bump"]
-assert j["strategy"]["matrix"]["image"] == ["dev-packages"], j["strategy"]
+assert j["strategy"]["matrix"]["image"] == ["dev-packages", "postgresql", "valkey", "seaweedfs", "kafka"], j["strategy"]
 assert j["strategy"]["fail-fast"] is False
 assert w["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write", "packages": "read"}, w["permissions"]
 co = [s for s in j["steps"] if s.get("uses", "").startswith("actions/checkout@")][0]

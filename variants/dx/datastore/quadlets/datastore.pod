@@ -1,0 +1,25 @@
+[Unit]
+Description=Datastore pod: PostgreSQL (disk), Valkey (memory), SeaweedFS (S3-compatible object store)
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=datastore
+HostName=datastore
+NetworkAlias=pgsql
+NetworkAlias=postgresql
+NetworkAlias=valkey
+NetworkAlias=seaweedfs
+Network=lakehouse.network
+
+# Loopback only, nothing is published on the LAN
+PublishPort=127.0.0.1:5432:5432
+PublishPort=127.0.0.1:6379:6379
+PublishPort=127.0.0.1:8333:8333
+PublishPort=127.0.0.1:9333:9333
+# 8889 on the host, 8888 inside: the filer's usual port is often taken by a notebook server. Other containers reach it on 8888
+# through the `seaweedfs` network alias.
+PublishPort=127.0.0.1:8889:8888
+
+# No [Install] section: nothing starts on boot or login. Start it with
+#   systemctl --user start datastore-pod   (or: ujust datastore start)

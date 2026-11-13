@@ -41,7 +41,7 @@ Everything system-level that used to be hand-layered now lives in this repo:
   libguestfs tools stay everywhere.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, a container
-  signature policy for the image itself. The `iommu=pt` kernel argument ships only in the dx image.
+  signature policy for the image itself. No image ships a kernel argument: `iommu=pt` for device passthrough is opt-in (`ujust virthost-setup`); a machine that had it from an earlier dx image loses it on the first image that drops the file, until that step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt` and a reboot).
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta,
   Flatseal, Extension Manager and Bazaar (the software center; gnome-software is removed, firmware
   updates stay available through `fwupdmgr`).

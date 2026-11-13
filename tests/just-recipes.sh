@@ -65,7 +65,7 @@ done
 nodoc=$(just --justfile "$root/Assembled" --dump --dump-format json | jq -r '.recipes[] | select((.private | not) and ((.doc // "") == "")) | .name')
 printf '%s\n' "$nodoc" >"$root/out"
 check "every public recipe of the assembled justfile has a description" test -z "$nodoc"
-nodoc=$(just --justfile "$dxdir/70-octarine-dev.just" --dump --dump-format json | jq -r '.recipes[] | select((.private | not) and ((.doc // "") == "")) | .name')
+nodoc=$(for f in "$dxdir"/*.just; do just --justfile "$f" --dump --dump-format json | jq -r '.recipes[] | select((.private | not) and ((.doc // "") == "")) | .name'; done)
 printf '%s\n' "$nodoc" >"$root/out"
 check "every public recipe of the dx variant file has a description" test -z "$nodoc"
 check "toolbox keeps its description" bash -c "just --justfile '$root/Assembled' --list 2>&1 | grep -E '^ +toolbox ' | grep -q 'Create and manage toolboxes'"

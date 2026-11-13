@@ -232,6 +232,55 @@ after install; the owner decides default-on after a soak. Whatever fails, the ma
   in a real session (only simulated), and whether `systemctl start` as the user really needs no prompt with the rule installed. The GameMode hooks run from a systemd user service: confirm polkit treats that as local and active, else the hooks need a different subject condition; test with a real GameMode run and `systemd-run --user --pipe systemctl start scx@rusty.service`. Also unverified on a real machine: that a `StartTransientUnit` named `scx@x.service` (for example with `systemd-run --user`'s system-bus counterpart through `busctl`) returns "already loaded"; each scheduler loading under SELinux (the units probably run as `unconfined_service_t`) and under kernel lockdown=integrity; the stats socket mode; the sched_ext watchdog timeout; whether a Flatpak with system-bus access can match the rule; and a `gamemoded`-launched `systemctl start` getting YES.
 - **Undo.** `ujust scheduler --boot none --gamemode skip`; remove the units, helpers, rule, preset, `gen-schedulers.sh` and the recipe.
 
+## Datastore containers (dx image only, opt-in)
+
+The dx images ship generic datastore and Kafka Quadlets: rootless, user-level, STOPPED by default, nothing enabled, no lingering. Derived from the
+owner's own Quadlets (which override them from `~/.config/containers/systemd` until removed); nothing personal, no airflow, connect, superset, trino,
+lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
+
+- **Rule.** The Quadlets are rootless user units: their start and stop state never needs administrator rights or any privilege prompt. Start and stop are
+  `systemctl --user start|stop <unit>` only. Only the image build writes under `/usr`. Every shipped port is bound to `127.0.0.1` and above 1023.
+  `tests/datastore.sh` fails if a shipped Quadlet, recipe, helper, the pin file or this section mentions a privilege-escalation tool, if a unit publishes
+  a port below 1024 or anything but `127.0.0.1`, and if a recipe runs as root.
+- **Files.** `variants/dx/datastore/quadlets/` (templates), `variants/dx/datastore/datastore.env` (the ONE pin file), `variants/dx/datastore/render.sh`
+  (run by `dx.sh` at build: copies the templates to `/usr/share/containers/systemd/users/` and replaces each `@NAME_IMAGE@` with
+  `<image>:<tag>@<digest>`; fails on a missing or malformed pin, a `latest` or floating tag, or a tag outside its major). Units: `datastore.pod`
+  (`PodName=datastore`, ports 5432 PostgreSQL, 6379 Valkey, 8333 S3, 9333 SeaweedFS master, 8889 filer on loopback), `postgresql.container` (container
+  name `pgsql`), `valkey.container`, `seaweedfs.container`, `kafka.pod` + `kafka.container` (KRaft, 9092), `lakehouse.network`, the named `local`-driver
+  volumes `postgresql-data`, `valkey-data`, `seaweed-data`, `kafka-data`. No `[Install]`, no preset, no lingering. Generated unit names (read with
+  `quadlet --user --dryrun` on the image's podman 6.1): `datastore-pod.service`, `kafka-pod.service`, `postgresql.service`, `valkey.service`,
+  `seaweedfs.service`, `kafka.service`, plus `*-volume.service` and `lakehouse-network.service`.
+- **Location, verified.** The user generator reads `/usr/share/containers/systemd/users/` (checked by running `quadlet --user --dryrun` as an unprivileged user on
+  the default image with the rendered files mounted there: all units are generated). The dx smoke test repeats that dry run inside the built image.
+- **Pins.** Exact patch-level tags with digests (`Image=name:tag@sha256:...`; the tag stays for humans, the digest decides), recorded 2026-11-13: postgres
+  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `3.99`, kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
+  `AutoUpdate=` on any shipped unit: a stateful service never changes image unattended. Majors are never bumped automatically (PostgreSQL 17 to 18 needs dump
+  and restore or `pg_upgrade`). `tests/datastore.sh` checks that every shipped `Image=` equals the pin file, is an exact tag with a digest, and is not `latest`.
+- **Weekly bump.** `bump-pins.yml` (Tuesday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
+  the newest tag of the same shape and suffix inside the pinned major, with its manifest digest (`skopeo inspect --raw | sha256sum`); release candidates and other
+  suffixes never match; a NEWER MAJOR is only named in the pull request body ("newer major available, manual decision") and never changes the pin; one pull request
+  per image on `bump/<image>-digest` into `testing`, with the same default-token-plus-dispatch design as the other bump workflows. These are public registry
+  images: the digest comes from the registry, nothing of ours signs it. Tests: `tests/datastore-bump.sh`.
+- **User override, verified.** `~/.config/containers/systemd/<service>.container.d/10-image.conf` with `[Container]` and `Image=` replaces the shipped image: checked with
+  `quadlet --user --dryrun` (the drop-in is loaded from the user directory while the unit comes from `/usr/share`, and the generated `podman run` uses the drop-in's image, the last `Image=` wins).
+  `ujust datastore-setup --pin SERVICE=TAG` writes that drop-in (same major only, no digest: a tag can move; a major change is refused, do it by hand), `--unpin` removes it,
+  `--status` shows shipped pin, override, running image, the PostgreSQL data major (`PG_VERSION` read with `podman unshare cat`), the storage location and the volume sizes.
+- **Secrets, never in the image.** `Secret=postgresql-password`, `valkey-password` and `seaweedfs-s3-config` (a generated SeaweedFS identities JSON, admin with a random access and
+  secret key). `ujust datastore-setup` creates the MISSING ones with `podman secret create NAME -` from random data through stdin (never printed, logged or passed as an argument, an
+  existing secret is never overwritten); undo `podman secret rm`.
+- **Data-version guard.** `ujust datastore start` refuses to start the datastore pod when the data volume's `PG_VERSION` major differs from the effective image's major, with the dump and restore
+  message; the Quadlet itself stays simple. `--status` shows both majors. `ujust datastore-setup --update` prints the pins, says "back up first", pulls only after confirmation and never restarts a running service.
+- **Recipes** (dx recipe file `72-octarine-datastore.just`, imported by `dx.sh`, group Setup; rootless, refuse root, no hardware-setup step): `ujust datastore start|stop [datastore|kafka|all]` (default datastore;
+  checks the secrets first, runs the PostgreSQL guard, never pulls, a running pod is a no-op, unknown name exits 2), `status` (pods, containers, ports, running image against the pin), `logs SERVICE`
+  (`journalctl --user`, 200 lines); `ujust datastore-setup [--yes|--no|--status|--pin|--unpin|--update|--backup DIR [--stop]]`. Helper `/usr/share/octarine-os/lib/datastore.sh`.
+- **Storage and backups.** Named volumes live in Podman's graphroot, `~/.local/share/containers/storage` with no `storage.conf` (the owner's machine moves it with `containers/storage.conf`
+  and the btrfs driver); `--status` shows the graphroot and warns when it is under the home; moving it is documented, not automated. `--backup DIR` exports each volume to `DIR/<volume>-<date>.tar`
+  (`podman volume export`), PostgreSQL while running through an online `pg_dumpall` into `DIR/postgresql-<date>.sql`; a running pod with Valkey, SeaweedFS or Kafka volumes is refused unless `--stop`
+  (stops the pod, exports, starts it again); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
+- **Smoke test** (`dx-smoke.sh`): the eleven Quadlet files exist, no `[Install]`, every image an exact tag with a digest, no latest, `AutoUpdate=`, home path or local image, loopback ports only, the recipe file and helper
+  ship, and the generator dry run produces the pod and container units. Tests: `tests/datastore.sh`, `tests/datastore-bump.sh`, `tests/dx-image.sh`.
+- **Unverified (real machine).** The first `systemctl --user start datastore-pod` (image pulls, healthchecks), the secret mounts, SELinux labels on the volumes, the owner's graphroot, a Kafka start with the pinned 4.3.2, and that the removal of the owner's own Quadlet copies leaves the same behavior (container names are kept: `pgsql` and the pod aliases).
+
 ## Branches and releases
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
@@ -363,7 +412,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`
   (Esc, the single-call re-enroll, the image-off line).
 - `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
-  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (default image without both, dx with the karg).
+  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (no image ships either; the iommu karg is opt-in).
 - The default image carries no compilers or build tools (the dx image does); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
@@ -587,7 +636,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the VM-hosting set moved out of the default image too, see stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
+- **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
 - **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
@@ -1148,9 +1197,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   "Developer menu" below.
 - **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
   (Microsoft is only listed as developer). The owner chose it knowingly; it is installed only by the `vscode` step of `ujust dev` (which says so), never preinstalled.
-- **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
-  other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
-  and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).
+- **Kernel argument.** None since 2026-11-13: the dx image no longer ships `10-iommu.toml`; `iommu=pt` is opt-in (see "Kernel argument" under the default image notes).
 - **Stage 3 (done, `feat/vm-host-to-dx`).** The VM-hosting set moved out of the default image and lives only in dx and nvidia-dx
   (`variants/dx/packages/extras.txt`: `libvirt` and `qemu-kvm` meta packages, `cockpit-machines`, `virt-install`, `virtiofsd`, `swtpm`,
   `swtpm-tools`, `dnsmasq`, `edk2-ovmf`, `virt-manager`, `virt-viewer`, `libvirt-nss`, ...). `build.sh` no longer lists `libvirt` and

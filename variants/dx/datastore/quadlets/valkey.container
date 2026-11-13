@@ -1,0 +1,30 @@
+[Unit]
+Description=Valkey (Redis-compatible in-memory store)
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Pod=datastore.pod
+ContainerName=valkey
+# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+Image=@VALKEY_IMAGE@
+
+Volume=valkey-data.volume:/data
+
+Secret=valkey-password
+
+Entrypoint=/bin/sh
+Exec=-c "exec valkey-server --requirepass \"$(cat /run/secrets/valkey-password)\" --appendonly yes"
+
+HealthCmd=/bin/sh -c "valkey-cli --no-auth-warning -a \"$(cat /run/secrets/valkey-password)\" ping"
+HealthInterval=10s
+HealthRetries=5
+HealthStartPeriod=10s
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=60
+
+# No [Install] section: pulled in by datastore-pod.service.

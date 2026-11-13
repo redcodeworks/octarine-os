@@ -253,7 +253,9 @@ F
     printf '[Flatpak Preinstall org.gnome.Example]\nBranch=stable\n' >"$sb/pre/gnome.preinstall"
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
-    echo 'kargs = ["iommu=pt"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
+    printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
+    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" >/dev/null
+    echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
@@ -262,7 +264,7 @@ F
 }
 smoke_run() { # BASE_KERNEL
     PATH="$sb/bin:$sb/sys" RPM_LIST="$sb/rpms" MODULES_DIR="$sb/modules" UNIT_DIR="$sb/units" PREINSTALL_DIR="$sb/pre" \
-        POLICY_FILE="$sb/policy.json" OS_RELEASE="$sb/os-release" SHARE_DIR="$sb/share" ETC_DIR="$sb/etc" BIN_DIR="$sb/usr-bin" LIB_DIR="$sb/lib" BASE_KERNEL="$1" \
+        POLICY_FILE="$sb/policy.json" OS_RELEASE="$sb/os-release" SHARE_DIR="$sb/share" ETC_DIR="$sb/etc" BIN_DIR="$sb/usr-bin" LIB_DIR="$sb/lib" BASE_KERNEL="$1" QUADLET_GENERATOR="$sb/no-generator" \
         bash "$smoke" >"$root/smoke.out" 2>&1
 }
 K=7.2.15-300.fc45.x86_64
@@ -293,9 +295,17 @@ mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/octarine-os-dx":\[\]##' "$sb/pol
 mk_world "$K"; printf '#!/bin/sh\necho "niri-setup user-setup"\n' >"$sb/bin/ujust"; smoke_run "$K"; check "smoke: ujust must list the dev recipe" test $? -ne 0
 mk_world "$K"; rm "$sb/share/ublue-os/just/70-octarine-dev.just"; smoke_run "$K"; check "smoke: the dev recipe file is required" test $? -ne 0
 mk_world "$K"; : >"$sb/share/ublue-os/justfile"; smoke_run "$K"; check "smoke: the justfile import of the dev recipe file is required" test $? -ne 0
-mk_world "$K"; rm "$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: the dx image must carry the iommu=pt karg" test $? -ne 0
-mk_world "$K"; echo 'kargs = ["quiet"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: the karg file must contain iommu=pt" test $? -ne 0
+mk_world "$K"; echo 'kargs = ["iommu=pt"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: a kargs.d file that mentions iommu fails (no image ships one)" test $? -ne 0
+mk_world "$K"; echo 'kargs = ["quiet"]' >"$sb/lib/bootc/kargs.d/10-other.toml"; smoke_run "$K"; check "smoke: an unrelated kargs.d file does not fail the iommu check" test $? -eq 0
 mk_world "$K"; sed -i 's#^SHELL=.*#SHELL=/usr/bin/zsh#' "$sb/etc/default/useradd"; smoke_run "$K"; check "smoke: zsh as the default shell of new users fails" test $? -ne 0
+Q="$sb/share/containers/systemd/users"
+mk_world "$K"; rm "$Q/kafka.pod"; smoke_run "$K"; check "smoke: a missing datastore Quadlet fails" test $? -ne 0
+mk_world "$K"; printf '\n[Install]\nWantedBy=default.target\n' >>"$Q/postgresql.container"; smoke_run "$K"; check "smoke: an [Install] section in a Quadlet fails (nothing may start by itself)" test $? -ne 0
+mk_world "$K"; sed -i 's#^Image=.*#Image=docker.io/library/postgres:latest#' "$Q/postgresql.container"; smoke_run "$K"; check "smoke: a latest tag in a Quadlet fails" test $? -ne 0
+mk_world "$K"; sed -i 's#^\(Image=.*\)@sha256:[0-9a-f]*#\1#' "$Q/valkey.container"; smoke_run "$K"; check "smoke: a Quadlet image without a digest fails" test $? -ne 0
+mk_world "$K"; sed -i 's#^PublishPort=127.0.0.1:5432#PublishPort=0.0.0.0:5432#' "$Q/datastore.pod"; smoke_run "$K"; check "smoke: a published port that is not loopback-only fails" test $? -ne 0
+mk_world "$K"; printf 'AutoUpdate=registry\n' >>"$Q/kafka.container"; smoke_run "$K"; check "smoke: AutoUpdate= on a stateful unit fails" test $? -ne 0
+mk_world "$K"; rm "$sb/share/ublue-os/just/72-octarine-datastore.just"; smoke_run "$K"; check "smoke: the datastore recipe file is required" test $? -ne 0
 mk_world "$K"; rm "$sb/usr-bin/sdk"; smoke_run "$K"; check "smoke: the sdk wrapper is required" test $? -ne 0
 mk_world "$K"; rm "$sb/etc/profile.d/octarine-dx-cargo.sh"; smoke_run "$K"; check "smoke: the cargo profile snippet is required" test $? -ne 0
 mk_world "$K"; SYSTEMCTL_FAIL=podman.socket smoke_run "$K"; check "smoke: a disabled podman.socket fails" test $? -ne 0

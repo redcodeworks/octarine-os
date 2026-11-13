@@ -60,7 +60,7 @@ Added by this image:
 |---|---|---|
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
-| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the `iommu=pt` kernel argument, and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 
 The default and dx images also have a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base
@@ -115,9 +115,11 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
 | `ujust hardware-setup [--list]` | Checklist of vendor and hardware specific setup; every step is hidden when your machine lacks that hardware (AMD or NVIDIA GPU, ROCm in a container, Secure Boot, TPM unlock, security key, fan sensors) |
-| `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
+| `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--restore] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
 | `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
+| `ujust datastore start\|stop\|status\|logs` (DX only) | Start and stop the opt-in rootless datastore containers (PostgreSQL, Valkey, SeaweedFS; Kafka on request), all stopped until you start them |
+| `ujust datastore-setup` (DX only) | Create the datastore secrets, pin or update image versions, and back up the volumes |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |
 
 ## Contributing

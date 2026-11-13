@@ -1,0 +1,33 @@
+[Unit]
+Description=SeaweedFS all-in-one (master, volume, filer, S3 gateway)
+
+[Container]
+Pod=datastore.pod
+ContainerName=seaweedfs
+# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+Image=@SEAWEEDFS_IMAGE@
+
+Volume=seaweed-data.volume:/data
+
+# The S3 identities file holds the access and secret key, so it lives in a podman secret (created by `ujust datastore-setup`
+# with random values), never in the image.
+Secret=seaweedfs-s3-config,type=mount
+
+# -ip.bind=0.0.0.0: the pod can sit on several networks, and without an explicit bind weed listens only on whichever network it
+# auto-detects as primary, which is not deterministic across restarts (other containers then get "connection refused").
+Exec=server -dir=/data -ip.bind=0.0.0.0 -s3 -s3.port=8333 -s3.config=/run/secrets/seaweedfs-s3-config \
+     -master.port=9333 -filer -filer.port=8888 -volume.max=0 -metricsPort=0
+
+# 127.0.0.1, not localhost: localhost resolves to [::1] first, SeaweedFS binds IPv4 only, and busybox wget does not fall back.
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:9333/cluster/status
+HealthInterval=15s
+HealthRetries=6
+HealthStartPeriod=30s
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+# No [Install] section: pulled in by datastore-pod.service.

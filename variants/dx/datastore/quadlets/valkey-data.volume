@@ -1,0 +1,6 @@
+[Unit]
+Description=Valkey data volume
+
+[Volume]
+VolumeName=valkey-data
+Driver=local
