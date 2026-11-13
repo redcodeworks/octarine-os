@@ -182,6 +182,7 @@ for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
     j = w["jobs"]["binaries"]
     assert j["uses"] == "./.github/workflows/binaries.yml", f
     assert j["permissions"] == {"contents": "read", "packages": "write"}, f
+    assert j.get("secrets") == "inherit", f + ": the called workflow signs with SIGNING_SECRET, which it only gets through secrets: inherit"
     needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
     assert "binaries" in needs, f
     text = open(f"{root}/.github/workflows/{f}").read()

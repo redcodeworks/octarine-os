@@ -118,7 +118,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   `check` (tree hash; `binaries-lookup.sh`: the tag exists and `cosign verify --key cosign.pub` accepts its digest: green "binaries
   unchanged, nothing to build"; a missing tag, or an existing one whose signature fails, is built again), `build` (`podman build` in the pinned
   builder, `binaries-layout.sh` checks the exported file list, then `push-tags.sh` pushes ONE manifest digest), `sign` (environment `signing`,
-  the same `SIGNING_SECRET`, old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
+  the same `SIGNING_SECRET` (a repository secret: the calling jobs pass it on with `secrets: inherit`, without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
   `main` publish; on any other ref (a validation dispatch) the binaries are built and checked but never pushed or signed, no digest is
   handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully exercised by the
   merge into `testing` (validate the binaries build alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no
