@@ -2030,6 +2030,17 @@ switch-image *args:
         echo "Already on $image ($channel)."
         exit 0
     fi
+    # An image that a bootc switch already STAGED (waiting for the reboot) is not the booted one: do not switch (and ask for a security key touch) again.
+    staged_ref=${OCTARINE_SWITCH_STAGED_REF-}
+    if [ -z "${OCTARINE_SWITCH_STAGED_REF+x}" ]; then
+        staged_ref=$(rpm-ostree status --json 2>/dev/null | jq -r '[.deployments[] | select(.staged == true)][0]."container-image-reference" // empty' 2>/dev/null)
+    fi
+    staged=$(printf '%s' "$staged_ref" | sed -E 's#^ostree[a-z-]*:##; s#^docker://##; s#@sha256:[0-9a-f]+$##')
+    if [ -n "$staged" ] && [ "$staged" = "$ref" ]; then
+        echo "$image ($channel) is already staged: reboot to use it. Nothing to do ('sudo bootc rollback' goes back to the previous deployment)."
+        exit 0
+    fi
+    if [ -n "$staged" ]; then echo "Note: $staged is staged and waiting for a reboot; this switch replaces it."; fi
     # nvidia images on a machine without an NVIDIA GPU: say so and ask (--yes alone does not bypass it, --force does)
     case "$image" in
         nvidia | nvidia-dx)
