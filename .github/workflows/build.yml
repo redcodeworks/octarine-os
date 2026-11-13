@@ -384,7 +384,7 @@ jobs:
             done
             # OPTIONAL packages: informational only, never fail (the missing list is reported below)
             for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock \
+                     gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
                      nautilus-gsconnect cockpit cockpit-machines cockpit-podman cockpit-storaged cockpit-networkmanager \
                      cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
                      pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
@@ -392,6 +392,15 @@ jobs:
                      libguestfs-xfs virt-v2v; do
               if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
             done
+            # GPaste (optional, shipped but not enabled): when installed, the extension directory, its UUID and the compiled schema must be there
+            if rpm -q gnome-shell-extension-gpaste >/dev/null 2>&1; then
+              check "GPaste extension directory and UUID" "grep -qF GPaste@gnome-shell-extensions.gnome.org /usr/share/gnome-shell/extensions/GPaste@gnome-shell-extensions.gnome.org/metadata.json"
+              check "GPaste schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.GPaste show-history | grep -q Alt"
+              check "GPaste daemon is D-Bus activated" "test -f /usr/share/dbus-1/services/org.gnome.GPaste.service"
+              check "GPaste is not enabled by default" "! grep -q GPaste /etc/dconf/db/distro.d/90-octarine-os"
+            else
+              echo "INFO GPaste not installed (listed in optional-packages-missing)"
+            fi
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
