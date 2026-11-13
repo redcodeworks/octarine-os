@@ -21,7 +21,9 @@ real_names="rusty lavd cake bpfland cosmos flash p2dq"
 
 # ---- the registry and the drop-ins generated from the manifest
 mk_dest() { # dest, tsv content on stdin
-    rm -rf "${1:?}"; mkdir -p "$1/usr/share/octarine-os" "$1/usr/bin"
+    rm -rf "${1:?}"; mkdir -p "$1/usr/share/octarine-os/polkit" "$1/usr/bin"
+    cp "$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in" "$1/usr/share/octarine-os/polkit/"
+    mkdir -p "$1/usr/lib/systemd/system"; cp "$here/system_files/usr/lib/systemd/system/scx@.service" "$1/usr/lib/systemd/system/"
     cat >"$1/usr/share/octarine-os/schedulers.tsv"
     while IFS= read -r l; do [ -n "$l" ] && { n=$(cut -f1 <<<"$l"); printf '#!/bin/sh\n' >"$1/usr/bin/$n"; chmod +x "$1/usr/bin/$n"; }; done <"$1/usr/share/octarine-os/schedulers.tsv"
 }
@@ -67,25 +69,35 @@ check "unit: no ConditionKernelVersion in the template (only generated per insta
 check "preset: scx@ instances are disabled and nothing in system_files enables a scheduler" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! grep -rE '^enable .*scx' '$here/system_files'"
 check "build files never enable or start a scheduler" bash -c "! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/gen-schedulers.sh' '$here/build_files/install-binaries.sh'"
 
-# ---- the polkit rule, with simulated actions (node)
-rules="$here/system_files/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
+# ---- the polkit rule: GENERATED from the template and the registry, tested with simulated actions (node)
+rules="$d/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
+tpl="$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in"
+check "polkit: the repo has only the template (the rule that ships is generated at image build from the registry)" bash -c "[ -f '$tpl' ] && grep -q '@INSTANCES@' '$tpl' && [ ! -e '$here/system_files/usr/share/polkit-1/rules.d/50-octarine-scx.rules' ]"
+check "polkit: the generated rule has the exact alternation of the registry instance names, no placeholder, no generic character class" bash -c "grep -qF '/^scx@(rusty|lavd|cake|bpfland|cosmos|flash|p2dq)\\.service\$/' '$rules' && ! grep -q '@INSTANCES@' '$rules' && ! grep -q 'A-Za-z0-9_-' '$rules'"
 cat >"$root/rule-test.js" <<'JSEOF'
 const fs = require("fs");
 let handler = null;
 const polkit = { addRule: (f) => { handler = f; }, Result: { YES: "YES", NO: "NO", AUTH_ADMIN: "AUTH_ADMIN", NOT_HANDLED: undefined } };
 eval(fs.readFileSync(process.argv[2], "utf8"));
+const names = process.argv[3].split(" ").filter(Boolean);
 const action = (id, details) => ({ id, lookup: (k) => details[k] });
 const subj = (o) => Object.assign({ local: true, active: true, isInGroup: (g) => g === "wheel" }, o);
 const MU = "org.freedesktop.systemd1.manage-units";
-const cases = [
-  ["valid start", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({}), "YES"],
-  ["valid stop", action(MU, { unit: "scx@lavd.service", verb: "stop" }), subj({}), "YES"],
-  ["valid restart", action(MU, { unit: "scx@p2dq.service", verb: "restart" }), subj({}), "YES"],
+const cases = [];
+for (const n of names) for (const v of ["start", "stop"]) cases.push([`registered ${n} ${v}`, action(MU, { unit: `scx@${n}.service`, verb: v }), subj({}), "YES"]);
+for (const n of names) cases.push([`restart is not granted for ${n}`, action(MU, { unit: `scx@${n}.service`, verb: "restart" }), subj({}), undefined]);
+cases.push(
+  ["unregistered name evil", action(MU, { unit: "scx@evil.service", verb: "start" }), subj({}), undefined],
+  ["a registered name plus a suffix (rusty2)", action(MU, { unit: "scx@rusty2.service", verb: "start" }), subj({}), undefined],
+  ["a registered name as a prefix of another (rust)", action(MU, { unit: "scx@rust.service", verb: "start" }), subj({}), undefined],
+  ["a name with a hyphen", action(MU, { unit: "scx@rusty-x.service", verb: "start" }), subj({}), undefined],
+  ["a registered name in uppercase", action(MU, { unit: "scx@RUSTY.service", verb: "start" }), subj({}), undefined],
+  ["scx@ without instance", action(MU, { unit: "scx@.service", verb: "start" }), subj({}), undefined],
+  ["two instances", action(MU, { unit: "scx@rusty@lavd.service", verb: "start" }), subj({}), undefined],
   ["different unit", action(MU, { unit: "sshd.service", verb: "start" }), subj({}), undefined],
   ["unit that only contains scx@", action(MU, { unit: "evil-scx@rusty.service", verb: "start" }), subj({}), undefined],
-  ["scx@ with a bad instance", action(MU, { unit: "scx@a/b.service", verb: "start" }), subj({}), undefined],
+  ["scx@ with a slash", action(MU, { unit: "scx@a/b.service", verb: "start" }), subj({}), undefined],
   ["scx@ with a space", action(MU, { unit: "scx@a b.service", verb: "start" }), subj({}), undefined],
-  ["scx@ without instance", action(MU, { unit: "scx@.service", verb: "start" }), subj({}), undefined],
   ["scx@ not a service", action(MU, { unit: "scx@rusty.timer", verb: "start" }), subj({}), undefined],
   ["missing verb", action(MU, { unit: "scx@rusty.service" }), subj({}), undefined],
   ["missing unit", action(MU, { verb: "start" }), subj({}), undefined],
@@ -93,6 +105,9 @@ const cases = [
   ["verb kill", action(MU, { unit: "scx@rusty.service", verb: "kill" }), subj({}), undefined],
   ["verb reload", action(MU, { unit: "scx@rusty.service", verb: "reload" }), subj({}), undefined],
   ["verb try-restart", action(MU, { unit: "scx@rusty.service", verb: "try-restart" }), subj({}), undefined],
+  ["verb reload-or-restart", action(MU, { unit: "scx@rusty.service", verb: "reload-or-restart" }), subj({}), undefined],
+  ["verb reset-failed", action(MU, { unit: "scx@rusty.service", verb: "reset-failed" }), subj({}), undefined],
+  ["verb set-property", action(MU, { unit: "scx@rusty.service", verb: "set-property" }), subj({}), undefined],
   ["verb start;kill", action(MU, { unit: "scx@rusty.service", verb: "start;kill" }), subj({}), undefined],
   ["inactive subject", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({ active: false }), undefined],
   ["remote subject", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({ local: false }), undefined],
@@ -100,20 +115,31 @@ const cases = [
   ["manage-unit-files (enable) is not granted", action("org.freedesktop.systemd1.manage-unit-files", { unit: "scx@rusty.service", verb: "enable" }), subj({}), undefined],
   ["another action id", action("org.freedesktop.login1.reboot", { unit: "scx@rusty.service", verb: "start" }), subj({}), undefined],
   ["non-string unit", action(MU, { unit: 5, verb: "start" }), subj({}), undefined],
-];
+);
 let bad = 0;
 for (const [name, a, s, want] of cases) {
   const got = handler(a, s);
   if (got !== want) { console.log("FAIL " + name + ": got " + got + ", want " + want); bad++; } else { console.log("ok   " + name); }
 }
+console.log(cases.length + " simulated actions");
 process.exit(bad ? 1 : 0);
 JSEOF
 if command -v node >/dev/null; then
-    check "polkit rule (node): grants only start, stop, restart of scx@<name>.service to an active local wheel user (22 simulated actions)" node "$root/rule-test.js" "$rules"
+    check "polkit rule (node, GENERATED rule): each of the seven real names matches for start and stop, restart does not match for any; unregistered, suffixed, hyphenated, uppercase and empty names, other verbs and subjects do not" node "$root/rule-test.js" "$rules" "$real_names"
 else
     bad "polkit rule test needs node (install nodejs)"
 fi
-check "polkit rule: YES is returned in one place only and the verbs are matched exactly" bash -c "[ \$(grep -c 'polkit.Result.YES' '$rules') = 1 ] && grep -q 'verb !== \"start\" && verb !== \"stop\" && verb !== \"restart\"' '$rules'"
+# adding a scheduler is one line in the manifest: the rule follows
+{ cat "$root/real4.tsv"; printf 'scx_newone\tbin/scx_newone\t\tA new scheduler\n'; } | mk_dest "$root/dpol"; gen "$root/dpol"
+check "polkit: adding one manifest line adds that instance to the generated rule, and it then matches" bash -c "[ $rc = 0 ] && grep -qF '|newone)' '$root/dpol/usr/share/polkit-1/rules.d/50-octarine-scx.rules' && node '$root/rule-test.js' '$root/dpol/usr/share/polkit-1/rules.d/50-octarine-scx.rules' '$real_names newone' | grep -q 'ok   registered newone stop' && ! grep -qF 'newone' '$rules'"
+rm -rf "${root:?}/dpol"
+printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/dpol2"; rm "$root/dpol2/usr/share/octarine-os/polkit/50-octarine-scx.rules.in"; gen "$root/dpol2"
+check "polkit: a missing rule template fails the generation" test "$rc" != 0
+printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/dpol3"; rm "$root/dpol3/usr/lib/systemd/system/scx@.service"; gen "$root/dpol3"
+check "polkit: the rule is never generated without the scx@.service template unit (StartTransientUnit under a matching name would otherwise create a root unit)" bash -c "[ $rc != 0 ] && grep -q 'not generating the polkit rule' '$root/run' && [ ! -e '$root/dpol3/usr/share/polkit-1/rules.d/50-octarine-scx.rules' ]"
+check "guard: usr/lib/systemd/system/scx@.service exists in the tree under exactly that name, next to the rule template; both workflows' smoke tests check it and that the rule lists the registry instances" bash -c "[ -f '$here/system_files/usr/lib/systemd/system/scx@.service' ] && [ -f '$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in' ] && for w in build.yml build-beta.yml; do grep -q 'test -f /usr/lib/systemd/system/scx@.service' '$here/.github/workflows/'\$w && grep -q 'polkit rule: generated from the registry' '$here/.github/workflows/'\$w || exit 1; done"
+check "polkit rule: YES is returned in one place only, the verbs are exactly start and stop (no restart), and the side doors are documented in the rule" bash -c "[ \$(grep -c 'polkit.Result.YES' '$tpl') = 1 ] && grep -q 'verb !== \"start\" && verb !== \"stop\") {' '$tpl' && ! grep -q 'restart\"' '$tpl' && grep -q 'FreezeUnit' '$tpl' && grep -q 'StartTransientUnit' '$tpl'"
+check "nothing relies on an unprivileged restart of scx units (hooks, recipe, restore use start and stop only)" bash -c "! grep -n 'systemctl[^|]*restart' '$lib'/gamemode-lib.sh '$lib'/gamemode-start '$lib'/gamemode-end '$here/system_files/usr/share/ublue-os/just/60-custom.just' | grep scx"
 
 # ---- the root-side helpers: instance validation, preflight, run, verify
 export OCTARINE_SCX_REGISTRY="$root/reg" OCTARINE_SCX_SYSFS="$root/sys" OCTARINE_SCX_BTF="$root/btf" OCTARINE_SCX_STATE="$root/state" OCTARINE_SCX_KERNEL="6.99.0-test"
@@ -159,12 +185,18 @@ set_inactive() { echo disabled >"$root/sys/state"; rm -f "${root:?}/sys/root/ops
 set_active rusty; ver rusty
 check "verify: the instance is the active scheduler: exit 0" test "$rc" = 0
 set_active lavd; ver rusty; r_wrong=$rc
-check "verify: another scheduler is active (ops lavd): failure, non-zero, counted once" bash -c "[ $r_wrong != 0 ] && [ \"\$(cat '$root/state/scx-failures/rusty')\" = 1 ]"
+check "verify: another scheduler holds sched_ext (ops lavd): the start fails (non-zero) but nothing is counted and no marker is written" bash -c "[ $r_wrong != 0 ] && grep -q 'busy' '$root/run' && [ -z \"\$(find '$root/state' -type f)\" ]"
+for i in $(seq 1 12); do ver rusty; done
+check "verify: twelve start attempts while another scheduler is active (the ignore-dependencies attack) count nothing and write no marker" bash -c "[ -z \"\$(find '$root/state' -type f)\" ]"
+echo enabled >"$root/sys/state"; echo "some_foreign_sched" >"$root/sys/root/ops"; ver rusty
+check "verify: a scheduler that is not one of ours holding sched_ext is busy too, not counted" bash -c "[ $rc != 0 ] && [ -z \"\$(find '$root/state' -type f)\" ]"
+set_inactive; ver rusty; set_active lavd; ver rusty; set_active lavd; ver rusty; set_inactive; ver rusty
+check "verify: mixed sequence (real failure, busy, busy, real failure) counts exactly the two real failures" bash -c "[ \"\$(cat '$root/state/scx-failures/rusty')\" = 2 ] && [ ! -e '$root/state/scx-disabled/rusty' ]"
 rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
 set_inactive; ver rusty; ver rusty
 check "verify: two consecutive failures: count 2, still no marker" bash -c "[ \"\$(cat '$root/state/scx-failures/rusty')\" = 2 ] && [ ! -e '$root/state/scx-disabled/rusty' ]"
 ver rusty
-check "verify: the third consecutive verified failure writes the marker with the running kernel" bash -c "[ \"\$(cat '$root/state/scx-disabled/rusty')\" = 6.99.0-test ] && grep -q 'disabled for kernel 6.99.0-test' '$root/run'"
+check "verify: the third consecutive real failure (sched_ext not enabled) writes the marker with the running kernel" bash -c "[ \"\$(cat '$root/state/scx-disabled/rusty')\" = 6.99.0-test ] && grep -q 'disabled for kernel 6.99.0-test' '$root/run'"
 pre rusty
 check "verify and preflight together: after the marker the instance is refused on this kernel" test "$rc" = 1
 check "verify: the other instance is not affected by the marker" bash -c "[ ! -e '$root/state/scx-disabled/lavd' ]"
@@ -236,6 +268,20 @@ PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1 &
 PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1
 wait
 check "hooks: two games overlapping (two starts, two ends at once): lavd is started once, the boot scheduler is restored once, the second end finds nothing to restore" bash -c "[ \$(grep -c 'systemctl start scx@lavd.service' '$HLOG') = 1 ] && [ \$(grep -c 'systemctl start scx@rusty.service' '$HLOG') = 1 ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty ]"
+# a stale game-time scheduler from a crashed session (gamemoded died, end never ran) is repaired by the next start
+printf 'NAME=scx_cake\nINSTANCE=cake\nBINARY=/usr/bin/scx_cake\nDESCRIPTION=cake test\nMIN_KERNEL=\nFLAGS=\n' >"$root/reg/cake.conf"
+hreset; ENABLED=rusty; set_active cake; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; o1=$(ops_now)
+check "hooks: a stale scheduler (cake, neither the boot choice rusty nor the requested lavd) is first replaced by the boot choice, then the requested one is switched in" bash -c "[ '$o1' = lavd ] && [ \$(grep -n 'systemctl start scx@rusty.service' '$HLOG' | head -1 | cut -d: -f1) -lt \$(grep -n 'systemctl start scx@lavd.service' '$HLOG' | head -1 | cut -d: -f1) ] && grep -q 'stale scheduler cake' '$HLOG'"
+hook end; o2=$(ops_now)
+check "hooks: after that start, end restores the boot choice again" test "$o2" = rusty
+hreset; ENABLED=""; set_active cake; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; o1=$(ops_now)
+check "hooks: a stale scheduler and NO boot instance: it is stopped, the requested one switched in" bash -c "[ '$o1' = lavd ] && grep -q 'systemctl stop scx@cake.service' '$HLOG'"
+hreset; ENABLED=rusty; set_active rusty; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start
+check "hooks: states that already match (boot scheduler running, game choice requested): no restore, one switch only" bash -c "[ \$(grep -c 'systemctl start scx@rusty.service' '$HLOG') = 0 ] && [ \$(grep -c 'systemctl start scx@lavd.service' '$HLOG') = 1 ] && ! grep -q 'stale scheduler' '$HLOG'"
+hreset; ENABLED=rusty; set_active lavd; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; hook end; o2=$(ops_now)
+check "hooks: a game scheduler already active but not the boot choice (crashed session, marker lost): start takes over the restore duty, end restores the boot choice" test "$o2" = rusty
+hreset; ENABLED=rusty; set_active cake; echo 'GAMEMODE_SCHED=skip' >"$root/user.conf"; hook start
+check "hooks: skip never touches a running scheduler, stale or not" bash -c "! grep -qE 'systemctl (start|stop)' '$HLOG'"
 hreset; echo 'GAMEMODE_SCHED=../../etc/passwd' >"$root/user.conf"; hook start; r1=$rc
 check "hooks: an unregistered or hostile GAMEMODE_SCHED is ignored (treated as skip), no systemctl call, exit 0" bash -c "[ $r1 = 0 ] && ! grep -qE 'systemctl (start|stop)' '$HLOG' && grep -q 'ignoring GAMEMODE_SCHED' '$HLOG'"
 hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; SYSTEMCTL_FAIL=all hook start; r1=$rc; SYSTEMCTL_FAIL=all hook end; r2=$rc

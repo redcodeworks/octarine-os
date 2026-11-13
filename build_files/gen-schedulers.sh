@@ -9,6 +9,8 @@
 #            /usr/lib/systemd/system/scx@<instance>.service.d/10-conflicts.conf   Conflicts= on every other instance
 #            /usr/lib/systemd/system/scx@<instance>.service.d/20-kernel.conf      ConditionKernelVersion=>=<min>, only when the
 #                                                                                 registry has a minimum kernel
+#            /usr/share/polkit-1/rules.d/50-octarine-scx.rules   from usr/share/octarine-os/polkit/50-octarine-scx.rules.in with
+#                                                                the exact alternation of the instance names
 # The instance name is the scheduler name without the scx_ prefix (scx_rusty -> rusty): scx@rusty.service. Adding a scheduler is a
 # line in binaries/scx/schedulers.tsv plus the next bump of the binaries; nothing here changes.
 set -euo pipefail
@@ -67,4 +69,21 @@ for inst in "${instances[@]}"; do
         printf '[Unit]\nConditionKernelVersion=>=%s\n' "${kernel}" > "${d}/20-kernel.conf"
     fi
 done
+# The polkit rule: the template with the exact alternation of the instance names. The names were validated above
+# (^[a-z0-9][a-z0-9_]*$), so nothing in them is special in a regular expression; they are escaped anyway.
+# The rule must never exist without the template unit: StartTransientUnit under a name scx@x.service also matches the rule, and the
+# only thing that stops a transient root unit with an arbitrary ExecStart is systemd's "already loaded or has a fragment file".
+[[ -s "${units}/scx@.service" ]] || { echo "ERROR: ${units}/scx@.service is missing: not generating the polkit rule without the template unit" >&2; exit 1; }
+tpl="${dest}/usr/share/octarine-os/polkit/50-octarine-scx.rules.in"
+rule="${dest}/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
+[[ -s "${tpl}" ]] || { echo "ERROR: ${tpl} is missing" >&2; exit 1; }
+grep -q '@INSTANCES@' "${tpl}" || { echo "ERROR: ${tpl} has no @INSTANCES@ placeholder" >&2; exit 1; }
+alt=""
+for inst in "${instances[@]}"; do
+    esc=$(sed 's/[][\\.^$*+?(){}|\/-]/\\&/g' <<<"${inst}")
+    alt+="${alt:+|}${esc}"
+done
+mkdir -p "$(dirname "${rule}")"
+sed "s/@INSTANCES@/${alt}/" "${tpl}" > "${rule}"
+if grep -q '@INSTANCES@' "${rule}"; then echo "ERROR: placeholder left in ${rule}" >&2; exit 1; fi
 echo "Scheduler registry: ${instances[*]}"

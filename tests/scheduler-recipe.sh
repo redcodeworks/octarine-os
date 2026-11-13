@@ -23,7 +23,7 @@ bin="$root/bin"
 sysbin="$root/sysbin"
 mkdir -p "$bin" "$sysbin"
 REAL_JUST=$(command -v just)
-for c in bash sh env cat grep awk sed cut tr date head sort dirname basename wc chmod printf mkdir mktemp mv rm ls touch tee readlink; do
+for c in bash sh env cat grep awk sed cut tr date head sort dirname basename wc chmod printf mkdir mktemp mv rm ls touch tee readlink timeout; do
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 export LOG="$root/log" HOME="$root/home" UGUMQ="$root/ugumq" GUMQ="$root/gumq" OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
@@ -43,6 +43,11 @@ cat >"$bin/systemctl" <<'F'
 echo "systemctl $*" >>"$LOG"
 case "$1" in
     is-enabled) grep -qx "${2#scx@}" <(sed 's/$/.service/' "$ENABLED_FILE") && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
+    is-active) i=${2#scx@}; i=${i%.service}; [ "$(cat "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
+    start) [ "${FAKE_SYSTEMCTL_FAIL:-}" = 1 ] && exit 1
+        i=${2#scx@}; i=${i%.service}; mkdir -p "$SCHEDULER_SYSFS/root"; echo enabled >"$SCHEDULER_SYSFS/state"; echo "$i" >"$SCHEDULER_SYSFS/root/ops"; exit 0 ;;
+    stop) [ "${FAKE_SYSTEMCTL_FAIL:-}" = 1 ] && exit 1
+        i=${2#scx@}; i=${i%.service}; [ "$(cat "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { rm -f "$SCHEDULER_SYSFS/root/ops"; echo disabled >"$SCHEDULER_SYSFS/state"; }; exit 0 ;;
 esac
 exit 0
 F
@@ -88,7 +93,7 @@ F
 chmod +x "$bin"/*
 
 reset() {
-    rm -f "${root:?}"/ugumq.* "${root:?}"/gumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC FAKE_SUDO_FAIL FAKE_UID
+    rm -f "${root:?}"/ugumq.* "${root:?}"/gumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC FAKE_SUDO_FAIL FAKE_UID FAKE_SYSTEMCTL_FAIL FAKE_GAMEMODED
     rm -rf "${HOME:?}/.config"
     rm -rf "${root:?}/state"; mkdir -p "$root/state"
     rm -rf "${root:?}/sys"; mkdir -p "$root/sys"
@@ -166,6 +171,44 @@ reset; run '' --yes
 check "--yes alone changes nothing" bash -c "[ $rc = 0 ] && ! grep -q sudo '$LOG' && [ ! -e '$conf' ]"
 reset; run ''
 check "no flags and no terminal: nothing changes, exit 0, the usage and the names shown, no menu" bash -c "[ $rc = 0 ] && grep -q 'Nothing to change\\|No terminal menu' '$root/out' && ! grep -q 'ugum' '$LOG' && ! grep -q sudo '$LOG'"
+
+# ---- --restore: back to the boot choice after a crashed GameMode session
+setops() { mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo "$1" >"$root/sys/root/ops"; }
+cat >"$bin/gamemoded" <<'F'
+#!/usr/bin/env bash
+case "${FAKE_GAMEMODED:-inactive}" in
+    active) echo "gamemode is active" ;;
+    silent) ;;
+    *) echo "gamemode is inactive" ;;
+esac
+F
+chmod +x "$bin/gamemoded"
+reset; setops lavd; : >"$ENABLED_FILE"; run '' --restore
+check "restore, stale game scheduler and no boot instance: stops it (no sudo needed), back to the kernel default" bash -c "[ $rc = 0 ] && grep -qx 'systemctl stop scx@lavd.service' '$LOG' && ! grep -q '^sudo' '$LOG' && [ ! -e '$root/sys/root/ops' ] && grep -q 'kernel default' '$root/out'"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; run '' --restore
+check "restore, stale game scheduler and a boot instance enabled: starts the boot instance (which replaces the other)" bash -c "[ $rc = 0 ] && grep -qx 'systemctl start scx@rusty.service' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = rusty ] && ! grep -q '^sudo' '$LOG'"
+reset; setops rusty; echo rusty >"$ENABLED_FILE"; run '' --restore
+check "restore, already consistent (boot instance running): nothing to do, nothing run" bash -c "[ $rc = 0 ] && grep -q 'Already consistent' '$root/out' && ! grep -qE 'systemctl (start|stop)' '$LOG'"
+reset; : >"$ENABLED_FILE"; echo disabled >"$root/sys/state"; run '' --restore
+check "restore, nothing enabled and nothing running: already consistent" bash -c "[ $rc = 0 ] && grep -q 'Already consistent' '$root/out' && ! grep -qE 'systemctl (start|stop)' '$LOG'"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; run '' --restore --no
+check "restore --no: prints the plan and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan only' '$root/out' && grep -q 'systemctl start scx@rusty.service' '$root/out' && ! grep -qE '^systemctl (start|stop)' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = lavd ]"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_SYSTEMCTL_FAIL=1 run '' --restore
+check "restore, the unprivileged call is refused: the same command runs once through sudo and the sudo is logged" bash -c "grep -qx 'sudo systemctl start scx@rusty.service' '$LOG' && [ \$(grep -cx 'sudo systemctl start scx@rusty.service' '$LOG') = 1 ]"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_SYSTEMCTL_FAIL=1 FAKE_SUDO_FAIL=1 run '' --restore
+check "restore, sudo fails too: FAILED with the exact command, exit 1, never retried" bash -c "[ $rc = 1 ] && grep -q 'Failed: sudo systemctl start scx@rusty.service' '$root/out' && [ \$(grep -c '^sudo ' '$LOG') = 1 ] && ! grep -q 'sudo systemctl stop' '$LOG'"
+reset; FAKE_UID=0 run '' --restore
+check "restore refuses root" test "$rc" = 1
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; run '' --status
+check "status: the running scheduler differs from the boot choice and gamemoded -s says inactive: the hint names ujust scheduler --restore" bash -c "grep -q 'a game-time scheduler is active but no GameMode session is registered: run ujust scheduler --restore' '$root/out'"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_GAMEMODED=active run '' --status
+check "status: with an active GameMode session no restore hint is given" bash -c "grep -q 'GameMode reports an active session' '$root/out' && ! grep -q 'run ujust scheduler --restore' '$root/out'"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_GAMEMODED=silent run '' --status
+check "status: gamemoded -s that answers nothing: the hint is skipped and says why" bash -c "grep -q 'did not answer' '$root/out'"
+reset; setops lavd; echo rusty >"$ENABLED_FILE"; mv "$bin/gamemoded" "$root/gamemoded.off"; run '' --status; mv "$root/gamemoded.off" "$bin/gamemoded"
+check "status: without gamemoded the hint says the GameMode state is unknown" bash -c "grep -q 'GameMode state unknown' '$root/out'"
+reset; setops rusty; echo rusty >"$ENABLED_FILE"; run '' --status
+check "status: running equals the boot choice: no note" bash -c "! grep -q 'differs from the boot choice' '$root/out'"
 
 # ---- the menus (a terminal is faked)
 export OCTARINE_MENU_FORCE_TTY=1

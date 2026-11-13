@@ -2716,7 +2716,7 @@ scheduler *args:
     sysfs="${SCHEDULER_SYSFS:-/sys/kernel/sched_ext}"
     state_dir="${SCHEDULER_STATE_DIR:-/var/lib/octarine-os}"
     conf="${SCHEDULER_USER_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/octarine-os/scheduler.conf}"
-    usage="Usage: ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--status] [--list] [--yes|--no] [-h|--help]"
+    usage="Usage: ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no] [-h|--help]"
     boot_want=""
     gm_want=""
     action=""
@@ -2728,10 +2728,11 @@ scheduler *args:
             --gamemode) shift; if [ "$#" -eq 0 ]; then echo "--gamemode needs skip, none or NAME" >&2; echo "$usage" >&2; exit 2; fi; gm_want=$1 ;;
             --gamemode=*) gm_want=${1#--gamemode=} ;;
             --status) action=status ;;
+            --restore) action=restore ;;
             --list) action=list ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now (system setting, sudo once, a security-key touch; never retried, the exact command is printed when it fails). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--restore] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now (system setting, sudo once, a security-key touch; never retried, the exact command is printed when it fails). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --restore puts the machine back on the boot choice (start the enabled instance and stop any other one, or stop every running scheduler when none is enabled), for the case that gamemoded died during a game and the game-time scheduler stayed active; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
             *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
         esac
         shift
@@ -2806,7 +2807,52 @@ scheduler *args:
             fi
         done
         echo "disabled markers: ${dis:- none}"
+        boot_first=$(enabled_insts | head -n1)
+        a_inst=$(active_sched)
+        if [ -n "$a_inst" ] && [ "$a_inst" != "$boot_first" ]; then
+            echo "note: the running scheduler ($a_inst) differs from the boot choice (${boot_first:-none})."
+            if command -v gamemoded >/dev/null 2>&1; then
+                gms=$(timeout 2 gamemoded -s 2>&1 | head -n1)
+                case "$gms" in
+                    *"is active"* | *"are active"*) echo "      GameMode reports an active session: $gms" ;;
+                    "") echo "      GameMode did not answer (gamemoded -s): the hint is skipped; run ujust scheduler --restore if no game is running." ;;
+                    *) echo "      a game-time scheduler is active but no GameMode session is registered: run ujust scheduler --restore" ;;
+                esac
+            else
+                echo "      GameMode state unknown (gamemoded -s is not available): if no game is running, run ujust scheduler --restore"
+            fi
+        fi
         exit 0
+    fi
+
+    if [ "$action" = restore ]; then
+        boot_first=$(enabled_insts | head -n1)
+        cmds=()
+        if [ -n "$boot_first" ]; then
+            if [ "$(active_sched)" != "$boot_first" ]; then cmds+=("systemctl start scx@$boot_first.service"); fi
+            for i in "${inst[@]}"; do
+                if [ "$i" != "$boot_first" ] && [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ]; then cmds+=("systemctl stop scx@$i.service"); fi
+            done
+        else
+            for i in "${inst[@]}"; do
+                if [ "$(systemctl is-active "scx@$i.service" 2>/dev/null)" = active ]; then cmds+=("systemctl stop scx@$i.service"); fi
+            done
+            a=$(active_sched)
+            if [ "${#cmds[@]}" -eq 0 ] && [ -n "$a" ] && is_inst "$a"; then cmds+=("systemctl stop scx@$a.service"); fi
+        fi
+        echo "== restore the boot choice (${boot_first:-none: the kernel default scheduler, EEVDF})"
+        if [ "${#cmds[@]}" -eq 0 ]; then echo "Already consistent: nothing to do."; exit 0; fi
+        printf '  %s\n' "${cmds[@]}"
+        echo "Needs no prompt for the active wheel user (polkit rule); if that is refused the same command runs once through sudo (a security-key touch), never retried. Undo: ujust scheduler --gamemode NAME and start a game, or systemctl start scx@NAME.service"
+        if [ "$mode" = no ]; then echo "Plan only."; exit 0; fi
+        rc=0
+        for c in "${cmds[@]}"; do
+            if $c 2>/dev/null; then echo "Done: $c"; continue; fi
+            echo "Refused without privileges; trying once through sudo: sudo $c"
+            if ! sudo $c; then echo "Failed: sudo $c" >&2; echo "Run it yourself when ready." >&2; rc=1; break; fi
+            echo "Done: sudo $c"
+        done
+        exit "$rc"
     fi
 
     boot_cur=$(enabled_insts | head -n1)

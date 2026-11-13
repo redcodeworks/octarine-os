@@ -122,7 +122,18 @@ scheduler_start() {
         if sctl stop "scx@${cur}.service"; then echo none > "$(marker)"; log "stopped ${cur} for the game: kernel default scheduler"; else notify_failure "could not stop scx@${cur}.service"; fi
         return 0
     fi
-    if [[ "${cur}" == "${choice}" ]]; then log "${choice} is already active: nothing to switch"; return 0; fi
+    if [[ "${cur}" == "${choice}" ]]; then
+        # already the game choice: if it is not also the boot choice, a crashed session may have left it; take the restore duty over
+        if [[ "${boot}" != "${choice}" ]]; then echo "${choice}" > "$(marker)"; fi
+        log "${choice} is already active: nothing to switch"
+        return 0
+    fi
+    # GameMode calls start only for the FIRST game, so a scheduler left over from a crashed session (gamemoded died, end never ran)
+    # is repaired here: when a scheduler is running that is neither the boot choice nor the requested one, go back to the boot choice first
+    if [[ -n "${cur}" && "${cur}" != "${boot}" ]]; then
+        log "stale scheduler ${cur} is running (boot choice: ${boot:-none}); restoring the boot choice before switching"
+        restore_boot
+    fi
     if sctl start "scx@${choice}.service" && wait_active "${choice}"; then
         echo "${choice}" > "$(marker)"
         log "switched to ${choice} for the game (boot choice: ${boot:-none})"
