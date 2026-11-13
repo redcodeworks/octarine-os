@@ -74,4 +74,9 @@ done
 check "no excluded category in the shipped files (theme names, key model, editor, personal names and paths)" bash -c "! grep -nEi 'gruvbox|papirus|helix|\\bhx\\b|/home/kevin|/var/home/|nox|asgard|kevin|riley' $keyfile $gm ${fish_files[*]} && ! grep -nE '\\bMEH\\b|\\bHYPR\\b' $keyfile $gm ${fish_files[*]}"
 check "no theme, icon, cursor or font key in the keyfile" bash -c "! grep -E '^(gtk-theme|icon-theme|cursor-theme|monospace-font-name|font-name|color-scheme|name)=' '$keyfile'"
 check "no keybinding group in the keyfile" bash -c "! grep -Ei 'keybindings|\\[org/gnome/desktop/wm|tilingshell|arcmenu|dash-to-dock|auto-move' '$keyfile'"
+# VM hosting is a dx-only feature: the default image installs none of the hosting meta packages but keeps the libguestfs tools
+check "build.sh does not install libvirt, qemu-kvm or cockpit-machines (dx only)" bash -c "! grep -vE '^[[:space:]]*#' '$here/build_files/build.sh' | grep -qE '(^|[ \"])(libvirt|qemu-kvm|cockpit-machines)([ \"]|\\\\|\$)'"
+check "build.sh keeps the libguestfs group" grep -q 'libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v' "$here/build_files/build.sh"
+check "the default smoke steps (build.yml and build-beta.yml) assert the hosting packages are absent" bash -c "for w in build build-beta; do grep -q 'VM-hosting package \$p is NOT installed' '$here/.github/workflows/'\$w.yml || exit 1; done"
+check "dx extras.txt lists the full VM-hosting set" bash -c "for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer swtpm edk2-ovmf libvirt-nss; do grep -qx \$p '$here/variants/dx/packages/extras.txt' || exit 1; done"
 exit "$fail"

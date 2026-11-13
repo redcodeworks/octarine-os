@@ -20,6 +20,8 @@ local_dir="${LOCAL_DIR:-/usr/local}"
 fail=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
+# The VM-hosting set (the meta packages and its tools) belongs to the dx variants only; the libguestfs tools stay everywhere.
+vmhost_pkgs() { rpm -qa --qf '%{NAME}\n' | grep -xE 'libvirt|qemu-kvm|cockpit-machines|virt-manager|virt-viewer|libvirt-nss'; }
 nvidia_pkgs() { rpm -qa | grep -i nvidia | grep -vi firmware; }
 # The CUDA toolkit (nvcc and friends) is never part of an image: NVIDIA's license does not allow shipping it, and `ujust dev`
 # installs it in a distrobox. Only the driver's own userspace (nvidia-driver-cuda*, libcuda) belongs here.
@@ -78,6 +80,10 @@ case "${mode}" in
         check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
         check "image id (${expect_image_id})" "grep -qx 'IMAGE_ID=\"${expect_image_id}\"' '${os_release}'"
         check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
+        case "${expect_image_id}" in
+            *-dx) ;;
+            *) check "no VM-hosting package in the plain NVIDIA image (dx only)" "test -z \"\$(vmhost_pkgs)\"" ;;
+        esac
         check "no CUDA toolkit package is installed" "test -z \"\$(toolkit_pkgs)\""
         check "no /usr/local/cuda* and no nvcc" "no_toolkit_files"
         # what a container needs to get the GPU through CDI (informational: whether the driver install brings them is unverified)

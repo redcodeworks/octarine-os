@@ -432,7 +432,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the default image still ships libvirt and qemu-kvm until stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
+- **Kernel argument:** none in the default image. `iommu=pt` (`kargs.d/10-iommu.toml`) ships only in the dx image, from `variants/dx/system_files/usr/lib/bootc/kargs.d/` (moved there 2026-11-10; the VM-hosting set moved out of the default image too, see stage 3 of "dx image"). `tests/readme-defaults.sh` and `dx-smoke.sh` assert it in dx, the smoke tests of `build.yml` and `build-beta.yml` assert its absence. The NVIDIA variant is built on the default image and has no `iommu=pt` either.
 - **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
@@ -815,7 +815,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `mokutil --test-key` does not report enrolled), `tpm-luks` (`/dev/tpmrm0` and a `crypto_LUKS` volume; never reported done, since
   reading the headers needs root), `fido-key` (`lsusb -d 1050:` or a hidraw with `ID_SECURITY_TOKEN=1`; runs
   `pamu2fcfg -o pam://sudo -i pam://sudo` into a temp file, mode 600, moved into `~/.config/Yubico/u2f_keys`; an existing non-empty file
-  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `rocm` (AMD GPU and `/dev/kfd` and distrobox; `ujust toolbox rocm`; not ticked by default; done when the box has `rocminfo`) with `rocm-export` and `cuda-export` (opt-in, never ticked; see "Opt-in export"), `virtualization` (dx image and `/dev/kvm`;
+  means done and is never overwritten; the PAM `nouserok` behavior is untouched), `rocm` (AMD GPU and `/dev/kfd` and distrobox; `ujust toolbox rocm`; not ticked by default; done when the box has `rocminfo`) with `rocm-export` and `cuda-export` (opt-in, never ticked; see "Opt-in export"), `virtualization` (dx image only, because only dx has libvirt, and `/dev/kvm`;
   `dev --only libvirt`; done when the user is in `libvirt`).
 - Adding an entry: add its id to `valid_steps` and `step_ids`, its text, and a case in `reason_of`, `done_of`, `default_of`, `undo_of`
   and `run_of`, then cases in `tests/hardware-setup.sh`. Skipped for now: firmware and laptop power. Unverified without hardware:
@@ -996,8 +996,28 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Kernel argument.** `variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml` (`iommu=pt`) is copied by the same `cp -avf` as the
   other dx files; the default image no longer ships it. UNVERIFIED on a real machine: that `bootc switch` between the two images adds
   and removes the karg at the next boot (bootc applies `kargs.d` differences on upgrade and switch).
-- **Stage 3 (planned).** The VM-hosting set (libvirt, QEMU, Cockpit machines and friends) will move out of the default image
-  and live only in dx (`extras.txt` already lists it so dx stays self-sufficient); the libguestfs tools stay in the default image.
+- **Stage 3 (done, `feat/vm-host-to-dx`).** The VM-hosting set moved out of the default image and lives only in dx and nvidia-dx
+  (`variants/dx/packages/extras.txt`: `libvirt` and `qemu-kvm` meta packages, `cockpit-machines`, `virt-install`, `virtiofsd`, `swtpm`,
+  `swtpm-tools`, `dnsmasq`, `edk2-ovmf`, `virt-manager`, `virt-viewer`, `libvirt-nss`, ...). `build.sh` no longer lists `libvirt` and
+  `qemu-kvm` (CRITICAL) or `cockpit-machines` (the `cockpit` group); the `libguestfs` group (`guestfs-tools`, `libguestfs`,
+  `libguestfs-xfs`, `virt-v2v`) stays in the default image and drags in libvirt libraries and a QEMU subset as dependencies
+  (measured on the default image of 2026-11-10 with `dnf5 --disable-repo='*' remove --assumeno libvirt qemu-kvm cockpit-machines`:
+  103 packages and about 79 MiB go away, among them `libvirt`, `libvirt-daemon`, `libvirt-daemon-driver-storage-*` (except `-core`),
+  `libvirt-dbus`, `libvirt-glib`, `qemu-kvm`, `qemu-system-x86`, the `qemu-audio-*`, `-block-*`, `-device-*`, `-ui-*` modules,
+  `virtiofsd`, `virt-install`, `cockpit-machines`, `spice-server`, `virglrenderer`, glusterfs and Ceph client libraries). What stays
+  because of libguestfs and virt-v2v: `libvirt-libs`, `libvirt-client`, `libvirt-daemon-common`, `-driver-qemu`, `-driver-network`,
+  `-driver-secret`, `-driver-storage-core`, `-daemon-log`, `-daemon-config-network`, `qemu-kvm-core`, `qemu-system-x86-core`,
+  `qemu-img`, `qemu-common`, `edk2-ovmf`, `nbdkit*`, `passt`, `supermin`, `libguestfs-appliance`, `swtpm` (with `-libs`, `-tools`,
+  `-selinux`, dragged in by the QEMU driver, so it is NOT asserted absent), `dnsmasq`, `virt-what`. The `libvirt` group and the
+  `virtqemud` units can still exist in the default image through the driver packages, but nothing enables them. Smoke tests:
+  `build.yml` and `build-beta.yml` assert `libvirt`, `qemu-kvm`, `cockpit-machines`, `virt-manager`, `virt-viewer` and `libvirt-nss`
+  are absent (and `guestfs-tools` present); `nvidia-smoke.sh present` asserts the same for the plain NVIDIA image (skipped for an
+  `-dx` image id); `dx-smoke.sh` asserts the full set, the `libvirtd`, `virtqemud`, `virtnetworkd` and `virtstoraged` units and
+  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). The root `Justfile` recipe `test-vm`
+  needs libvirt on the host, so it runs on a dx machine. Switching a machine from dx to the default image removes VM hosting
+  (`ujust dev --only libvirt` and the hardware-setup `virtualization` step are dx-only; the user's `libvirt` group membership stays
+  in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
+  2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
 - **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
   image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
   exists on `main` (for the testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
@@ -1231,7 +1251,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
   `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
   `chrome-flatpak-webapps` and `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; steps
-  in order: `groups` (copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first;
+  in order: `groups` (the gum checklist names only the groups `getent` finds, so the default image says gamemode and input; copies the `gamemode`, `input` and `libvirt` lines from `/usr/lib/group` into `/etc/group` first;
   sudo), `shell` (`usermod -s /usr/bin/zsh`, second and last sudo use; skeleton zsh files copied with `cp -n` for the
   invoking user only), `flatpak` (skipped per app when missing (`flatpak info`) or the override is present (`flatpak
   override --user --show`); defaults yes except the Steam devices (widens the sandbox) and the games directory (needs a

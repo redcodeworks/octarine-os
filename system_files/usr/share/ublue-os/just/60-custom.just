@@ -19,7 +19,7 @@ user-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input, libvirt; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -135,9 +135,17 @@ user-setup *args:
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
         ui=1
         menu_title "octarineOS user setup"
+        # only name the groups that exist here (libvirt exists only where libvirt is installed, so not on the default image)
+        menu_groups=()
+        for g in gamemode input libvirt; do getent group "$g" >/dev/null 2>&1 && menu_groups+=("$g"); done
+        case "${#menu_groups[@]}" in
+            0) menu_groups_text="no extra groups" ;;
+            1) menu_groups_text="${menu_groups[0]}" ;;
+            *) menu_groups_text="$(IFS=,; echo "${menu_groups[*]:0:${#menu_groups[@]}-1}" | sed 's/,/, /g') and ${menu_groups[${#menu_groups[@]}-1]}" ;;
+        esac
         menu_multi "User setup: choose the steps" \
             "^Account^0" \
-            "groups^Add $user to gamemode, input and libvirt (sudo)^1" \
+            "groups^Add $user to $menu_groups_text (sudo)^1" \
             "shell^Login shell zsh (sudo)^1" \
             "^Apps^0" \
             "flatpak^Flatpak access overrides^1" \
@@ -167,7 +175,7 @@ user-setup *args:
     done
     echo "== groups"
     if [ "${#groups_todo[@]}" -eq 0 ]; then
-        echo "$user is already in every available group (gamemode, input, libvirt)."
+        echo "$user is already in every available group (gamemode, input, libvirt where installed)."
         record "groups" "already done"
     else
         echo "Will add $user to: ${groups_todo[*]} (uses sudo; takes effect at next login)."
