@@ -110,6 +110,10 @@ echo "== latest channel (main)"
 rm -f "$CFG"/*
 run latest; expect "latest, nothing published, no testing image: build" true false ""
 cfg latest "${bl}" "${inputs}"; run latest; expect "latest, same base and dx inputs: skip" false false ""
+echo "$(printf 'ghcr.io/redcodeworks/octarine-os-dx@sha256:%s' "$(dxd latest)")" > "$UNSIGNED"
+cfg latest "${bl}" "${inputs}"; run latest; expect "latest, same base and inputs but the published image is NOT signed (a cancelled run): build, never skip" true false ""
+grep -q 'does not verify: building' "$root/log" && pass "the unsigned skip candidate is named in a warning" || bad "unsigned warning"
+: > "$UNSIGNED"
 cfg latest "${other}" "${inputs}"; run latest; expect "latest, old base, no testing image: build" true false ""
 cfg testing "${bl}" "${inputs}"
 run latest; expect "latest, tested testing image with the same base and dx inputs: promote" false true testing
@@ -179,4 +183,11 @@ want_ag "plan failed" 1 failure skipped skipped skipped "" ""
 want_ag "plan cancelled" 1 cancelled skipped skipped skipped "" ""
 want_ag "run dx is not built for (plan skipped)" 0 skipped skipped skipped skipped "" ""
 want_ag "plan skipped but a job ran" 1 skipped success skipped skipped "" ""
+# BASE is the base build's aggregate result (set by build.yml; unset by the old workflow_run version, which must keep working)
+want_ag_b() { local name=$1 rc=$2 base=$3; shift 3; BASE=$base ag "$@"; local got=$?; [[ "$got" == "$rc" ]] && pass "aggregate: $name" || { bad "aggregate: $name (rc ${got}, want ${rc})"; sed 's/^/     /' "$root/aglog"; }; }
+want_ag_b "base ok, dx built" 0 success success success skipped success true false
+want_ag_b "base failed: dx was not built on it, fails" 1 failure "" "" "" "" "" ""
+want_ag_b "base cancelled: fails" 1 cancelled skipped skipped skipped "" "" ""
+want_ag_b "no dx result reported at all (call did not start): fails" 1 success "" "" "" "" "" ""
+want_ag_b "base ok, legitimate skip" 0 success success skipped skipped skipped false false
 exit "${fail}"

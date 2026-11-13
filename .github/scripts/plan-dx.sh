@@ -21,7 +21,8 @@
 #
 # The published octarine-os-dx:<channel> carries two labels: org.opencontainers.image.base.digest (the base it was built
 # on) and io.github.redcodeworks.octarine-os.dx-inputs (inputs-hash.sh `dx` of the commit it was built from).
-#   no force, both labels equal the current base digest and the current dx_inputs    -> skip   (build=false promote=false)
+#   no force, both labels equal the current base digest and the current dx_inputs, and the published digest is signed
+#                                                                                    -> skip   (build=false promote=false)
 #   channel latest, a tested octarine-os-dx testing image with the same two labels   -> promote (retag, no build)
 #   anything else (nothing published, unreadable, a label differs, force)            -> build
 # After a vanilla promote, octarine-os:latest has the digest of the tested octarine-os:testing-<sha>, which is the base
@@ -98,8 +99,16 @@ decision=""
 if [[ "${force}" == "true" ]]; then
     decision="forced: building although the published image is ${cur_base:-unknown}"
 elif [[ -n "${cur_base}" && "${cur_base}" == "${digest}" && "${cur_inputs}" == "${inputs}" ]]; then
-    build=false
-    decision="skipped: base and dx inputs unchanged (${channel}: ${digest})"
+    # The published image must also be SIGNED: a run that was cancelled between the push and the signing (build.yml cancels an
+    # older run on `testing`) leaves a published, unsigned image with equal labels, which would otherwise be skipped for ever
+    cur_d=$(skopeo inspect --raw "docker://${dx}:${channel}" 2> /dev/null | sha256sum | sed 's/ .*//') || cur_d=""
+    if [[ -n "${cur_d}" ]] && cosign verify --key cosign.pub "${dx}@sha256:${cur_d}" > /dev/null 2>&1; then
+        build=false
+        decision="skipped: base and dx inputs unchanged (${channel}: ${digest}), published image signed"
+    else
+        echo "::warning::The published ${dx}:${channel} matches but its signature does not verify: building (and signing) again"
+        decision="building (the published image is not signed)"
+    fi
 else
     if [[ -n "${cur_base}" ]]; then
         [[ "${cur_base}" == "${digest}" ]] || echo "The published dx image was built from ${cur_base}, the base is now ${digest}"

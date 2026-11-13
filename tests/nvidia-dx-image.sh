@@ -39,7 +39,7 @@ assert st["env"] == {"BASE_NAME": "octarine-os-nvidia", "DX_NAME": "octarine-os-
 assert st["run"] == ".github/scripts/plan-dx.sh"
 assert w["env"]["CHANNEL"] == "latest"
 PY
-check "workflow: it never posts the required check context of build-dx.yml (no job of that name, no statuses permission or API call)" python3 - "$wf" "$here/.github/workflows/build-dx.yml" <<'PY'
+check "workflow: it never reports the required check context (that job lives in build.yml; no job of that name here, no statuses permission or API call)" python3 - "$wf" "$here/.github/workflows/build-dx.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); dx = yaml.safe_load(open(sys.argv[2]))
 names = {j.get("name") for j in w["jobs"].values()}
@@ -49,9 +49,10 @@ assert "statuses" not in text.replace("statuses are", "") or "statuses: write" n
 assert "repos/${GITHUB_REPOSITORY}/statuses" not in text and 'context="Build dx and push image"' not in text
 for j in w["jobs"].values():
     assert "statuses" not in (j.get("permissions") or {}), j
-# and the dx workflow keeps posting it, unchanged
-assert dx["jobs"]["dx_result"]["name"] == "Build dx and push image"
-assert dx["jobs"]["dx_result"]["permissions"] == {"contents": "read", "statuses": "write"}
+# the required check is the job of build.yml, nowhere else
+b = yaml.safe_load(open(sys.argv[2].replace("build-dx", "build")))
+assert b["jobs"]["dx_result"]["name"] == "Build dx and push image"
+assert "Build dx and push image" not in {j.get("name") for j in dx["jobs"].values()}
 PY
 check "workflow: jobs are plan -> build -> sign -> result, result named 'NVIDIA dx build result', sign in the signing environment" python3 - "$wf" <<'PY'
 import sys, yaml

@@ -40,7 +40,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
 - `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
-- `.github/workflows/`: `build-dx.yml` (the dx image, see "Input hashes and dx on testing"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
+- `.github/workflows/`: `build-dx.yml` (the reusable workflow that builds the dx image, called by `build.yml` and `build-beta.yml`, see "dx image: a reusable workflow"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -565,10 +565,9 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   (sign skipped, as for a docs-only push) and the `testing` tag stays on the earlier image. A commit between them that changes
   `vanilla_inputs` stops the walk (build). Images from before the label have none: the commit decides. The scheduled skip compares
   `vanilla_inputs` of the `latest` revision with HEAD instead of the git tree, so a dx-only change does not rebuild `latest` the next day.
-- **dx on testing (`build-dx.yml`).** `workflow_run` of "Build container image" now fires for `main` and `testing`
-  (`branches: [main, testing]`; the beta build only counts for `main`). Channels: `testing` (after a testing build; base
+- **dx on testing (`build-dx.yml`).** Since 2026-11-13 dx is built INSIDE the pipelines by a reusable workflow (next bullet); the plan, tags and channels below are unchanged. Channels: `testing` (after a testing build; base
   `octarine-os:testing-<sha7>` of the triggering commit, see below; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build), `beta`
-  (main only, dispatch or after the beta build; unchanged). Every checkout uses `workflow_run.head_sha` (a dispatch: main's tip).
+  (main only, the beta pipeline or a dispatch). Every checkout is the caller's commit (`github.sha`: the pushed commit, or main's tip).
   `.github/scripts/plan-dx.sh` (tests: `tests/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
   `org.opencontainers.image.base.digest` and `io.github.redcodeworks.octarine-os.dx-inputs` (new; `dx-tree` is still written but no longer compared):
   skip only when BOTH equal the current base digest (raw manifest digest of the verified base, see "Base of the testing channel" below) and `dx_inputs` of the
@@ -583,7 +582,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   Change combinations on `testing`: dx-only = vanilla `reuse` (no vanilla build), dx builds; vanilla-only = vanilla builds, the new base digest
   makes dx build; both = both; nothing/docs-only = vanilla skips, dx skips (labels equal); first run = both build.
 - **Base of the testing channel.** `plan-dx.sh` for `testing` does not read the floating `octarine-os:testing` tag: it resolves
-  `octarine-os:testing-<short sha7 of HEAD>` (HEAD = `workflow_run.head_sha`, the commit of the default build that just finished), verifies
+  `octarine-os:testing-<short sha7 of HEAD>` (HEAD = the commit being built, whose default build just finished in the same run), verifies
   its signature and records that digest as `base.digest`. If the tag does not exist (the default build was reused for a dx-only or docs-only
   change) it walks back with `nearest_image_for_inputs` (the `plan-vanilla-reuse.sh` logic: first-parent history, stops at a commit whose
   `vanilla_inputs` differ) to the nearest earlier `testing-<sha>`; if there is none either it falls back to the floating `testing` tag with
@@ -599,21 +598,45 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   `build-beta.yml`, `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
   with the stub podman/skopeo registry, plus the `dx-image` and `beta-channel` workflow checks). Images published before the fix still have
   two digests; the first promotion after it builds dx once because no tested dx image on a matching base exists yet.
-- **The dx result check.** The aggregate job `Build dx and push image` (`aggregate-dx.sh`, tested in `tests/plan-dx.sh`) is green when dx was
-  built and signed, promoted and verified, or legitimately skipped; it passes without a signal when the plan was skipped (a failed or
-  cancelled vanilla run, the beta build on testing). A `workflow_run` run is attached to main's tip (`GITHUB_SHA` is the default branch's), NOT to the
-  commit a pull request shows, so a required check from that job could never be satisfied on the promotion PR. For a run on `testing` the job therefore also
-  posts a commit status named `Build dx and push image` on `workflow_run.head_sha` (`statuses: write`, `gh api repos/.../statuses/<sha>`); it posts `failure`
-  when the result check fails and nothing when the plan was skipped, so the pull request keeps waiting. The ruleset for `main` can require that
-  status context (any source; it is not a check run of the Actions app).
+- **dx image: a reusable workflow (2026-11-13; replaces the `workflow_run` chain).** `build-dx.yml` is `workflow_call` (inputs `channel`, `force`; outputs
+  the plan decision and the results of its jobs) plus a `workflow_dispatch` kept for a manual rebuild on `main`. Why: `workflow_run` always runs the
+  workflow file of `main`, so a change to the dx workflow could not be tried on `testing` (the recurring "first real run follows the first
+  promotion"), the result had to be posted as a COMMIT STATUS on the tested commit (a `workflow_run` check run attaches to main's tip), the testing
+  base was looked up a second time and two workflows had separate concurrency. Now `build.yml` has the job `dx` (`uses: ./.github/workflows/build-dx.yml`,
+  channel `testing` on `testing`, `latest` on `main`, `secrets: inherit`, `needs: build_result`, `if` the base aggregate succeeded and the ref is `main` or
+  `testing`; never a pull request: the workflow has no such trigger) and `build-beta.yml` has `dx` (channel `beta`, `needs: sign`, ref `main`). ONE-WAY: dx
+  needs the base, nothing of the base needs dx, so a failed dx build never turns `Build and push image` or `Sign and verify images` red or blocks their
+  signing; the run's overall conclusion is then red (the dx jobs failed) while the base checks stay green. The plan, tags, signing and result logic are the
+  same scripts (`plan-dx.sh`, `aggregate-dx.sh`, `push-tags.sh`, `dx-smoke.sh`); the plan still resolves the base itself (`octarine-os:testing-<sha7>`, an
+  immutable tag already published and signed by the time dx runs), so the base digest is not passed as an input (deviation from the first sketch: a pass-through
+  would have to cover the reused-default-build and promote cases). `build-nvidia-dx.yml` stays a separate workflow: it follows the NVIDIA variant's own weekly
+  chain on `main` (a `workflow_run` of "Build NVIDIA variant"), has no testing channel and no promote, and uses another smoke script; it is the only
+  `workflow_run` left (a test pins that).
+- **The required check `Build dx and push image` (since 2026-11-13).** It is the job `dx_result` OF `build.yml` (a job of a called workflow is reported as
+  `<caller job> / <job>`, so the exact name must come from the caller), `if: always()` on `main` and `testing`, `needs: [build_result, dx]`; it feeds
+  `aggregate-dx.sh` with the call's outputs (`collect` job: plan, build, promote, sign results and the plan's `build`/`promote` decision) and the base aggregate's
+  result in `BASE`: green when dx was built and signed, promoted and verified, or legitimately skipped (base and dx inputs unchanged); RED when the base build
+  failed (nothing was built on it; the base's own checks are red too), when the dx workflow reported nothing, or when a dx job failed or was cancelled.
+  It is a normal check run on the pushed commit, so the commit-status POST (`statuses: write`) is gone. Main's ruleset lists the context without an
+  integration id, so a check run of the Actions app satisfies it; no ruleset change was needed. Two contexts of one name with different results would block a
+  promotion: during the transition the old `main` version of `build-dx.yml` may still post the commit status once (below), always with the same outcome in practice.
+- **Transition (design).** Until the first promotion, `main` still has the OLD `build-dx.yml` (a `workflow_run` of "Build container image"), which starts after every
+  testing run that SUCCEEDED and builds dx again for the same commit. Why that is safe: (1) the new in-pipeline dx finishes before the run completes, so the old one
+  starts later; (2) the old one's plan (this commit's `plan-dx.sh`) sees the dx image of the same base digest and dx inputs, signed, and SKIPS (no second build, no tag
+  push, no `Build dx` job beyond the plan); (3) both use the concurrency group `build-dx-<channel>` (`cancel-in-progress: false`), so they never run at once; (4)
+  if the in-pipeline dx failed the run is red, so the old workflow's `conclusion == 'success'` gate keeps it from posting anything. Residual risks: a PENDING
+  group slot is replaced by a newer pending run (the old chain of an earlier commit and the new call of a later one can collide: the cancelled call shows red,
+  re-run it); the old workflow posts one more commit status of the same name with success; nothing else. The promotion that brings this file to `main`
+  removes the `workflow_run` trigger in the same merge, so there is no overlap after it. Hardening added for this: `plan-dx.sh` skips only when the published
+  image's digest also verifies with `cosign.pub` (a `testing` run that `build.yml` cancels between push and sign would otherwise leave an unsigned image with
+  equal labels that a skip never repairs).
 - **Prune.** `prune-testing.yml` now runs the generic testing pass on the `-dx` package too (same keep count as the default package; `testing-*` only versions,
   promoted versions carrying `latest*` are never candidates) next to the dx per-channel pass.
 - **NVIDIA dx.** `build-nvidia-dx.yml` reuses `plan-dx.sh` (`BASE_NAME`, `DX_NAME`, `PROMOTE_FROM_TESTING=false`) and builds the same `variants/dx` layer on `octarine-os-nvidia`; see "NVIDIA dx image and the CUDA toolbox".
-- **Cannot run before the first promotion.** `workflow_run` and `workflow_dispatch` use the workflow file of the default branch, so the new
-  `build-dx.yml` (testing trigger, promote job, status) first runs after this change is promoted to `main`; the first `testing` push after that
-  builds dx for the first time on testing. Until then the only checks are the stub tests and `bash -n`/YAML parses. Also unverified: the status
-  post (permissions), `actions/checkout` of a `head_sha` that is not on the default branch, the GHCR package being readable by the plan, and the promote retag of a dx
-  manifest.
+- **First runs.** Since the reusable workflow is called from `build.yml`, its first real run is the `testing` build after the merge of the change (no more
+  wait for a promotion). Verified here: static tests (`tests/dx-image.sh`, `tests/build-triggers.sh`, `tests/plan-dx.sh`), YAML parses, `bash -n`. Only the first
+  `testing` build shows: that the called workflow's `concurrency` and `environment: signing` work as called jobs, that `secrets: inherit` reaches `SIGNING_SECRET`,
+  the check name `Build dx and push image` on the pushed commit, the outputs of `collect` reaching `dx_result`, and the old `workflow_run` run skipping.
 
 ## Base image and Fedora major upgrade
 
@@ -1182,12 +1205,8 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `tests/dx-image.sh` covers the recipe with fake skopeo and cosign.
 - **Workflow rules (`build-dx.yml`).** Since 2026-11-10 dx also builds on `testing` and promotes on `main`; the flow, the plan decision table, the
   input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/plan-dx.sh`. The text below
-  describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: `workflow_run` of "Build container image" and "Build beta image" (`completed`,
-  `branches: [main, testing]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
-  or a feature branch and the first run of a changed file happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The
-  plan job runs only when `github.ref == refs/heads/main` and (a dispatch, or the triggering run concluded `success`, its event
-  is `schedule`, `push` or `workflow_dispatch`, and its `head_branch` is `main`; never a pull request). Channel: `beta` after
-  the beta build, `latest` after the default build, the input on dispatch. Plan: resolves
+  describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: since 2026-11-13 `workflow_call` (from `build.yml` and `build-beta.yml`) and `workflow_dispatch` (inputs `channel`, `force`), no `workflow_run`; see "dx image: a reusable workflow". The
+  plan job runs only for a push, schedule or dispatch of `testing` (channel `testing`) or `main` (`latest`, `beta`); never a pull request. Channel: the input. Plan: resolves
   `octarine-os:<channel>` to a digest (sha256 of the raw manifest), verifies it with `cosign.pub`, reads the published
   `octarine-os-dx:<channel>` labels and ends green with the notice "base unchanged, nothing to build" when its
   `org.opencontainers.image.base.digest` equals the digest AND its `io.github.redcodeworks.octarine-os.dx-tree` label equals
@@ -1242,9 +1261,8 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   (`ujust dev --only libvirt` and `ujust virthost-setup` are dx-only; the hardware-setup `virtualization` step was removed; the user's `libvirt` group membership stays
   in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
   2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
-- **Unverified until promotion.** The real build (no build before the merge exercises `variants/dx`: `build.yml` builds the default
-  image only), the base digest compare, the sign step and the first `workflow_run` behavior only run after the workflow
-  exists on `main` (for the testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
+- **Unverified until the first `testing` build.** The real build, the base digest compare and the sign step run in the first `testing` build after the merge (for the
+  testing trigger and the promote path see "Input hashes and dx on testing"). The `FROM` expansion `${BASE_DIGEST:+@}${BASE_DIGEST}` was checked with a local podman, not on the runner.
 
 ## NVIDIA dx image (`octarine-os-nvidia-dx`) and the CUDA toolbox
 
@@ -1253,9 +1271,9 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   build is identical for both variants, and NVIDIA's toolkit is a user-side install. No fork of the package list: the workflow passes
   `BASE_IMAGE=ghcr.io/<owner>/octarine-os-nvidia` and `DX_IMAGE_ID=octarine-os-nvidia-dx` (a build argument of the final stage of
   `variants/dx/Containerfile`, default `octarine-os-dx`; `dx.sh` sets `IMAGE_ID` from it and refuses any other value).
-- **Own workflow, `build-nvidia-dx.yml` (name "Build NVIDIA dx image").** Not a matrix of `build-dx.yml`: that file posts the REQUIRED
-  check `Build dx and push image` (also the commit status on the tested commit) and its trigger and result logic must not change. The new
-  workflow never posts that context: its result job is named `NVIDIA dx build result`, there is no `statuses` permission and no status
+- **Own workflow, `build-nvidia-dx.yml` (name "Build NVIDIA dx image").** Not a caller of the reusable `build-dx.yml`: it follows the NVIDIA variant's own weekly chain on `main`, has no testing channel or promote and another smoke script. The REQUIRED
+  check `Build dx and push image` is the `dx_result` job of `build.yml`. This
+  workflow never reports that context: its result job is named `NVIDIA dx build result`, there is no `statuses` permission and no status
   call, so it can neither satisfy nor block a promotion pull request. Trigger: `workflow_run` of "Build NVIDIA variant" (`main`
   only; that workflow itself runs only on the Sunday schedule and by dispatch) and `workflow_dispatch` with `force`; never a push, pull
   request or `testing`. Jobs: `plan` -> `build` -> `sign` (environment `signing`) -> `nvidia_dx_result` (`aggregate-dx.sh` with promote skipped).

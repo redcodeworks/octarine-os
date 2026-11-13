@@ -6,10 +6,11 @@ name: Build NVIDIA dx image
 # dated tags: it starts when "Build NVIDIA variant" finishes on `main` (workflow_run, which always runs the workflow file of
 # the default branch) or by manual dispatch on `main`; it never runs on pushes, pull requests or `testing`. The plan job
 # (.github/scripts/plan-dx.sh with BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false) skips
-# when the NVIDIA base digest and the dx inputs are unchanged. A separate workflow, not a matrix of build-dx.yml: that one
-# posts the required check `Build dx and push image` and its trigger and result logic must not change. THIS workflow never
-# posts that context (its result job has another name and posts no commit status), so it can neither satisfy nor block a
-# promotion pull request. Keep the build and sign steps in line with build-dx.yml. Design in CLAUDE.md ("NVIDIA dx image").
+# when the NVIDIA base digest and the dx inputs are unchanged. A separate workflow, not a caller of the reusable build-dx.yml:
+# it follows the NVIDIA variant's own weekly chain on main, has no testing channel or promote and another smoke script. THIS
+# workflow never reports the required check `Build dx and push image` (that is the dx_result job of build.yml; this result job
+# has another name and posts no commit status), so it can neither satisfy nor block a promotion pull request. Keep the build
+# and sign steps in line with build-dx.yml. Design in CLAUDE.md ("NVIDIA dx image").
 on:
   workflow_run:
     workflows: ["Build NVIDIA variant"]

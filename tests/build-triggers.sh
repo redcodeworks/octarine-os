@@ -90,6 +90,26 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     assert "pull_request" not in on and "pull_request_target" not in on, f
 PY
+check "no workflow starts from a finished default or beta build (workflow_run): dx is called inside the pipelines now; only the NVIDIA variant chain still uses workflow_run" python3 - "$here" <<'PY'
+import sys, glob, yaml
+for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
+    w = yaml.safe_load(open(f))
+    on = w.get(True) or w.get("on") or {}
+    wr = on.get("workflow_run") if isinstance(on, dict) else None
+    if wr:
+        assert wr["workflows"] == ["Build NVIDIA variant"], (f, wr)
+        assert f.endswith("build-nvidia-dx.yml"), f
+PY
+check "build-dx.yml (reusable): no push, pull_request or schedule trigger; every dx job is behind the plan guard, so a pull request or feature branch could never build it" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-dx.yml"))
+on = w.get(True) or w.get("on")
+assert not ({"push", "pull_request", "pull_request_target", "schedule", "workflow_run"} & set(on)), set(on)
+assert "if" in w["jobs"]["plan"]
+for n in ("build", "promote"):
+    assert w["jobs"][n]["needs"] == "plan", n
+assert w["jobs"]["sign"]["needs"] == ["build", "promote"] and w["jobs"]["collect"]["needs"] == ["plan", "build", "promote", "sign"]
+PY
 check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Tuesday 07:00 dev-packages bump, Monday 07:00 upstream check" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
