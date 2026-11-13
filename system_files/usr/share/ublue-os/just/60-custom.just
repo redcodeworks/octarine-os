@@ -932,6 +932,11 @@ gaming-setup *args:
         echo "$v"
     }
 
+    # GameMode's desiredgov=powersave is the workaround for upstream gamemode#419 and only right on amd-pstate in active
+    # mode (amd-pstate-epp). On other CPUs or drivers the step is not pre-ticked and the line is left out of the file.
+    pstate_active=0
+    [ "$(cat "${GAMING_SETUP_PSTATE_STATUS:-/sys/devices/system/cpu/amd_pstate/status}" 2>/dev/null)" = active ] && pstate_active=1
+    gm_default=$pstate_active
     # Terminal with gum and no step named: a checklist of the steps (the chosen ones run as if named, so they count
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
@@ -944,7 +949,7 @@ gaming-setup *args:
             "extest^extest build (experimental)^0" \
             "desktop^Generated Steam launchers^1" \
             "^Tuning^0" \
-            "gamemode^GameMode tuning in ~/.config/gamemode.ini^1"
+            "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -1133,6 +1138,13 @@ gaming-setup *args:
         echo "Skipped: $src_ini is missing."
         record "gamemode" "skipped (no source file)"
     else
+        if [ "$pstate_active" = 0 ]; then
+            # not amd-pstate-epp: drop the desiredgov workaround (its comment block and the line); the rest stays
+            gm_tmp=$(mktemp)
+            sed '/^; Keep the CPU governor/,/^desiredgov=/d' "$src_ini" >"$gm_tmp"
+            src_ini=$gm_tmp
+            echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
+        fi
         command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
         id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
         if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
@@ -1145,7 +1157,7 @@ gaming-setup *args:
                 echo "Replacing it keeps a timestamped backup."
                 ask n "Replace it?"
             else
-                echo "Installs the GameMode tuning (renice=10, desiredgov=powersave, tuned latency-performance while a game runs) as $dest_ini."
+                echo "Installs the GameMode tuning (renice=10,$([ "$pstate_active" = 1 ] && echo " desiredgov=powersave,") tuned latency-performance while a game runs) as $dest_ini."
                 ask y "Apply?"
             fi
             if [ "$answer" != y ]; then
@@ -1906,17 +1918,19 @@ switch-image *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     list=0
+    force=0
     image=""
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--list]`. Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
+            --force) force=1 ;;
             default | dx | nvidia | nvidia-dx) image=$a ;;
             latest | beta | testing) channel=$a ;;
-            -*) echo "Unknown option: $a (use --yes, --no or --list)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --force or --list)" >&2; exit 2 ;;
             *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, beta, testing)" >&2; exit 2 ;;
         esac
     done
@@ -2015,6 +2029,26 @@ switch-image *args:
         echo "Already on $image ($channel)."
         exit 0
     fi
+    # nvidia images on a machine without an NVIDIA GPU: say so and ask (--yes alone does not bypass it, --force does)
+    case "$image" in
+        nvidia | nvidia-dx)
+            has_nvidia=0
+            for v in "${OCTARINE_SYSFS_DRM:-/sys/class/drm}"/card*/device/vendor; do
+                [ -r "$v" ] && [ "$(cat "$v" 2>/dev/null)" = 0x10de ] && has_nvidia=1
+            done
+            if [ "$has_nvidia" = 0 ] && [ "$force" = 0 ]; then
+                echo "This machine has no NVIDIA GPU, so the $image image gives you a driver you cannot use (and it needs Secure Boot key enrollment)."
+                if [ "$mode" = no ]; then
+                    echo "(A real run would ask for confirmation, or need --force.)"
+                elif [ "$mode" = yes ]; then
+                    echo "Not switching: --yes does not bypass this. Add --force to switch anyway." >&2
+                    exit 1
+                else
+                    menu_confirm "Switch to $image anyway?" n || { echo "Left as it is."; exit 0; }
+                fi
+            fi
+            ;;
+    esac
     echo "Target:  $ref"
     probe "$image" "$channel"
     case $? in
@@ -2070,6 +2104,10 @@ luks-tpm-unlock *args:
         esac
     done
     case "$pcrs" in 7 | 7+14) ;; *) echo "--pcrs takes 7 or 7+14" >&2; exit 2 ;; esac
+    if [ ! -e "${OCTARINE_TPM_DEVICE:-/dev/tpmrm0}" ]; then
+        echo "This machine has no TPM 2.0 device (${OCTARINE_TPM_DEVICE:-/dev/tpmrm0} is missing), so TPM2 auto-unlock is not possible here. Check the firmware settings (fTPM or PTT) if you expected one. Nothing changed."
+        exit 0
+    fi
     sudo -v || { echo "sudo is needed to read the LUKS headers (YubiKey touch)." >&2; exit 1; }
     devs=()
     declare -A uuid_of=() size_of=() tpm_of=()

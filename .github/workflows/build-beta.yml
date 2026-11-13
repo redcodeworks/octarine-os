@@ -264,6 +264,9 @@ jobs:
             done
             check "jq and skopeo run" "jq --version && skopeo --version"
             check "staged automatic image updates are on by default (ujust toggle-updates is the user switch)" "systemctl is-enabled rpm-ostreed-automatic.timer && grep -qx AutomaticUpdatePolicy=stage /etc/rpm-ostreed.conf"
+            check "mcelog is not masked and has the Intel-only drop-in" "! systemctl is-enabled mcelog.service 2>&1 | grep -qx masked && grep -q GenuineIntel /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf"
+            check "automatic update retry drop-in: bounded on-failure restart" "grep -qx Restart=on-failure /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx RestartSec=60 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx StartLimitBurst=5 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf"
+            check "automatic update service waits for the network (base drop-in) and NetworkManager-wait-online is enabled" "grep -q After=network-online.target /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/override.conf && systemctl is-enabled NetworkManager-wait-online.service"
             summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
             check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
             has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }

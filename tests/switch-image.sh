@@ -45,6 +45,11 @@ echo "bootc $*" >>"$LOG"
 EOF2
 chmod +x "$root/fakebin/"*
 
+mkdir -p "$root/drm-nvidia/card0/device" "$root/drm-amd/card0/device"
+echo 0x10de >"$root/drm-nvidia/card0/device/vendor"
+echo 0x1002 >"$root/drm-amd/card0/device/vendor"
+export OCTARINE_SYSFS_DRM="$root/drm-nvidia"
+
 pub_all="octarine-os:latest octarine-os:beta octarine-os:testing octarine-os-dx:latest octarine-os-dx:beta octarine-os-dx:testing octarine-os-nvidia:latest"
 
 run() { # current ref, args...
@@ -152,6 +157,24 @@ check "Esc at the image menu runs nothing" notlogged "bootc"
 escrun dx
 check "Esc at the channel menu exits 0" bash -c "[ $rc = 0 ] && grep -q 'nothing changed' '$root/out'"
 check "Esc at the channel menu runs nothing" notlogged "bootc"
+
+# ---- nvidia images on a machine without an NVIDIA GPU
+pubnv="$pub_all octarine-os-nvidia-dx:latest"
+OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia --yes
+check "no NVIDIA GPU: --yes alone does not bypass (exit 1, says --force)" bash -c "[ $rc = 1 ] && grep -q 'no NVIDIA GPU' '$root/out' && grep -q -- '--force' '$root/out'"
+check "no NVIDIA GPU: nothing switched with --yes alone" notlogged "bootc switch"
+OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia --yes --force
+check "no NVIDIA GPU: --force proceeds" logged "bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-nvidia:latest"
+OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia-dx --yes
+check "no NVIDIA GPU: nvidia-dx is gated too" bash -c "[ $rc = 1 ] && grep -q 'no NVIDIA GPU' '$root/out'"
+OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia --no
+check "no NVIDIA GPU: --no states it and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'no NVIDIA GPU' '$root/out' && ! grep -q 'bootc switch' '$LOG'"
+OCTARINE_SYSFS_DRM="$root/drm-amd" run "$base" nvidia
+check "no NVIDIA GPU without a terminal: the confirmation defaults to No, nothing switched" bash -c "[ $rc = 0 ] && grep -q 'Left as it is' '$root/out' && ! grep -q 'bootc switch' '$LOG'"
+OCTARINE_SYSFS_DRM="$root/drm-amd" run "$base" dx --yes
+check "no NVIDIA GPU: dx and default are not gated" bash -c "[ $rc = 0 ] && ! grep -q 'no NVIDIA GPU' '$root/out'"
+OCTARINE_SYSFS_DRM="$root/drm-amd" run "$base" --help
+check "--help mentions --force" has "--force"
 
 echo
 echo "$pass passed, $failn failed"
