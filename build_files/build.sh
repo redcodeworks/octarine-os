@@ -256,6 +256,13 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # no unit, no preset, nothing is started.
 /ctx/install-binaries.sh
 
+# The sched_ext scheduler registry and unit drop-ins, generated from the manifest that install-binaries.sh just installed
+# (scx@.service, its helpers and the polkit rule come from system_files). Nothing is enabled: the preset says disable.
+/ctx/gen-schedulers.sh
+for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x "/usr/libexec/octarine-os/${f}"; done
+test -f /usr/lib/systemd/system/scx@.service
+test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
+
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).
 

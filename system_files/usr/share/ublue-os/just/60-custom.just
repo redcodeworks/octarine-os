@@ -1146,7 +1146,7 @@ gaming-setup *args:
             src_ini=$gm_tmp
             echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
         fi
-        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the [custom] start/end commands do nothing."
+        command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the tuned part of the GameMode start and end hooks does nothing."
         id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
         if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
             echo "$dest_ini already has the tuning."
@@ -2699,6 +2699,232 @@ hardware-setup *args:
     for k in "${!names[@]}"; do printf '%-18s %s\n' "${names[$k]}" "${results[$k]}"; done
     echo
     echo "To undo (per step):"
+    for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
+    exit "$failed"
+
+# Choose a sched_ext CPU scheduler: at boot and while GameMode runs
+[group('Setup')]
+[positional-arguments]
+scheduler *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_ready_one >/dev/null; then menu_one() { return 3; }; menu_confirm() { return 1; }; menu_title() { printf '%s\n' "$1"; }; fi
+    registry="${SCHEDULER_REGISTRY:-/usr/share/octarine-os/schedulers.d}"
+    sysfs="${SCHEDULER_SYSFS:-/sys/kernel/sched_ext}"
+    state_dir="${SCHEDULER_STATE_DIR:-/var/lib/octarine-os}"
+    conf="${SCHEDULER_USER_CONF:-${XDG_CONFIG_HOME:-$HOME/.config}/octarine-os/scheduler.conf}"
+    usage="Usage: ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--status] [--list] [--yes|--no] [-h|--help]"
+    boot_want=""
+    gm_want=""
+    action=""
+    mode=ask
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --boot) shift; if [ "$#" -eq 0 ]; then echo "--boot needs NAME or none" >&2; echo "$usage" >&2; exit 2; fi; boot_want=$1 ;;
+            --boot=*) boot_want=${1#--boot=} ;;
+            --gamemode) shift; if [ "$#" -eq 0 ]; then echo "--gamemode needs skip, none or NAME" >&2; echo "$usage" >&2; exit 2; fi; gm_want=$1 ;;
+            --gamemode=*) gm_want=${1#--gamemode=} ;;
+            --status) action=status ;;
+            --list) action=list ;;
+            --yes) mode=yes ;;
+            --no) mode=no ;;
+            help | --help | -h) printf '%s\n' 'Choose the sched_ext CPU scheduler (BPF schedulers that replace the kernel'\''s default, EEVDF, while loaded). `ujust scheduler [--boot NAME|none] [--gamemode skip|none|NAME] [--status] [--list] [--yes|--no]`. Everything ships off: no scheduler runs until you choose one. Step 1, at boot: none or one of the shipped schedulers; it is enabled as the system unit scx@NAME.service and started now (system setting, sudo once, a security-key touch; never retried, the exact command is printed when it fails). Step 2, while GameMode is active: skip (do not switch), none (the default scheduler during games) or a scheduler; stored in ~/.config/octarine-os/scheduler.conf as GAMEMODE_SCHED=..., no sudo; the GameMode hooks switch when a game starts and restore the boot choice when the last game ends (they need the GameMode file from `ujust gaming-setup gamemode`). Without options on a terminal both steps are asked, each option with its description. --status shows the sched_ext state, the active scheduler, the boot unit, the GameMode choice and any scheduler disabled after repeated load failures on this kernel; --list shows every shipped scheduler with its full description; --no only prints the plan. NAME is the scheduler without the scx_ prefix (rusty, lavd, cake, bpfland, cosmos, flash, p2dq). Switching by hand needs no prompt: systemctl start scx@NAME.service. Undo: ujust scheduler --boot none --gamemode skip. Not applicable on a kernel without sched_ext. Whether a scheduler loads on your kernel and hardware is not verified in the image build: if one fails to load three times in a row it is disabled for that kernel (the marker is in /var/lib/octarine-os/scx-disabled) and the default scheduler stays.'; exit 0 ;;
+            *) echo "Unknown option: $1" >&2; echo "$usage" >&2; exit 2 ;;
+        esac
+        shift
+    done
+
+    # the registry: one file per scheduler (instance name = file name without .conf)
+    reg_get() { awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$1"; }
+    inst=()
+    desc=()
+    mink=()
+    for f in "$registry"/*.conf; do
+        [ -f "$f" ] || continue
+        b=${f##*/}
+        inst+=("${b%.conf}")
+        desc+=("$(reg_get "$f" DESCRIPTION)")
+        mink+=("$(reg_get "$f" MIN_KERNEL)")
+    done
+    if [ "${#inst[@]}" -eq 0 ]; then echo "No schedulers are registered in $registry (this image ships none)." >&2; exit 1; fi
+    is_inst() { local x; for x in "${inst[@]}"; do [ "$x" = "$1" ] && return 0; done; return 1; }
+    desc_of() { local k; for k in "${!inst[@]}"; do [ "${inst[$k]}" = "$1" ] && { printf '%s' "${desc[$k]}"; return; }; done; }
+    short() { local t=$1 max=${2:-76}; if [ "${#t}" -gt "$max" ]; then t="${t:0:$((max - 1))}…"; fi; printf '%s' "$t"; }
+    names_list="$(IFS=' '; echo "${inst[*]}")"
+
+    if [ "$action" = list ]; then
+        echo "Shipped schedulers (use the name on the left; --boot NAME, --gamemode NAME):"
+        for k in "${!inst[@]}"; do
+            printf '  %-9s scx_%-9s minimum kernel: %-4s %s\n' "${inst[$k]}" "${inst[$k]}" "${mink[$k]:-any}" "${desc[$k]}"
+        done
+        echo "  none      the kernel's default scheduler (EEVDF)"
+        echo "  skip      (--gamemode only) do not switch when a game starts"
+        exit 0
+    fi
+    if [ "$(id -u)" = 0 ]; then echo "Run this as your user, not as root: it writes your GameMode choice, and the boot step asks for sudo itself." >&2; exit 1; fi
+
+    # validate names before anything else
+    if [ -n "$boot_want" ] && [ "$boot_want" != none ] && ! is_inst "$boot_want"; then
+        echo "Unknown scheduler for --boot: '$boot_want'. Known: none $names_list" >&2; exit 2
+    fi
+    if [ -n "$gm_want" ] && [ "$gm_want" != none ] && [ "$gm_want" != skip ] && ! is_inst "$gm_want"; then
+        echo "Unknown choice for --gamemode: '$gm_want'. Known: skip none $names_list" >&2; exit 2
+    fi
+
+    if [ ! -d "$sysfs" ]; then
+        echo "Not applicable: this kernel has no sched_ext ($sysfs is missing)."
+        exit 0
+    fi
+
+    sched_state() { cat "$sysfs/state" 2>/dev/null || echo unknown; }
+    active_sched() { local o; o=$(cat "$sysfs/root/ops" 2>/dev/null); if [ -n "$o" ] && is_inst "$o"; then echo "$o"; elif [ -n "$o" ]; then echo "$o (not one of ours)"; fi; }
+    enabled_insts() { local i; for i in "${inst[@]}"; do [ "$(systemctl is-enabled "scx@$i.service" 2>/dev/null)" = enabled ] && echo "$i"; done; }
+    gm_current() {
+        local v=""
+        if [ -r "$conf" ]; then v=$(awk -F= '$1 == "GAMEMODE_SCHED" { v = $2 } END { print v }' "$conf" | tr -d '[:space:]"'"'"); fi
+        case "$v" in "" | skip) echo skip ;; none) echo none ;; *) if is_inst "$v"; then echo "$v"; else echo "skip"; fi ;; esac
+    }
+
+    if [ "$action" = status ]; then
+        kern=$(uname -r)
+        a=$(active_sched)
+        e=$(enabled_insts | tr '\n' ' ')
+        echo "sched_ext state:   $(sched_state)"
+        a_txt=$a
+        [ -n "$a_txt" ] || a_txt="none (the kernel default, EEVDF)"
+        echo "active scheduler:  $a_txt"
+        echo "boot choice:       ${e:-none} (the enabled scx@NAME.service)"
+        echo "GameMode choice:   $(gm_current) ($conf)"
+        dis=""
+        for i in "${inst[@]}"; do
+            m="$state_dir/scx-disabled/$i"
+            if [ -f "$m" ]; then
+                if [ "$(head -c 200 "$m")" = "$kern" ]; then dis="$dis $i (disabled for this kernel $kern after repeated load failures)"; else dis="$dis $i (marker for another kernel)"; fi
+            fi
+        done
+        echo "disabled markers: ${dis:- none}"
+        exit 0
+    fi
+
+    boot_cur=$(enabled_insts | head -n1)
+    gm_cur=$(gm_current)
+    names=()
+    results=()
+    undos=()
+    failed=0
+    record() { names+=("$1"); results+=("$2"); undos+=("${3:--}"); }
+
+    # interactive: ask both steps when nothing was named and this is a terminal
+    if [ -z "$boot_want" ] && [ -z "$gm_want" ] && [ "$mode" = ask ]; then
+        specs=()
+        specs+=("none^$(short "None - the kernel's default scheduler (EEVDF)")")
+        for k in "${!inst[@]}"; do specs+=("${inst[$k]}^$(short "${inst[$k]}: ${desc[$k]}")"); done
+        # the current choice first (menu_one preselects the first item)
+        ordered=()
+        cur_id=${boot_cur:-none}
+        for s in "${specs[@]}"; do [ "${s%%^*}" = "$cur_id" ] && ordered+=("$s"); done
+        for s in "${specs[@]}"; do [ "${s%%^*}" = "$cur_id" ] || ordered+=("$s"); done
+        menu_title "octarineOS scheduler"
+        menu_one "Scheduler at boot (now: $cur_id; first entry = keep)" "${ordered[@]}"
+        rc=$?
+        if [ "$rc" -eq 3 ]; then
+            echo "No terminal menu available: nothing changed. Name what you want:"
+            echo "$usage"
+            echo "Shipped: none $names_list (ujust scheduler --list shows the descriptions)"
+            exit 0
+        fi
+        if [ "$rc" -eq 0 ]; then boot_want=$MENU_ONE; fi
+        gspecs=()
+        gspecs+=("skip^$(short "Skip - do not switch when a game starts")")
+        gspecs+=("none^$(short "None - the kernel's default scheduler (EEVDF) during games")")
+        for k in "${!inst[@]}"; do gspecs+=("${inst[$k]}^$(short "${inst[$k]}: ${desc[$k]}")"); done
+        gordered=()
+        for s in "${gspecs[@]}"; do [ "${s%%^*}" = "$gm_cur" ] && gordered+=("$s"); done
+        for s in "${gspecs[@]}"; do [ "${s%%^*}" = "$gm_cur" ] || gordered+=("$s"); done
+        menu_one "Scheduler while GameMode is active (now: $gm_cur; first entry = keep)" "${gordered[@]}"
+        if [ $? -eq 0 ]; then gm_want=$MENU_ONE; fi
+        if [ -z "$boot_want" ] && [ -z "$gm_want" ]; then echo "Nothing chosen; nothing changed."; exit 0; fi
+        echo "Plan: boot ${boot_want:-unchanged}, GameMode ${gm_want:-unchanged}"
+        if ! menu_confirm "Apply?" y; then echo "Nothing changed."; exit 0; fi
+    elif [ -z "$boot_want" ] && [ -z "$gm_want" ]; then
+        echo "Nothing to change. Now: boot ${boot_cur:-none}, GameMode $gm_cur. Name what you want:"
+        echo "$usage"
+        echo "Shipped: none $names_list (ujust scheduler --list shows the descriptions)"
+        exit 0
+    fi
+
+    # step 1: the boot choice (system unit, sudo once)
+    if [ -n "$boot_want" ]; then
+        echo
+        echo "== scheduler at boot"
+        already=0
+        if [ "$boot_want" = none ] && [ -z "$boot_cur" ]; then already=1; fi
+        if [ "$boot_want" != none ] && [ "$boot_cur" = "$boot_want" ] && [ "$(enabled_insts | wc -l)" -eq 1 ]; then already=1; fi
+        if [ "$already" = 1 ]; then
+            echo "Already set: ${boot_want}."
+            record "boot" "already done"
+        else
+            cmds=()
+            for i in $(enabled_insts); do [ "$i" = "$boot_want" ] || cmds+=("sudo systemctl disable --now scx@$i.service"); done
+            if [ "$boot_want" != none ]; then cmds+=("sudo systemctl enable --now scx@$boot_want.service"); fi
+            echo "Sets $( [ "$boot_want" = none ] && echo 'the kernel default scheduler (EEVDF)' || echo "scx_$boot_want ($(short "$(desc_of "$boot_want")" 90))") at boot. System setting: uses sudo once (a security-key touch); never retried."
+            for c in "${cmds[@]}"; do echo "  $c"; done
+            if [ "$mode" = no ]; then
+                record "boot" "plan only"
+            else
+                okc=1
+                for c in "${cmds[@]}"; do
+                    if ! $c; then okc=0; echo "Failed: $c" >&2; echo "Run the commands above yourself when ready." >&2; break; fi
+                done
+                if [ "$okc" = 1 ]; then
+                    record "boot" applied "ujust scheduler --boot ${boot_cur:-none}"
+                else
+                    failed=1
+                    record "boot" FAILED "run: ${cmds[*]}"
+                fi
+            fi
+        fi
+    fi
+
+    # step 2: the GameMode choice (a user file, no sudo)
+    if [ -n "$gm_want" ]; then
+        echo
+        echo "== scheduler while GameMode is active"
+        if [ "$gm_want" = "$gm_cur" ] && [ -f "$conf" ]; then
+            echo "Already set: ${gm_want}."
+            record "gamemode" "already done"
+        else
+            echo "Writes GAMEMODE_SCHED=$gm_want to $conf (no sudo). The GameMode hooks read it when a game starts."
+            if [ "$mode" = no ]; then
+                record "gamemode" "plan only"
+            else
+                mkdir -p "$(dirname "$conf")" || true
+                tmp=$(mktemp "$conf.XXXXXX" 2>/dev/null)
+                if [ -n "$tmp" ]; then
+                    if [ -f "$conf" ]; then grep -v '^GAMEMODE_SCHED=' "$conf" >"$tmp" || true; else
+                        printf '%s\n' "# Written by ujust scheduler. GAMEMODE_SCHED=skip|none|<scheduler name> (see ujust scheduler --list); absent means skip." >"$tmp"
+                    fi
+                    printf 'GAMEMODE_SCHED=%s\n' "$gm_want" >>"$tmp"
+                fi
+                if [ -n "$tmp" ] && mv -f -- "$tmp" "$conf"; then
+                    record "gamemode" applied "ujust scheduler --gamemode $gm_cur"
+                else
+                    rm -f -- "$tmp" 2>/dev/null
+                    echo "Failed: could not write $conf" >&2
+                    failed=1
+                    record "gamemode" FAILED
+                fi
+            fi
+        fi
+    fi
+
+    echo
+    echo "== Summary"
+    for k in "${!names[@]}"; do printf '  %-10s %s\n' "${names[$k]}" "${results[$k]}"; done
+    echo "To undo:"
     for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
     exit "$failed"
 

@@ -30,7 +30,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
-- Prebuilt sched_ext schedulers (`scx_*`) and the extest libraries for Steam Input on Wayland (installed, not enabled)
+- Prebuilt sched_ext schedulers (`scx_*`, off until you pick one with `ujust scheduler`) and the extest libraries for Steam Input on Wayland
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
 **Removed from the base**
@@ -115,6 +115,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
 | `ujust hardware-setup [--list]` | Checklist of vendor and hardware specific setup; every step is hidden when your machine lacks that hardware (AMD or NVIDIA GPU, ROCm in a container, Secure Boot, TPM unlock, security key, fan sensors) |
+| `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
 | `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |
 | `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |

@@ -405,6 +405,9 @@ jobs:
             check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
             check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
             check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
+            check "scheduler units: the template and the polkit rule ship, the helpers and the GameMode hooks are executable" "test -f /usr/lib/systemd/system/scx@.service && test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x /usr/libexec/octarine-os/\$f || exit 1; done"
+            check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
+            check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
             check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
@@ -542,6 +545,15 @@ jobs:
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
+
+      # Tier 1 compatibility check: every shipped scheduler against the kernel of THIS image, statically (kernel config, the
+      # kernel's own BTF read out of vmlinuz, the kernel symbols and struct sched_ext_ops members each scheduler's embedded BPF
+      # object requires). It loads nothing; a failure here fails the build and so blocks the promotion of this build.
+      - name: Check the shipped schedulers against the image kernel
+        run: |
+          set -euo pipefail
+          podman run --rm -v "${PWD}/.github/scripts/scx-kernel-check.py:/scx-kernel-check.py:ro" "${IMAGE_NAME}:${DEFAULT_TAG}" \
+            bash -c 'kver=$(ls /usr/lib/modules | head -n1); echo "kernel ${kver}"; python3 -I /scx-kernel-check.py --kernel-dir "/usr/lib/modules/${kver}"'
 
       # Optional packages that could not be installed (build.sh writes the list): a warning each, never a failure
       - name: Report missing optional packages

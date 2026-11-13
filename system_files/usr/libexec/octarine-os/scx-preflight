@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# ExecCondition of scx@.service: may this instance start now? Exit 0 yes, 1 no (systemd then skips the unit quietly: no failure, no
+# restart), 2 unknown instance. Refuses when the kernel has no BTF (a BPF scheduler cannot load) or when the instance is marked
+# disabled for the running kernel (scx-verify wrote the marker after repeated verified load failures). Reads only root-owned files.
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scx-lib.sh
+. "${here}/scx-lib.sh"
+name=${1-}
+reg=$(scx_find_instance "${name}") || { scx_log "preflight: unknown scheduler instance"; exit 2; }
+if [[ ! -r "${SCX_BTF}" ]]; then
+    scx_log "preflight ${name}: ${SCX_BTF} is missing (kernel without BTF), not starting"
+    exit 1
+fi
+marker="$(scx_marker_dir)/${name}"
+if [[ -f "${marker}" && "$(head -c 200 "${marker}")" == "$(scx_kernel)" ]]; then
+    scx_log "preflight ${name}: disabled for kernel $(scx_kernel) after repeated load failures; remove ${marker} to try again"
+    exit 1
+fi
+: "${reg}"
+exit 0

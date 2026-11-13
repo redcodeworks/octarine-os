@@ -168,6 +168,68 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   `BINARIES_IMAGE` argument and mount, `install-binaries.sh`, the smoke assertions and the tests; restore the cargo build in the `extest`
   step from git history.
 
+## sched_ext schedulers (`scx@`, `ujust scheduler`)
+
+The seven shipped schedulers (`scx_rusty`, `scx_lavd`, `scx_cake`, `scx_bpfland`, `scx_cosmos`, `scx_flash`, `scx_p2dq`, sched-ext/scx v1.1.4,
+built from `binaries/scx`, see "Prebuilt binaries"; Fedora's own old `scx_rusty` package is not used) are BPF schedulers that replace the
+kernel's default (EEVDF) while loaded. EVERYTHING SHIPS OFF: no preset enables one (`00-octarine-scx.preset` says `disable scx@*.service`), none runs
+after install; the owner decides default-on after a soak. Whatever fails, the machine stays on EEVDF. Adding a scheduler later = one line in
+`binaries/scx/schedulers.tsv` plus the upstream bump; the registry, drop-ins, menus and tests derive from it.
+
+- **Registry.** `build_files/gen-schedulers.sh` (called by `build.sh` after `install-binaries.sh`) reads `/usr/share/octarine-os/schedulers.tsv`
+  (four tab-separated fields: name, `bin/<name>`, minimum kernel (EMPTY for all seven today), description up to 120 characters; read with
+  `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`) and writes `/usr/share/octarine-os/schedulers.d/<instance>.conf` (`NAME`, `INSTANCE`, `BINARY`,
+  `DESCRIPTION`, `MIN_KERNEL`, `FLAGS`; parsed with awk, never sourced). The **instance name is the scheduler name without `scx_`**: `rusty`, `lavd`, `cake`,
+  `bpfland`, `cosmos`, `flash`, `p2dq` (it equals the scheduler's `sched_ext_ops` name, which `/sys/kernel/sched_ext/root/ops` shows). It also writes per
+  instance `scx@<name>.service.d/10-conflicts.conf` (`Conflicts=` on every other instance) and, only when the registry has a minimum kernel,
+  `20-kernel.conf` (`ConditionKernelVersion=>=<min>`).
+- **Unit** `system_files/usr/lib/systemd/system/scx@.service`: `Type=simple`, `ConditionPathExists=/sys/kernel/sched_ext`, `StartLimitIntervalSec=0`
+  (user-triggered start/stop cycles never trip systemd's start limit), `Restart=on-failure`, `RestartSec=5`, `ExecCondition=` `scx-preflight %i`,
+  `ExecStart=` `scx-run %i`, `ExecStartPost=` `scx-verify %i`, `[Install] WantedBy=multi-user.target`. No hardening directives, as in upstream's own
+  `services/scx.service` (which has none either): loading a BPF scheduler needs root and a sandbox that blocks `bpf()` would stop it; whether stricter
+  settings still load is UNVERIFIED. Helpers in `/usr/libexec/octarine-os/` (`scx-lib.sh`, `scx-preflight`, `scx-run`, `scx-verify`):
+  `scx-preflight` refuses quietly (exit 1, the unit is skipped, not failed) when `/sys/kernel/btf/vmlinux` is missing or the marker
+  `/var/lib/octarine-os/scx-disabled/<name>` holds the running `uname -r`; `scx-run` runs the registry's binary (must be `/usr/bin/scx_*`) with the
+  registry's flags and a cleared environment; `scx-verify` waits up to 5 s until `/sys/kernel/sched_ext/state` is `enabled` and
+  `/sys/kernel/sched_ext/root/ops` equals the instance (sysfs facts read from the kernel docs and a running nox; the `root` directory exists only while a scheduler is loaded).
+- **Safeguards (each tested in `tests/schedulers.sh`).** (a) The polkit rule `usr/share/polkit-1/rules.d/50-octarine-scx.rules` grants `YES` for
+  `org.freedesktop.systemd1.manage-units` ONLY when the `unit` detail matches `^scx@[A-Za-z0-9_-]+\.service$` AND the `verb` detail is exactly `start`, `stop` or
+  `restart` AND `subject.local && subject.active && subject.isInGroup("wheel")`; a request without those details never matches; nothing else is granted (not
+  enable/disable). The test runs the rule in node against 22 simulated actions (`nodejs` is installed in the `test` job). The rule is in `/usr/share`, not `/etc`, so
+  the base's `/etc/polkit-1/rules.d` attributes are not touched. (b) The instance name is attacker-chosen: all three helpers match it EXACTLY against the registry
+  files (`^[a-z0-9][a-z0-9_]*$` AND a file of that name) before any use and exit 2 for anything else (`../x`, empty, spaces, case, an unregistered name); no path is
+  built from an unvalidated name. (c) Root units read only the root-owned registry, `/usr` binaries, sysfs and `/var/lib/octarine-os`; flags come from the registry only;
+  no user file or environment. The per-user file is read ONLY by the GameMode hooks (run as the user). (d) `scx-verify` is the crash-loop protection: the marker is written ONLY after a real load
+  failure (not active within the timeout), counted in the root-owned `/var/lib/octarine-os/scx-failures/<name>`, at the third consecutive verified failure; a success removes
+  the count and the marker; a stop during the wait (SIGTERM) counts nothing. (e) Residual risk in plain words: any process running as the logged-in wheel user in an active local
+  session can switch among the shipped schedulers without a prompt (an availability and performance risk, not code execution as root, because the unit files, binaries and flags
+  are root-owned), the same trust class as the existing tuned rule. UNVERIFIED: whether schedulers expose a stats socket and who can read it. From the scx source (`scx_stats`
+  server, v1.1.4) the default is a Unix socket `/var/run/scx/root/stats` created by the root-run scheduler with its umask, so with the usual 022 only root could connect;
+  not checked on a running scheduler.
+- **GameMode hooks.** `/usr/libexec/octarine-os/gamemode-start` and `gamemode-end` (library `gamemode-lib.sh`) are the `[custom] start=` and `end=` of
+  `usr/share/octarine-os/gamemode.ini` (installed as `~/.config/gamemode.ini` by `ujust gaming-setup gamemode`; the image's own `/etc/gamemode.ini` has no `[custom]` on
+  purpose), with `script_timeout=20`. They run the two tuned commands as before (`latency-performance` on start, `balanced` on end), independent steps, side by side with the
+  scheduler step. The user's choice is `GAMEMODE_SCHED=skip|none|<name>` in `~/.config/octarine-os/scheduler.conf` (parsed, validated against the registry; absent or invalid means skip): `skip` does nothing; a name runs
+  `systemctl start scx@<name>.service` and checks `/sys/kernel/sched_ext/root/ops`; `none` stops the active scheduler; `end` restores the boot choice (the instance `systemctl is-enabled` reports
+  enabled, else the default scheduler) only when `start` switched something (marker in `$XDG_RUNTIME_DIR/octarine-scx`). If the chosen scheduler fails, the boot choice is restored. A lock serializes overlapping
+  games. Each hook always exits 0, logs with `logger -t octarine-scx`, bounds every step, and sends `notify-send` on failure. Kevin's own `~/.config/gamemode.ini` overrides the image file and must be updated by hand.
+- **Recipe `ujust scheduler`** (group Setup, above `toolbox`, not part of `hardware-setup`): step 1 scheduler at boot (None plus every registry entry, current first; `sudo systemctl enable --now scx@NAME.service`
+  after disabling the enabled other one; never retried; exact command printed on failure), step 2 scheduler while GameMode is active (Skip, None, entries; writes `scheduler.conf`, no sudo). Every option shows its
+  description (menu text shortened to 76 characters; `--list` shows the full text). Flags `--boot`, `--gamemode`, `--status`, `--list`, `--yes`, `--no`, `-h`; unknown name or option exits 2; refuses root; "not applicable" without
+  `/sys/kernel/sched_ext`. Test hooks `SCHEDULER_REGISTRY|SYSFS|STATE_DIR|USER_CONF`. Tests: `tests/scheduler-recipe.sh`.
+- **Tier 1 compatibility check** (`.github/scripts/scx-kernel-check.py`, a step after the smoke test in `build.yml` and `build-beta.yml`, run inside the built image; the dx and NVIDIA variants inherit the same kernel and the
+  schedulers, so they need none). FEASIBLE and built: the image's `/usr/lib/modules/<kver>/vmlinuz` is an x86 bzImage whose payload offset and length are in the setup header (zstd on Fedora 45); decompressed, the vmlinux has a
+  `.BTF` section (159774 types on 7.2.15) which the script parses itself (no bpftool or pahole needed), plus `config` and `System.map` next to it. It checks `CONFIG_SCHED_CLASS_EXT`, `CONFIG_BPF_SYSCALL` and
+  `CONFIG_DEBUG_INFO_BTF` are `y`; for each scheduler binary it extracts the embedded BPF object (an EM_BPF ELF inside the Rust binary) and requires that every REQUIRED import (undefined, non-weak ELF symbols; weak
+  ones are the scx compat layer's optional kfuncs and are only notes; `CONFIG_*` and `LINUX_KERNEL_VERSION` are libbpf's own `.kconfig` externs, checked against the kernel config) exists in the kernel BTF (functions, variables) or `System.map`,
+  and that every `struct sched_ext_ops` member the object sets (found through the `.struct_ops*` relocations and the object's own BTF) exists in the kernel's `struct sched_ext_ops`. Run on 2026-11-13 by hand against
+  the 7.2.15 kernel of the image and the seven v1.1.4 binaries: all pass. A failure fails the build, which blocks promoting it. If the kernel image's BTF cannot be read the comparison is skipped with a warning (the config part
+  still counts). It does NOT prove the verifier accepts the programs, that a member's meaning is unchanged, or that the userspace side works. Tests: `tests/scx-kernel-check.sh` (synthetic kernel and objects).
+- **Smoke test** (both build workflows): the template, the polkit rule and the helpers exist, the registry has one file per manifest line with a conflicts drop-in each, and nothing enables a scheduler.
+- **Unverified.** Loading any scheduler on the shipped kernel (only a real machine can), the live switch during a game, SELinux and kernel lockdown effects on loading, the stats socket permissions, the polkit rule
+  in a real session (only simulated), and whether `systemctl start` as the user really needs no prompt with the rule installed.
+- **Undo.** `ujust scheduler --boot none --gamemode skip`; remove the units, helpers, rule, preset, `gen-schedulers.sh` and the recipe.
+
 ## Branches and releases
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
@@ -274,7 +336,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - Shell blocks in workflows and recipes: check with `bash -n`.
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
-- `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries").
+- `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries"); `tests/schedulers.sh`, `tests/scheduler-recipe.sh` and `tests/scx-kernel-check.sh` test the scheduler runtime, the recipe and the kernel check (see "sched_ext schedulers").
 - `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
 - `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.

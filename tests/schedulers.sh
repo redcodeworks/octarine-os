@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# Tests for the sched_ext scheduler runtime of the image (no scheduler is ever loaded here): the registry and unit drop-ins
+# generated from the manifest (build_files/gen-schedulers.sh), the template unit and the preset, the polkit rule (node, with
+# simulated actions), the root-side helpers scx-preflight, scx-run and scx-verify (instance validation, markers, failure counting)
+# and the GameMode hooks (stub systemctl and friends). The recipe is tests/scheduler-recipe.sh. Needs: bash, node, flock, awk.
+# Run: tests/schedulers.sh
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+root=$(mktemp -d)
+trap 'rm -rf -- "${root:?}"' EXIT
+pass=0
+failn=0
+rc=0
+ok() { pass=$((pass + 1)); echo "ok   $1"; }
+bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/     /' "$root/out"; [ -f "$root/run" ] && sed 's/^/     run: /' "$root/run"; echo "     rc=$rc"; }
+check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
+lib="$here/system_files/usr/libexec/octarine-os"
+tsv_src="$here/binaries/scx/schedulers.tsv"
+real_names="rusty lavd cake bpfland cosmos flash p2dq"
+
+# ---- the registry and the drop-ins generated from the manifest
+mk_dest() { # dest, tsv content on stdin
+    rm -rf "${1:?}"; mkdir -p "$1/usr/share/octarine-os" "$1/usr/bin"
+    cat >"$1/usr/share/octarine-os/schedulers.tsv"
+    while IFS= read -r l; do [ -n "$l" ] && { n=$(cut -f1 <<<"$l"); printf '#!/bin/sh\n' >"$1/usr/bin/$n"; chmod +x "$1/usr/bin/$n"; }; done <"$1/usr/share/octarine-os/schedulers.tsv"
+}
+# the real source list as the installed four-field manifest (name, bin/name, minimum kernel, description)
+grep -vE '^[[:space:]]*(#|$)' "$tsv_src" | awk -F'\t' '{ printf "%s\tbin/%s\t%s\t%s\n", $1, $1, $2, $3 }' >"$root/real4.tsv"
+d="$root/dest"; mk_dest "$d" <"$root/real4.tsv"
+gen() { DESTDIR="$1" bash "$here/build_files/gen-schedulers.sh" >"$root/run" 2>&1; rc=$?; }
+gen "$d"
+reg="$d/usr/share/octarine-os/schedulers.d"
+check "gen: one registry file per scheduler, instance = name without scx_ (rusty lavd cake bpfland cosmos flash p2dq)" bash -c "[ $rc = 0 ] && [ \"\$(ls '$reg' | sed 's/.conf$//' | sort | tr '\n' ' ')\" = \"\$(echo $real_names | tr ' ' '\n' | sort | tr '\n' ' ')\" ]"
+check "gen: registry fields NAME INSTANCE BINARY DESCRIPTION MIN_KERNEL FLAGS, empty minimum kernel kept empty" bash -c "grep -qx 'NAME=scx_rusty' '$reg/rusty.conf' && grep -qx 'INSTANCE=rusty' '$reg/rusty.conf' && grep -qx 'BINARY=/usr/bin/scx_rusty' '$reg/rusty.conf' && grep -qx 'MIN_KERNEL=' '$reg/rusty.conf' && grep -qx 'FLAGS=' '$reg/rusty.conf' && grep -q '^DESCRIPTION=.\\{10,\\}' '$reg/rusty.conf'"
+check "gen: every description of the registry is the manifest's, at most 120 characters" bash -c "for n in $real_names; do dsc=\$(sed -n 's/^DESCRIPTION=//p' '$reg'/\$n.conf); [ -n \"\$dsc\" ] && [ \${#dsc} -le 120 ] && grep -qF -- \"\$dsc\" '$root/real4.tsv' || exit 1; done"
+for n in $real_names; do
+    dd="$d/usr/lib/systemd/system/scx@$n.service.d"
+    others=$(for o in $real_names; do [ "$o" = "$n" ] || printf 'scx@%s.service ' "$o"; done)
+    check "gen: scx@$n conflicts with exactly the six others, no kernel condition (minimum kernel empty)" bash -c "grep -qx 'Conflicts=${others% }' '$dd/10-conflicts.conf' && [ ! -e '$dd/20-kernel.conf' ]"
+done
+# a minimum kernel gives a ConditionKernelVersion drop-in
+printf 'scx_a\tbin/scx_a\t6.12\tAlpha\nscx_b\tbin/scx_b\t\tBeta\n' | mk_dest "$root/d2"; gen "$root/d2"
+check "gen: a registry minimum kernel (6.12) writes ConditionKernelVersion=>=6.12 for that instance only" bash -c "[ $rc = 0 ] && grep -qx 'ConditionKernelVersion=>=6.12' '$root/d2/usr/lib/systemd/system/scx@a.service.d/20-kernel.conf' && [ ! -e '$root/d2/usr/lib/systemd/system/scx@b.service.d/20-kernel.conf' ] && grep -qx 'MIN_KERNEL=6.12' '$root/d2/usr/share/octarine-os/schedulers.d/a.conf'"
+printf 'scx_a\tbin/scx_a\t\tAlone\n' | mk_dest "$root/d3"; gen "$root/d3"
+check "gen: a single scheduler gets a conflicts drop-in without a Conflicts= line" bash -c "[ $rc = 0 ] && ! grep -q 'Conflicts=' '$root/d3/usr/lib/systemd/system/scx@a.service.d/10-conflicts.conf'"
+printf 'scx_a\tbin/scx_a\tAlpha without kernel field\n' | mk_dest "$root/d4"; gen "$root/d4"
+check "gen: a manifest line with three fields (the empty one collapsed) fails" bash -c "[ $rc != 0 ] && grep -q 'four tab separated' '$root/run'"
+printf 'bad name\tbin/bad name\t\tX\n' | mk_dest "$root/d5"; gen "$root/d5"
+check "gen: a bad scheduler name fails" test "$rc" != 0
+printf 'scx_a\tbin/scx_a\t\tAlpha\nscx_a\tbin/scx_a\t\tAgain\n' | mk_dest "$root/d6"; gen "$root/d6"
+check "gen: a duplicate fails" test "$rc" != 0
+printf 'scx_a\tbin/scx_a\t\t%s\n' "$(printf 'x%.0s' {1..121})" | mk_dest "$root/d7"; gen "$root/d7"
+check "gen: a description over 120 characters fails" test "$rc" != 0
+printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/d8"; rm "$root/d8/usr/bin/scx_a"; gen "$root/d8"
+check "gen: a scheduler whose binary is not installed fails" test "$rc" != 0
+printf 'scx_a\tbin/scx_a\tsix\tAlpha\n' | mk_dest "$root/d9"; gen "$root/d9"
+check "gen: a minimum kernel that is not MAJOR.MINOR fails" test "$rc" != 0
+check "build.sh generates the registry after installing the binaries, and checks the helpers and the rule are there" bash -c "grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && grep -q 'scx-preflight scx-run scx-verify gamemode-start gamemode-end' '$here/build_files/build.sh' && grep -q '50-octarine-scx.rules' '$here/build_files/build.sh'"
+
+# ---- the template unit and the preset
+u="$here/system_files/usr/lib/systemd/system/scx@.service"
+check "unit: Type=simple, ExecCondition preflight, ExecStart run, ExecStartPost verify, all with %i" bash -c "grep -qx 'Type=simple' '$u' && grep -qx 'ExecCondition=/usr/libexec/octarine-os/scx-preflight %i' '$u' && grep -qx 'ExecStart=/usr/libexec/octarine-os/scx-run %i' '$u' && grep -qx 'ExecStartPost=/usr/libexec/octarine-os/scx-verify %i' '$u'"
+check "unit: ConditionPathExists=/sys/kernel/sched_ext, Restart=on-failure, RestartSec=5, StartLimitIntervalSec=0" bash -c "grep -qx 'ConditionPathExists=/sys/kernel/sched_ext' '$u' && grep -qx 'Restart=on-failure' '$u' && grep -qx 'RestartSec=5' '$u' && grep -qx 'StartLimitIntervalSec=0' '$u'"
+check "unit: no sandboxing or capability directives that could block loading a BPF scheduler (as upstream's unit)" bash -c "! grep -E '^(NoNewPrivileges|Protect[A-Za-z]*|Private[A-Za-z]*|Restrict[A-Za-z]*|SystemCallFilter|CapabilityBoundingSet|AmbientCapabilities|MemoryDenyWriteExecute|LockPersonality|User|DynamicUser)=' '$u'"
+check "unit: no ConditionKernelVersion in the template (only generated per instance, when the registry has a minimum)" bash -c "! grep -q '^ConditionKernelVersion' '$u'"
+check "preset: scx@ instances are disabled and nothing in system_files enables a scheduler" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! grep -rE '^enable .*scx' '$here/system_files'"
+check "build files never enable or start a scheduler" bash -c "! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/gen-schedulers.sh' '$here/build_files/install-binaries.sh'"
+
+# ---- the polkit rule, with simulated actions (node)
+rules="$here/system_files/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
+cat >"$root/rule-test.js" <<'JSEOF'
+const fs = require("fs");
+let handler = null;
+const polkit = { addRule: (f) => { handler = f; }, Result: { YES: "YES", NO: "NO", AUTH_ADMIN: "AUTH_ADMIN", NOT_HANDLED: undefined } };
+eval(fs.readFileSync(process.argv[2], "utf8"));
+const action = (id, details) => ({ id, lookup: (k) => details[k] });
+const subj = (o) => Object.assign({ local: true, active: true, isInGroup: (g) => g === "wheel" }, o);
+const MU = "org.freedesktop.systemd1.manage-units";
+const cases = [
+  ["valid start", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({}), "YES"],
+  ["valid stop", action(MU, { unit: "scx@lavd.service", verb: "stop" }), subj({}), "YES"],
+  ["valid restart", action(MU, { unit: "scx@p2dq.service", verb: "restart" }), subj({}), "YES"],
+  ["different unit", action(MU, { unit: "sshd.service", verb: "start" }), subj({}), undefined],
+  ["unit that only contains scx@", action(MU, { unit: "evil-scx@rusty.service", verb: "start" }), subj({}), undefined],
+  ["scx@ with a bad instance", action(MU, { unit: "scx@a/b.service", verb: "start" }), subj({}), undefined],
+  ["scx@ with a space", action(MU, { unit: "scx@a b.service", verb: "start" }), subj({}), undefined],
+  ["scx@ without instance", action(MU, { unit: "scx@.service", verb: "start" }), subj({}), undefined],
+  ["scx@ not a service", action(MU, { unit: "scx@rusty.timer", verb: "start" }), subj({}), undefined],
+  ["missing verb", action(MU, { unit: "scx@rusty.service" }), subj({}), undefined],
+  ["missing unit", action(MU, { verb: "start" }), subj({}), undefined],
+  ["no details at all", action(MU, {}), subj({}), undefined],
+  ["verb kill", action(MU, { unit: "scx@rusty.service", verb: "kill" }), subj({}), undefined],
+  ["verb reload", action(MU, { unit: "scx@rusty.service", verb: "reload" }), subj({}), undefined],
+  ["verb try-restart", action(MU, { unit: "scx@rusty.service", verb: "try-restart" }), subj({}), undefined],
+  ["verb start;kill", action(MU, { unit: "scx@rusty.service", verb: "start;kill" }), subj({}), undefined],
+  ["inactive subject", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({ active: false }), undefined],
+  ["remote subject", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({ local: false }), undefined],
+  ["not in wheel", action(MU, { unit: "scx@rusty.service", verb: "start" }), subj({ isInGroup: () => false }), undefined],
+  ["manage-unit-files (enable) is not granted", action("org.freedesktop.systemd1.manage-unit-files", { unit: "scx@rusty.service", verb: "enable" }), subj({}), undefined],
+  ["another action id", action("org.freedesktop.login1.reboot", { unit: "scx@rusty.service", verb: "start" }), subj({}), undefined],
+  ["non-string unit", action(MU, { unit: 5, verb: "start" }), subj({}), undefined],
+];
+let bad = 0;
+for (const [name, a, s, want] of cases) {
+  const got = handler(a, s);
+  if (got !== want) { console.log("FAIL " + name + ": got " + got + ", want " + want); bad++; } else { console.log("ok   " + name); }
+}
+process.exit(bad ? 1 : 0);
+JSEOF
+if command -v node >/dev/null; then
+    check "polkit rule (node): grants only start, stop, restart of scx@<name>.service to an active local wheel user (22 simulated actions)" node "$root/rule-test.js" "$rules"
+else
+    bad "polkit rule test needs node (install nodejs)"
+fi
+check "polkit rule: YES is returned in one place only and the verbs are matched exactly" bash -c "[ \$(grep -c 'polkit.Result.YES' '$rules') = 1 ] && grep -q 'verb !== \"start\" && verb !== \"stop\" && verb !== \"restart\"' '$rules'"
+
+# ---- the root-side helpers: instance validation, preflight, run, verify
+export OCTARINE_SCX_REGISTRY="$root/reg" OCTARINE_SCX_SYSFS="$root/sys" OCTARINE_SCX_BTF="$root/btf" OCTARINE_SCX_STATE="$root/state" OCTARINE_SCX_KERNEL="6.99.0-test"
+mkdir -p "$root/reg" "$root/sys/root" "$root/state" "$root/bin"
+for n in rusty lavd; do printf 'NAME=scx_%s\nINSTANCE=%s\nBINARY=/usr/bin/scx_%s\nDESCRIPTION=%s test\nMIN_KERNEL=\nFLAGS=\n' $n $n $n $n >"$root/reg/$n.conf"; done
+echo btf >"$root/btf"
+# logger is a stub so nothing reaches the journal
+printf '#!/bin/sh\necho "logger $*" >>"$LOGF"\n' >"$root/bin/logger"; chmod +x "$root/bin/logger"
+export LOGF="$root/logf"; : >"$LOGF"
+export PATH="$root/bin:$PATH"
+pre() { bash "$lib/scx-preflight" "$@" >"$root/run" 2>&1; rc=$?; }
+# validation of the instance name in all three helpers
+for bad_name in "../x" "" "a b" "RUSTY" "rusty/../lavd" "rusty.conf" "ru*" 'rusty;touch x' "foo" "rusty
+lavd"; do
+    pre "$bad_name"; r1=$rc
+    bash "$lib/scx-run" "$bad_name" >"$root/run" 2>&1; r2=$?
+    bash "$lib/scx-verify" "$bad_name" >"$root/run" 2>&1; r3=$?
+    rc="$r1 $r2 $r3"
+    check "validation: instance name '$(printf '%s' "$bad_name" | tr '\n' '|')' is refused by preflight, run and verify (exit 2 each), nothing written" bash -c "[ '$r1' = 2 ] && [ '$r2' = 2 ] && [ '$r3' = 2 ] && [ -z \"\$(find '$root/state' -type f)\" ]"
+done
+pre rusty
+check "preflight: a registered instance with BTF and no marker may start (exit 0)" test "$rc" = 0
+mv "$root/btf" "$root/btf.off"; pre rusty; mv "$root/btf.off" "$root/btf"
+check "preflight: no kernel BTF: refuses with exit 1 (the unit is skipped, not failed)" bash -c "[ $rc = 1 ] && grep -q 'BTF' '$root/run'"
+mkdir -p "$root/state/scx-disabled"; echo "6.99.0-test" >"$root/state/scx-disabled/rusty"; pre rusty; r_cur=$rc; pre lavd; r_other=$rc
+check "preflight: a marker holding the running kernel refuses that instance only" test "$r_cur" = 1 -a "$r_other" = 0
+echo "6.1.0-older" >"$root/state/scx-disabled/rusty"; pre rusty
+check "preflight: a marker for another kernel does not block (a new kernel is tried again)" test "$rc" = 0
+rm -f "${root:?}/state/scx-disabled/rusty"
+check "run: the binary comes only from the registry, under /usr/bin/scx_*, with a cleared environment" bash -c "grep -q 'exec env -i PATH=/usr/bin:/usr/sbin LANG=C' '$lib/scx-run' && grep -q '\\^/usr/bin/scx_\\[a-z0-9_\\]+\\$' '$lib/scx-run'"
+printf 'NAME=scx_evil\nINSTANCE=evil\nBINARY=/tmp/evil\nDESCRIPTION=x\nMIN_KERNEL=\nFLAGS=\n' >"$root/reg/evil.conf"
+bash "$lib/scx-run" evil >"$root/run" 2>&1; rc=$?
+check "run: a registry entry whose binary is not /usr/bin/scx_* is refused (exit 2)" bash -c "[ $rc = 2 ] && grep -q 'bad or missing binary' '$root/run'"
+rm -f "${root:?}/reg/evil.conf"
+check "no helper reads a user-writable file: no HOME, XDG, ~ or user config path in scx-lib, scx-preflight, scx-run, scx-verify" bash -c "! grep -E '\\\$HOME|XDG_|~/|/home/|scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-run' '$lib/scx-verify'"
+check "no sudo, pkexec or run0 in any helper, hook or the unit" bash -c "! grep -E '(sudo|pkexec|run0)' '$lib'/* '$u'"
+
+# verify: success, failures, threshold, reset, interrupts
+export OCTARINE_SCX_VERIFY_SECONDS=1
+ver() { bash "$lib/scx-verify" "$@" >"$root/run" 2>&1; rc=$?; }
+set_active() { echo enabled >"$root/sys/state"; echo "$1" >"$root/sys/root/ops"; }
+set_inactive() { echo disabled >"$root/sys/state"; rm -f "${root:?}/sys/root/ops"; }
+set_active rusty; ver rusty
+check "verify: the instance is the active scheduler: exit 0" test "$rc" = 0
+set_active lavd; ver rusty; r_wrong=$rc
+check "verify: another scheduler is active (ops lavd): failure, non-zero, counted once" bash -c "[ $r_wrong != 0 ] && [ \"\$(cat '$root/state/scx-failures/rusty')\" = 1 ]"
+rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
+set_inactive; ver rusty; ver rusty
+check "verify: two consecutive failures: count 2, still no marker" bash -c "[ \"\$(cat '$root/state/scx-failures/rusty')\" = 2 ] && [ ! -e '$root/state/scx-disabled/rusty' ]"
+ver rusty
+check "verify: the third consecutive verified failure writes the marker with the running kernel" bash -c "[ \"\$(cat '$root/state/scx-disabled/rusty')\" = 6.99.0-test ] && grep -q 'disabled for kernel 6.99.0-test' '$root/run'"
+pre rusty
+check "verify and preflight together: after the marker the instance is refused on this kernel" test "$rc" = 1
+check "verify: the other instance is not affected by the marker" bash -c "[ ! -e '$root/state/scx-disabled/lavd' ]"
+set_active rusty; ver rusty
+check "verify: a success removes the failure count and the marker" bash -c "[ $rc = 0 ] && [ ! -e '$root/state/scx-failures/rusty' ] && [ ! -e '$root/state/scx-disabled/rusty' ]"
+rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
+set_inactive; ver lavd; ver lavd; set_active lavd; ver lavd; set_inactive; ver lavd; ver lavd
+check "verify: failures must be consecutive: a success in between resets the count (no marker after 2+2)" bash -c "[ ! -e '$root/state/scx-disabled/lavd' ] && [ \"\$(cat '$root/state/scx-failures/lavd')\" = 2 ]"
+rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
+set_active rusty
+for i in $(seq 1 12); do ver rusty; done
+check "verify: rapid start/stop cycles (twelve successful verifications) write no marker and no failure count" bash -c "[ -z \"\$(find '$root/state' -type f)\" ]"
+set_inactive
+export OCTARINE_SCX_VERIFY_SECONDS=30
+bash "$lib/scx-verify" rusty >"$root/run" 2>&1 &
+vp=$!
+sleep 1
+kill -TERM "$vp"; wait "$vp"; rc=$?
+export OCTARINE_SCX_VERIFY_SECONDS=1
+check "verify: a stop during the wait (SIGTERM) is not a failure: exit 143, nothing counted, nothing written" bash -c "[ $rc = 143 ] && [ -z \"\$(find '$root/state' -type f)\" ] && grep -q 'not counted' '$LOGF'"
+check "verify: the threshold defaults to three failures" bash -c "grep -q 'SCX_MAX_FAILURES=\\\${OCTARINE_SCX_MAX_FAILURES:-3}' '$lib/scx-lib.sh'"
+
+# ---- the GameMode hooks (stub systemctl, tuned-adm, notify-send)
+hb="$root/hbin"; mkdir -p "$hb"
+cat >"$hb/systemctl" <<'F'
+#!/usr/bin/env bash
+echo "systemctl $*" >>"$HLOG"
+case "$1" in
+    is-enabled) for e in $ENABLED; do [ "$2" = "scx@$e.service" ] && { echo enabled; exit 0; }; done; echo disabled; exit 1 ;;
+    start) i=${2#scx@}; i=${i%.service}
+        [ "${SYSTEMCTL_FAIL:-}" = all ] && exit 1
+        for f in $FAIL_START; do [ "$f" = "$i" ] && exit 1; done
+        echo enabled >"$OCTARINE_SCX_SYSFS/state"; mkdir -p "$OCTARINE_SCX_SYSFS/root"; echo "$i" >"$OCTARINE_SCX_SYSFS/root/ops" ;;
+    stop) [ "${SYSTEMCTL_FAIL:-}" = all ] && exit 1
+        echo disabled >"$OCTARINE_SCX_SYSFS/state"; rm -f "$OCTARINE_SCX_SYSFS/root/ops" ;;
+esac
+exit 0
+F
+printf '#!/bin/sh\necho "tuned-adm $*" >>"$HLOG"\n' >"$hb/tuned-adm"
+printf '#!/bin/sh\necho "notify-send $*" >>"$HLOG"\n' >"$hb/notify-send"
+printf '#!/bin/sh\necho "logger $*" >>"$HLOG"\n' >"$hb/logger"
+chmod +x "$hb"/*
+export HLOG="$root/hlog" OCTARINE_SCX_RUN_DIR="$root/gmrun" OCTARINE_SCX_USER_CONF="$root/user.conf" OCTARINE_SCX_ACTIVE_WAIT=1 OCTARINE_SCX_SYSTEMCTL_TIMEOUT=5
+unset OCTARINE_SCX_STATE
+hreset() { : >"$HLOG"; rm -rf "${root:?}/gmrun" "${root:?}/user.conf"; set_inactive; unset FAIL_START SYSTEMCTL_FAIL; export ENABLED=""; }
+hook() { PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-$1" >"$root/run" 2>&1; rc=$?; }
+ops_now() { cat "$root/sys/root/ops" 2>/dev/null; }
+
+hreset; hook start; r1=$rc; hook end; r2=$rc
+check "hooks: no choice file means skip: tuned as before, no systemctl start or stop, both exit 0" bash -c "[ $r1 = 0 ] && [ $r2 = 0 ] && grep -q 'tuned-adm profile latency-performance' '$HLOG' && grep -q 'tuned-adm profile balanced' '$HLOG' && ! grep -qE 'systemctl (start|stop)' '$HLOG'"
+hreset; echo 'GAMEMODE_SCHED=skip' >"$root/user.conf"; hook start
+check "hooks: skip does nothing to schedulers" bash -c "! grep -qE 'systemctl (start|stop)' '$HLOG'"
+hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; r1=$rc; o1=$(ops_now); hook end; r2=$rc; o2=$(ops_now)
+check "hooks: a name with no boot scheduler: start switches to it (verified), end returns to the kernel default; exit 0 both" bash -c "[ $r1 = 0 ] && [ $r2 = 0 ] && [ '$o1' = lavd ] && [ -z '$o2' ] && grep -q 'systemctl start scx@lavd.service' '$HLOG' && grep -q 'systemctl stop scx@lavd.service' '$HLOG'"
+hreset; ENABLED=rusty; set_active rusty; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; o1=$(ops_now); hook end; o2=$(ops_now)
+check "hooks: a name with a boot scheduler: start switches to it, end restores the boot scheduler (the instance systemctl reports enabled)" bash -c "[ '$o1' = lavd ] && [ '$o2' = rusty ]"
+hreset; ENABLED=rusty; set_active rusty; echo 'GAMEMODE_SCHED=none' >"$root/user.conf"; hook start; o1=$(ops_now); hook end; o2=$(ops_now)
+check "hooks: none stops the boot scheduler for the game and end brings it back" bash -c "[ -z '$o1' ] && [ '$o2' = rusty ] && grep -q 'systemctl stop scx@rusty.service' '$HLOG'"
+hreset; echo 'GAMEMODE_SCHED=none' >"$root/user.conf"; hook start; hook end
+check "hooks: none with no scheduler active changes nothing" bash -c "! grep -qE 'systemctl (start|stop)' '$HLOG'"
+hreset; ENABLED=rusty; set_active rusty; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; FAIL_START=lavd hook start; r1=$rc; o1=$(ops_now)
+check "hooks: the chosen scheduler fails to start: the boot choice stays or is restored, a notification is sent, exit 0, nothing marked as switched" bash -c "[ $r1 = 0 ] && [ '$o1' = rusty ] && grep -q 'notify-send' '$HLOG' && grep -q 'logger -t octarine-scx' '$HLOG' && [ ! -e '$root/gmrun/switched' ]"
+unset FAIL_START
+hreset; ENABLED=rusty; set_active rusty; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"
+PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-start" >/dev/null 2>&1 &
+PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-start" >/dev/null 2>&1
+wait
+PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1 &
+PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1
+wait
+check "hooks: two games overlapping (two starts, two ends at once): lavd is started once, the boot scheduler is restored once, the second end finds nothing to restore" bash -c "[ \$(grep -c 'systemctl start scx@lavd.service' '$HLOG') = 1 ] && [ \$(grep -c 'systemctl start scx@rusty.service' '$HLOG') = 1 ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty ]"
+hreset; echo 'GAMEMODE_SCHED=../../etc/passwd' >"$root/user.conf"; hook start; r1=$rc
+check "hooks: an unregistered or hostile GAMEMODE_SCHED is ignored (treated as skip), no systemctl call, exit 0" bash -c "[ $r1 = 0 ] && ! grep -qE 'systemctl (start|stop)' '$HLOG' && grep -q 'ignoring GAMEMODE_SCHED' '$HLOG'"
+hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; SYSTEMCTL_FAIL=all hook start; r1=$rc; SYSTEMCTL_FAIL=all hook end; r2=$rc
+check "hooks: systemctl failing everywhere still exits 0 for start and end" test "$r1" = 0 -a "$r2" = 0
+hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; mv "$hb/tuned-adm" "$hb/tuned-adm.off"; hook start; r1=$rc; mv "$hb/tuned-adm.off" "$hb/tuned-adm"
+check "hooks: without tuned-adm the scheduler switch still happens and the hook exits 0" bash -c "[ $r1 = 0 ] && grep -q 'systemctl start scx@lavd.service' '$HLOG'"
+start_t=$(date +%s); hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; el=$(( $(date +%s) - start_t ))
+check "hooks: a normal start finishes in a couple of seconds, far below the 20 s script_timeout" test "$el" -lt 5
+check "hooks: only the hook library reads scheduler.conf; the root helpers and the unit never mention it" bash -c "grep -q 'scheduler.conf' '$lib/gamemode-lib.sh' && ! grep -rq 'scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-run' '$lib/scx-verify' '$u'"
+gm="$here/system_files/usr/share/octarine-os/gamemode.ini"
+check "gamemode.ini ships the hooks as start= and end= and a script_timeout above the default" bash -c "grep -qx 'start=/usr/libexec/octarine-os/gamemode-start' '$gm' && grep -qx 'end=/usr/libexec/octarine-os/gamemode-end' '$gm' && grep -qx 'script_timeout=20' '$gm' && ! grep -q '^start=tuned-adm' '$gm'"
+check "every shipped script under libexec parses and is executable" bash -c "for f in '$lib'/scx-preflight '$lib'/scx-run '$lib'/scx-verify '$lib'/gamemode-start '$lib'/gamemode-end; do bash -n \"\$f\" && [ -x \"\$f\" ] || exit 1; done; for f in '$lib'/*-lib.sh '$here'/build_files/gen-schedulers.sh; do bash -n \"\$f\" || exit 1; done"
+
+echo
+echo "passed: $pass, failed: $failn"
+[ "$failn" = 0 ]
