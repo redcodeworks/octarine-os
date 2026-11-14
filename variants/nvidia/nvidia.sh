@@ -79,5 +79,8 @@ grep -i nvidia "${lst}" | head -20 || true
 rm -f "${lst}"
 echo "NVIDIA driver installed for kernel ${before}"
 
+# Every repository that is enabled must be one the base enables (validate-repos.sh)
+/ctx/validate-repos.sh
+
 # nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (build_files/final-cleanup.sh)
 /ctx/final-cleanup.sh

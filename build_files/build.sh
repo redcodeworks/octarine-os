@@ -304,5 +304,8 @@ systemctl --global enable podman.socket
 # get no failed unit and Intel machines keep machine-check logging.
 test -f /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf
 
+# --- Every repository that is enabled must be one the base enables (see validate-repos.sh) ---
+/ctx/validate-repos.sh
+
 # --- Last step: nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (see final-cleanup.sh) ---
 /ctx/final-cleanup.sh

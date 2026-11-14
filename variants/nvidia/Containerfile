@@ -12,6 +12,7 @@ FROM ${AKMODS_REF} AS nvidia-akmods
 FROM scratch AS ctx
 COPY variants/nvidia/nvidia.sh /nvidia.sh
 COPY build_files/final-cleanup.sh /final-cleanup.sh
+COPY build_files/validate-repos.sh /validate-repos.sh
 
 FROM ${BASE_REF}
 

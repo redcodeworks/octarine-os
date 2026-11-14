@@ -85,5 +85,8 @@ after=$(kernel_of)
 [[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: /usr/lib/modules does not hold exactly ${before}"; exit 1; }
 echo "dx layer installed for kernel ${before}"
 
+# Every repository that is enabled must be one the base enables (validate-repos.sh)
+/ctx/validate-repos.sh
+
 # nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (build_files/final-cleanup.sh)
 /ctx/final-cleanup.sh
