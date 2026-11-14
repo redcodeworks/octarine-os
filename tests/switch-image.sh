@@ -43,6 +43,11 @@ cat >"$root/fakebin/bootc" <<'EOF2'
 #!/bin/bash
 echo "bootc $*" >>"$LOG"
 EOF2
+cat >"$root/fakebin/rpm-ostree" <<'EOF2'
+#!/bin/bash
+echo "rpm-ostree $*" >>"$LOG"
+cat "$FAKE_RPMOSTREE_JSON"
+EOF2
 chmod +x "$root/fakebin/"*
 
 mkdir -p "$root/drm-nvidia/card0/device" "$root/drm-amd/card0/device"
@@ -56,13 +61,33 @@ run() { # current ref, args...
     local cur=$1
     shift
     : >"$LOG"
-    PATH="$root/fakebin:$PATH" OCTARINE_SWITCH_CURRENT_REF="$cur" FAKE_PUBLISHED="${FAKE_PUBLISHED:-$pub_all}" \
+    PATH="$root/fakebin:$PATH" OCTARINE_SWITCH_CURRENT_REF="$cur" OCTARINE_SWITCH_STAGED_REF="${STAGED-}" FAKE_PUBLISHED="${FAKE_PUBLISHED:-$pub_all}" \
         just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }
 rc=0
 base="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os:latest"
 dx="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"
+
+# ---- staged but not booted: a second run must not call bootc again
+STAGED="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"
+run "$base" dx --yes
+check "the target is already staged (not booted): nothing runs, says reboot to use it, exit 0" bash -c "[ $rc = 0 ] && grep -q 'already staged: reboot' '$root/out' && ! grep -q 'bootc' '$root/log' && ! grep -q '^sudo' '$root/log'"
+run "$base" dx --no
+check "staged target with --no: same message, no command" bash -c "[ $rc = 0 ] && grep -q 'already staged' '$root/out' && ! grep -q 'Would run' '$root/out'"
+STAGED="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest@sha256:0123456789abcdef"
+run "$base" dx --yes
+check "a staged digest suffix is ignored when comparing" bash -c "grep -q 'already staged' '$root/out' && ! grep -q 'bootc' '$root/log'"
+STAGED="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-nvidia:latest"
+run "$base" dx --yes
+check "a DIFFERENT staged image is named and replaced by the new switch" bash -c "[ $rc = 0 ] && grep -q 'octarine-os-nvidia:latest is staged' '$root/out' && grep -q 'bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest' '$root/log'"
+STAGED=""
+printf '%s' '{"deployments":[{"booted":false,"staged":true,"container-image-reference":"ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"},{"booted":true,"staged":false,"container-image-reference":"ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os:latest"}]}' >"$root/rpmostree.json"
+unset STAGED
+: >"$LOG"
+PATH="$root/fakebin:$PATH" FAKE_RPMOSTREE_JSON="$root/rpmostree.json" OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image dx --yes >"$root/out" 2>&1 </dev/null; rc=$?
+check "the staged deployment is read from rpm-ostree status --json when no override is set: no bootc call" bash -c "[ $rc = 0 ] && grep -q 'already staged' '$root/out' && ! grep -q 'bootc' '$root/log'"
+STAGED=""
 
 run "$base" --help
 check "--help explains images, channels and the rollback" bash -c "[ $rc = 0 ]" 

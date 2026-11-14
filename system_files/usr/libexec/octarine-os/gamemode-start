@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# GameMode `start` hook: the tuned profile (as before) and, when the user chose one, the scheduler switch. The two steps are
+# independent and run side by side; neither failing stops the other. Always exits 0 (a failing hook must not disturb the game),
+# logs with logger -t octarine-scx, and stays well under GameMode's script_timeout (each step is bounded).
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=gamemode-lib.sh
+. "${here}/gamemode-lib.sh"
+(
+    if command -v tuned-adm > /dev/null 2>&1; then
+        timeout 5 tuned-adm profile latency-performance > /dev/null 2>&1 || log "tuned-adm profile latency-performance failed"
+    fi
+) &
+with_lock scheduler_start || true
+wait
+exit 0

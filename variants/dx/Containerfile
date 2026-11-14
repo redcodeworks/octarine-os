@@ -23,6 +23,7 @@ FROM scratch AS ctx
 COPY variants/dx/dx.sh /dx.sh
 COPY variants/dx/packages/extras.txt /extras.txt
 COPY variants/dx/system_files /system_files
+COPY variants/dx/datastore /datastore
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 

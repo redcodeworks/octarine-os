@@ -139,7 +139,7 @@ mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
 optional_groups=(
-    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-blur-my-shell gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
+    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
     "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
     "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
     "pcp:pcp python3-pcp"
@@ -255,6 +255,14 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # at /binaries/<name>; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
 # no unit, no preset, nothing is started.
 /ctx/install-binaries.sh
+
+# The sched_ext scheduler registry and unit drop-ins, generated from the manifest that install-binaries.sh just installed
+# (scx@.service, its helpers and the polkit rule come from system_files). Nothing is enabled: the preset says disable.
+/ctx/gen-schedulers.sh
+for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x "/usr/libexec/octarine-os/${f}"; done
+test -f /usr/lib/systemd/system/scx@.service
+test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
+! grep -q "@INSTANCES@" /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).

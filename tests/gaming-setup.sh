@@ -320,7 +320,7 @@ check "gum: a named step (reset) opens no checklist" notlogged "gum choose"
 reset
 GAMING_SETUP_PSTATE_STATUS="$root/pstate-passive" run '' --yes gamemode
 check "gamemode (no amd-pstate active): no desiredgov line and no workaround comment" bash -c "! grep -q '^desiredgov=\|gamemode#419\|FeralInteractive' '$HOME/.config/gamemode.ini'"
-check "gamemode (no amd-pstate active): renice and the tuned start/end stay" bash -c "grep -q '^renice=10' '$HOME/.config/gamemode.ini' && grep -q '^start=tuned-adm' '$HOME/.config/gamemode.ini' && grep -q '^end=tuned-adm' '$HOME/.config/gamemode.ini'"
+check "gamemode (no amd-pstate active): renice and the tuned start/end stay" bash -c "grep -q '^renice=10' '$HOME/.config/gamemode.ini' && grep -q '^start=/usr/libexec/octarine-os/gamemode-start' '$HOME/.config/gamemode.ini' && grep -q '^end=/usr/libexec/octarine-os/gamemode-end' '$HOME/.config/gamemode.ini'"
 check "gamemode (no amd-pstate active): the note says why" has "amd-pstate is not in active mode"
 GAMING_SETUP_PSTATE_STATUS="$root/pstate-passive" run '' gamemode
 check "gamemode (no amd-pstate active): idempotent" has "already has the tuning"

@@ -1,0 +1,42 @@
+[Unit]
+Description=Kafka broker (KRaft, single node)
+
+[Container]
+Pod=kafka.pod
+ContainerName=kafka
+# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+Image=@KAFKA_IMAGE@
+
+Volume=kafka-data.volume:/var/lib/kafka/data
+
+# KRaft: this one node is both broker and controller, so no ZooKeeper.
+Environment=KAFKA_NODE_ID=1
+Environment=KAFKA_PROCESS_ROLES=broker,controller
+Environment=KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+Environment=KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+Environment=KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+Environment=KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+Environment=KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+# Clients are told to reach the broker here, so it has to resolve from other pods: the pod alias, not localhost.
+Environment=KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+
+# Single node: nothing to replicate to.
+Environment=KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+Environment=KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+Environment=KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1
+Environment=KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0
+Environment=KAFKA_LOG_DIRS=/var/lib/kafka/data
+Environment=KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+
+HealthCmd=/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092
+HealthInterval=15s
+HealthRetries=10
+HealthStartPeriod=45s
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+# No [Install] section: pulled in by kafka-pod.service.

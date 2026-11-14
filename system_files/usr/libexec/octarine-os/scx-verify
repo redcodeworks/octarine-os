@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# ExecStartPost of scx@.service: did the scheduler really take over? Waits up to 5 seconds until the sched_ext state is `enabled`
+# and the active ops name (root/ops) is this instance. Exit 0 on success (and the failure count is reset), non-zero otherwise.
+#
+# A failure counts only when the scheduler did not become active within the timeout AND sched_ext is not held by another scheduler
+# (a real load failure; a busy sched_ext fails the start without counting). The count is a root-owned
+# file; at the third consecutive verified failure the marker /var/lib/octarine-os/scx-disabled/<instance> is written with the running
+# kernel release, and scx-preflight then refuses to start the instance on that kernel. A stop or restart during the wait (SIGTERM)
+# is not a failure and counts nothing, so start/stop cycles never trip anything. Whatever happens the machine stays on the kernel's
+# default scheduler (EEVDF) unless a scheduler is really loaded.
+set -uo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scx-lib.sh
+. "${here}/scx-lib.sh"
+name=${1-}
+scx_find_instance "${name}" > /dev/null || { scx_log "verify: unknown scheduler instance"; exit 2; }
+trap 'scx_log "verify ${name}: interrupted (stop or restart), not counted"; exit 143' TERM INT
+
+fdir=$(scx_failure_dir)
+mdir=$(scx_marker_dir)
+state=${SCX_SYSFS}/state
+ops=${SCX_SYSFS}/root/ops
+
+active() {
+    [[ "$(cat "${state}" 2> /dev/null)" == enabled && "$(cat "${ops}" 2> /dev/null)" == "${name}" ]]
+}
+
+deadline=$((SECONDS + SCX_VERIFY_SECONDS))
+while :; do
+    if active; then
+        rm -f -- "${fdir}/${name}" "${mdir}/${name}"
+        scx_log "verify ${name}: active"
+        exit 0
+    fi
+    ((SECONDS >= deadline)) && break
+    sleep 0.2 &
+    wait $!
+done
+
+# Busy, not a load failure: sched_ext is enabled but ANOTHER scheduler holds it (for example a user started this instance with
+# `systemctl start --job-mode=ignore-dependencies`, which skips the Conflicts= stop of the active one). This instance cannot load
+# then, the start fails, but nothing is counted and no marker is written: it says nothing about this kernel and this scheduler.
+cur_state=$(cat "${state}" 2> /dev/null)
+cur_ops=$(cat "${ops}" 2> /dev/null)
+if [[ "${cur_state}" == enabled && -n "${cur_ops}" && "${cur_ops}" != "${name}" ]]; then
+    scx_log "verify ${name}: busy, sched_ext is held by '${cur_ops}'; not a load failure, not counted"
+    exit 1
+fi
+
+# a real failure (sched_ext not enabled at all after the timeout): count it
+mkdir -p "${fdir}" "${mdir}" 2> /dev/null
+n=$(cat "${fdir}/${name}" 2> /dev/null)
+[[ "${n}" =~ ^[0-9]+$ ]] || n=0
+n=$((n + 1))
+((n > SCX_MAX_FAILURES)) && n=${SCX_MAX_FAILURES}   # the count never grows past the threshold
+echo "${n}" > "${fdir}/${name}" 2> /dev/null
+scx_log "verify ${name}: not active after ${SCX_VERIFY_SECONDS} s (state '$(cat "${state}" 2> /dev/null)', ops '$(cat "${ops}" 2> /dev/null)'), failure ${n} of ${SCX_MAX_FAILURES}"
+if ((n >= SCX_MAX_FAILURES)); then
+    scx_kernel > "${mdir}/${name}"
+    scx_log "verify ${name}: disabled for kernel $(scx_kernel) after ${n} verified failures; remove ${mdir}/${name} to try again"
+fi
+exit 1

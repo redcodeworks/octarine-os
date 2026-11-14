@@ -41,7 +41,7 @@ Everything system-level that used to be hand-layered now lives in this repo:
   libguestfs tools stay everywhere.
 - **Config under `system_files/`:** YubiKey PAM for sudo and polkit, sysctl tuning, sshd hardening,
   firewalld services and zone, GameMode settings, a container
-  signature policy for the image itself. The `iommu=pt` kernel argument ships only in the dx image.
+  signature policy for the image itself. No image ships a kernel argument: `iommu=pt` for device passthrough is opt-in (`ujust virthost-setup`); a machine that had it from an earlier dx image loses it on the first image that drops the file, until that step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt` and a reboot).
 - **Preinstalled Flatpaks:** official GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta,
   Flatseal, Extension Manager and Bazaar (the software center; gnome-software is removed, firmware
   updates stay available through `fwupdmgr`).
@@ -137,7 +137,7 @@ timers are installed but not enabled. Turn on what you use.
   `ujust gnome-candy install-icon` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
-  Dock, Blur My Shell, User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
+  Dock, Blur My Shell (not shipped by the image: install the upstream release as a user extension), User Themes (needed to apply a GNOME Shell theme), Caffeine, AppIndicator
   and Auto Move Windows, which sends apps to fixed workspaces: general, browsers, media and chat,
   games.
 - **Keybindings for a keyboard with no arrow keys.** Right Command becomes Hyper and right Alt
@@ -311,7 +311,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   replaced). Each step is skipped when the app is not installed or the change is already in place; Enter takes the
   default. `--yes` takes the defaults without asking, `--no` changes nothing and prints the plan. The summary lists how
   to undo each applied step.
-- **`dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]` (dx image only):** a checklist of developer setup steps: `libvirt` (system
+- **`dev [--yes|--no] [--only STEP[,STEP...]] [--image IMAGE]` (dx image only):** a checklist of developer setup steps: `libvirt` (delegates to `ujust virthost-setup --only daemons,connection`; the rest of the VM host setup, the bridge, IOMMU and images, is that recipe; system
   libvirt; the one `sudo` command), `tools` (Homebrew developer tools in groups), `vscode` (Flathub, not verified),
   `jetbrains` (official Homebrew cask plus a launcher), `rust` (rustup, rust-analyzer, rust-src), `java` (SDKMAN from the
   Homebrew tap, Zulu 8, 11, 17, 21, 25), `node` (fnm and the latest LTS), `python` (uv-managed 3.12 to 3.14) and, only on a machine with an NVIDIA driver, `cuda` (a

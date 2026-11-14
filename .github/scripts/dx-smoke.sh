@@ -83,7 +83,28 @@ for p in bcc bpftrace trace-cmd numactl git-subtree git-svn ydotool cascadia-cod
 done
 
 echo "== kernel argument (dx only)"
-check "iommu=pt karg file is shipped" "has_text ${lib_dir}/bootc/kargs.d/10-iommu.toml 'iommu=pt'"
+check "no image ships an iommu kernel argument (it is opt-in: ujust virthost-setup)" "! grep -rqs iommu ${lib_dir}/bootc/kargs.d"
+
+echo "== datastore Quadlets (opt-in, rootless, stopped by default)"
+qdir="${QUADLET_DIR:-${share_dir}/containers/systemd/users}"
+for f in datastore.pod kafka.pod postgresql.container valkey.container seaweedfs.container kafka.container lakehouse.network postgresql-data.volume valkey-data.volume seaweed-data.volume kafka-data.volume; do
+    check "Quadlet ${f} ships" "test -s ${qdir}/${f}"
+done
+quadlet_has_no_install() { ! grep -rq '^\[Install\]' "${qdir}"; }
+quadlet_images_exact() { local bad; bad=$(grep -h '^Image=' "${qdir}"/*.container | grep -vE '^Image=[a-z0-9./-]+:[0-9][0-9a-z.-]*@sha256:[0-9a-f]{64}$') || true; [ -z "${bad}" ] && [ "$(grep -hc '^Image=' "${qdir}"/*.container | grep -vc '^1$')" = 0 ]; }
+quadlet_clean() { ! grep -rEq ':latest|^AutoUpdate=|/home/|%h|localhost/' "${qdir}"; }
+quadlet_loopback_only() { local bad; bad=$(grep -h '^PublishPort=' "${qdir}"/*.pod | grep -v '^PublishPort=127\.0\.0\.1:') || true; [ -z "${bad}" ] && [ -n "$(grep -h '^PublishPort=' "${qdir}"/*.pod)" ]; }
+check "no Quadlet has an [Install] section (nothing starts by itself)" quadlet_has_no_install
+check "every Quadlet image is an exact version tag with a sha256 digest, one Image= per container" quadlet_images_exact
+check "no latest tag, no AutoUpdate=, no host path and no local image in the Quadlets" quadlet_clean
+check "every published port is bound to 127.0.0.1" quadlet_loopback_only
+check "the datastore and virthost recipe files and the datastore helper ship" "test -s ${share_dir}/ublue-os/just/72-octarine-datastore.just && test -s ${share_dir}/ublue-os/just/75-octarine-virthost.just && test -s ${share_dir}/octarine-os/lib/datastore.sh"
+if [ -x "${QUADLET_GENERATOR:-/usr/libexec/podman/quadlet}" ]; then
+    qgen() { local o; o=$(HOME=/tmp "${QUADLET_GENERATOR:-/usr/libexec/podman/quadlet}" --user --dryrun 2>&1) || return 1; for u in datastore-pod.service kafka-pod.service postgresql.service valkey.service seaweedfs.service kafka.service; do [[ "${o}" == *"---${u}---"* ]] || return 1; done; }
+    check "the user Quadlet generator reads /usr/share/containers/systemd/users and produces the pod and container units (dry run)" qgen
+else
+    echo "INFO the Quadlet generator is not available here: dry run skipped"
+fi
 
 echo "== services and Flatpak"
 check "podman.socket enabled" "systemctl is-enabled podman.socket"

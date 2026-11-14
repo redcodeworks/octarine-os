@@ -20,6 +20,12 @@ on:
       image:
         description: registry path of the binaries image
         value: ${{ jobs.result.outputs.image }}
+      action:
+        description: "which path the binaries image took: reused (a signed image for the hash existed), built (built, pushed and signed) or validated (built on a ref that cannot publish)"
+        value: ${{ jobs.result.outputs.action }}
+      hash:
+        description: the tree hash of binaries/ (the image tag)
+        value: ${{ jobs.result.outputs.hash }}
   workflow_dispatch:
 
 env:
@@ -64,6 +70,31 @@ jobs:
         id: lookup
         run: .github/scripts/binaries-lookup.sh "${{ steps.hash.outputs.image }}" "${{ steps.hash.outputs.hash }}"
 
+  # The reuse path: runs ONLY when the lookup found an image for the hash tag whose signature verified. It hands the digest on;
+  # the build and sign jobs are skipped then. (A tag whose signature fails to verify is not usable: the lookup says so and the
+  # build path rebuilds and signs it again, the loud warning stays in the lookup step.)
+  reuse:
+    name: Reuse the binaries image
+    needs: check
+    if: needs.check.outputs.usable == 'true'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    outputs:
+      digest: ${{ steps.reuse.outputs.digest }}
+    steps:
+      - name: Reuse the published image
+        id: reuse
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+          DIGEST: ${{ needs.check.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest from the lookup: '${DIGEST}'"; exit 1; }
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "Binaries image: reused \`${HASH}\` (digest \`${DIGEST}\`, signature verified, no build)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Binaries image: reused ${HASH} (digest ${DIGEST}, signature verified, no build)"
+
   build:
     name: Build the binaries image
     needs: check
@@ -76,7 +107,12 @@ jobs:
     outputs:
       published: ${{ steps.channel.outputs.publish }}
       digest: ${{ steps.push.outputs.digests }}
+      started: ${{ steps.started.outputs.at }}
     steps:
+      - name: Note the start time
+        id: started
+        run: echo "at=$(date +%s)" >> "${GITHUB_OUTPUT}"
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -122,6 +158,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Summary (validation only)
+        if: steps.channel.outputs.publish != 'true'
+        env:
+          HASH: ${{ needs.check.outputs.hash }}
+        run: |
+          echo "Binaries image: built \`${HASH}\` for validation only (this ref does not publish), nothing was pushed or signed" >> "${GITHUB_STEP_SUMMARY}"
+
       # One push under the hash tag: one manifest digest, which the signature belongs to
       - name: Push
         id: push
@@ -140,6 +183,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.sign.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -157,7 +202,9 @@ jobs:
           tool: cosign
 
       - name: Sign and verify
+        id: sign
         env:
+          STARTED: ${{ needs.build.outputs.started }}
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
           IMAGE: ${{ needs.check.outputs.image }}
@@ -171,16 +218,21 @@ jobs:
           cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
           cosign verify --key cosign.pub "${IMAGE}:${HASH}" > /dev/null
           echo "signed: ${IMAGE}:${HASH} = ${DIGEST}"
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          minutes=$(( ($(date +%s) - ${STARTED:-$(date +%s)}) / 60 ))
+          echo "Binaries image: built \`${HASH}\` in ${minutes}m, signed and published (digest \`${DIGEST}\`)" >> "${GITHUB_STEP_SUMMARY}"
 
   result:
     name: Binaries image digest
-    needs: [check, build, sign]
+    needs: [check, reuse, build, sign]
     if: always()
     runs-on: ubuntu-26.04
     permissions:
       contents: read
     outputs:
       digest: ${{ steps.pick.outputs.digest }}
+      action: ${{ steps.pick.outputs.action }}
+      hash: ${{ needs.check.outputs.hash }}
       image: ${{ needs.check.outputs.image }}
     steps:
       - name: Pick the digest
@@ -188,26 +240,29 @@ jobs:
         env:
           CHECK: ${{ needs.check.result }}
           USABLE: ${{ needs.check.outputs.usable }}
-          CHECK_DIGEST: ${{ needs.check.outputs.digest }}
+          REUSE: ${{ needs.reuse.result }}
+          REUSE_DIGEST: ${{ needs.reuse.outputs.digest }}
           BUILD: ${{ needs.build.result }}
           PUBLISHED: ${{ needs.build.outputs.published }}
-          BUILD_DIGEST: ${{ needs.build.outputs.digest }}
           SIGN: ${{ needs.sign.result }}
+          SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
         run: |
           set -euo pipefail
           err() { echo "::error::$*"; exit 1; }
           [[ "${CHECK}" == success ]] || err "The lookup of the binaries image failed (${CHECK})"
+          # one producer path per case: reuse, or build then sign, or a validation-only build
           if [[ "${USABLE}" == true ]]; then
-            echo "digest=${CHECK_DIGEST}" >> "${GITHUB_OUTPUT}"
-            echo "### Prebuilt binaries: unchanged, nothing to build (${CHECK_DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
+            [[ "${REUSE}" == success ]] || err "The reuse job did not succeed (${REUSE})"
+            echo "digest=${REUSE_DIGEST}" >> "${GITHUB_OUTPUT}"
+            echo "action=reused" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           [[ "${BUILD}" == success ]] || err "The binaries build failed (${BUILD})"
           if [[ "${PUBLISHED}" == true ]]; then
             [[ "${SIGN}" == success ]] || err "Signing the binaries image failed (${SIGN})"
-            echo "digest=${BUILD_DIGEST}" >> "${GITHUB_OUTPUT}"
-            echo "### Prebuilt binaries: built, pushed and signed (${BUILD_DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
+            echo "digest=${SIGN_DIGEST}" >> "${GITHUB_OUTPUT}"
+            echo "action=built" >> "${GITHUB_OUTPUT}"
           else
             echo "digest=" >> "${GITHUB_OUTPUT}"
-            echo "### Prebuilt binaries: built for validation only (this ref does not publish); nothing was pushed" >> "${GITHUB_STEP_SUMMARY}"
+            echo "action=validated" >> "${GITHUB_OUTPUT}"
           fi

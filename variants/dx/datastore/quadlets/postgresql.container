@@ -1,0 +1,38 @@
+[Unit]
+Description=PostgreSQL server
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+Pod=datastore.pod
+# `pgsql`, the pod's short host name: podman exec pgsql psql ...
+ContainerName=pgsql
+# An exact tag and its digest from variants/dx/datastore/datastore.env, never a floating tag, and no AutoUpdate= on purpose:
+# a database does not change image unattended. A major version (PG_VERSION of the data) is never changed by an image update.
+Image=@POSTGRESQL_IMAGE@
+
+Volume=postgresql-data.volume:/var/lib/postgresql/data
+
+Environment=POSTGRES_DB=postgres
+Environment=POSTGRES_USER=postgres
+Environment=POSTGRES_PASSWORD_FILE=/run/secrets/postgresql-password
+# Keep the cluster in a subdirectory so the volume root stays writable and empty-safe.
+Environment=PGDATA=/var/lib/postgresql/data/pgdata
+Secret=postgresql-password
+
+# Logical replication, for change-data-capture tools (Debezium and the like): wal_level defaults to `replica`, which carries no
+# row-level detail. Instance-wide setting.
+Exec=postgres -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
+
+HealthCmd=pg_isready -U postgres -d postgres
+HealthInterval=10s
+HealthRetries=5
+HealthStartPeriod=30s
+
+NoNewPrivileges=true
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+# No [Install] section: pulled in by datastore-pod.service.

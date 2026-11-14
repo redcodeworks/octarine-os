@@ -21,7 +21,7 @@ in_order() { # headings in the order given, all present
 
 # ---- README structure
 check "sections in order: requirements, highlights, variants, install, recipes, then the closing block" \
-    in_order Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
+    in_order "Build status" Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
 check "the last second-level heading is About this repo (the disclaimer stays last)" \
     bash -c "[ \"\$(grep -E '^## ' '$readme' | tail -1)\" = '## About this repo' ]"
 check "the disclaimer text is in the About section" bash -c "awk '/^## About this repo/{f=1} f' '$readme' | grep -q 'excuse the slop'"
@@ -33,13 +33,45 @@ check "no section of the old Developer menu" bash -c "! grep -q 'Developer menu'
 check "the old compilers sentence is gone" bash -c "! grep -q 'stay out of the host' '$readme'"
 check "no personal names" bash -c "! grep -qiE 'kevin|riley' '$readme'"
 check "no step-by-step recipe text (no per-step table of ujust dev, no u2f commands)" bash -c "! grep -qE 'pamu2fcfg|\`libvirt\` \\|' '$readme'"
-check "the Variants table has exactly the three images" bash -c "awk '/^## Variants/{f=1;next} /^## /{f=0} f' '$readme' | grep -c '^| \(default\|NVIDIA\|dx\) |' | grep -qx 3"
+check "the Variants table lists the four images in the order default, dx, NVIDIA, NVIDIA dx, and has no badge" python3 - "$readme" <<'PY'
+import re, sys
+sec = open(sys.argv[1]).read().split("\n## Variants", 1)[1].split("\n#", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("| ")]
+assert [r.split("|")[1].strip() for r in rows[1:]] == ["default", "dx", "NVIDIA", "NVIDIA dx"], rows
+assert "badge.svg" not in sec
+PY
+# ---- the Build status table: Image | main | testing, one linked badge per cell, natural size (no text beside it)
+check "Build status table: header, four rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
+import re, sys, os
+text = open(sys.argv[1]).read(); repo = sys.argv[2]
+assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
+assert text.index("CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
+assert "### Build status" not in text
+sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("|")]
+assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
+body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}
+assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx"], list(body)
+base = "https://github.com/redcodeworks/octarine-os/actions/workflows/"
+def badge(cell, wf, br):
+    m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
+    assert m, (wf, br, cell)
+    assert os.path.exists(os.path.join(repo, ".github/workflows", wf)), wf
+for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml"), ("NVIDIA", "build-nvidia.yml"), ("NVIDIA dx", "build-nvidia-dx.yml")):
+    badge(body[img][0], wf, "main")
+badge(body["default"][1], "build.yml", "testing")
+# dx is a workflow_run workflow: GitHub records every run on main, a testing badge would never show a status
+assert body["dx"][1] == "after each testing build, see the check on the commit", body["dx"]
+badge(body["beta"][0], "build-beta.yml", "main")
+for img in ("beta", "NVIDIA", "NVIDIA dx"):
+    assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
+PY
 
 # ---- recipes: every public recipe of the shipped recipe files is listed, marked DX only where dx-only
 recipes() { grep -hE '^[a-z][a-z0-9-]* (\*args)?:$' "$@" | sed -E 's/ .*//; s/:$//'; }
 default_recipes=$(recipes "$repo/system_files/usr/share/ublue-os/just/60-custom.just" "$repo/system_files/usr/share/ublue-os/just/10-update.just")
 dx_recipes=$(recipes "$repo"/variants/dx/system_files/usr/share/ublue-os/just/*.just)
-check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$dx_recipes\" = dev ]"
+check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$(echo $dx_recipes | tr ' ' '\n' | sort | tr '\n' ' ')\" = \"datastore datastore-setup dev virthost-setup \" ]"
 for r in $default_recipes; do
     check "README lists ujust $r" grep -qF "ujust $r" "$readme"
 done
@@ -59,19 +91,20 @@ for img in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; 
     check "README has the URL of $img" grep -qF "ghcr.io/redcodeworks/$img:latest" "$readme"
 done
 check "the nvidia and dx variants have their own build files" test -f "$repo/variants/nvidia/nvidia.sh" -a -f "$repo/variants/dx/dx.sh"
-check "the README says dx has the iommu=pt karg and the file is in the dx tree" bash -c "grep -q 'iommu=pt' '$readme' && grep -qx 'kargs = \[\"iommu=pt\"\]' '$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml'"
+check "the README does not claim an iommu=pt kernel argument for dx and no dx tree file ships it" bash -c "! grep -q 'iommu=pt' '$readme' && ! grep -rqs iommu '$repo/variants/dx/system_files/usr/lib/bootc'"
 check "the README does not say VS Code or virt-manager is preinstalled" bash -c "! grep -qiE 'Visual Studio Code preinstalled|virt-manager, Vorta' '$readme'"
 
-# ---- iommu=pt: dx only
+check "the blur-my-shell extension is not in the package lists (build.sh, smoke test optional lists)" bash -c "! grep -rq 'gnome-shell-extension-blur-my-shell' '$repo/build_files' '$repo/.github/workflows' '$repo/variants'"
+
+# ---- iommu=pt: no image ships it (opt-in through ujust virthost-setup)
 check "the default image tree ships no kargs.d file with iommu" bash -c "! grep -rqs iommu '$repo/system_files/usr/lib/bootc'"
 check "the default image tree has no 10-iommu.toml" test ! -e "$repo/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "the dx image tree ships iommu=pt" grep -q 'iommu=pt' "$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "dx.sh copies the dx tree (so the karg file lands in /usr/lib/bootc/kargs.d)" grep -q 'cp -avf /ctx/system_files/. /' "$repo/variants/dx/dx.sh"
+check "the dx image tree has no kargs.d file at all" test ! -e "$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
 for wf in build.yml build-beta.yml; do
     check "$wf smoke test asserts the karg file is ABSENT" grep -qF '! test -e /usr/lib/bootc/kargs.d/10-iommu.toml' "$repo/.github/workflows/$wf"
     check "$wf smoke test no longer requires the karg file" bash -c "! grep -qF 'test -f /usr/lib/bootc/kargs.d/10-iommu.toml' '$repo/.github/workflows/$wf'"
 done
-check "dx-smoke.sh asserts the karg" grep -q 'iommu=pt karg file is shipped' "$repo/.github/scripts/dx-smoke.sh"
+check "dx-smoke.sh asserts that no kargs.d file mentions iommu" grep -q 'no image ships an iommu kernel argument' "$repo/.github/scripts/dx-smoke.sh"
 check "the README does not claim iommu=pt for the default image" bash -c "! grep -E 'zram swap tuning.*iommu' '$readme'"
 
 # ---- zsh: installed, not the default of new users

@@ -1,0 +1,15 @@
+[Unit]
+Description=Kafka pod (single-node KRaft broker)
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=kafka
+HostName=kafka
+NetworkAlias=kafka
+Network=lakehouse.network
+
+PublishPort=127.0.0.1:9092:9092
+
+# No [Install] section: nothing starts on boot or login. Start it with
+#   systemctl --user start kafka-pod   (or: ujust datastore start kafka)

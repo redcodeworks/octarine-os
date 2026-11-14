@@ -110,6 +110,10 @@ echo "== latest channel (main)"
 rm -f "$CFG"/*
 run latest; expect "latest, nothing published, no testing image: build" true false ""
 cfg latest "${bl}" "${inputs}"; run latest; expect "latest, same base and dx inputs: skip" false false ""
+echo "$(printf 'ghcr.io/redcodeworks/octarine-os-dx@sha256:%s' "$(dxd latest)")" > "$UNSIGNED"
+cfg latest "${bl}" "${inputs}"; run latest; expect "latest, same base and inputs but the published image is NOT signed (a cancelled run): build, never skip" true false ""
+grep -q 'does not verify: building' "$root/log" && pass "the unsigned skip candidate is named in a warning" || bad "unsigned warning"
+: > "$UNSIGNED"
 cfg latest "${other}" "${inputs}"; run latest; expect "latest, old base, no testing image: build" true false ""
 cfg testing "${bl}" "${inputs}"
 run latest; expect "latest, tested testing image with the same base and dx inputs: promote" false true testing

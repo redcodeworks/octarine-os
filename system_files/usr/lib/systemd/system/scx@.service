@@ -1,0 +1,27 @@
+[Unit]
+Description=sched_ext scheduler scx_%i (octarineOS)
+Documentation=https://github.com/sched-ext/scx/tree/main/services
+# The instance name is the scheduler name without the scx_ prefix (rusty, lavd, ...); the registry in
+# /usr/share/octarine-os/schedulers.d lists the valid ones. Per-instance drop-ins generated at image build add Conflicts= on every
+# other instance (only one scheduler can be loaded) and, where the registry has a minimum kernel, ConditionKernelVersion=.
+# Disabled by default: nothing enables or starts it; `ujust scheduler` does, on request.
+ConditionPathExists=/sys/kernel/sched_ext
+# Start/stop cycles triggered by the user (GameMode hooks) must never trip systemd's start limit; crash-loop protection is
+# scx-verify's failure counter instead.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+# No hardening on purpose: upstream's own unit (sched-ext/scx services/scx.service) has none, loading a BPF scheduler needs root
+# privileges, and a sandbox directive that blocks bpf() would stop it from loading. Whether stricter settings work is unverified.
+# Refuse (quietly) without BTF or after repeated failures on this kernel; run the registry's binary; then check that it took over.
+ExecCondition=/usr/libexec/octarine-os/scx-preflight %i
+ExecStart=/usr/libexec/octarine-os/scx-run %i
+ExecStartPost=/usr/libexec/octarine-os/scx-verify %i
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=20
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
