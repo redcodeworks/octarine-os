@@ -2442,10 +2442,24 @@ hardware-setup *args:
         if [ -n "$n" ] && [ -d "${WOL_NET_DIR:-/sys/class/net}/$n/bridge" ]; then port=$(ls "${WOL_NET_DIR:-/sys/class/net}/$n/brif" 2>/dev/null | head -n1); [ -n "$port" ] && n=$port; fi
         echo "$n"
     }
+    # wol_support NIC: yes (ethtool shows `g`), no (readable, no `g`) or unknown (the Wake-on line is not readable: ethtool is
+    # missing, or fails as a normal user with "netlink error: Operation not permitted")
+    wol_support() {
+        local line
+        if command -v ethtool >/dev/null 2>&1; then
+            line=$(ethtool "$1" 2>/dev/null | grep -E 'Supports Wake-on:' | head -n1)
+            if [ -n "$line" ]; then case "${line#*:}" in *g*) echo yes ;; *) echo no ;; esac; return; fi
+        fi
+        echo unknown
+    }
+    # wol_hint NIC: unprivileged evidence that the device can wake the machine (sysfs wakeup file, or the port profile already says magic)
+    wol_hint() {
+        [ -e "${WOL_NET_DIR:-/sys/class/net}/$1/device/power/wakeup" ] && return 0
+        [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(nmcli -g GENERAL.CONNECTION device show "$1" 2>/dev/null)" 2>/dev/null | head -n1)" = magic ]
+    }
     wol_capable() {
-        local n eo; n=$(wol_nic); [ -n "$n" ] || return 1
-        if command -v ethtool >/dev/null 2>&1 && eo=$(ethtool "$n" 2>/dev/null) && [ -n "$eo" ]; then grep -E 'Supports Wake-on:' <<<"$eo" | grep -q g; return; fi
-        [ -e "${WOL_NET_DIR:-/sys/class/net}/$n/device/power/wakeup" ]
+        local n; n=$(wol_nic); [ -n "$n" ] || return 1
+        case "$(wol_support "$n")" in yes) return 0 ;; no) return 1 ;; *) wol_hint "$n" ;; esac
     }
     wol_profile() { nmcli -g GENERAL.CONNECTION device show "$(wol_nic)" 2>/dev/null; }
 
@@ -2639,6 +2653,7 @@ hardware-setup *args:
         if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
         elif [ "${isdone[$1]}" = 1 ]; then echo done
         elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
+        elif [ "$1" = wake-on-lan ] && [ "$(wol_support "$(wol_nic)")" = unknown ]; then echo "available (support not readable without root: sudo ethtool $(wol_nic) shows it)"
         else echo available; fi
     }
 
@@ -3136,20 +3151,27 @@ wake-on-lan *args:
         port=$(ls "$net_dir/$nic/brif" 2>/dev/null | head -n1)
         if [ -n "$port" ]; then echo "$nic is a bridge: the physical port is $port."; nic=$port; fi
     fi
-    capable=0
-    if command -v ethtool >/dev/null 2>&1 && eout=$(ethtool "$nic" 2>/dev/null) && [ -n "$eout" ]; then
-        grep -E 'Supports Wake-on:' <<<"$eout" | grep -q 'g' && capable=1
-    elif [ -e "$net_dir/$nic/device/power/wakeup" ]; then
-        echo "(ethtool is missing or not readable as your user: using $net_dir/$nic/device/power/wakeup as the capability hint)"
-        capable=1
+    # support: yes (ethtool shows `g`), no (readable, no `g`) or unknown (ethtool missing, or "netlink error: Operation not permitted" as a normal user)
+    support=unknown
+    if command -v ethtool >/dev/null 2>&1; then
+        wline=$(ethtool "$nic" 2>/dev/null | grep -E 'Supports Wake-on:' | head -n1)
+        if [ -n "$wline" ]; then case "${wline#*:}" in *g*) support=yes ;; *) support=no ;; esac; fi
     fi
-    if [ "$capable" = 0 ]; then echo "$nic does not report magic-packet wake support: nothing to do." ; exit 0; fi
+    if [ "$support" = no ]; then echo "$nic does not report magic-packet wake support: nothing to do." ; exit 0; fi
     prof=$(nmcli -g GENERAL.CONNECTION device show "$nic" 2>/dev/null)
     if [ -z "$prof" ] || [ "$prof" = "--" ]; then echo "No active NetworkManager profile on $nic." >&2; exit 1; fi
     cur=$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$prof" 2>/dev/null | head -n1)
     mac=$(cat "$net_dir/$nic/address" 2>/dev/null)
+    if [ "$support" = unknown ]; then
+        if [ -e "$net_dir/$nic/device/power/wakeup" ] || [ "$cur" = magic ]; then
+            echo "Support for magic-packet wake is not readable without root (ethtool needs privileges; 'sudo ethtool $nic' shows 'Supports Wake-on'). $net_dir/$nic/device/power/wakeup or the profile setting suggests it is available."
+        else
+            echo "$nic: support for magic-packet wake is not readable without root and there is no sysfs wakeup file, so there is no sign that it works: nothing to do. Check: sudo ethtool $nic"
+            exit 0
+        fi
+    fi
     if [ "$action" = status ]; then
-        echo "NIC $nic, profile '$prof', wake-on-lan setting: ${cur:-unknown}, MAC ${mac:-unknown}"
+        echo "NIC $nic, profile '$prof', wake-on-lan setting: ${cur:-unknown}, MAC ${mac:-unknown}, support: $support"
         exit 0
     fi
     want=magic; [ "$action" = off ] && want=ignore
@@ -3157,9 +3179,12 @@ wake-on-lan *args:
     if [ "$cur" = "$want" ]; then echo "Already done."; exit 0; fi
     undo_val=ignore; [ "$action" = off ] && undo_val=magic
     echo "Undo: ujust wake-on-lan$([ "$action" = off ] || echo ' --off')"
+    c0=(sudo ethtool "$nic")
     c1=(sudo nmcli connection modify "$prof" 802-3-ethernet.wake-on-lan "$want")
     c2=(sudo nmcli device reapply "$nic")
+    confirm=0; [ "$support" = unknown ] && [ "$action" = on ] && confirm=1
     echo "Commands (sudo, a security-key touch, never retried):"
+    if [ "$confirm" = 1 ]; then echo "  ${c0[*]}   (read only: confirms 'Supports Wake-on' includes g before anything is written)"; fi
     echo "  ${c1[*]}"
     echo "  ${c2[*]}"
     if [ "$mode" = no ]; then echo "Plan only."; exit 0; fi
@@ -3168,6 +3193,14 @@ wake-on-lan *args:
         # shellcheck source=/dev/null
         if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
         if ! declare -F menu_confirm >/dev/null || ! menu_confirm "Apply?" y; then echo "Nothing changed."; exit 0; fi
+    fi
+    if [ "$confirm" = 1 ]; then
+        if ! eo=$("${c0[@]}" 2>&1); then echo "FAILED: ${c0[*]}" >&2; echo "Nothing was written. Run it yourself and look for 'Supports Wake-on'." >&2; exit 1; fi
+        wl=$(grep -E 'Supports Wake-on:' <<<"$eo" | head -n1)
+        case "${wl#*:}" in
+            *g*) echo "Confirmed: $wl" ;;
+            *) echo "$nic does not report magic-packet wake support (${wl:-no Wake-on line}): nothing changed."; exit 0 ;;
+        esac
     fi
     if ! "${c1[@]}"; then echo "FAILED: ${c1[*]}" >&2; exit 1; fi
     if ! "${c2[@]}"; then echo "FAILED: ${c2[*]}" >&2; echo "The setting is saved in the profile; it applies at the next connection." >&2; exit 1; fi

@@ -31,7 +31,7 @@ export VIRTHOST_CPUINFO="$root/m/cpuinfo" VIRTHOST_CMDLINE="$root/m/cmdline" VIR
 export VIRTHOST_IMAGE_DIR="$root/imgs" VIRTHOST_VIRTIO_MIN=10 STATE="$root/state"
 unset XDG_CONFIG_HOME SSH_CONNECTION
 mk() { printf '#!/bin/bash\n%s\n' "$2" >"$bin/$1"; chmod +x "$bin/$1"; }
-mk sudo 'echo "sudo $*" >>"$LOG"; [ "${FAKE_SUDO_FAIL:-}" = 1 ] && exit 1; exit 0'
+mk sudo 'echo "sudo $*" >>"$LOG"; [ "${FAKE_SUDO_FAIL:-}" = 1 ] && exit 1; [ "$1" = ethtool ] && { echo "Settings for $2:"; echo "${FAKE_SUDO_ETHTOOL-	Supports Wake-on: pumbg}"; }; exit 0'
 mk id 'case "$1" in -u) echo "${FAKE_UID:-1000}" ;; -un) echo tester ;; -nG) echo "${FAKE_GROUPS:-tester wheel}" ;; esac'
 mk getent '[ "$1" = group ] && echo "libvirt:x:970:${FAKE_LIBVIRT_MEMBERS:-}"; exit 0'
 mk systemctl 'case "$1" in is-enabled) for e in $ENABLED_UNITS; do [ "$e" = "$2" ] && { echo enabled; exit 0; }; done; echo disabled; exit 1 ;; esac; exit 0'
@@ -52,7 +52,7 @@ mk curl 'echo "curl $*" >>"$LOG"; [ "${FAKE_CURL_FAIL:-}" = 1 ] && exit 22
 out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
 head -c 64 /dev/zero >"$out"; printf "https://fedorapeople.org/archive-virtio/virtio-win-0.1.302-1/virtio-win-0.1.302.iso"'
 mk ip 'case "$*" in *"route show default"*) [ -n "${FAKE_DEFDEV:-}" ] && echo "default via 192.168.1.1 dev $FAKE_DEFDEV proto dhcp" ;; *"addr show"*) echo "2: ${FAKE_DEFDEV:-x}    inet 192.168.1.20/24 brd 192.168.1.255 scope global" ;; esac; exit 0'
-mk ethtool 'echo "Supports Wake-on: pumbg"'
+mk ethtool 'case "${FAKE_ETHTOOL:-ok}" in denied) echo "Settings for enp8s0:"; echo "netlink error: Operation not permitted" >&2 ;; *) echo "Supports Wake-on: pumbg" ;; esac; exit 0'
 mk nmcli 'echo "nmcli $*" >>"$LOG"
 case "$*" in
   "-t -f NAME,TYPE connection show") printf "%s" "$FAKE_CONS" ;;
@@ -68,7 +68,7 @@ chmod +x "$bin"/*
 reset() {
     rm -rf "${root:?}/home" "${root:?}/imgs" "${root:?}/m"; mkdir -p "$root/home" "$root/m/iommu" "$root/m/net"
     : >"$LOG"; printf 'vendor_id: AuthenticAMD\nflags: fpu vmx svm\n' >"$VIRTHOST_CPUINFO"; echo "quiet" >"$VIRTHOST_CMDLINE"; : >"$VIRTHOST_KVM"; : >"$root/m/iommu/ivhd0"
-    unset FAKE_UID FAKE_SUDO_FAIL FAKE_KARGS FAKE_FACL FAKE_CTX FAKE_CURL_FAIL FAKE_NET_EXISTS FAKE_DEFDEV FAKE_PROFILE FAKE_WOL FAKE_LIBVIRT_MEMBERS FAKE_GROUPS SSH_CONNECTION
+    unset FAKE_UID FAKE_SUDO_FAIL FAKE_KARGS FAKE_FACL FAKE_CTX FAKE_CURL_FAIL FAKE_NET_EXISTS FAKE_DEFDEV FAKE_PROFILE FAKE_WOL FAKE_ETHTOOL FAKE_SUDO_ETHTOOL FAKE_LIBVIRT_MEMBERS FAKE_GROUPS SSH_CONNECTION
     export ENABLED_UNITS="" FAKE_CONS="" FAKE_DEVS=""
 }
 run() { local r=$1; shift; PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$2" --working-directory "$root" "$r" "${@:3}" >"$root/out" 2>&1 </dev/null; rc=$?; }
@@ -211,8 +211,26 @@ reset; FAKE_DEFDEV=enp8s0 FAKE_WOL=magic wol --status
 check "wake-on-lan --status shows the setting and the MAC, changes nothing" bash -c "grep -q 'wake-on-lan setting: magic' '$root/out' && ! grep -q '^sudo' '$LOG'"
 reset; FAKE_DEFDEV=enp8s0 FAKE_SUDO_FAIL=1 wol --yes
 check "wake-on-lan: a failing sudo is FAILED with the exact command, exit 1, not retried" bash -c "[ $rc = 1 ] && grep -q 'FAILED: sudo nmcli connection modify' '$root/out' && [ \$(grep -c '^sudo ' '$LOG') = 1 ]"
-reset; mk ethtool 'echo "Supports Wake-on: d"'; FAKE_DEFDEV=enp8s0 wol --yes; mk ethtool 'echo "Supports Wake-on: pumbg"'
+reset; mk ethtool 'echo "Supports Wake-on: d"'; FAKE_DEFDEV=enp8s0 wol --yes; mk ethtool 'case "${FAKE_ETHTOOL:-ok}" in denied) echo "Settings for enp8s0:"; echo "netlink error: Operation not permitted" >&2 ;; *) echo "Supports Wake-on: pumbg" ;; esac; exit 0'
 check "wake-on-lan: a NIC without g does nothing" bash -c "[ $rc = 0 ] && grep -q 'does not report magic-packet wake' '$root/out' && ! grep -q '^sudo' '$LOG'"
+# ---- wake-on-lan when ethtool is not readable as a normal user (nox: "netlink error: Operation not permitted", no Wake-on line)
+wakeup() { mkdir -p "$root/m/net/enp8s0/device/power"; : >"$root/m/net/enp8s0/device/power/wakeup"; }
+reset; wakeup; mkdir -p "$root/m/net/br0/bridge" "$root/m/net/br0/brif"; : >"$root/m/net/br0/brif/enp8s0"; FAKE_ETHTOOL=denied FAKE_DEFDEV=br0 FAKE_PROFILE="br0-enp8s0" wol --status
+check "wol, ethtool denied, sysfs wakeup file: NOT 'unsupported'; --status says support unknown, no sudo" bash -c "[ $rc = 0 ] && grep -q 'support: unknown' '$root/out' && grep -q 'not readable without root' '$root/out' && ! grep -q 'does not report' '$root/out' && ! grep -q '^sudo' '$LOG'"
+reset; wakeup; FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 wol --no
+check "wol --no with ethtool denied: the plan names the one read-only sudo ethtool, then the write; nothing runs" bash -c "[ $rc = 0 ] && grep -q 'sudo ethtool enp8s0' '$root/out' && grep -q 'sudo nmcli connection modify' '$root/out' && grep -q 'Plan only' '$root/out' && ! grep -q '^sudo' '$LOG'"
+reset; wakeup; FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 wol --yes
+check "wol --yes with ethtool denied: ONE sudo ethtool read first (confirmed g), then the nmcli write and the reapply, never retried" bash -c "[ $rc = 0 ] && grep -q 'Confirmed: ' '$root/out' && [ \$(grep -c '^sudo ethtool enp8s0' '$LOG') = 1 ] && [ \$(grep -n '^sudo ethtool' '$LOG' | cut -d: -f1) -lt \$(grep -n '^sudo nmcli connection modify' '$LOG' | cut -d: -f1) ] && grep -qx 'sudo nmcli device reapply enp8s0' '$LOG'"
+reset; wakeup; FAKE_SUDO_ETHTOOL="	Supports Wake-on: d" FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 wol --yes
+check "wol with ethtool denied, the sudo read shows no g: nothing is written, exit 0" bash -c "[ $rc = 0 ] && grep -q 'does not report magic-packet wake support' '$root/out' && ! grep -q 'sudo nmcli' '$LOG'"
+reset; wakeup; FAKE_SUDO_FAIL=1 FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 wol --yes
+check "wol with ethtool denied and the sudo read failing: FAILED with the exact command, nothing written, one sudo call, exit 1" bash -c "[ $rc = 1 ] && grep -q 'FAILED: sudo ethtool enp8s0' '$root/out' && [ \$(grep -c '^sudo' '$LOG') = 1 ]"
+reset; wakeup; mkdir -p "$root/m/net/br0/bridge" "$root/m/net/br0/brif"; : >"$root/m/net/br0/brif/enp8s0"; FAKE_ETHTOOL=denied FAKE_WOL=magic FAKE_DEFDEV=br0 FAKE_PROFILE="br0-enp8s0" wol --yes
+check "wol, nox layout (bridge br0, port profile already magic, ethtool denied): already done, no sudo at all" bash -c "[ $rc = 0 ] && grep -q 'Already done' '$root/out' && ! grep -q '^sudo' '$LOG'"
+reset; FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 wol --yes
+check "wol, ethtool denied, no sysfs file and the profile not magic: no sign of support, nothing to do, no sudo" bash -c "[ $rc = 0 ] && grep -q 'no sign that it works' '$root/out' && ! grep -q '^sudo' '$LOG'"
+reset; wakeup; FAKE_ETHTOOL=denied FAKE_DEFDEV=enp8s0 FAKE_WOL=magic wol --off --yes
+check "wol --off with ethtool denied needs no ethtool read, only the nmcli write" bash -c "[ $rc = 0 ] && ! grep -q '^sudo ethtool' '$LOG' && grep -q 'wake-on-lan ignore' '$LOG'"
 reset; FAKE_UID=0 wol --yes
 check "wake-on-lan refuses root" test "$rc" = 1
 reset; wol --bogus
