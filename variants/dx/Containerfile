@@ -39,4 +39,4 @@ RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \
     --mount=type=cache,dst=/var/log \
     /ctx/dx.sh
 
-RUN bootc container lint
+RUN bootc container lint --no-truncate

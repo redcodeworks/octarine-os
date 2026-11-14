@@ -619,6 +619,14 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
+      # Secure Boot: the kernel image must verify with sbverify against the certificate pinned in keys/ (a base with an unsigned or differently
+      # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
+      - name: Secure Boot check of the kernel
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/secureboot-check.sh "${IMAGE_NAME}:${DEFAULT_TAG}"
+
       # A promoted image keeps its build's version, so no version may name a channel
       - name: Check the version is channel-neutral
         run: |
