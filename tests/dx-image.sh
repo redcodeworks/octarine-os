@@ -157,6 +157,7 @@ w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
 d = w["jobs"]["dx"]
 assert d["uses"] == "./.github/workflows/build-dx.yml" and d["secrets"] == "inherit", d
 assert d["needs"] == "build_result" and "needs.build_result.result == 'success'" in d["if"], d
+assert d["if"].startswith("always() &&"), "without always() GitHub's implicit success() skips the call when an ancestor (promote, binaries) was skipped"
 assert "github.ref == 'refs/heads/main'" in d["if"] and "github.ref == 'refs/heads/testing'" in d["if"] and "pull_request" not in d["if"]
 assert d["with"]["channel"] == "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}"
 assert d["permissions"] == {"contents": "read", "packages": "write"}
@@ -190,6 +191,7 @@ w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-beta.yml"))
 d = w["jobs"]["dx"]
 assert d["uses"] == "./.github/workflows/build-dx.yml" and d["secrets"] == "inherit" and d["with"] == {"channel": "beta"}, d
 assert d["needs"] == "sign" and "needs.sign.result == 'success'" in d["if"] and "github.ref == 'refs/heads/main'" in d["if"], d
+assert d["if"].startswith("always() &&"), d["if"]
 for n, j in w["jobs"].items():
     needs = j.get("needs") or []
     needs = [needs] if isinstance(needs, str) else needs

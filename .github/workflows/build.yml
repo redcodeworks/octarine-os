@@ -809,7 +809,10 @@ jobs:
   dx:
     name: dx image
     needs: build_result
-    if: needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    # always(): without a status function GitHub adds an implicit success(), which is false when ANY ancestor job was skipped
+    # (promote is skipped on a testing push, binaries on a docs-only push), even though the direct need succeeded: the first
+    # testing run with this call skipped it and the required check went red
+    if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
     uses: ./.github/workflows/build-dx.yml
     with:
       channel: ${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}

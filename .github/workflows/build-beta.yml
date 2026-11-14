@@ -443,7 +443,8 @@ jobs:
   dx:
     name: dx image (beta)
     needs: sign
-    if: needs.sign.result == 'success' && github.ref == 'refs/heads/main'
+    # always(): see the dx job in build.yml (an implicit success() also looks at skipped ancestors)
+    if: always() && needs.sign.result == 'success' && github.ref == 'refs/heads/main'
     uses: ./.github/workflows/build-dx.yml
     with:
       channel: beta
