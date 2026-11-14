@@ -810,6 +810,10 @@ flatpak-preinstall *args:
     if menu_tty && ! menu_confirm "Install these apps now?" y; then echo "Nothing installed."; exit 0; fi
     echo "Installing. If a polkit prompt appears, authorize it."
     out=$(mktemp)
+    # Ctrl-C or a termination must not leave the temp file behind
+    trap 'rm -f -- "$out"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     "$flatpak_bin" preinstall -y 2>&1 | tee "$out"
     status=${PIPESTATUS[0]}
     if [ "$status" -eq 0 ]; then
@@ -876,7 +880,7 @@ gaming-setup *args:
         local def=$1 q=$2 reply hint="[Y/n]"
         [ "$def" = n ] && hint="[y/N]"
         if [ "$mode" = no ]; then answer=n; return; fi
-        if [ "$cur" != reset ] && explicit "$cur"; then answer=y; return; fi
+        if [ "$cur" != reset ] && [ "${ask_noexplicit:-0}" = 0 ] && explicit "$cur"; then answer=y; return; fi
         if [ "$mode" = yes ]; then answer=$def; return; fi
         printf '%s %s ' "$q" "$hint"
         read -r reply || reply=""
@@ -1142,6 +1146,9 @@ gaming-setup *args:
         if [ "$pstate_active" = 0 ]; then
             # not amd-pstate-epp: drop the desiredgov workaround (its comment block and the line); the rest stays
             gm_tmp=$(mktemp)
+            trap 'rm -f -- "$gm_tmp"' EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
             sed '/^; Keep the CPU governor/,/^desiredgov=/d' "$src_ini" >"$gm_tmp"
             src_ini=$gm_tmp
             echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
@@ -1156,7 +1163,8 @@ gaming-setup *args:
                 echo "$dest_ini exists and differs:"
                 diff -u "$dest_ini" "$src_ini"
                 echo "Replacing it keeps a timestamped backup."
-                ask n "Replace it?"
+                # a step named on the command line means "run it", NOT "replace my edited file": this question is always asked (default no)
+                ask_noexplicit=1 ask n "Replace it?"
             else
                 echo "Installs the GameMode tuning (renice=10,$([ "$pstate_active" = 1 ] && echo " desiredgov=powersave,") tuned latency-performance while a game runs) as $dest_ini."
                 ask y "Apply?"
@@ -1172,7 +1180,9 @@ gaming-setup *args:
                 fi
                 if cp -- "$src_ini" "$dest_ini"; then
                     sha256sum "$dest_ini" | cut -d' ' -f1 >"$state_dir/gamemode.sha256"
-                    printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
+                    # the pointer keeps the FIRST state (the user's original file, or empty = there was none): a second replacement makes a
+                    # second backup, but `reset` must still restore the original, not an earlier copy of our own file
+                    [ -e "$state_dir/gamemode.backup" ] || printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
                     echo "Installed $dest_ini${backup:+ (previous file saved as $backup)}."
                     record "gamemode" applied "ujust gaming-setup reset restores the backup or removes the file if unchanged"
                 else
@@ -1839,6 +1849,22 @@ gnome-candy *args:
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
+    # The recipes of gnome-themes run as you, from a branch that can move: the first time a new revision is about to run it is shown
+    # (commit, date, author, subject) and you are asked (default no); the approved commit is remembered, so the question comes back only
+    # when the repository has moved. GNOME_THEMES_REF=<full commit sha> pins it (no question); GNOME_THEMES_TRUST=1 skips the question
+    # (automation). Without a terminal and without either, it stops and says how.
+    rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
+    approved_file="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gnome-candy-approved"
+    if [ "${GNOME_THEMES_TRUST:-}" != 1 ] && ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]] && { [ -z "$rev" ] || [ "$rev" != "$(cat "$approved_file" 2>/dev/null)" ]; }; then
+        echo "gnome-themes is about to run as you, from $url ($ref):"
+        git -C "$dir" log -1 --date=short --format='  %h  %ad  %an: %s' 2>/dev/null || echo "  (revision unknown)"
+        if menu_confirm "Run this version?" n; then
+            if [ -n "$rev" ]; then mkdir -p "$(dirname "$approved_file")" && printf '%s\n' "$rev" >"$approved_file"; fi
+        else
+            echo "Not run. Look at it first: $dir (git log), then run again and answer y; to skip the question: GNOME_THEMES_TRUST=1 ujust gnome-candy ..., or pin a commit: GNOME_THEMES_REF=<full sha>."
+            exit 0
+        fi
+    fi
     # No arguments in a terminal: a menu of the checked-out repository's public recipes (name - comment), read from the
     # structured `just --dump --dump-format json` (never from the human `just --list`, which prints group headings).
     # Private recipes and `default` are not offered; only REQUIRED parameters (no default) are asked for. A parser
@@ -2270,12 +2296,14 @@ sensors-setup *args:
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
     mode=ask
+    redetect=0
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--yes|--no]`. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--redetect] [--yes|--no]`. When the module list of an earlier run exists it says so and does nothing (no sudo, no probe); --redetect probes again. --yes never moves an older hand-made nct6775.conf aside: only the question (without --yes) does. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            --redetect) redetect=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            *) echo "Unknown argument: $a (use --yes, --no or --help)" >&2; exit 1 ;;
+            *) echo "Unknown argument: $a (use --redetect, --yes, --no or --help)" >&2; exit 1 ;;
         esac
     done
     sysconfig=${OCTARINE_SENSORS_SYSCONFIG:-/etc/sysconfig/lm_sensors}
@@ -2286,9 +2314,13 @@ sensors-setup *args:
         echo "sensors-detect is not installed (package lm_sensors, part of the image's optional packages); nothing changed." >&2
         exit 1
     fi
-    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
     [ -e "$target" ] && echo "Existing: $target"
     [ -e "$legacy" ] && echo "Existing (older hand-made name): $legacy"
+    if [ -e "$target" ] && [ "$redetect" = 0 ]; then
+        echo "Already done: $target exists (written by an earlier run); nothing was probed. Run 'ujust sensors-setup --redetect' to probe the hardware again."
+        exit 0
+    fi
+    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
     if [ "$mode" = no ]; then echo "(--no: nothing was run or changed)"; exit 0; fi
     if [ "$mode" = ask ]; then
         menu_confirm "Probe the hardware with sensors-detect --auto and write the module list?" n || { echo "Left as it is."; exit 0; }
@@ -2355,7 +2387,8 @@ sensors-setup *args:
     if [ -e "$legacy" ]; then
         echo "Note: the older hand-made file $legacy exists; it loads modules too."
         doit=0
-        if [ "$mode" = yes ]; then doit=1; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
+        # only the question moves it: --yes never touches a file the user made by hand
+        if [ "$mode" = yes ]; then echo "Left $legacy alone (--yes does not move a hand-made file; run without --yes to be asked)."; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
         if [ "$doit" = 1 ]; then
             if sudo mv "$legacy" "$legacy.bak-$ts"; then echo "Moved $legacy to $legacy.bak-$ts (undo: sudo mv it back)"; else failed=1; fi
         else
@@ -2558,10 +2591,12 @@ hardware-setup *args:
     # done_of <step>: already in place
     done_of() {
         case "$1" in
-            sensors) [ -e "$modload_dir/octarine-sensors.conf" ] || [ -e "$modload_dir/nct6775.conf" ] ;;
+            sensors) [ -e "$modload_dir/octarine-sensors.conf" ] ;;
             amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
             amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
-            amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
+            # done = the file is exactly the shipped tuning (as gaming-setup compares it); a file that merely contains the line is the user's own
+            # edit: not done, and the step then asks before replacing it (default no)
+            amd-cpu-gaming) cmp -s "${GAMING_SETUP_GAMEMODE_SRC:-/usr/share/octarine-os/gamemode.ini}" "$gm_ini" 2>/dev/null ;;
             rocm)
                 box_exists rocm || return 1
                 # plan modes (--list, --no) stay pure: entering a distrobox starts a stopped container, so the box is not entered there
@@ -3158,6 +3193,10 @@ scheduler *args:
             else
                 mkdir -p "$(dirname "$conf")" || true
                 tmp=$(mktemp "$conf.XXXXXX" 2>/dev/null)
+                # no temp file left behind on Ctrl-C or termination (removed again after the move: the file is gone then)
+                trap 'rm -f -- "${tmp:-}"' EXIT
+                trap 'exit 130' INT
+                trap 'exit 143' TERM
                 if [ -n "$tmp" ]; then
                     if [ -f "$conf" ]; then grep -v '^GAMEMODE_SCHED=' "$conf" >"$tmp" || true; else
                         printf '%s\n' "# Written by ujust scheduler. GAMEMODE_SCHED=skip|none|<scheduler name> (see ujust scheduler --list); absent means skip." >"$tmp"
@@ -3567,10 +3606,15 @@ toolbox *args:
 
     recorded() { grep -qxF -- "export $1" "$state_file" 2>/dev/null; }
 
-    # A new conf record replaces this toolbox's older one
-    drop_conf_records() {
+    # The FIRST `conf ...` record says how container_name_default came to be (created, appended, or the ORIGINAL value it replaced) and is what
+    # --remove restores, so a later change keeps it and only replaces the `conf-value` line (what this recipe wrote last)
+    drop_conf_value() {
         [ -f "$state_file" ] || return 0
-        sed -i -e '/^conf /d' -e '/^conf-value /d' "$state_file"
+        sed -i -e '/^conf-value /d' "$state_file"
+    }
+    record_conf() { # "conf created" | "conf appended" | "conf changed OLD": written only when there is no conf record yet
+        drop_conf_value
+        grep -qE '^conf (created|appended|changed)' "$state_file" 2>/dev/null || record "$1"
     }
 
     record() {
@@ -4108,6 +4152,22 @@ toolbox *args:
                 echo "   Kept the existing box."
                 return 0
             fi
+            # Nothing is removed before the replacement is certain: the definition must be usable and the new image must be pulled first,
+            # so a failed pull (network, registry) leaves the existing box as it was
+            if [ ! -r "$def_file" ] || ! grep -qx "\[$box\]" "$def_file"; then
+                echo "   $def_file is missing or has no [$box] section: the existing box was NOT removed."
+                failed=1
+                return 1
+            fi
+            new_image=${image_override:-$(def_image)}
+            if command -v podman >/dev/null 2>&1 && [ -n "$new_image" ]; then
+                echo "   Pulling $new_image first (the existing box stays if this fails)"
+                if ! podman pull -q "$new_image" >/dev/null; then
+                    echo "   Could not pull $new_image: the existing box was NOT removed. Check the network and run it again."
+                    failed=1
+                    return 1
+                fi
+            fi
             distrobox rm --force "$box" </dev/null || {
                 echo "   Could not remove $box."
                 failed=1
@@ -4264,19 +4324,16 @@ toolbox *args:
         mkdir -p -- "$(dirname -- "$conf_file")"
         if [ ! -f "$conf_file" ]; then
             printf 'container_name_default="%s"\n' "$new" >"$conf_file"
-            drop_conf_records
-            record "conf created"
+            record_conf "conf created"
         elif ! grep -qE '^[[:space:]]*container_name_default=' "$conf_file"; then
             if [ -s "$conf_file" ] && [ -n "$(tail -c1 "$conf_file")" ]; then printf '\n' >>"$conf_file"; fi
             printf 'container_name_default="%s"\n' "$new" >>"$conf_file"
-            drop_conf_records
-            record "conf appended"
+            record_conf "conf appended"
         else
             tmp="$work/distrobox.conf"
             awk -v v="container_name_default=\"$new\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
             cat "$tmp" >"$conf_file"
-            drop_conf_records
-            record "conf changed $cur"
+            record_conf "conf changed $cur"
         fi
         if [ "$new" != "$box" ]; then record "conf-value $new"; fi
         disable_shadow
@@ -4435,12 +4492,23 @@ toolbox *args:
         esac
     }
 
-    # Before an install step: remember, once, whether each directory already existed
+    # Before an install step: remember, once, which directories already exist. A directory that is still missing is NOT recorded as created
+    # yet (the installer may fail, or someone else may create it later, and --remove deletes what is recorded as created): confirm_dirs
+    # records it after the installer succeeded and the directory is there.
+    pending_dirs=" "
     note_dirs() {
         local d
         for d in $(row_dirs "$1"); do
             if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
-            if [ -e "$d" ]; then record "dir $d existed"; else record "dir $d created"; fi
+            if [ -e "$d" ]; then record "dir $d existed"; else pending_dirs="$pending_dirs$d "; fi
+        done
+    }
+    confirm_dirs() {
+        local d
+        for d in $(row_dirs "$1"); do
+            case "$pending_dirs" in *" $d "*) ;; *) continue ;; esac
+            if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
+            if [ -e "$d" ]; then record "dir $d created"; fi
         done
     }
 
@@ -4473,6 +4541,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs rustup
         echo "   Installed rustup with a stable toolchain."
     }
 
@@ -4514,6 +4583,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs "$t"
         echo "   Installed $label."
     }
 

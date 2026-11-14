@@ -58,5 +58,14 @@ us_state() {
 }
 
 us_on() { [ "$(us_state "$1")" = enabled ]; }
+# us_full ID: every timer of the source that exists is enabled (flatpak has two: a source with only one of them on is half-enabled)
+us_full() {
+    local scope unit n=0
+    while read -r scope unit; do
+        [ -n "$unit" ] || continue
+        case "$(us_unit_state "$scope" "$unit")" in enabled) n=$((n + 1)) ;; missing) ;; *) return 1 ;; esac
+    done < <(us_units "$1")
+    [ "$n" -gt 0 ]
+}
 
 us_valid() { local i; for i in "${US_IDS[@]}"; do [ "$i" = "$1" ] && return 0; done; return 1; }

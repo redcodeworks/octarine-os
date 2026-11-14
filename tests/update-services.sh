@@ -152,6 +152,13 @@ check "a failing source does not stop the others, and is reported (exit 1)" bash
 FAKE_ENABLED="$all_on" run update bogus
 check "an unknown source is rejected (exit 2)" bash -c "[ $rc = 2 ]"
 
+# ---- a half-enabled source (flatpak: the system timer on, the user timer off) is completed by enable, not skipped
+FAKE_ENABLED="flatpak-system-update.timer" run toggle-updates enable flatpak --yes
+check "enable on a half-enabled flatpak: planned as completing it, BOTH timers get the enable (the user one is the missing one)" bash -c "[ $rc = 0 ] && grep -q 'completes it' '$root/out' && grep -q 'systemctl\[user\] enable --now user:flatpak-user-update.timer\|systemctl\[user\] enable --now flatpak-user-update.timer' '$LOG' && grep -q 'systemctl\[system\] enable --now flatpak-system-update.timer' '$LOG'"
+FAKE_ENABLED="flatpak-system-update.timer user:flatpak-user-update.timer" run toggle-updates enable flatpak --yes
+check "enable on a fully enabled flatpak: nothing to change, no systemctl call" bash -c "[ $rc = 0 ] && grep -q 'Nothing to change' '$root/out' && ! grep -q 'systemctl\[' '$LOG'"
+FAKE_ENABLED="flatpak-system-update.timer" run toggle-updates disable flatpak --yes
+check "disable on a half-enabled flatpak turns the whole source off" bash -c "[ $rc = 0 ] && grep -q 'turn off  flatpak' '$root/out' && grep -q 'disable --now flatpak-system-update.timer' '$LOG'"
 # ---- a pending kernel-argument change would be replaced by the staged image: warn, ask (default no), --yes goes on, --no is the plan
 mkdir -p "$root/kbin"
 cat >"$root/kbin/rpm-ostree" <<'EOF2'

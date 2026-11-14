@@ -82,8 +82,11 @@ toggle-updates *args:
         if [ "$(us_state "$id")" = unavailable ]; then continue; fi
         on=0; us_on "$id" && on=1
         sel=0; in_list "$id" "${want[@]}" && sel=1
-        [ "$on" = "$sel" ] && continue
-        if [ "$sel" = 1 ]; then plan+=("turn on   $id"); else plan+=("turn off  $id"); fi
+        # a half-enabled source (some of its timers on, some off) is not "on": turning it on completes it
+        half=0; [ "$on" = 1 ] && ! us_full "$id" && half=1
+        if [ "$on" = "$sel" ] && [ "$half" = 0 ]; then continue; fi
+        if [ "$sel" = 1 ] && [ "$half" = 1 ]; then plan+=("turn on   $id (completes it: only some of its timers were on)")
+        elif [ "$sel" = 1 ]; then plan+=("turn on   $id"); else plan+=("turn off  $id"); fi
         while read -r scope unit; do
             [ -n "$unit" ] || continue
             if [ "$sel" = 1 ]; then
