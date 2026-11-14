@@ -220,7 +220,7 @@ jobs:
       - name: Build the image
         run: |
           set -euo pipefail
-          set -a; . ./image-template.env; set +a
+          set -a; . ./config/image.env; set +a
           version=$(.github/scripts/image-version.sh)
           sha=$(git rev-parse HEAD)
           # os-release IMAGE_VERSION: this build's version, `beta-` prefixed on the beta channel (never promoted)

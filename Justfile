@@ -1,4 +1,4 @@
-set dotenv-filename := "image-template.env"
+set dotenv-path := "config/image.env"
 set dotenv-load
 
 export image_name := env_var("IMAGE_NAME")
