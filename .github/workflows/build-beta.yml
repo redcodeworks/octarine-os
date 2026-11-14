@@ -322,9 +322,13 @@ jobs:
             summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
             check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
             has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
-            for r in switch-image toggle-updates update luks-tpm-unlock; do
+            for r in switch-image toggle-updates update luks-tpm-unlock toggle-motd toggle-user-motd; do
               check "assembled justfile lists $r" "has_recipe $r"
             done
+            count_recipe() { printf "%s\n" $summary | grep -cx -- "$1"; }
+            check "toggle-user-motd is listed exactly once (our wrapper of the base recipe)" "test \$(count_recipe toggle-user-motd) = 1"
+            check "the base 00-default.just is kept as 00-default-base.just and ours imports it" "test -s /usr/share/ublue-os/just/00-default-base.just && grep -qF 00-default-base.just /usr/share/ublue-os/just/00-default.just"
+            check "one motd script (executable) and the profile.d hook that calls it, interactive shells only" "test -x /usr/libexec/octarine-os/motd && grep -qF /usr/libexec/octarine-os/motd /etc/profile.d/user-motd.sh && grep -qF \"*i*)\" /etc/profile.d/user-motd.sh"
             for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
               check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
             done
