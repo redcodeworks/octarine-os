@@ -66,6 +66,19 @@ case "${mode}" in
         check "an NVIDIA kernel module exists for the kernel" "nvidia_modules | grep -q ."
         check "exactly one kernel is installed" "test \"\$(ls '${modules_dir}' | wc -l)\" = 1"
         check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "test -n '${BASE_KERNEL:-}' && test '${kver}' = '${BASE_KERNEL:-}'"
+        # Secure Boot: the NVIDIA modules must be signed with the key whose certificate the image ships for the MOK enrollment
+        # (/etc/pki/akmods/certs/akmods-ublue.der, imported by `ujust hardware-setup`): the module's sig_key must equal that certificate's subject key
+        # identifier, otherwise an enrolled machine would refuse the modules. The modules must also be built for THIS kernel (vermagic starts with the
+        # kernel release). EXPECT_MODULE_SIGNER (keys/secureboot.env NVIDIA_MODULE_SIGNER, optional) pins the signer name as well. The DIAG line shows the real values.
+        akmods_der=${AKMODS_CERT:-/etc/pki/akmods/certs/akmods-ublue.der}
+        skid() { openssl x509 -inform DER -in "${akmods_der}" -noout -ext subjectKeyIdentifier 2>/dev/null | tail -n 1 | tr -d ' :' | tr 'a-f' 'A-F'; }
+        modkey() { modinfo -F sig_key "$1" 2>/dev/null | tr -d ' :' | tr 'a-f' 'A-F'; }
+        for m in $(nvidia_modules | head -n 1); do echo "DIAG ${m}: signer='$(modinfo -F signer "${m}" 2>&1)' sig_key='$(modinfo -F sig_key "${m}" 2>&1)' vermagic='$(modinfo -F vermagic "${m}" 2>&1)'; akmods cert skid='$(skid)'"; done
+        check "every NVIDIA kernel module is signed with the key of ${akmods_der} (sig_key equals its subject key identifier)" "test -n \"\$(skid)\" && nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do test \"\$(modkey \"\$m\")\" = \"\$(skid)\" || exit 1; done )"
+        if [ -n "${EXPECT_MODULE_SIGNER:-}" ]; then
+            check "every NVIDIA kernel module names the pinned signer (${EXPECT_MODULE_SIGNER})" "( for m in \$(nvidia_modules); do test \"\$(modinfo -F signer \"\$m\")\" = '${EXPECT_MODULE_SIGNER}' || exit 1; done )"
+        fi
+        check "every NVIDIA kernel module was built for the installed kernel (vermagic ${kver})" "nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do test \"\$(modinfo -F vermagic \"\$m\" | cut -d' ' -f1)\" = '${kver}' || exit 1; done )"
         check "the initramfs for the kernel exists" "test -s '${modules_dir}/${kver}/initramfs.img'"
         if command -v lsinitrd >/dev/null 2>&1; then
             before_fail=${fail}

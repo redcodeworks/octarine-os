@@ -2,6 +2,7 @@
 cosign.key
 *.key
 *.pem
+!keys/*.pem
 
 # Personal security key registrations and other private key material must never be committed
 u2f_keys

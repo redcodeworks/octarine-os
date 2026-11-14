@@ -1,0 +1,137 @@
+---
+name: Roll back latest
+# The sanctioned way to put `latest` of the default image (octarine-os) and the dx image (octarine-os-dx) back on an OLDER dated build. Publish latest
+# (publish-latest.yml) never moves `latest` backwards; this workflow does, on purpose, by hand: a dispatch on main with the dated tag of the default
+# image to roll back to. Modelled on Bazzite's retag workflow (a re-point of the tags from an old tag with a short cancel window).
+#
+#   vanilla_tag   the dated tag of the DEFAULT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-*, beta* and latest are refused
+#   reason        free text (required), goes into the summary and the issue
+#   default_only  false (default): the dx image built on that default image moves with it; the run REFUSES when no dx image was built on it.
+#                 true: only the default image moves and dx `latest` stays behind (the summary says so), as publish-latest's vanilla-only
+#   dry_run       true (default): plan and report only, nothing is written
+#
+# What is the same as publish-latest.yml, because it is the same script (publish-latest.sh with ALLOW_BACKWARDS=true): BOTH signatures are verified
+# before anything moves (cosign.pub), the dx image is the one whose base-digest label is the default image's digest, the default image was built from
+# main, the digests are preserved (skopeo copy --all --preserve-digests, each tag read back), dx moves first and the default image LAST, nothing is
+# signed (so no `signing` environment), nothing is written on any ref but main, one move at a time (the same concurrency group as publish-latest). New:
+# the first job is a 30-second cancel window (cancel the run in that time and nothing happens), and a failed rollback opens or updates the ONE
+# ci-failure-dx issue. The next green dx run on main moves `latest` forward again to the newest pair: roll back, then fix main, or hold the daily build.
+on:
+  workflow_dispatch:
+    inputs:
+      vanilla_tag:
+        description: "Dated tag of the default image to roll back to (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>)"
+        type: string
+        required: true
+      reason:
+        description: "Why (free text, required)"
+        type: string
+        required: true
+      default_only:
+        description: "Move only the default image (dx latest stays behind); false = the dx image built on it moves too, and the run refuses when there is none"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan and report only"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  window:
+    name: Cancel window
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Say what is about to happen, then wait 30 seconds (cancel the run to stop it)
+        env:
+          TAG: ${{ inputs.vanilla_tag }}
+          REASON: ${{ inputs.reason }}
+          ONLY: ${{ inputs.default_only }}
+          DRY: ${{ inputs.dry_run }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Roll back latest"
+            echo "- default image tag: \`${TAG}\`"
+            echo "- dx image moves too: $([[ "${ONLY}" == true ]] && echo no, default_only || echo yes, the dx image built on it)"
+            echo "- reason: ${REASON}"
+            echo "- dry run: ${DRY}; ref: ${REF} (anything but main only plans)"
+            [[ "${DRY}" == true ]] || echo "- **Cancel this run within 30 seconds to stop it.**"
+          } >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${DRY}" == true ]]; then echo "dry run: no wait"; else sleep 30; fi
+
+  rollback:
+    name: Move latest back
+    needs: window
+    runs-on: ubuntu-26.04
+    # the same group as publish-latest.yml: one move of latest at a time, a running one is never cancelled
+    concurrency:
+      group: publish-latest
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout with the full history (the main commit of an image is checked against it)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Fetch main
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Verify the pair and move latest back
+        env:
+          OWNER: ${{ github.repository_owner }}
+          VANILLA_TAG: ${{ inputs.vanilla_tag }}
+          REASON: ${{ inputs.reason }}
+          SCOPE: ${{ inputs.default_only && 'vanilla-only' || 'both' }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          ALLOW_BACKWARDS: "true"
+          # writes only on main; any other ref is a dry run whatever the input says
+          WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          [[ -n "${VANILLA_TAG}" && -n "${REASON}" ]] || { echo "::error::vanilla_tag and reason are required"; exit 1; }
+          .github/scripts/publish-latest.sh
+
+  alert:
+    name: Report a failed rollback
+    needs: [window, rollback]
+    if: always() && needs.rollback.result == 'failure' && github.ref == 'refs/heads/main' && inputs.dry_run != true
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          ISSUE_TITLE: "rollback of latest failed"
+          ISSUE_BODY: "A rollback of `latest` (rollback-latest.yml) failed on main: `latest` of both images stays where it was. Open the run for the reason (an unsigned image, no dx image built on that default image, a tag that is not a dated tag of the default image, or a registry error) and dispatch it again; a dry run plans without writing."
+          FAIL_COMMENT: "A rollback of latest failed again"
+        run: .github/scripts/ci-issue.sh fail

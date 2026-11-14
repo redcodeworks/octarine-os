@@ -140,6 +140,28 @@ check "vanilla-only refuses a signed dated image that was not built from main" b
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-20261113-${c3:0:7}"; echo "$V2" > "$root/reg/unsigned"
 SCOPE=vanilla-only VANILLA_TAG="latest-20261113-${c3:0:7}" run
 check "vanilla-only refuses an unsigned image" bash -c "[ $rc = 1 ] && grep -q 'no valid signature' '$root/out'"
+# ---- ROLLBACK (rollback-latest.yml runs this script with ALLOW_BACKWARDS=true): an older verified pair goes under latest
+rb_setup() { reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - latest "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" latest "latest-20261113-${c3:0:7}"
+    mk $V "$V0" "$c1" 2026-11-10T00:00:00Z - "latest-20261110-${c1:0:7}"; mk $D "$E0" "$c1" 2026-11-10T01:00:00Z "$V0" "latest-20261110-${c1:0:7}"; }
+rb_setup; VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "without ALLOW_BACKWARDS an older default image is HELD (the ordering guard of publish-latest): nothing copied" bash -c "[ $rc = 0 ] && grep -q 'latest held' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+rb_setup; ALLOW_BACKWARDS=true REASON="bad build" VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK: both latest tags go back to the older pair, dx first and the default image last, digests preserved, each read back" bash -c "[ $rc = 0 ] && grep -q 'ROLLBACK, latest moved:' '$root/out' && grep -q 'reason: bad build' '$root/out' && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V0' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E0' ] && [ \$(grep -n 'copy.*$D:latest' '$root/log' | head -1 | cut -d: -f1) -lt \$(grep -n 'copy.*$V:latest' '$root/log' | head -1 | cut -d: -f1) ] && grep -q -- '--preserve-digests' '$root/log'"
+rb_setup; ALLOW_BACKWARDS=true SCOPE=vanilla-only VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK with scope vanilla-only (default_only): only the default image moves, dx latest stays behind and the summary says so" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V0' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E2' ] && grep -q 'NOT moved and is behind' '$root/out'"
+rb_setup; rm -f "$root/reg/$D/cfg/$E0" "$root/reg/$D/tag/latest-20261110-${c1:0:7}"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK refuses when no dx image was built on that default image (and default_only was not asked for): nothing copied" bash -c "[ $rc = 1 ] && grep -q 'no dx image was built on' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+rb_setup; echo "$E0" > "$root/reg/unsigned"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK verifies BOTH signatures before anything moves: an unsigned dx image refuses, nothing copied" bash -c "[ $rc = 1 ] && grep -q 'no valid signature' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+rb_setup; echo "$V0" > "$root/reg/unsigned"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK: an unsigned default image refuses" bash -c "[ $rc = 1 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+rb_setup; ALLOW_BACKWARDS=true DRY_RUN=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK dry run: plans and reports, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+rb_setup; ALLOW_BACKWARDS=true WRITE=false VANILLA_TAG="latest-20261110-${c1:0:7}" run
+check "ROLLBACK on a ref that cannot write (WRITE=false): a dry run whatever the input says" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
+for bt in latest testing-abcdef1 beta; do rb_setup; ALLOW_BACKWARDS=true VANILLA_TAG="$bt" run; check "ROLLBACK refuses the tag '$bt' (only dated tags of the default image)" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"; done
+rb_setup; mk $V "$Vs" "$cs" 2026-11-09T00:00:00Z - "latest-20261109-${cs:0:7}"; ALLOW_BACKWARDS=true SCOPE=vanilla-only VANILLA_TAG="latest-20261109-${cs:0:7}" run
+check "ROLLBACK still refuses an image that was not built from main" bash -c "[ $rc = 1 ] && grep -q 'not on' '$root/out'"
 check "the script never signs, never logs in and never writes anything but the latest tag of the two images" bash -c "! grep -E 'cosign sign|docker login|skopeo login|--dest-creds' '$script' && [ \$(grep -c 'skopeo copy' '$script') = 1 ]"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

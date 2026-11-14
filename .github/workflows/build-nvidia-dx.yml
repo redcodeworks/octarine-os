@@ -62,6 +62,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
 
@@ -111,6 +112,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
@@ -241,9 +243,9 @@ jobs:
           podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
             -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" "octarine-os-nvidia-dx:${CHANNEL}" bash /smoke.sh present
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         run: |
-          just ostree-rechunk octarine-os-nvidia-dx "${CHANNEL}"
+          just rechunk octarine-os-nvidia-dx "${CHANNEL}"
 
       - name: Check the version is channel-neutral
         run: |
@@ -295,6 +297,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Login to GitHub Container Registry
@@ -349,6 +352,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Check the result
         env:

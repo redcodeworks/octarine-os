@@ -11,6 +11,7 @@ FROM ${AKMODS_REF} AS nvidia-akmods
 
 FROM scratch AS ctx
 COPY variants/nvidia/nvidia.sh /nvidia.sh
+COPY build_files/final-cleanup.sh /final-cleanup.sh
 
 FROM ${BASE_REF}
 
@@ -23,4 +24,4 @@ RUN --mount=type=bind,from=nvidia-akmods,src=/rpms,dst=/tmp/akmods-rpms \
     --mount=type=cache,dst=/var/log \
     /ctx/nvidia.sh
 
-RUN bootc container lint
+RUN --network=none bootc container lint --fatal-warnings --no-truncate

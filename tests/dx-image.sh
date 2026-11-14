@@ -113,12 +113,12 @@ assert 'cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}"' in text("
 assert 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}"' in text("build")
 names = [s.get("name") for s in w["jobs"]["build"]["steps"]]
 for a, b in (("Check the dev-packages pin", "Build the image"), ("Check image size", "Smoke test the image"),
-             ("Smoke test the image", "Rechunk with rpm-ostree"), ("Rechunk with rpm-ostree", "Push to GHCR"),
+             ("Smoke test the image", "Rechunk with chunkah"), ("Rechunk with chunkah", "Push to GHCR"),
              ("Check the version is channel-neutral", "Push to GHCR")):
     assert names.index(a) < names.index(b), (a, b)
 size = next(s for s in w["jobs"]["build"]["steps"] if s.get("name") == "Check image size")
 assert size["env"]["MAX_IMAGE_GIB"] == 15
-assert "dx-smoke.sh" in text("build") and 'just ostree-rechunk octarine-os-dx "${CHANNEL}"' in text("build")
+assert "dx-smoke.sh" in text("build") and 'just rechunk octarine-os-dx "${CHANNEL}"' in text("build")
 PY
 check "workflow: the build is by digest and has explicit labels (base name and digest, no inherited maintainer data)" bash -c "
   grep -q -- '--build-arg \"BASE_DIGEST=\${BASE_DIGEST}\"' '$wf'
@@ -193,7 +193,7 @@ check "Containerfile: dev-packages digest is sha256: plus 64 hex characters" tes
 check "Containerfile: the devpkgs stage uses the digest, the bind mount runs install.sh through dx.sh" bash -c "
   grep -qx 'FROM ghcr.io/redcodeworks/dev-packages@\${DEV_PACKAGES_DIGEST} AS devpkgs' '$cf'
   grep -q 'from=devpkgs,source=/,target=/dev-packages' '$cf' && grep -q 'bash /dev-packages/install.sh' '$here/variants/dx/dx.sh'"
-check "Containerfile: ends with bootc container lint" bash -c "tail -1 '$cf' | grep -qx 'RUN bootc container lint'"
+check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN --network=none bootc container lint --fatal-warnings --no-truncate'"
 check "dx.sh: bash syntax, strict extras install, podman.socket, kernel unchanged" bash -c "
   bash -n '$here/variants/dx/dx.sh' && grep -q 'dnf5 -y install --setopt=strict=1' '$here/variants/dx/dx.sh' &&
   grep -q 'systemctl enable podman.socket' '$here/variants/dx/dx.sh' && grep -q 'changed the kernel' '$here/variants/dx/dx.sh'"

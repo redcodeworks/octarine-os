@@ -99,8 +99,19 @@ cat >"$root/bin/semodule" <<'F'
 #!/usr/bin/env bash
 cat "$SEMODULES"
 F
+# Secure Boot facts: a throwaway akmods certificate (DER, with a subject key identifier) and a modinfo that answers with the key, signer and vermagic of the stub module
+openssl req -x509 -newkey rsa:2048 -nodes -subj "/CN=stub akmods" -days 2 -addext subjectKeyIdentifier=hash -outform DER -keyout "$root/akmods.key" -out "$root/akmods.der" 2>/dev/null
+SKID=$(openssl x509 -inform DER -in "$root/akmods.der" -noout -ext subjectKeyIdentifier | tail -n 1 | tr -d ' ')
+cat >"$root/bin/modinfo" <<'F'
+#!/usr/bin/env bash
+case "$2" in
+    sig_key) echo "${STUB_SIG_KEY}" ;;
+    signer) echo "${STUB_SIGNER:-stub akmods}" ;;
+    vermagic) echo "${STUB_VERMAGIC} SMP preempt mod_unload" ;;
+esac
+F
 chmod +x "$root/bin"/*
-export RPM_LIST="$root/rpms" SEMODULES="$root/semods"
+export RPM_LIST="$root/rpms" SEMODULES="$root/semods" STUB_SIG_KEY="$SKID" AKMODS_CERT="$root/akmods.der"
 mk_image() { # kernel dir name
     rm -rf "$root/img"
     mkdir -p "$root/img/modules/$1/extra" "$root/img/kargs" "$root/img/modprobe"
@@ -114,11 +125,16 @@ mk_image() { # kernel dir name
 }
 smoke() { # mode
     PATH="$root/bin:$PATH" MODULES_DIR="$root/img/modules" KARGS_FILE="$root/img/kargs/00-nvidia.toml" \
-        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" OS_RELEASE="$root/img/os-release" BASE_KERNEL="$K" LOCAL_DIR="$root/img/local" "$here/.github/scripts/nvidia-smoke.sh" "$1"
+        MODPROBE_FILE="$root/img/modprobe/00-nouveau-blacklist.conf" OS_RELEASE="$root/img/os-release" BASE_KERNEL="$K" STUB_VERMAGIC="${STUB_VERMAGIC:-$K}" LOCAL_DIR="$root/img/local" "$here/.github/scripts/nvidia-smoke.sh" "$1"
 }
 K=$k
 mk_image "$K"
 check "smoke present: a complete variant passes" smoke present
+STUB_SIG_KEY=AA:BB:CC smoke present >"$root/sm.out" 2>&1; check "smoke present: a module signed with another key than the image's akmods certificate FAILS (an enrolled machine would refuse it)" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module is signed with the key of' '$root/sm.out'"
+STUB_VERMAGIC=1.2.3-other smoke present >"$root/sm.out" 2>&1; check "smoke present: a module built for another kernel FAILS" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module was built for the installed kernel' '$root/sm.out'"
+EXPECT_MODULE_SIGNER="stub akmods" smoke present >"$root/sm.out" 2>&1; check "smoke present: an optional pinned signer name that matches passes" test $? -eq 0
+EXPECT_MODULE_SIGNER="somebody else" smoke present >"$root/sm.out" 2>&1; check "smoke present: a pinned signer name that differs FAILS" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module names the pinned signer' '$root/sm.out'"
+AKMODS_CERT="$root/missing.der" smoke present >"$root/sm.out" 2>&1; check "smoke present: no akmods certificate in the image FAILS" test $? -ne 0
 mk_image "$K"; printf 'kmod-nvidia-%s\nnvidia-driver\nlibvirt\n' "$K" >"$RPM_LIST"
 smoke present >"$root/sm.out" 2>&1; check "smoke present: libvirt in the plain NVIDIA image fails (VM hosting is dx only)" bash -c "[ $? -ne 0 ] && grep -q 'FAIL no VM-hosting package' '$root/sm.out'"
 mk_image "$K"; printf 'kmod-nvidia-%s\nnvidia-driver\nlibvirt-libs\nguestfs-tools\n' "$K" >"$RPM_LIST"
