@@ -20,7 +20,7 @@ check "workflow: bash syntax of every run block" python3 - "$wf" <<'PY'
 import subprocess, sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 for name, job in w["jobs"].items():
-    for s in job["steps"]:
+    for s in job.get("steps", []):   # a job that calls a reusable workflow has no steps
         if "run" in s:
             r = subprocess.run(["bash", "-n"], input=s["run"], text=True, capture_output=True)
             assert r.returncode == 0, (name, s.get("name"), r.stderr)
@@ -61,7 +61,7 @@ check "workflow: channel, sha and dry_run are the inputs; the group build-dx-<ch
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert w["env"] == {"CHANNEL": "${{ inputs.channel }}", "FORCE": "${{ inputs.force || false }}", "SHA": "${{ inputs.sha || github.sha }}", "DRY_RUN": "${{ inputs.dry_run || false }}"}, w["env"]
-assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel }}" and w["concurrency"]["cancel-in-progress"] is False
+assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', substring(inputs.sha || github.sha, 0, 7)) || inputs.channel }}" and w["concurrency"]["cancel-in-progress"] is False
 assert w["jobs"]["build"]["env"]["CHANNEL"] == "${{ needs.plan.outputs.channel }}"
 assert w["jobs"]["build"]["env"]["BASE_DIGEST"] == "${{ needs.plan.outputs.base_digest }}"
 assert w["jobs"]["build"]["env"]["BASE_TAG"] == "${{ needs.plan.outputs.base_tag }}"
@@ -150,15 +150,15 @@ for n in ("plan", "build", "promote", "sign"):
     assert co["uses"].startswith("actions/checkout@") and co["with"]["ref"] == "${{ env.SHA }}", (n, co)
 assert w["jobs"]["plan"]["steps"][0]["with"]["fetch-depth"] == 0
 PY
-check "build.yml: dispatch_dx is the last job, guarded (always() and the base aggregate succeeded, main or testing only), needs only build_result, has actions: write, passes the built commit; nothing of the base needs it" python3 - "$here" <<'PY'
+check "build.yml: dispatch_dx is the last job, guarded (always() and the base aggregate succeeded, main or testing only), needs the base aggregate (and the two jobs whose digest it hands over), has actions: write, passes the built commit; nothing of the base needs it" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
 d = w["jobs"]["dispatch_dx"]
-assert d["needs"] == "build_result" and d["if"].startswith("always() && needs.build_result.result == 'success'"), d
+assert d["needs"] == ["build_result", "build_push", "promote"] and d["if"].startswith("always() && needs.build_result.result == 'success'"), d
 assert "refs/heads/main" in d["if"] and "refs/heads/testing" in d["if"] and "pull_request" not in d["if"]
 assert d["permissions"] == {"contents": "read", "actions": "write"}
 run = next(s["run"] for s in d["steps"] if "dispatch-dx.sh" in s.get("run", ""))
-assert '"${GITHUB_SHA}"' in run and "'testing'" in run and "'latest'" in run, run
+assert '"${GITHUB_SHA}"' in run and '"${BASE_DIGEST}"' in run and "'testing'" in run and "'latest'" in run, run
 for n, j in w["jobs"].items():
     nd = j.get("needs") or []
     nd = [nd] if isinstance(nd, str) else nd

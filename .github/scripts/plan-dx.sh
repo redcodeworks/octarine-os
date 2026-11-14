@@ -4,6 +4,8 @@
 #
 # Environment: CHANNEL (latest, beta or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
 # GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx),
+# BASE_DIGEST_PIN (channel latest only: the default image's digest this run is built on, handed over by the pipeline; without it the
+# base is whatever `octarine-os:latest` is now, which is the digest of the published pair),
 # PROMOTE_FROM_TESTING (default true; false skips the search for a tested testing image: the NVIDIA developer image has no
 # testing channel). Tools: git, skopeo, cosign, jq.
 # The NVIDIA developer image (build-nvidia-dx.yml) runs this with CHANNEL=latest BASE_NAME=octarine-os-nvidia
@@ -70,7 +72,21 @@ if [[ "${channel}" == testing ]]; then
         echo "::warning::No ${base}:${mine} and no earlier testing image with the same default-image inputs: falling back to the floating ${base}:testing"
     fi
 fi
-digest=$(base_digest_of "${base_tag}") || { echo "::error::Cannot read ${base}:${base_tag}"; exit 1; }
+pin="${BASE_DIGEST_PIN:-}"
+if [[ -n "${pin}" ]]; then
+    # The default image this run is meant for, handed over by the pipeline that just published it (channel latest on main). `latest`
+    # is not moved before dx has passed, so it is NOT the base here: the base is exactly this digest, which must exist as the image
+    # of the default repository and hash to itself. The signature is verified below like any other base.
+    [[ "${channel}" == latest ]] || { echo "::error::BASE_DIGEST_PIN is only for the channel latest (got ${channel})"; exit 1; }
+    [[ "${pin}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BASE_DIGEST_PIN '${pin}' is not sha256:<64 hex>"; exit 1; }
+    skopeo inspect --raw "docker://${base}@${pin}" > "${tmp}" 2> /dev/null && [[ -s "${tmp}" ]] || { echo "::error::Cannot read ${base}@${pin}"; exit 1; }
+    [[ "sha256:$(sha256sum "${tmp}" | sed 's/ .*//')" == "${pin}" ]] || { echo "::error::${base}@${pin} does not hash to its digest"; exit 1; }
+    digest="${pin}"
+    base_tag="latest"
+    echo "Base pinned by the pipeline: ${base}@${digest}"
+else
+    digest=$(base_digest_of "${base_tag}") || { echo "::error::Cannot read ${base}:${base_tag}"; exit 1; }
+fi
 cosign verify --key cosign.pub "${base}@${digest}" > /dev/null
 echo "Base image ${base}:${base_tag} = ${digest} (signature valid)"
 

@@ -41,6 +41,11 @@ echo b >> variants/dx/f; commit dx1
 eq "dx-only change (variants/dx): vanilla_inputs equal" "$(v)" "${v0}"; ne "dx-only change: dx_inputs differ" "$(d)" "${d0}"
 echo b >> .github/workflows/build-dx.yml; echo b >> tests/dx-image.sh; echo b >> .github/scripts/dx-smoke.sh; echo b >> keys/redcodeworks-toolbox-cosign.pub; commit dx2
 eq "dx workflow, smoke script, dx test and key: vanilla_inputs equal" "$(v)" "${v0}"
+mkdir -p .github/scripts; echo a > .github/scripts/publish-latest.sh; echo a > .github/scripts/dispatch-dx.sh; echo a > tests/publish-latest.sh; commit pipelineonly0
+v0=$(v); d0=$(d)
+echo b >> .github/scripts/publish-latest.sh; echo b >> .github/scripts/dispatch-dx.sh; echo b >> tests/publish-latest.sh; commit pipelineonly
+eq "pipeline-only files (publish-latest, dispatch-dx and their tests): vanilla_inputs equal" "$(v)" "${v0}"; eq "...and dx_inputs equal" "$(d)" "${d0}"
+( source "${hash}"; is_pipeline_only .github/workflows/build.yml || is_pipeline_only .github/workflows/build-dx.yml || is_pipeline_only .github/scripts/plan-dx.sh || is_pipeline_only Justfile ) && bad "a build file is listed as pipeline-only" || pass "the build workflows and plan scripts are not pipeline-only"
 echo b >> README.md; echo b >> docs/n.md; commit docs
 eq "docs-only change: vanilla_inputs equal" "$(v)" "${v0}"; eq "docs-only change: dx_inputs equal to the commit before" "$(d)" "$(d HEAD~1)"
 d2=$(d)

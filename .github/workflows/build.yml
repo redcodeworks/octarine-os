@@ -630,9 +630,12 @@ jobs:
       - name: Generate Build Tags
         id: gen-build-tags
         run: |
+          # main publishes only the dated tags; the bare `latest` is moved later by publish-latest.yml (see CLAUDE.md "Promoting
+          # the default and dx images together")
           alias_tags="$(just generate-build-tags \
                         ${IMAGE_NAME} \
-                        ${DEFAULT_TAG})"
+                        ${DEFAULT_TAG} \
+                        false)"
 
           echo "Tags for this Action..."
           echo "${alias_tags}"
@@ -703,7 +706,7 @@ jobs:
       - name: Generate the tags a main build would publish
         id: tags
         run: |
-          alias_tags="$(just generate-build-tags x latest)"
+          alias_tags="$(just generate-build-tags x latest false)"
           echo "Tags: ${alias_tags}"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 
@@ -827,7 +830,7 @@ jobs:
   # dispatches again. Only for main and testing; there is no pull_request trigger.
   dispatch_dx:
     name: Start the dx build
-    needs: build_result
+    needs: [build_result, build_push, promote]
     if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
     runs-on: ubuntu-26.04
     permissions:
@@ -841,4 +844,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
-        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}"
+          # main: the digest of the default image this run published or promoted (empty when nothing new was built: a docs-only
+          # merge or an unchanged scheduled run); dx builds on exactly that digest, and `latest` is moved only after dx passed
+          BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
