@@ -57,10 +57,11 @@ def badge(cell, wf, br):
     m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
     assert m, (wf, br, cell)
     assert os.path.exists(os.path.join(repo, ".github/workflows", wf)), wf
-for img, wf in (("default", "build.yml"), ("dx", "build.yml"), ("NVIDIA", "build-nvidia.yml"), ("NVIDIA dx", "build-nvidia-dx.yml")):
+for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml"), ("NVIDIA", "build-nvidia.yml"), ("NVIDIA dx", "build-nvidia-dx.yml")):
     badge(body[img][0], wf, "main")
-for img in ("default", "dx"):
-    badge(body[img][1], "build.yml", "testing")
+badge(body["default"][1], "build.yml", "testing")
+# dx is a workflow_run workflow: GitHub records every run on main, a testing badge would never show a status
+assert body["dx"][1] == "after each testing build, see the check on the commit", body["dx"]
 badge(body["beta"][0], "build-beta.yml", "main")
 for img in ("beta", "NVIDIA", "NVIDIA dx"):
     assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
