@@ -125,16 +125,16 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   - *Build* (`ghostty/build.sh`, PACKAGING.md's system-package recipe): `nix/build-support/fetch-zig-cache.sh` is the ONLY step with network (every URL of
     `build.zig.zon.txt`: deps.files.ghostty.org, plus one git dependency on github.com and one on codeberg.org); Zig stores a package under its content hash and the
     `--system` build only finds a package under the hash `build.zig.zon` names, so altered content is not found and the build stops. Then
-    `DESTDIR=<src>/.stage zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=<ver> -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=spirv-cross`
-    (a PIE, dependencies dynamic; Fedora 45 has no spirv-cross, built statically from the package; highway is static by default). A pkg-config preflight fails with the
+    `DESTDIR=<src>/.stage zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=<ver> -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=spirv-cross -fno-sys=glslang`
+    (a PIE, dependencies dynamic; Fedora 45 has no spirv-cross and its glslang lacks the glslang-default-resource-limits pkg-config module (first CI build, 2026-11-14), so both are built statically from the cached packages; highway is static by default). A pkg-config preflight fails with the
     module name when a -devel package is missing. Builder packages: git-core curl minisign tar xz file binutils gcc glibc-devel pkgconf, ncurses (tic), gettext, pandoc-cli (docs
-    and man pages are always built in system mode), the GTK/libadwaita/gtk4-layer-shell/wayland/glvnd/X11/xkbcommon -devel set, fontconfig freetype harfbuzz oniguruma glslang
+    and man pages are always built in system mode), the GTK/libadwaita/gtk4-layer-shell/wayland/glvnd/X11/xkbcommon -devel set, fontconfig freetype harfbuzz oniguruma
     simdutf bzip2 libpng zlib -devel. `stage.sh --tree` stages the whole install tree; smoke test `ghostty --version`; BUILDINFO records Zig and the library versions.
   - *Image.* `/ghostty/usr/...` (plus LICENSES, SOURCE, BUILDINFO); `install-binaries.sh` copies it into `/usr` after checking that the desktop file, the D-Bus
     service and the systemd user unit name `/usr/bin/ghostty` (D-Bus activation is on: the desktop file says `DBusActivatable=true`; the user unit is shipped but not enabled). It
     also installs `xterm-ghostty` terminfo, icons, shell integration, completions, man pages, themes and, as upstream always does, the Nautilus extension (an "Open in Ghostty"
     entry) and a KDE service menu (inert). Runtime libraries: the first `dnf5 install` block of `build.sh` (critical; the new ones over silverblue-main are expected to be
-    gtk4-layer-shell, oniguruma, glslang and simdutf), then `ldd /usr/bin/ghostty` must show no `not found` and `ghostty --version` and `infocmp xterm-ghostty` must run. The list is
+    gtk4-layer-shell, oniguruma and simdutf), then `ldd /usr/bin/ghostty` must show no `not found` and `ghostty --version` and `infocmp xterm-ghostty` must run. The list is
     a derived guess until the first CI build; BUILDINFO lists the real NEEDED libraries. A soname change of one of these libraries in a Fedora update fails the image build at the ldd check until `binaries/` is changed (rebuilt).
   - *Following upstream (Kevin, 2026-11-14).* Ghostty is a user-facing app, so it follows the latest stable release with a pin for integrity: the weekly
     `upstream-check.yml` finds the highest tag matching `UPSTREAM_TAG_REGEX` (`^v[0-9]+\.[0-9]+\.[0-9]+$`; Ghostty has no GitHub release objects; `vt-*` is libghostty-vt, `tip` a

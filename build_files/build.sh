@@ -131,10 +131,10 @@ dnf5 install -y \
 
 # The runtime libraries of Ghostty (binaries/ghostty, built with --system: every dependency but spirv-cross is linked
 # dynamically against the same Fedora release). Most ship in silverblue-main (dnf5 skips them); the ones that do not are
-# gtk4-layer-shell, oniguruma, glslang and simdutf. Critical: the ldd check after install-binaries.sh fails the build when one is
+# gtk4-layer-shell, oniguruma and simdutf. Critical: the ldd check after install-binaries.sh fails the build when one is
 # missing or its soname changed (then the binaries image has to be rebuilt: change binaries/).
 dnf5 install -y \
-    gtk4 libadwaita gtk4-layer-shell oniguruma glslang simdutf fontconfig freetype harfbuzz bzip2-libs libpng \
+    gtk4 libadwaita gtk4-layer-shell oniguruma simdutf fontconfig freetype harfbuzz bzip2-libs libpng \
     libwayland-client libX11 libxkbcommon libglvnd-egl libstdc++ zlib-ng-compat
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it

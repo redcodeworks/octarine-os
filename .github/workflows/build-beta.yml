@@ -230,7 +230,7 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo gtk4 libadwaita gtk4-layer-shell oniguruma glslang simdutf fontconfig freetype harfbuzz bzip2-libs libpng libwayland-client libX11 libxkbcommon libglvnd-egl libstdc++ zlib-ng-compat"
+            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo gtk4 libadwaita gtk4-layer-shell oniguruma simdutf fontconfig freetype harfbuzz bzip2-libs libpng libwayland-client libX11 libxkbcommon libglvnd-egl libstdc++ zlib-ng-compat"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)

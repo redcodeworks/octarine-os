@@ -13,7 +13,7 @@
 # 4. DESTDIR=<src>/.stage zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline
 #    -Dinstalled-exe-path=/usr/bin/ghostty (written into the desktop file, D-Bus service and systemd user service; no DESTDIR in it).
 #    --system links the dependencies dynamically and makes a PIE. -fno-sys=<name> keeps a library out of the system set and builds it
-#    from the cached package instead; Fedora 45 has no spirv-cross package, so that one is linked statically.
+#    from the cached package instead; Fedora 45 has no spirv-cross package and its glslang ships no glslang-default-resource-limits pkg-config module, so those two are linked statically.
 # 5. stage.sh stages the whole install tree (/usr/...), the binary, the licenses, SOURCE and BUILDINFO and runs `ghostty --version`.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -43,11 +43,10 @@ system_libs=(
     "harfbuzz=harfbuzz"
     "fontconfig=fontconfig"
     "oniguruma=oniguruma"
-    "glslang=glslang glslang-default-resource-limits"
     "simdutf=simdutf"
     "gtk4-layer-shell=gtk4-layer-shell-0"
 )
-no_system=(spirv-cross)
+no_system=(spirv-cross glslang)
 other_modules=(gtk4 libadwaita-1 wayland-client egl x11 glib-2.0 gio-2.0)
 missing=()
 for entry in "${system_libs[@]}"; do
@@ -101,4 +100,4 @@ fi
     --info "zig build: --prefix /usr --system -Doptimize=ReleaseFast -Dcpu=baseline -Dinstalled-exe-path=/usr/bin/ghostty ${sysflags[*]}" \
     --info "system libraries (dynamic): $(printf '%s ' "${system_libs[@]%%=*}")gtk4 libadwaita gtk4-layer-shell wayland glib" \
     --info "built from the package, linked statically: ${no_system[*]} highway and the rest of the Zig packages" \
-    --info "pkg-config versions: $(for m in gtk4 libadwaita-1 gtk4-layer-shell-0 harfbuzz freetype2 fontconfig oniguruma glslang simdutf; do printf '%s=%s ' "${m}" "$(pkg-config --modversion "${m}")"; done)"
+    --info "pkg-config versions: $(for m in gtk4 libadwaita-1 gtk4-layer-shell-0 harfbuzz freetype2 fontconfig oniguruma simdutf; do printf '%s=%s ' "${m}" "$(pkg-config --modversion "${m}")"; done)"

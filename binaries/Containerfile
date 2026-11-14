@@ -44,13 +44,13 @@ FROM ${BUILDER} AS ghostty
 # Build dependencies from Fedora's repositories: the -devel packages of everything Ghostty links dynamically (--system), the tools
 # the source tarball still needs (tic from ncurses for the terminfo, msgfmt from gettext, pandoc for the man pages and docs,
 # wayland-scanner from wayland-devel) and the verification tools (minisign, curl, git-core for `ls-remote`). blueprint-compiler is NOT
-# needed: the release tarball carries the pre-generated GTK resources. Fedora 45 has no spirv-cross package (built statically).
+# needed: the release tarball carries the pre-generated GTK resources. Fedora 45 has no spirv-cross package and no glslang pkg-config module for Ghostty (both built statically).
 RUN dnf5 -y install --setopt=install_weak_deps=False --setopt=strict=1 \
         git-core curl minisign tar xz gzip file binutils gcc glibc-devel pkgconf-pkg-config \
         ncurses gettext pandoc-cli \
         gtk4-devel libadwaita-devel gtk4-layer-shell-devel glib2-devel \
         wayland-devel wayland-protocols-devel libglvnd-devel libX11-devel libxkbcommon-devel \
-        fontconfig-devel freetype-devel harfbuzz-devel oniguruma-devel glslang-devel simdutf-devel \
+        fontconfig-devel freetype-devel harfbuzz-devel oniguruma-devel simdutf-devel \
         bzip2-devel libpng-devel zlib-devel \
     && dnf5 clean all
 
