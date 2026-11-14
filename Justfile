@@ -108,6 +108,9 @@ build $target_image=image_name $tag=default_tag:
     # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the tree hash of binaries/
     # (published by the binaries workflow when that content reached testing or main)
     BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:$(git rev-parse HEAD:binaries)}")
+    # A daily build that fell back to the last good binaries image (the workflow exports BINARIES_FALLBACK_TREE): the Containerfile writes
+    # the notice into the installed SOURCE and BUILDINFO records
+    if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BINARIES_FALLBACK_TREE=${BINARIES_FALLBACK_TREE}" "--build-arg" "BINARIES_FALLBACK_CREATED=${BINARIES_FALLBACK_CREATED:-unknown}"); fi
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
@@ -135,6 +138,11 @@ build $target_image=image_name $tag=default_tag:
 
     # The prebuilt binaries image this build installed from (digest reference in CI, tree-hash tag locally)
     LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-tree-$(git rev-parse HEAD:binaries)}")
+
+    # Machine-readable: a build that used the last good binaries image instead of binaries/ of its own commit
+    if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then
+        LABELS+=("--label" "org.octarineos.binaries-fallback=true" "--label" "org.octarineos.binaries-tree=${BINARIES_FALLBACK_TREE}")
+    fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
     # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.

@@ -134,7 +134,7 @@ timers are installed but not enabled. Turn on what you use.
   GNOME and GTK portals.
 - **Theme:** Gruvbox Material, dark and medium contrast, applied by hand across the shell, GTK 3
   and 4, terminals, Helix, bat, fzf, starship, btop and more. The themes are not in the image:
-  `ujust gnome-candy install-theme` fetches them from github.com/redcodeworks/gnome-themes and
+  `ujust gnome-candy install-theme` fetches them from github.com/redcodeworks/candy-for-gnome and
   `ujust gnome-candy install-icon` fetches icon sets (Papirus, Tela, Fluent, Gruvbox Plus, Zafiro, Candy), both into your home directory.
 - **GNOME extensions:** the image ships GSConnect (and its Nautilus integration). The rest are
   per-user, and Extension Manager is preinstalled for adding them. The ones used here: Dash to
@@ -319,7 +319,7 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   rootless distrobox named `cuda` with the CUDA toolkit; `--image IMAGE` uses another image). Nothing
   runs that you did not tick; `--yes` takes the defaults (and skips the `sudo` step unless you name it with
   `--only libvirt`), `--no` prints the plan. Each step prints its undo line.
-- **`gnome-candy <recipe> [name]`:** themes and icons from the gnome-themes repo into your home
+- **`gnome-candy <recipe> [name]`:** themes and icons from the candy-for-gnome repo into your home
   directory (`install-theme`, `switch-theme`, `install-icon`, `switch-icon`; no name opens a checklist with everything off).
 - **`toolbox [<name> [options]]`:** no name lists the toolboxes; with a name it creates and manages one
   (`--help` shows the options). A box created before the brew prefix existed lacks the read-only brew mount; run

@@ -1828,7 +1828,7 @@ niri-setup *args:
     [ "$kept_any" = 1 ] && echo "Files you already had were kept. Re-run and answer y to a replace question to take the shipped file (your file is backed up first)."
     exit "$failed"
 
-# Themes and icons from the gnome-themes repo; no arguments opens a menu of its recipes (--help lists them)
+# Themes and icons from the candy-for-gnome repo; no arguments opens a menu of its recipes (--help lists them)
 [group('Appearance')]
 [positional-arguments]
 gnome-candy *args:
@@ -1838,9 +1838,9 @@ gnome-candy *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
-    url="${GNOME_THEMES_URL:-https://github.com/redcodeworks/gnome-themes.git}"
-    ref="${GNOME_THEMES_REF:-main}"
-    dir="${XDG_CACHE_HOME:-$HOME/.cache}/gnome-themes/repo"
+    url="${CANDY_FOR_GNOME_URL:-https://github.com/redcodeworks/candy-for-gnome}"
+    ref="${CANDY_FOR_GNOME_REF:-main}"
+    dir="${XDG_CACHE_HOME:-$HOME/.cache}/candy-for-gnome/repo"
     if [ -d "$dir/.git" ]; then
         git -C "$dir" remote set-url origin "$url"
         git -C "$dir" fetch --quiet --tags origin
@@ -1849,19 +1849,19 @@ gnome-candy *args:
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
-    # The recipes of gnome-themes run as you, from a branch that can move: the first time a new revision is about to run it is shown
+    # The recipes of candy-for-gnome run as you, from a branch that can move: the first time a new revision is about to run it is shown
     # (commit, date, author, subject) and you are asked (default no); the approved commit is remembered, so the question comes back only
-    # when the repository has moved. GNOME_THEMES_REF=<full commit sha> pins it (no question); GNOME_THEMES_TRUST=1 skips the question
+    # when the repository has moved. CANDY_FOR_GNOME_REF=<full commit sha> pins it (no question); CANDY_FOR_GNOME_TRUST=1 skips the question
     # (automation). Without a terminal and without either, it stops and says how.
     rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
     approved_file="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gnome-candy-approved"
-    if [ "${GNOME_THEMES_TRUST:-}" != 1 ] && ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]] && { [ -z "$rev" ] || [ "$rev" != "$(cat "$approved_file" 2>/dev/null)" ]; }; then
-        echo "gnome-themes is about to run as you, from $url ($ref):"
+    if [ "${CANDY_FOR_GNOME_TRUST:-}" != 1 ] && ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]] && { [ -z "$rev" ] || [ "$rev" != "$(cat "$approved_file" 2>/dev/null)" ]; }; then
+        echo "candy-for-gnome is about to run as you, from $url ($ref):"
         git -C "$dir" log -1 --date=short --format='  %h  %ad  %an: %s' 2>/dev/null || echo "  (revision unknown)"
         if menu_confirm "Run this version?" n; then
             if [ -n "$rev" ]; then mkdir -p "$(dirname "$approved_file")" && printf '%s\n' "$rev" >"$approved_file"; fi
         else
-            echo "Not run. Look at it first: $dir (git log), then run again and answer y; to skip the question: GNOME_THEMES_TRUST=1 ujust gnome-candy ..., or pin a commit: GNOME_THEMES_REF=<full sha>."
+            echo "Not run. Look at it first: $dir (git log), then run again and answer y; to skip the question: CANDY_FOR_GNOME_TRUST=1 ujust gnome-candy ..., or pin a commit: CANDY_FOR_GNOME_REF=<full sha>."
             exit 0
         fi
     fi
@@ -1910,7 +1910,7 @@ gnome-candy *args:
             done <<<"$rows"
         fi
         if [ "${#specs[@]}" -eq 0 ]; then
-            echo "Recipes of gnome-themes (run: ujust gnome-candy <recipe>):"
+            echo "Recipes of candy-for-gnome (run: ujust gnome-candy <recipe>):"
             just --justfile "$dir/justfile" --working-directory "$dir" --summary | tr ' ' '\n' | sed 's/^/  /'
             exit 0
         fi
@@ -1927,7 +1927,7 @@ gnome-candy *args:
         exit 0
     fi
     if [ "${1:-}" = help ] || [ "${1:-}" = --help ]; then
-        echo "ujust gnome-candy [recipe [arguments]]: runs a recipe of github.com/redcodeworks/gnome-themes from a fresh checkout. Recipes:"
+        echo "ujust gnome-candy [recipe [arguments]]: runs a recipe of github.com/redcodeworks/candy-for-gnome from a fresh checkout. Recipes:"
         just --justfile "$dir/justfile" --working-directory "$dir" --list --unsorted
         exit 0
     fi
@@ -2167,7 +2167,10 @@ luks-tpm-unlock *args:
     cmdline=${OCTARINE_LUKS_CMDLINE:-/proc/cmdline}
     root_uuid=$(tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n 's/^rd\.luks\.uuid=luks-//p' | head -n1)
     for d in "${devs[@]}"; do
-        if sudo cryptsetup luksDump "$d" 2>/dev/null | grep -q systemd-tpm2; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
+        # read the whole dump first: `luksDump | grep -q` under pipefail fails when grep exits at its first match and luksDump then dies of
+        # SIGPIPE (status 141), which reported an enrolled volume as "none" now and then (a flaky test, and a wrong default on a real machine)
+        dump=$(sudo cryptsetup luksDump "$d" 2>/dev/null)
+        if grep -q systemd-tpm2 <<<"${dump}"; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
     done
     # other_unlock_slots DEVICE: how many keyslots do NOT belong to a systemd-tpm2 token (a passphrase, a recovery key, a FIDO2 key); "unknown"
     # when the header is not LUKS2 or cannot be read. Wiping the TPM2 slot of a volume with none leaves it without any way to unlock it.
