@@ -3516,10 +3516,15 @@ toolbox *args:
 
     recorded() { grep -qxF -- "export $1" "$state_file" 2>/dev/null; }
 
-    # A new conf record replaces this toolbox's older one
-    drop_conf_records() {
+    # The FIRST `conf ...` record says how container_name_default came to be (created, appended, or the ORIGINAL value it replaced) and is what
+    # --remove restores, so a later change keeps it and only replaces the `conf-value` line (what this recipe wrote last)
+    drop_conf_value() {
         [ -f "$state_file" ] || return 0
-        sed -i -e '/^conf /d' -e '/^conf-value /d' "$state_file"
+        sed -i -e '/^conf-value /d' "$state_file"
+    }
+    record_conf() { # "conf created" | "conf appended" | "conf changed OLD": written only when there is no conf record yet
+        drop_conf_value
+        grep -qE '^conf (created|appended|changed)' "$state_file" 2>/dev/null || record "$1"
     }
 
     record() {
@@ -4057,6 +4062,22 @@ toolbox *args:
                 echo "   Kept the existing box."
                 return 0
             fi
+            # Nothing is removed before the replacement is certain: the definition must be usable and the new image must be pulled first,
+            # so a failed pull (network, registry) leaves the existing box as it was
+            if [ ! -r "$def_file" ] || ! grep -qx "\[$box\]" "$def_file"; then
+                echo "   $def_file is missing or has no [$box] section: the existing box was NOT removed."
+                failed=1
+                return 1
+            fi
+            new_image=${image_override:-$(def_image)}
+            if command -v podman >/dev/null 2>&1 && [ -n "$new_image" ]; then
+                echo "   Pulling $new_image first (the existing box stays if this fails)"
+                if ! podman pull -q "$new_image" >/dev/null; then
+                    echo "   Could not pull $new_image: the existing box was NOT removed. Check the network and run it again."
+                    failed=1
+                    return 1
+                fi
+            fi
             distrobox rm --force "$box" </dev/null || {
                 echo "   Could not remove $box."
                 failed=1
@@ -4213,19 +4234,16 @@ toolbox *args:
         mkdir -p -- "$(dirname -- "$conf_file")"
         if [ ! -f "$conf_file" ]; then
             printf 'container_name_default="%s"\n' "$new" >"$conf_file"
-            drop_conf_records
-            record "conf created"
+            record_conf "conf created"
         elif ! grep -qE '^[[:space:]]*container_name_default=' "$conf_file"; then
             if [ -s "$conf_file" ] && [ -n "$(tail -c1 "$conf_file")" ]; then printf '\n' >>"$conf_file"; fi
             printf 'container_name_default="%s"\n' "$new" >>"$conf_file"
-            drop_conf_records
-            record "conf appended"
+            record_conf "conf appended"
         else
             tmp="$work/distrobox.conf"
             awk -v v="container_name_default=\"$new\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
             cat "$tmp" >"$conf_file"
-            drop_conf_records
-            record "conf changed $cur"
+            record_conf "conf changed $cur"
         fi
         if [ "$new" != "$box" ]; then record "conf-value $new"; fi
         disable_shadow
@@ -4384,12 +4402,23 @@ toolbox *args:
         esac
     }
 
-    # Before an install step: remember, once, whether each directory already existed
+    # Before an install step: remember, once, which directories already exist. A directory that is still missing is NOT recorded as created
+    # yet (the installer may fail, or someone else may create it later, and --remove deletes what is recorded as created): confirm_dirs
+    # records it after the installer succeeded and the directory is there.
+    pending_dirs=" "
     note_dirs() {
         local d
         for d in $(row_dirs "$1"); do
             if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
-            if [ -e "$d" ]; then record "dir $d existed"; else record "dir $d created"; fi
+            if [ -e "$d" ]; then record "dir $d existed"; else pending_dirs="$pending_dirs$d "; fi
+        done
+    }
+    confirm_dirs() {
+        local d
+        for d in $(row_dirs "$1"); do
+            case "$pending_dirs" in *" $d "*) ;; *) continue ;; esac
+            if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
+            if [ -e "$d" ]; then record "dir $d created"; fi
         done
     }
 
@@ -4422,6 +4451,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs rustup
         echo "   Installed rustup with a stable toolchain."
     }
 
@@ -4463,6 +4493,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs "$t"
         echo "   Installed $label."
     }
 
