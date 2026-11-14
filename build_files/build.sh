@@ -265,7 +265,7 @@ test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 ! grep -q "@INSTANCES@" /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
-# `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/gnome-themes).
+# `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/candy-for-gnome).
 
 # Use a COPR Example:
 #

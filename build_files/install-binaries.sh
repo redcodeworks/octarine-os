@@ -41,4 +41,15 @@ for img in scx extest; do
 done
 grep -rqF 'GNU GENERAL PUBLIC LICENSE' "${dest}/usr/share/licenses/octarine-os-binaries/scx" || { echo "ERROR: no GPL text shipped with scx" >&2; exit 1; }
 grep -rqF 'MIT License' "${dest}/usr/share/licenses/octarine-os-binaries/extest" || { echo "ERROR: no MIT text shipped with extest" >&2; exit 1; }
+# A build that fell back to the last good binaries image (BINARIES_FALLBACK_TREE, from the build argument): say so in the records that
+# ship with the binaries and in a file of its own
+if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then
+    note="FALLBACK: these binaries are NOT built from the binaries/ tree of this image's commit; they are the last good binaries image, built from tree ${BINARIES_FALLBACK_TREE} (built ${BINARIES_FALLBACK_CREATED:-unknown}), used because the binaries build failed"
+    for img in scx extest; do
+        printf '%s\n' "${note}" >> "${dest}/usr/share/licenses/octarine-os-binaries/${img}/SOURCE"
+        printf '%s\n' "${note}" >> "${dest}/usr/share/licenses/octarine-os-binaries/${img}/BUILDINFO"
+    done
+    printf '%s\n' "${note}" > "${dest}/usr/share/licenses/octarine-os-binaries/FALLBACK"
+    echo "WARNING: ${note}"
+fi
 echo "Installed the prebuilt binaries: $(tr '\n' ' ' <<<"${listed}")"

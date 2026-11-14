@@ -155,7 +155,8 @@ check "binaries.yml: reusable (workflow_call with digest and image outputs) and 
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
 assert set(on) == {"workflow_call", "workflow_dispatch"}, set(on)
-assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash"}
+assert set(on["workflow_call"]["inputs"]) == {"allow_fallback"}
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "fallback", "fallback_hash", "fallback_created"}
 PY
 check "binaries.yml: no job carries a required check name; the signing job is the only one with the signing environment" python3 -I - "$wfb" <<'PY'
 import sys, yaml
@@ -181,13 +182,13 @@ j = w["jobs"]
 assert j["reuse"]["name"] == "Reuse the binaries image"
 assert j["reuse"]["if"] == "needs.check.outputs.usable == 'true'" and j["reuse"]["needs"] == "check"
 assert j["build"]["if"] == "needs.check.outputs.usable != 'true'"
-assert set(j["result"]["needs"]) == {"check", "reuse", "build", "sign"}
+assert set(j["result"]["needs"]) == {"check", "reuse", "build", "sign", "fallback"}
 assert "reuse" not in j["build"]["needs"] and "reuse" not in j["sign"]["needs"]
 PY
 check "binaries.yml: the workflow outputs are digest, image, action (built, reused or validated) and hash" python3 -I - "$wfb" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
-assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash"}, set(on["workflow_call"]["outputs"])
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "fallback", "fallback_hash", "fallback_created"}, set(on["workflow_call"]["outputs"])
 t = open(sys.argv[1]).read()
 for v in ("action=reused", "action=built", "action=validated"):
     assert v in t, v
@@ -202,7 +203,7 @@ for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
     w = yaml.safe_load(open(f"{root}/.github/workflows/{f}"))
     j = w["jobs"]["binaries"]
     assert j["uses"] == "./.github/workflows/binaries.yml", f
-    assert j["permissions"] == {"contents": "read", "packages": "write"}, f
+    assert j["permissions"] == {"contents": "read", "packages": "write", "issues": "write"}, f  # issues: the track job files the fallback issue
     assert j.get("secrets") == "inherit", f + ": the called workflow signs with SIGNING_SECRET, which it only gets through secrets: inherit"
     needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
     assert "binaries" in needs, f

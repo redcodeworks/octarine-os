@@ -110,6 +110,7 @@ jobs:
           [[ "${base_now}" == sha256:???*  && "${base_now}" != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] || base_now=""
           cfg=$(skopeo inspect --config "docker://${IMAGE}:latest" 2>/dev/null)
           latest_base=$(label io.github.redcodeworks.octarine-os.base-index-digest)
+          latest_fallback=$(label org.octarineos.binaries-fallback)
           revision=$(label org.opencontainers.image.revision)
           created=$(label org.opencontainers.image.created)
           repo_same=false
@@ -125,7 +126,7 @@ jobs:
           fi
           decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
             REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
-            .github/scripts/plan-skip.sh)
+            LATEST_FALLBACK="${latest_fallback}" .github/scripts/plan-skip.sh)
           echo "${decision}"
           echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
@@ -217,9 +218,14 @@ jobs:
     needs: plan
     if: needs.plan.outputs.build == 'true'
     uses: ./.github/workflows/binaries.yml
+    with:
+      # only the scheduled daily build may fall back to the last good binaries image when the binaries BUILD failed (binaries.yml
+      # enforces schedule and main again); everything else fails closed
+      allow_fallback: ${{ github.event_name == 'schedule' }}
     permissions:
       contents: read
       packages: write
+      issues: write
     # the signing secret is a repository secret, which a called workflow only gets when it is passed on
     secrets: inherit
 
@@ -353,7 +359,17 @@ jobs:
         env:
           ACTION: ${{ needs.binaries.outputs.action }}
           HASH: ${{ needs.binaries.outputs.hash }}
-        run: echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
+          FALLBACK: ${{ needs.binaries.outputs.fallback }}
+          FB_HASH: ${{ needs.binaries.outputs.fallback_hash }}
+          FB_CREATED: ${{ needs.binaries.outputs.fallback_created }}
+        run: |
+          echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
+          if [[ "${FALLBACK}" == true ]]; then
+            echo "::warning::FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, tree ${FB_HASH}, built ${FB_CREATED}) because the binaries build failed"
+            echo "## FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, built ${FB_CREATED}) because the binaries build failed" >> "${GITHUB_STEP_SUMMARY}"
+            # the image build records it (Justfile: label, Containerfile: SOURCE and BUILDINFO of the installed binaries)
+            { echo "BINARIES_FALLBACK_TREE=${FB_HASH}"; echo "BINARIES_FALLBACK_CREATED=${FB_CREATED}"; } >> "${GITHUB_ENV}"
+          fi
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled

@@ -11,8 +11,22 @@ name: Prebuilt binaries
 # those two branches may use) and verified. On any other ref (a validation dispatch) it is built and checked but never pushed or
 # signed, and no digest is handed over: the image build then stops with a message, because an unpublished image cannot be used.
 # The jobs carry no required check name; they only gate the image build.
+#
+# Fallback (Kevin, 2026-11-14): a SCHEDULED run on main (the daily image build; the caller passes allow_fallback) whose binaries BUILD
+# failed may use the last good binaries image instead, loudly. Everything else fails closed as before: a push to testing, a pull
+# request, a promotion or a dispatch; a failed lookup, a failed SIGNING of the new image, a last-good image whose signature does not
+# verify, one that does not satisfy this tree's installer (binaries-fallback.sh). The last good image is the moving tag
+# `last-good` of octarine-os-binaries, moved by the `track` job only after a signed build or reuse on main; the build still copies
+# from the DIGEST that tag resolved to (verified), never from the tag. The `track` job also opens, updates and closes the ONE
+# issue labeled ci-failure-binaries. A dispatch with fallback_dry_run (and simulate_build_failure, which fails the build step and
+# skips the reuse) rehearses the whole decision on any branch without publishing or changing anything.
 on:
   workflow_call:
+    inputs:
+      allow_fallback:
+        description: "true on the scheduled daily build: a failed binaries BUILD on main may fall back to the last good binaries image"
+        type: boolean
+        default: false
     outputs:
       digest:
         description: "manifest digest of the published, signed binaries image (empty when it was only built for validation)"
@@ -26,7 +40,25 @@ on:
       hash:
         description: the tree hash of binaries/ (the image tag)
         value: ${{ jobs.result.outputs.hash }}
+      fallback:
+        description: "true when the digest is the last good image used because the binaries build failed (action is fallback)"
+        value: ${{ jobs.result.outputs.fallback }}
+      fallback_hash:
+        description: the tree hash of binaries/ the fallback image was built from (empty unless fallback)
+        value: ${{ jobs.result.outputs.fallback_hash }}
+      fallback_created:
+        description: when the fallback image was built (empty unless fallback)
+        value: ${{ jobs.result.outputs.fallback_created }}
   workflow_dispatch:
+    inputs:
+      simulate_build_failure:
+        description: "Rehearsal: skip the reuse and fail the build step on purpose (nothing is published)"
+        type: boolean
+        default: false
+      fallback_dry_run:
+        description: "Rehearsal: when the build failed, run the fallback checks on the last good image and report; never publishes or uses it"
+        type: boolean
+        default: false
 
 env:
   IMAGE_NAME: octarine-os-binaries
@@ -41,7 +73,7 @@ jobs:
     outputs:
       hash: ${{ steps.hash.outputs.hash }}
       image: ${{ steps.hash.outputs.image }}
-      usable: ${{ steps.lookup.outputs.usable }}
+      usable: ${{ steps.final.outputs.usable }}
       digest: ${{ steps.lookup.outputs.digest }}
     steps:
       - name: Checkout
@@ -69,6 +101,17 @@ jobs:
       - name: Published and signed already?
         id: lookup
         run: .github/scripts/binaries-lookup.sh "${{ steps.hash.outputs.image }}" "${{ steps.hash.outputs.hash }}"
+
+      # a rehearsal of a failed build must not be short-circuited by an existing signed image of this tree
+      - name: Usable (not for a rehearsal)
+        id: final
+        env:
+          LOOKUP: ${{ steps.lookup.outputs.usable }}
+          SIMULATE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure == true }}
+        run: |
+          usable=${LOOKUP}
+          [[ "${SIMULATE}" != true ]] || { usable=false; echo "rehearsal: the reuse is skipped"; }
+          echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
 
   # The reuse path: runs ONLY when the lookup found an image for the hash tag whose signature verified. It hands the digest on;
   # the build and sign jobs are skipped then. (A tag whose signature fails to verify is not usable: the lookup says so and the
@@ -115,6 +158,12 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Simulated build failure (rehearsal only)
+        if: github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure == true
+        run: |
+          echo "::error::simulated binaries build failure (simulate_build_failure)"
+          exit 1
 
       - name: Choose channel
         id: channel
@@ -222,9 +271,49 @@ jobs:
           minutes=$(( ($(date +%s) - ${STARTED:-$(date +%s)}) / 60 ))
           echo "Binaries image: built \`${HASH}\` in ${minutes}m, signed and published (digest \`${DIGEST}\`)" >> "${GITHUB_STEP_SUMMARY}"
 
+  # The fallback: only after a failed BUILD (not a failed signing, not a failed lookup), only for a scheduled run on main, or as a dry run
+  # of a dispatch. binaries-fallback.sh verifies the signature and the layout contract; a refusal fails this job and so the whole run.
+  fallback:
+    name: Last good binaries image
+    needs: [check, build]
+    if: >-
+      always() && needs.check.result == 'success' && needs.build.result == 'failure' &&
+      ((inputs.allow_fallback == true && github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_dispatch' && inputs.fallback_dry_run == true))
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      digest: ${{ steps.pick.outputs.digest }}
+      hash: ${{ steps.pick.outputs.hash }}
+      created: ${{ steps.pick.outputs.created }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify and check the last good image
+        id: pick
+        env:
+          IMAGE: ${{ needs.check.outputs.image }}
+        run: .github/scripts/binaries-fallback.sh "${IMAGE}" last-good binaries/scx/schedulers.tsv build_files/install-binaries.sh
+
   result:
     name: Binaries image digest
-    needs: [check, reuse, build, sign]
+    needs: [check, reuse, build, sign, fallback]
     if: always()
     runs-on: ubuntu-26.04
     permissions:
@@ -234,6 +323,9 @@ jobs:
       action: ${{ steps.pick.outputs.action }}
       hash: ${{ needs.check.outputs.hash }}
       image: ${{ needs.check.outputs.image }}
+      fallback: ${{ steps.pick.outputs.fallback }}
+      fallback_hash: ${{ steps.pick.outputs.fallback_hash }}
+      fallback_created: ${{ steps.pick.outputs.fallback_created }}
     steps:
       - name: Pick the digest
         id: pick
@@ -246,6 +338,12 @@ jobs:
           PUBLISHED: ${{ needs.build.outputs.published }}
           SIGN: ${{ needs.sign.result }}
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
+          FALLBACK: ${{ needs.fallback.result }}
+          FB_DIGEST: ${{ needs.fallback.outputs.digest }}
+          FB_HASH: ${{ needs.fallback.outputs.hash }}
+          FB_CREATED: ${{ needs.fallback.outputs.created }}
+          FB_TAG: ${{ needs.fallback.outputs.tag }}
+          EVENT: ${{ github.event_name }}
         run: |
           set -euo pipefail
           err() { echo "::error::$*"; exit 1; }
@@ -257,6 +355,23 @@ jobs:
             echo "action=reused" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          echo "fallback=false" >> "${GITHUB_OUTPUT}"
+          if [[ "${BUILD}" == failure && "${FALLBACK}" == success ]]; then
+            if [[ "${EVENT}" == workflow_dispatch ]]; then
+              # a rehearsal: say what would have happened and publish nothing
+              echo "FALLBACK (dry run): the last good binaries image ${FB_DIGEST} (${FB_TAG}, tree ${FB_HASH}, built ${FB_CREATED}) is signed and satisfies this tree's installer; nothing is used or changed" | tee -a "${GITHUB_STEP_SUMMARY}"
+              echo "digest=" >> "${GITHUB_OUTPUT}"
+              echo "action=validated" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            msg="FALLBACK: using binaries image ${FB_DIGEST} (${FB_TAG}, tree ${FB_HASH}, built ${FB_CREATED}) because the binaries build failed"
+            echo "::warning::${msg}"
+            echo "## ${msg}" >> "${GITHUB_STEP_SUMMARY}"
+            echo "The image of this run is NOT built from this commit's \`binaries/\` tree but from the tree above." >> "${GITHUB_STEP_SUMMARY}"
+            { echo "digest=${FB_DIGEST}"; echo "action=fallback"; echo "fallback=true"; echo "fallback_hash=${FB_HASH}"; echo "fallback_created=${FB_CREATED}"; } >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          [[ "${BUILD}" != failure || "${FALLBACK}" != failure ]] || err "The binaries build failed and the last good image was refused (see the fallback job): nothing is built"
           [[ "${BUILD}" == success ]] || err "The binaries build failed (${BUILD})"
           if [[ "${PUBLISHED}" == true ]]; then
             [[ "${SIGN}" == success ]] || err "Signing the binaries image failed (${SIGN})"
@@ -266,3 +381,66 @@ jobs:
             echo "digest=" >> "${GITHUB_OUTPUT}"
             echo "action=validated" >> "${GITHUB_OUTPUT}"
           fi
+
+  # After the decision: move `last-good` (only after a signed build or reuse on main) and keep the ONE issue for a fallback. Never fails the
+  # run (continue-on-error): a failure to move the tag or to open the issue must not block an image build.
+  track:
+    name: Track the last good binaries image
+    needs: result
+    if: always() && needs.result.result == 'success'
+    runs-on: ubuntu-26.04
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: write
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Login to GitHub Container Registry
+        if: github.ref == 'refs/heads/main' && (needs.result.outputs.action == 'reused' || needs.result.outputs.action == 'built')
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # the digest was verified by the lookup or the sign job; the tag is a pointer to it, the signature belongs to the digest
+      - name: Move last-good to this digest
+        if: github.ref == 'refs/heads/main' && (needs.result.outputs.action == 'reused' || needs.result.outputs.action == 'built')
+        env:
+          IMAGE: ${{ needs.result.outputs.image }}
+          DIGEST: ${{ needs.result.outputs.digest }}
+        run: |
+          set -euo pipefail
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::warning::no digest to mark"; exit 0; }
+          skopeo copy --all --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:last-good"
+          got="sha256:$(skopeo inspect --raw "docker://${IMAGE}:last-good" | sha256sum | sed 's/ .*//')"
+          [[ "${got}" == "${DIGEST}" ]] || { echo "::warning::last-good is ${got}, expected ${DIGEST}"; exit 0; }
+          echo "last-good -> ${DIGEST}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+      - name: Issue for a fallback (one, label ci-failure-binaries)
+        if: needs.result.outputs.fallback == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-binaries
+          LABEL_DESC: the daily image used the last good binaries image because the binaries build failed (one open issue at a time)
+          ISSUE_TITLE: "binaries build failed: the daily image used the last good binaries image"
+          FB_HASH: ${{ needs.result.outputs.fallback_hash }}
+          FB_CREATED: ${{ needs.result.outputs.fallback_created }}
+          FB_DIGEST: ${{ needs.result.outputs.digest }}
+          FAIL_COMMENT: the binaries build failed again and the daily image used the last good binaries image again
+        run: |
+          export ISSUE_BODY="The binaries build of the daily run failed, so the image of that run uses the last good binaries image instead of one built from the current \`binaries/\` tree: digest \`${FB_DIGEST}\`, tree \`${FB_HASH}\`, built ${FB_CREATED}. The image is labeled \`org.octarineos.binaries-fallback=true\` and its binaries SOURCE and BUILDINFO say so. Fix \`binaries/\` (or revert the change); the next successful binaries build or reuse closes this issue. A Fedora library change that breaks a binary at link time is NOT covered by the fallback: only a rebuild fixes it. See CLAUDE.md, Prebuilt binaries."
+          .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the binaries are fine again
+        if: needs.result.outputs.fallback != 'true' && github.ref == 'refs/heads/main' && (needs.result.outputs.action == 'reused' || needs.result.outputs.action == 'built')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-binaries
+          RECOVER_COMMENT: the binaries image was built or reused without a fallback
+        run: .github/scripts/ci-issue.sh recover

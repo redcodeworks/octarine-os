@@ -45,6 +45,9 @@ check "no secret value in the Quadlets: passwords come from Secret= and *_FILE o
 check "ports: every PublishPort is bound to 127.0.0.1 and the host port is above 1023" bash -c "grep -h '^PublishPort=' '$rq'/*.pod | awk -F'[=:]' '{ if (\$2 != \"127.0.0.1\" || \$3 < 1024) bad=1 } END { exit bad }' && [ \$(grep -h '^PublishPort=' '$rq'/*.pod | wc -l) = 6 ]"
 check "ports: the datastore pod publishes 5432 6379 8333 9333 8889 and kafka 9092" bash -c "for p in 5432:5432 6379:6379 8333:8333 9333:9333 8889:8888; do grep -q \"PublishPort=127.0.0.1:\$p\" '$rq/datastore.pod' || exit 1; done; grep -q 'PublishPort=127.0.0.1:9092:9092' '$rq/kafka.pod'"
 check "the pods and containers join the lakehouse network; the dvdrental network is not referenced" bash -c "grep -q '^Network=lakehouse.network' '$rq/datastore.pod' '$rq/kafka.pod' && ! grep -rq dvdrental '$rq'"
+check "kafka accepts SIGTERM's exit status 143 as a clean stop (a stopped broker is not a failed unit); the other containers do not need it" bash -c "grep -qx 'SuccessExitStatus=143' '$rq/kafka.container' && ! grep -q 'SuccessExitStatus' '$rq/postgresql.container' '$rq/valkey.container'"
+check "seaweedfs: StopTimeout is set (30 to 60 s) and systemd's TimeoutStopSec is longer, so systemd never kills podman before the container's own limit" bash -c "st=\$(sed -n 's/^StopTimeout=//p' '$rq/seaweedfs.container'); ts=\$(sed -n 's/^TimeoutStopSec=//p' '$rq/seaweedfs.container'); [ -n \"\$st\" ] && [ \"\$st\" -ge 30 ] && [ \"\$st\" -le 60 ] && [ \"\$ts\" -gt \"\$st\" ]"
+check "seaweedfs 4.x drops privileges itself: the unit sets no User=, UserNS= or :U volume option, and the S3 secret keeps a readable default mode (no mode=0400 or 0600)" bash -c "! grep -qE '^(User|UserNS)=|:U( |,|\$)' '$rq/seaweedfs.container' && ! grep -qE 'Secret=.*mode=0?[46]00' '$rq/seaweedfs.container'"
 check "volumes are named podman volumes with the local driver" bash -c "for v in postgresql seaweed valkey kafka; do grep -qx \"VolumeName=\$v-data\" '$rq'/\$v-data.volume && grep -qx 'Driver=local' '$rq'/\$v-data.volume || exit 1; done"
 check "no sudo, pkexec or run0 in any Quadlet, recipe file, helper, render script or in the CLAUDE.md datastore section" bash -c "! grep -E '(sudo|pkexec|run0)' '$rq'/* '$rjust' '$dslib' '$dsdir/render.sh' '$dsdir/datastore.env' && ! awk '/^## Datastore containers/{f=1;next} /^## /{f=0} f' '$here/CLAUDE.md' | grep -E '(sudo|pkexec|run0)'"
 # render must refuse bad pins
@@ -58,7 +61,7 @@ bad_render() { # description, sed expression
 bad_render "a latest tag" 's/^VALKEY_TAG=.*/VALKEY_TAG=latest/'
 bad_render "a floating major tag" 's/^POSTGRESQL_TAG=.*/POSTGRESQL_TAG=17-alpine/'
 bad_render "a bad digest" 's/^KAFKA_DIGEST=.*/KAFKA_DIGEST=sha256:abc/'
-bad_render "a tag outside its major" 's/^SEAWEEDFS_TAG=.*/SEAWEEDFS_TAG=4.1/'
+bad_render "a tag outside its major" 's/^SEAWEEDFS_TAG=.*/SEAWEEDFS_TAG=3.99/'
 bad_render "a missing pin" '/^KAFKA_DIGEST=/d'
 check "the dx image tree ships no kargs.d file (iommu=pt is opt-in now)" test ! -e "$here/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
 check "dx.sh renders the Quadlets into /usr/share/containers/systemd/users, checks there is no [Install], imports the recipe file; the Containerfile copies the datastore directory" bash -c "grep -q 'render.sh /usr/share/containers/systemd/users /ctx/datastore' '$here/variants/dx/dx.sh' && grep -q 'grep -rq .^.\\[Install' '$here/variants/dx/dx.sh' && grep -q '72-octarine-datastore.just' '$here/variants/dx/dx.sh' && grep -q 'COPY variants/dx/datastore /datastore' '$here/variants/dx/Containerfile'"

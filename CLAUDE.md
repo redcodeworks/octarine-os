@@ -110,6 +110,24 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
+- **Fallback to the last good binaries image (daily build only; Kevin, 2026-11-14).** A failed binaries BUILD must not block the daily image; everything else still fails closed.
+  - *When.* ONLY the scheduled run on main (`build.yml` passes `allow_fallback: ${{ github.event_name == 'schedule' }}`; `binaries.yml` checks `schedule` and `refs/heads/main` again in the `fallback` job's `if`) and ONLY when the `build` job
+    failed (compile, fetch or verify of the upstream sources). Not for: a push to testing, a pull request, a promotion, `build-beta.yml`, a dispatch; a failed lookup; a failed SIGNING of the new image (build succeeded, `sign` failed: the result job stops);
+    a last-good image whose signature does not verify; one that fails the layout contract.
+  - *Which image.* The moving tag `last-good` of `octarine-os-binaries`, moved by the `track` job (`continue-on-error`, so it never blocks a build) with `skopeo copy --all --preserve-digests` to the digest of a signed build or reuse on main
+    (only `reused` and `built`, never a fallback). The tag is a pointer: `binaries-fallback.sh` resolves it to a manifest digest, verifies the cosign signature of THAT digest with `cosign.pub`, and the image build still copies from the digest
+    (`binaries-use.sh` verifies it again), never from the tag. `last-good` lags the newest tree by design: it moves only on main runs where the binaries job ran.
+  - *Contract.* Before use the candidate is exported and must pass `binaries-layout.sh` against THIS tree's `schedulers.tsv` (every scheduler of the tree, both extest libraries, SOURCE, BUILDINFO, LICENSES per component) and THIS tree's
+    `install-binaries.sh` run on it (`BINARIES_ROOT` and a scratch `DESTDIR`); otherwise the fallback is refused, the build fails and nothing ships without a component. A Fedora library change that breaks a binary at link time is NOT covered: an old image would hit the same failure; only a rebuild fixes it.
+  - *Visible.* The binaries job summary and a warning annotation say `FALLBACK: using binaries image <digest> (last-good, tree <hash>, built <date>) because the binaries build failed` (`build.yml` repeats it); the image carries the labels
+    `org.octarineos.binaries-fallback=true` and `org.octarineos.binaries-tree=<hash>` (`Justfile`, from `BINARIES_FALLBACK_TREE` which the workflow exports) and the installed `SOURCE` and `BUILDINFO` of both components and
+    `/usr/share/licenses/octarine-os-binaries/FALLBACK` say the binaries are NOT from this commit's `binaries/` tree and which tree they are from (`install-binaries.sh`); the `track` job opens ONE issue with the label `ci-failure-binaries`
+    (a comment per later fallback, closed with a comment when a main run builds or reuses the binaries without fallback; same mechanics as `ci-failure-dx`: `.github/scripts/ci-issue.sh` with `LABEL=ci-failure-binaries`).
+  - *Never kept.* `plan-skip.sh` reads the label of `latest` (`LATEST_FALLBACK`): an image built with fallback binaries is never skipped, so the next daily run builds again (and tries the real binaries); the label `io.github.redcodeworks.octarine-os.binaries` records the digest actually used.
+  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=true -f fallback_dry_run=true`: skips the reuse, fails the build step on purpose, runs the fallback checks on the real `last-good` image (signature, layout, installer)
+    and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
+  - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
+  - The binaries image has two components (scx, extest).
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).
@@ -273,9 +291,18 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
 - **Location, verified.** The user generator reads `/usr/share/containers/systemd/users/` (checked by running `quadlet --user --dryrun` as an unprivileged user on
   the default image with the rendered files mounted there: all units are generated). The dx smoke test repeats that dry run inside the built image.
 - **Pins.** Exact patch-level tags with digests (`Image=name:tag@sha256:...`; the tag stays for humans, the digest decides), recorded 2026-11-13: postgres
-  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `3.99`, kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
+  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `4.53` (digest `sha256:ccad23e1...`, the multi-arch index digest as `skopeo inspect --raw | sha256sum` gives it; moved from 3.99 on 2026-11-14, major 4), kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
   `AutoUpdate=` on any shipped unit: a stateful service never changes image unattended. Majors are never bumped automatically (PostgreSQL 17 to 18 needs dump
   and restore or `pg_upgrade`). `tests/datastore.sh` checks that every shipped `Image=` equals the pin file, is an exact tag with a digest, and is not `latest`.
+- **Stop behavior (found on a real run, 2026-11-14).** `kafka.container` has `SuccessExitStatus=143` (the broker shuts down cleanly on SIGTERM and exits 143, which made the unit `failed` after every clean stop; PostgreSQL and
+  Valkey stop with 0 and do not need it). `seaweedfs.container` has `StopTimeout=45` (Quadlet, `podman stop -t`) and `TimeoutStopSec=60` in `[Service]`: the all-in-one server exceeded podman's default 10 s and was SIGKILLed.
+  45 s lets master, volume, filer and S3 flush; the systemd limit is longer so systemd does not kill podman first. If SeaweedFS ignores SIGTERM altogether the stop simply takes 45 s and then kills, as before: look at the log before raising it.
+- **SeaweedFS 4.x (pin 4.53, UNVERIFIED on a real machine).** Research (release notes, wiki, issues; not tested here): 4.00 added a non-root user (uid and gid 1000, `seaweed`); the entrypoint starts as root, `chown`s `/data` when the owner
+  differs and drops privileges with su-exec, no documented switch. In rootless Podman that uid is a subuid on the host, so the first start changes the ownership of the volume's files (data is tiny on the owner's machine, a backup exists).
+  Checked against the shipped unit: no `User=`, `UserNS=` or `:U` volume option; capabilities are Podman's default set (CHOWN, SETUID and SETGID are in it) and `NoNewPrivileges=true` does not stop `setuid()` inside the container;
+  the S3 config secret is a `type=mount` podman secret, whose default mode is 0444, so the dropped-privilege process can read it (nothing changed in the unit). With identities in `-s3.config` S3 requires credentials; objects over 8 MiB return
+  multipart-style ETags; do not mix plain and `_large_disk` images on one volume (the pin is the plain image); a known deadlock (#12493, heavy bucket churn) exists in 4.48 to 4.53 and is fixed after 4.53 (low exposure here). The weekly bump
+  follows 4.x (`SEAWEEDFS_MAJOR=4`) and only reports a 5. A machine that pinned an older SeaweedFS with `ujust datastore-setup --pin seaweedfs=<tag>` removes that drop-in with `ujust datastore-setup --unpin seaweedfs` after this image arrives.
 - **Weekly bump.** `bump-pins.yml` (Tuesday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
   the newest tag of the same shape and suffix inside the pinned major, with its manifest digest (`skopeo inspect --raw | sha256sum`); release candidates and other
   suffixes never match; a NEWER MAJOR is only named in the pull request body ("newer major available, manual decision") and never changes the pin; one pull request
@@ -299,7 +326,8 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
   (stops the pod, exports, starts it again; a trap starts again exactly the pods this run stopped on Ctrl-C, SIGTERM or an early failure); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
 - **Smoke test** (`dx-smoke.sh`): the eleven Quadlet files exist, no `[Install]`, every image an exact tag with a digest, no latest, `AutoUpdate=`, home path or local image, loopback ports only, the recipe file and helper
   ship, and the generator dry run produces the pod and container units. Tests: `tests/datastore.sh`, `tests/datastore-bump.sh`, `tests/dx-image.sh`.
-- **Unverified (real machine).** The first `systemctl --user start datastore-pod` (image pulls, healthchecks), the secret mounts, SELinux labels on the volumes, the owner's graphroot, a Kafka start with the pinned 4.3.2, and that the removal of the owner's own Quadlet copies leaves the same behavior (container names are kept: `pgsql` and the pod aliases).
+- **Verified on a real machine (2026-11-14, nox).** The owner's own Quadlets were moved away and the shipped units took over: secrets mounted, PostgreSQL 17.12 (data major 17 accepted), Valkey 9.1.3, SeaweedFS (3.24 through a local drop-in), Kafka 4.3.2 started healthy and shut down cleanly; Lakekeeper, Connect (the Debezium slot was reused), Trino, Airflow and Superset were started afterwards against them and were healthy. That run also found the stop behavior above.
+- **Unverified (real machine).** SeaweedFS 4.x on the shipped unit (the non-root drop, the chown of the volume, the S3 config read as uid 1000, the 45 s stop), the new `SuccessExitStatus` and `StopTimeout` effects, SELinux labels on the volumes and the owner's graphroot.
 
 ## virthost-setup and wake-on-lan
 
@@ -365,7 +393,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   pushed; the aggregate job `Build and push image` still passes. Concurrency group is workflow plus ref,
   cancel-in-progress on (only `main` and the schedule are never cancelled). The workflow must exist on that branch.
   Test: `tests/build-triggers.sh`.
-- The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+- The owner's other repos (candy-for-gnome, fedora-toolbox, dot-files) still commit straight on `testing`.
 
 ## Test workflow
 
@@ -639,7 +667,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - `datastore-setup` never creates a new `postgresql-password` while the volume `postgresql-data` exists (PostgreSQL keeps the password its data directory was created with): it prints the three ways out and exits 1; the other missing secrets are still created.
 - `toolbox`: the FIRST `conf ...` record is kept (it is what `--remove` restores), only `conf-value` follows later changes; a directory is recorded as created only after the installer succeeded and the directory exists (`note_dirs` / `confirm_dirs`); `--recreate` validates the definition and pulls the new image before it removes the box.
 - `dev --only java` sets the SDKMAN default only when none exists (a dangling `current` counts as none); `sensors-setup` does nothing (no sudo, no probe) when its module list exists, `--redetect` probes again, `--yes` never moves a hand-made `nct6775.conf`, and `hardware-setup` counts only `octarine-sensors.conf` as done; `toggle-updates enable` completes a half-enabled source (flatpak has two timers); `hardware-setup` treats `amd-cpu-gaming` as done only when `gamemode.ini` equals the shipped tuning.
-- `gnome-candy` runs recipes of the `main` branch of gnome-themes as the user, so a new revision is shown (commit, date, author, subject) and approved once (default no; the approved sha is `~/.local/state/octarine-os/gnome-candy-approved`); `GNOME_THEMES_REF=<full sha>` pins, `GNOME_THEMES_TRUST=1` skips the question (automation); without a terminal and without either it stops and says how.
+- `gnome-candy` runs recipes of the `main` branch of candy-for-gnome (the repository gnome-themes was renamed; the old URL redirects) as the user, so a new revision is shown (commit, date, author, subject) and approved once (default no; the approved sha is `~/.local/state/octarine-os/gnome-candy-approved`); `CANDY_FOR_GNOME_REF=<full sha>` pins, `CANDY_FOR_GNOME_TRUST=1` skips the question (automation), `CANDY_FOR_GNOME_URL` overrides the repository (default `https://github.com/redcodeworks/candy-for-gnome`); the old `GNOME_THEMES_*` names are gone, no alias; without a terminal and without either it stops and says how. An old `~/.cache/gnome-themes` is unused after the rename (the checkout lives in `~/.cache/candy-for-gnome/repo`) and can be deleted.
 - Deliberately NOT changed: the `fido-key` probe (a non-empty `u2f_keys` counts as done): the step writes the file by replacing it, so a stricter probe would make it overwrite another key's entries.
 ## Kernel arguments are pending until the reboot (and an image update drops them)
 
@@ -714,6 +742,9 @@ signed and the dx image was built on exactly that default digest.
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
   variable, so set it only when the next scheduled build should use it.
+  (5) In the SAME change move the binaries builder: `ARG BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/Containerfile` (re-resolve the digest as
+  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/` tree also gives a new tree hash, so the next build
+  rebuilds them for the new release. The fallback to the last good binaries image does not help here: an old image built for release N-1 may not link on N, and only a rebuild fixes that.
 
 ## Logo files
 
@@ -832,7 +863,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | Source | Entry | Decision | Reason |
   |---|---|---|---|
   | `20-interface.dconf` | `enable-hot-corners=false` | included | neutral behavior, one key, easy to undo |
-  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from gnome-themes |
+  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from candy-for-gnome |
   | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
   | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
@@ -1561,8 +1592,8 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
 - **Installer scripts.** SDKMAN and nvm (in the toolbox) are the only installer
   scripts; nothing here needs sudo.
-- **Other recipes.** `ujust gnome-candy` runs a recipe of the gnome-themes repo from a fresh checkout in
-  `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
+- **Other recipes.** `ujust gnome-candy` runs a recipe of the candy-for-gnome repo from a fresh checkout in
+  `~/.cache/candy-for-gnome/repo` (`CANDY_FOR_GNOME_REF` picks the ref).
   `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
   `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
   `chrome-flatpak-webapps` and `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; steps

@@ -35,8 +35,8 @@ fresh; bump postgresql TAGS='"17.12-alpine","17.11-alpine"'
 check "already the newest: equal, nothing to bump, exit 0" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && grep -qx 'result=equal' '$root/gho' && cmp -s '$here/variants/dx/datastore/datastore.env' '$root/ds.env'"
 fresh; bump kafka TAGS='"4.3.2","4.4.0","4.4.1","4.4.1-rc1","5.0.0","latest"'
 check "bare version tags (kafka 4.3.2): 4.4.1 chosen inside major 4, 5.0.0 reported as a newer major" bash -c "[ $rc = 10 ] && grep -qx 'KAFKA_TAG=4.4.1' '$root/ds.env' && grep -q 'newer major available (5)' '$root/run'"
-fresh; bump seaweedfs TAGS='"3.99","3.100","3.101","4.60"'
-check "version sort is numeric (3.101 beats 3.99), 4.60 is a newer major" bash -c "[ $rc = 10 ] && grep -qx 'SEAWEEDFS_TAG=3.101' '$root/ds.env' && grep -q 'newer major available (4)' '$root/run'"
+fresh; bump seaweedfs TAGS='"3.99","4.53","4.54","4.100","5.0"'
+check "version sort is numeric (4.100 beats 4.54 and 4.53; 3.99 is below the pin), 5.0 is a newer major, the pin follows 4.x" bash -c "[ $rc = 10 ] && grep -qx 'SEAWEEDFS_TAG=4.100' '$root/ds.env' && grep -q 'newer major available (5)' '$root/run'"
 fresh; bump valkey TAGS='"9.1.3-alpine","9.1.4-alpine","9.2.0-alpine","9.2-alpine","9.2.0","9.1.4-bookworm"'
 check "valkey: the -alpine suffix is kept (9.2.0-alpine), the two-part 9.2-alpine and other suffixes are ignored" bash -c "[ $rc = 10 ] && grep -qx 'VALKEY_TAG=9.2.0-alpine' '$root/ds.env'"
 fresh; bump postgresql SKOPEO_FAIL=1 TAGS=''
