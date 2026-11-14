@@ -119,7 +119,7 @@ root = sys.argv[1]
 w = yaml.safe_load(open(f"{root}/.github/workflows/binaries.yml"))
 on = w.get(True) or w.get("on")
 assert on["workflow_call"]["inputs"]["allow_fallback"]["default"] is False
-assert set(on["workflow_dispatch"]["inputs"]) == {"simulate_build_failure", "fallback_dry_run"}
+assert set(on["workflow_dispatch"]["inputs"]) == {"simulate_build_failure", "fallback_dry_run", "validate_only"}
 j = w["jobs"]["fallback"]
 c = " ".join(j["if"].split())
 for needle in ("needs.build.result == 'failure'", "needs.check.result == 'success'", "inputs.allow_fallback == true", "github.event_name == 'schedule'", "github.ref == 'refs/heads/main'", "github.event_name == 'workflow_dispatch' && inputs.fallback_dry_run == true"):

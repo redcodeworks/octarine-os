@@ -12,6 +12,13 @@ name: Prebuilt binaries
 # signed, and no digest is handed over: the image build then stops with a message, because an unpublished image cannot be used.
 # The jobs carry no required check name; they only gate the image build.
 #
+# Own runs (Kevin, 2026-11-14; the README badge): the workflow also runs by itself so that its badge shows something. `push` to main and testing (only
+# when binaries/, this workflow or its scripts change) and a WEEKLY `schedule` on main (Friday 08:00 UTC) run it under its own name; a called run belongs to
+# the caller. An own `push` or `schedule` run, and a dispatch with `validate_only`, NEVER publish, sign, move `last-good` or touch the issue: the push run
+# only proves that this content builds (it reuses an already signed image of the tree when the caller published it first, so nothing races or is
+# published twice: the publishing run stays the caller's), and the schedule run and `validate_only` IGNORE the reuse shortcut and build again against the pinned sources and
+# today's Fedora 45 packages, failing visibly when the build fails. Nothing of it gets the signing secret (the sign job is skipped).
+#
 # Fallback (Kevin, 2026-11-14): a SCHEDULED run on main (the daily image build; the caller passes allow_fallback) whose binaries BUILD
 # failed may use the last good binaries image instead, loudly. Everything else fails closed as before: a push to testing, a pull
 # request, a promotion or a dispatch; a failed lookup, a failed SIGNING of the new image, a last-good image whose signature does not
@@ -21,6 +28,15 @@ name: Prebuilt binaries
 # issue labeled ci-failure-binaries. A dispatch with fallback_dry_run (and simulate_build_failure, which fails the build step and
 # skips the reuse) rehearses the whole decision on any branch without publishing or changing anything.
 on:
+  push:
+    branches: [main, testing]
+    paths:
+      - "binaries/**"
+      - ".github/workflows/binaries.yml"
+      - ".github/scripts/binaries-*.sh"
+      - ".github/scripts/push-tags.sh"
+  schedule:
+    - cron: "0 8 * * 5"  # Fridays 08:00 UTC: validate that the binaries still build (nothing is published)
   workflow_call:
     secrets:
       SIGNING_SECRET:
@@ -59,6 +75,10 @@ on:
         description: "Rehearsal: skip the reuse and fail the build step on purpose (nothing is published)"
         type: boolean
         default: false
+      validate_only:
+        description: "Validation: ignore the reuse shortcut and build again; publish, sign and track nothing (what the weekly run does)"
+        type: boolean
+        default: false
       fallback_dry_run:
         description: "Rehearsal: when the build failed, run the fallback checks on the last good image and report; never publishes or uses it"
         type: boolean
@@ -78,6 +98,7 @@ jobs:
       hash: ${{ steps.hash.outputs.hash }}
       image: ${{ steps.hash.outputs.image }}
       usable: ${{ steps.final.outputs.usable }}
+      nopublish: ${{ steps.final.outputs.nopublish }}
       digest: ${{ steps.lookup.outputs.digest }}
     steps:
       - name: Checkout
@@ -117,10 +138,21 @@ jobs:
         env:
           LOOKUP: ${{ steps.lookup.outputs.usable }}
           SIMULATE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure == true }}
+          # in a called workflow github.workflow is the CALLER's name: this is true only for the workflow's own runs
+          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
+          EVENT: ${{ github.event_name }}
+          VALIDATE_ONLY: ${{ inputs.validate_only == true }}
         run: |
           usable=${LOOKUP}
-          [[ "${SIMULATE}" != true ]] || { usable=false; echo "rehearsal: the reuse is skipped"; }
+          # own push and schedule runs and validate_only never publish; the schedule run and validate_only also ignore the reuse shortcut
+          nopublish=false force=false
+          if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
+          if [[ "${VALIDATE_ONLY}" == true || ( "${OWN}" == true && "${EVENT}" == schedule ) ]]; then nopublish=true; force=true; fi
+          [[ "${SIMULATE}" != true ]] || force=true
+          [[ "${force}" != true ]] || { usable=false; echo "validation or rehearsal: the reuse is skipped"; }
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
+          echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
+          echo "usable=${usable} nopublish=${nopublish} force=${force}"
 
   # The reuse path: runs ONLY when the lookup found an image for the hash tag whose signature verified. It hands the digest on;
   # the build and sign jobs are skipped then. (A tag whose signature fails to verify is not usable: the lookup says so and the
@@ -180,11 +212,13 @@ jobs:
         id: channel
         env:
           REF: ${{ github.ref }}
+          NOPUBLISH: ${{ needs.check.outputs.nopublish }}
         run: |
           publish=false
           case "${REF}" in
             refs/heads/main | refs/heads/testing) publish=true ;;
           esac
+          [[ "${NOPUBLISH}" != true ]] || publish=false
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
 
@@ -341,6 +375,7 @@ jobs:
       fallback: ${{ steps.pick.outputs.fallback }}
       fallback_hash: ${{ steps.pick.outputs.fallback_hash }}
       fallback_created: ${{ steps.pick.outputs.fallback_created }}
+      nopublish: ${{ needs.check.outputs.nopublish }}
     steps:
       - name: Pick the digest
         id: pick
@@ -402,7 +437,8 @@ jobs:
   track:
     name: Track the last good binaries image
     needs: result
-    if: always() && needs.result.result == 'success'
+    # not for the workflow's own push and schedule runs or a validate_only dispatch: they validate, they do not publish
+    if: always() && needs.result.result == 'success' && needs.result.outputs.nopublish != 'true'
     runs-on: ubuntu-26.04
     continue-on-error: true
     permissions:

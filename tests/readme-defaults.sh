@@ -41,7 +41,7 @@ assert [r.split("|")[1].strip() for r in rows[1:]] == ["default", "dx", "NVIDIA"
 assert "badge.svg" not in sec
 PY
 # ---- the Build status table: Image | main | testing, one linked badge per cell, natural size (no text beside it)
-check "Build status table: header, four rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
+check "Build status table: header, six rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
 import re, sys, os
 text = open(sys.argv[1]).read(); repo = sys.argv[2]
 assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
@@ -51,7 +51,7 @@ sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
 rows = [l for l in sec.splitlines() if l.startswith("|")]
 assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
 body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}
-assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx"], list(body)
+assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx", "binaries"], list(body)
 base = "https://github.com/redcodeworks/octarine-os/actions/workflows/"
 def badge(cell, wf, br):
     m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
@@ -62,6 +62,7 @@ for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml"), ("NVIDIA", "bu
 for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml")):
     badge(body[img][1], wf, "testing")   # the dx run is dispatched on the ref, so it is recorded on testing too
 badge(body["beta"][0], "build-beta.yml", "main")
+badge(body["binaries"][0], "binaries.yml", "main"); badge(body["binaries"][1], "binaries.yml", "testing")   # binaries.yml runs on its own on push to both branches and weekly on main
 for img in ("beta", "NVIDIA", "NVIDIA dx"):
     assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
 PY
