@@ -62,6 +62,12 @@ for f in nix/build-support/fetch-zig-cache.sh build.zig.zon.txt; do
     [[ -e "${srcdir}/${f}" ]] || { echo "::error::the source tarball has no ${f}" >&2; exit 1; }
 done
 (cd "${srcdir}" && ZIG_GLOBAL_CACHE_DIR="${cache}" ./nix/build-support/fetch-zig-cache.sh)
+# diagnostics for a failed lookup: what the cache holds, and which package hashes named in any build.zig.zon are absent from it
+echo "offline cache: $(find "${cache}/p" -mindepth 1 -maxdepth 1 | wc -l) packages"
+ls "${cache}/p" | sort
+while IFS= read -r h; do
+    [[ -d "${cache}/p/${h}" ]] || echo "MISSING from the offline cache: ${h}"
+done < <(grep -rhoE --include=build.zig.zon '\.hash = "[^"]+"' "${srcdir}" | sed 's/^\.hash = "//; s/"$//' | sort -u)
 
 # 4. the build (no network: --system)
 rm -rf "${srcdir}/.stage"
