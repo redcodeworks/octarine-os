@@ -45,7 +45,7 @@ check "Build status table: header, six rows, badges for main and testing of the 
 import re, sys, os
 text = open(sys.argv[1]).read(); repo = sys.argv[2]
 assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
-assert text.index("CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
+assert text.index("docs/CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
 assert "### Build status" not in text
 sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
 rows = [l for l in sec.splitlines() if l.startswith("|")]

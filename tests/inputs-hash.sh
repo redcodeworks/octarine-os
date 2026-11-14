@@ -46,8 +46,8 @@ v0=$(v); d0=$(d)
 echo b >> .github/scripts/publish-latest.sh; echo b >> .github/scripts/dispatch-dx.sh; echo b >> tests/publish-latest.sh; commit pipelineonly
 eq "pipeline-only files (publish-latest, dispatch-dx and their tests): vanilla_inputs equal" "$(v)" "${v0}"; eq "...and dx_inputs equal" "$(d)" "${d0}"
 ( source "${hash}"; is_pipeline_only .github/workflows/build.yml || is_pipeline_only .github/workflows/build-dx.yml || is_pipeline_only .github/scripts/plan-dx.sh || is_pipeline_only Justfile ) && bad "a build file is listed as pipeline-only" || pass "the build workflows and plan scripts are not pipeline-only"
-echo b >> README.md; echo b >> docs/n.md; commit docs
-eq "docs-only change: vanilla_inputs equal" "$(v)" "${v0}"; eq "docs-only change: dx_inputs equal to the commit before" "$(d)" "$(d HEAD~1)"
+echo b >> README.md; echo b >> docs/n.md; echo b >> docs/CONFIG-GUIDE.md; commit docs
+eq "docs-only change (README, docs/, docs/CONFIG-GUIDE.md): vanilla_inputs equal" "$(v)" "${v0}"; eq "docs-only change: dx_inputs equal to the commit before" "$(d)" "$(d HEAD~1)"
 d2=$(d)
 echo b >> system_files/x; commit vanilla1
 ne "vanilla change: vanilla_inputs differ" "$(v)" "${v0}"; eq "vanilla change: dx_inputs equal" "$(d)" "${d2}"
@@ -56,6 +56,11 @@ echo b >> .github/workflows/build.yml; commit workflow
 ne "a change to build.yml is a vanilla change" "$(v)" "${v1}"
 echo b >> tests/other.sh; commit othertest
 eq "a test file is not an image input (tests/** is listed with the docs)" "$(v)" "$(v HEAD~1)"; eq "...and not a dx input either" "$(d)" "$(d HEAD~1)"
+mkdir -p config; echo a > config/image.env; echo a > config/chunkah.env; commit configenv; ci=$(v)
+echo b >> config/image.env; commit imageenv
+ne "config/image.env is an image input" "$(v)" "${ci}"; ci=$(v)
+echo b >> config/chunkah.env; commit chunkahenv
+ne "config/chunkah.env is an image input" "$(v)" "${ci}"
 echo c > system_files/new; commit newfile
 ne "a new vanilla file changes vanilla_inputs" "$(v)" "$(v HEAD~1)"
 git mv variants/dx/f variants/dx/f2; commit rename
