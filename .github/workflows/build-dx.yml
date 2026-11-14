@@ -1,47 +1,61 @@
 ---
 name: Build dx image
+run-name: dx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}
 # The developer image (ghcr.io/<owner>/octarine-os-dx): the published default image plus the developer toolchain of the
 # owner's dev-toolbox, in three channels that follow the default image's own:
-#   octarine-os:testing  -> octarine-os-dx:testing   (after "Build container image" on `testing`)
-#   octarine-os:latest   -> octarine-os-dx:latest    (after "Build container image" on `main`: promotes the tested testing
+#   octarine-os:testing  -> octarine-os-dx:testing   (dispatched by "Build container image" on `testing`)
+#   octarine-os:latest   -> octarine-os-dx:latest    (dispatched by "Build container image" on `main`: promotes the tested testing
 #                                                     image when base digest and dx inputs match, else builds)
-#   octarine-os:beta     -> octarine-os-dx:beta      (after "Build beta image" on `main`)
-# It never runs on pushes or pull requests. It starts when one of those workflows finishes (workflow_run, which always
-# runs the workflow file of the default branch, so nothing here can be tried from `testing` before the first promotion)
-# or by manual dispatch on `main` (latest or beta). The plan job (.github/scripts/plan-dx.sh) resolves the base digest,
-# verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
-# dx-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and
-# `testing-<sha>`), signed with the repository key in the `signing` environment. The aggregate job `Build dx and push
-# image` is the one result of a run; for a run on `testing` it also posts a commit status of the same name on the tested
-# commit (a workflow_run check run is attached to main's tip, not to the commit the pull request shows). Design in
-# CLAUDE.md ("dx image").
+#   octarine-os:beta     -> octarine-os-dx:beta      (dispatched by "Build beta image" on `main`)
+# A SEPARATE workflow that is started by the last job of those pipelines (`gh workflow run build-dx.yml --ref <ref> -f
+# channel=<channel> -f sha=<built commit>`, .github/scripts/dispatch-dx.sh) after the base succeeded, and that can be re-run on
+# its own. A dispatched run uses the file of the ref it was dispatched on and is recorded on that branch, so a change here runs
+# on `testing` before it is promoted and the README can show a dx badge per branch. It never runs for pull requests or feature
+# branches (the plan job's guard). `sha` is the commit the pipeline built: the ref may have moved on since, so every job checks
+# out exactly that commit, and the plan job refuses a commit that is not an ancestor of the ref. The plan job
+# (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the
+# published image's labels (base digest and dx-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>`
+# (testing: `testing` and `testing-<sha>`), signed with the repository key in the `signing` environment. The aggregate job is the
+# check `Build dx and push image` ONLY when the built commit is the tip of the ref (otherwise it is named `Build dx (older
+# commit)`, so a green check can never appear on a commit whose own dx build has not run); the commit status of the same
+# name is always posted on the built commit and is what a pull request into main can rely on. Design in CLAUDE.md ("dx image").
 on:
-  workflow_run:
-    workflows: ["Build container image", "Build beta image"]
-    types: [completed]
-    branches: [main, testing]
   workflow_dispatch:
     inputs:
       channel:
-        description: "Channel to build"
+        description: "Channel to build: testing (ref testing), latest or beta (ref main)"
         type: choice
         options:
+          - testing
           - latest
           - beta
         default: latest
+      sha:
+        description: "Commit to build (default: the tip of the ref); the pipeline passes the commit it just built"
+        type: string
+        default: ""
+      base_digest:
+        description: "Channel latest on main: the digest of the default image this run is built on (the pipeline passes the one it just published); empty = no new default image"
+        type: string
+        default: ""
       force:
         description: "Build even when the base digest is unchanged"
         type: boolean
         default: false
+      dry_run:
+        description: "Plan and report only: nothing is built, pushed or signed, no commit status is posted"
+        type: boolean
+        default: false
 
 env:
-  # testing after a build of `testing`, beta after the beta build, latest after the default build of `main`; a dispatch names it
-  CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest')) }}
-  FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
+  CHANNEL: ${{ inputs.channel }}
+  FORCE: ${{ inputs.force || false }}
+  SHA: ${{ inputs.sha || github.sha }}
+  DRY_RUN: ${{ inputs.dry_run || false }}
 
 # One group per channel; a run that is already building is never cancelled (a newer trigger waits, only one can wait)
 concurrency:
-  group: build-dx-${{ github.event_name == 'workflow_dispatch' && inputs.channel || (github.event.workflow_run.name == 'Build beta image' && 'beta' || (github.event.workflow_run.head_branch == 'testing' && 'testing' || 'latest')) }}
+  group: build-dx-${{ inputs.channel }}
   cancel-in-progress: false
 
 permissions:
@@ -50,15 +64,10 @@ permissions:
 jobs:
   plan:
     name: Plan the dx build
-    # The workflow file of `main` only. For workflow_run: a successful scheduled, push or dispatched build, never a pull
-    # request, of `main` (either build) or of `testing` (the default build only: there is no beta channel on testing)
+    # Only `testing` (channel testing) or `main` (latest, beta): never a feature branch; a dispatch is the only trigger
     if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      contains(fromJSON('["schedule","push","workflow_dispatch"]'), github.event.workflow_run.event) &&
-      (github.event.workflow_run.head_branch == 'main' ||
-      (github.event.workflow_run.head_branch == 'testing' && github.event.workflow_run.name == 'Build container image'))))
+      (github.ref == 'refs/heads/testing' && inputs.channel == 'testing') ||
+      (github.ref == 'refs/heads/main' && contains(fromJSON('["latest","beta"]'), inputs.channel))
     runs-on: ubuntu-26.04
 
     outputs:
@@ -80,8 +89,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.SHA }}
           fetch-depth: 0
+
+      # The commit must be a full sha that is the ref's tip or one of its ancestors (the ref may have moved on): nothing off the branch is ever built
+      - name: Check the commit belongs to the branch
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha '${SHA}' is not a full commit sha"; exit 1; }
+          git fetch --no-tags origin "${GITHUB_REF}"
+          git merge-base --is-ancestor "${SHA}" FETCH_HEAD || { echo "::error::${SHA} is not on ${GITHUB_REF_NAME}"; exit 1; }
+          echo "Building ${SHA} (tip of ${GITHUB_REF_NAME}: $([[ "$(git rev-parse FETCH_HEAD)" == "${SHA}" ]] && echo yes || echo no))"
 
       # Reads of a package that is not public yet need the token; harmless when it is public
       - name: Login to GitHub Container Registry
@@ -103,7 +121,7 @@ jobs:
   build:
     name: Build dx image
     needs: plan
-    if: needs.plan.outputs.build == 'true'
+    if: needs.plan.outputs.build == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04
 
     outputs:
@@ -125,7 +143,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.SHA }}
 
       - name: Maximize build space
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
@@ -287,7 +305,7 @@ jobs:
   promote:
     name: Promote tested dx image
     needs: plan
-    if: needs.plan.outputs.promote == 'true'
+    if: needs.plan.outputs.promote == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04
 
     permissions:
@@ -303,7 +321,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.SHA }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -356,7 +374,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ env.SHA }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -410,12 +428,15 @@ jobs:
           done
 
   # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the dx
-  # image was built, promoted or legitimately skipped (base and dx inputs unchanged). For a run on `testing` it also posts
-  # a commit status of the same name on the tested commit: a workflow_run check run is attached to main's tip, so the
-  # status is what a pull request into main can require. A plan that was skipped (a failed or cancelled build, the beta
-  # build on testing) posts nothing, so the pull request keeps waiting.
+  # image was built, promoted or legitimately skipped (base and dx inputs unchanged). It is the required check
+  # `Build dx and push image` only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
+  # that tip): for an older commit it is named `Build dx (older commit)`, so a green check never appears on a commit whose
+  # own dx build has not run. The commit status of the same name on the BUILT commit is always posted (a pull request into
+  # main can require it; both come from this one result, so they never disagree). A plan that was skipped (a ref or channel
+  # that dx is not built for) posts nothing.
   dx_result:
-    name: Build dx and push image
+    # a dry run never carries the required name (it must not satisfy the check on the tip)
+    name: ${{ inputs.dry_run && 'Build dx (dry run)' || ((inputs.sha || github.sha) == github.sha && 'Build dx and push image' || 'Build dx (older commit)') }}
     needs: [plan, build, promote, sign]
     if: always()
     runs-on: ubuntu-26.04
@@ -437,16 +458,17 @@ jobs:
           BUILD: ${{ needs.build.result }}
           PROMOTE: ${{ needs.promote.result }}
           SIGN: ${{ needs.sign.result }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
         run: .github/scripts/aggregate-dx.sh
 
-      - name: Post the result as a commit status on the tested commit
-        if: always() && needs.plan.result != 'skipped' && github.event.workflow_run.head_branch == 'testing'
+      - name: Post the result as a commit status on the built commit
+        if: always() && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
           OUTCOME: ${{ steps.result.outcome }}
         run: |
           set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no valid commit to post a status on (${SHA})"; exit 1; }
           state=failure; text="dx image build, promotion or check failed"
           if [[ "${OUTCOME}" == success ]]; then state=success; text="dx image built, promoted or unchanged"; fi
           gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \

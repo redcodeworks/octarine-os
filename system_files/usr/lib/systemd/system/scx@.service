@@ -18,7 +18,11 @@ Type=simple
 ExecCondition=/usr/libexec/octarine-os/scx-preflight %i
 ExecStart=/usr/libexec/octarine-os/scx-run %i
 ExecStartPost=/usr/libexec/octarine-os/scx-verify %i
+# Restart only a scheduler that was active and then crashed. scx-run (the main process) exits 75 for a start that never became active
+# (a load failure, or a start that scx-verify judged failed), and 75 prevents the restart: one user attempt is one counted failure,
+# not three in sixteen seconds. Verified on systemd 262: a main process that exits 75 stops the restart although ExecStartPost failed.
 Restart=on-failure
+RestartPreventExitStatus=75
 RestartSec=5
 TimeoutStartSec=20
 StandardError=journal

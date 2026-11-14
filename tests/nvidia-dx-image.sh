@@ -50,7 +50,7 @@ assert "repos/${GITHUB_REPOSITORY}/statuses" not in text and 'context="Build dx 
 for j in w["jobs"].values():
     assert "statuses" not in (j.get("permissions") or {}), j
 # and the dx workflow keeps posting it, unchanged
-assert dx["jobs"]["dx_result"]["name"] == "Build dx and push image"
+assert "Build dx and push image" in dx["jobs"]["dx_result"]["name"]
 assert dx["jobs"]["dx_result"]["permissions"] == {"contents": "read", "statuses": "write"}
 PY
 check "workflow: jobs are plan -> build -> sign -> result, result named 'NVIDIA dx build result', sign in the signing environment" python3 - "$wf" <<'PY'

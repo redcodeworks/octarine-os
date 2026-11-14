@@ -13,6 +13,7 @@ SCX_REGISTRY=${OCTARINE_SCX_REGISTRY:-/usr/share/octarine-os/schedulers.d}
 SCX_SYSFS=${OCTARINE_SCX_SYSFS:-/sys/kernel/sched_ext}
 SCX_BTF=${OCTARINE_SCX_BTF:-/sys/kernel/btf/vmlinux}
 SCX_STATE=${OCTARINE_SCX_STATE:-/var/lib/octarine-os}
+SCX_RUN_DIR=${OCTARINE_SCX_RUN:-/run/octarine-os}
 SCX_MAX_FAILURES=${OCTARINE_SCX_MAX_FAILURES:-3}
 SCX_VERIFY_SECONDS=${OCTARINE_SCX_VERIFY_SECONDS:-5}
 
@@ -49,6 +50,21 @@ scx_instances() {
         base=${f##*/}
         printf '%s\n' "${base%.conf}"
     done
+}
+
+# scx_ops_instance <ops string>: the registered instance a root/ops value belongs to, or nothing. The kernel reports the ops name
+# of a loaded scheduler WITH a version suffix (observed: `rusty_1.1.4_x86_64_unknown_linux_gnu`), so an instance matches when the
+# string equals its name or starts with `<name>_`; the longest match wins (the registry must have no name that is `<other>_...`:
+# tests/schedulers.sh fails when a new entry makes that ambiguous). An empty or unknown string gives nothing.
+scx_ops_instance() {
+    local ops=${1-} best="" i
+    [[ -n "${ops}" ]] || return 0
+    while IFS= read -r i; do
+        if [[ "${ops}" == "${i}" || "${ops}" == "${i}_"* ]]; then
+            ((${#i} > ${#best})) && best=${i}
+        fi
+    done < <(scx_instances)
+    [[ -z "${best}" ]] || printf '%s\n' "${best}"
 }
 
 scx_marker_dir() { echo "${SCX_STATE}/scx-disabled"; }

@@ -6,6 +6,7 @@
 #                       testing): nothing to report, the job passes and posts no commit status (see build-dx.yml)
 #   build wanted        build and sign must have succeeded
 #   promote wanted      promote and sign (which verifies the signature of the retagged digest) must have succeeded
+#   DRY_RUN=true        plan only: build, promote and sign must all be skipped, always passes then
 #   neither             legitimate skip (base and dx inputs unchanged): build, promote and sign must all be skipped
 set -euo pipefail
 : "${PLAN:?}" "${BUILD:?}" "${PROMOTE:?}" "${SIGN:?}"
@@ -17,6 +18,12 @@ if [[ "${PLAN}" == skipped ]]; then
     exit 0
 fi
 [[ "${PLAN}" == success ]] || err "The plan job did not succeed (${PLAN})"
+if [[ "${DRY_RUN-}" == true ]]; then
+    # a dry run plans and reports only: nothing may have been built, promoted or signed
+    [[ "${BUILD}" == skipped && "${PROMOTE}" == skipped && "${SIGN}" == skipped ]] || err "Dry run, but later jobs ran (build ${BUILD}, promote ${PROMOTE}, sign ${SIGN})"
+    echo "Dry run: planned build=${BUILD_WANTED-} promote=${PROMOTE_WANTED-}; nothing was built, pushed or signed"
+    exit 0
+fi
 if [[ "${BUILD_WANTED-}" == true ]]; then
     [[ "${BUILD}" == success && "${PROMOTE}" == skipped && "${SIGN}" == success ]] || err "The dx build did not succeed (build ${BUILD}, promote ${PROMOTE}, sign ${SIGN})"
 elif [[ "${PROMOTE_WANTED-}" == true ]]; then
