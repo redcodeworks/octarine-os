@@ -28,10 +28,11 @@ name=${1-}
 reg=$(scx_find_instance "${name}") || { scx_log "run: unknown scheduler instance"; exit 2; }
 binary=$(scx_reg_get "${reg}" BINARY)
 flags=$(scx_reg_get "${reg}" FLAGS)
-[[ "${binary}" =~ ^/usr/bin/scx_[a-z0-9_]+$ && -x "${binary}" ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
-
+[[ "${binary}" =~ ^/usr/bin/scx_[a-z0-9_]+$ ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
 # test hook only (the units run with a clean environment): the registry value was validated above, a stub directory replaces /usr/bin
 [[ -z "${OCTARINE_SCX_BIN_DIR-}" ]] || binary="${OCTARINE_SCX_BIN_DIR}/${binary##*/}"
+[[ -x "${binary}" ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
+
 
 unshare=${OCTARINE_SCX_UNSHARE:-/usr/bin/unshare}
 sh_bin=${OCTARINE_SCX_SH:-/usr/bin/sh}
