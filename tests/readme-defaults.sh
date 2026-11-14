@@ -33,7 +33,13 @@ check "no section of the old Developer menu" bash -c "! grep -q 'Developer menu'
 check "the old compilers sentence is gone" bash -c "! grep -q 'stay out of the host' '$readme'"
 check "no personal names" bash -c "! grep -qiE 'kevin|riley' '$readme'"
 check "no step-by-step recipe text (no per-step table of ujust dev, no u2f commands)" bash -c "! grep -qE 'pamu2fcfg|\`libvirt\` \\|' '$readme'"
-check "the Variants table has exactly the four images (no badge column in it)" bash -c "awk '/^## Variants/{f=1;next} /^#+ /{f=0} f' '$readme' | grep -c '^| \(default\|NVIDIA\|dx\|NVIDIA dx\) |' | grep -qx 4 && ! awk '/^## Variants/{f=1;next} /^#+ /{f=0} f' '$readme' | grep -q 'badge.svg'"
+check "the Variants table lists the four images in the order default, dx, NVIDIA, NVIDIA dx, and has no badge" python3 - "$readme" <<'PY'
+import re, sys
+sec = open(sys.argv[1]).read().split("\n## Variants", 1)[1].split("\n#", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("| ")]
+assert [r.split("|")[1].strip() for r in rows[1:]] == ["default", "dx", "NVIDIA", "NVIDIA dx"], rows
+assert "badge.svg" not in sec
+PY
 # ---- the Build status table: Image | main | testing, one linked badge per cell, natural size (no text beside it)
 check "Build status table: header, four rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
 import re, sys, os
@@ -45,7 +51,7 @@ sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
 rows = [l for l in sec.splitlines() if l.startswith("|")]
 assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
 body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}
-assert list(body) == ["default", "NVIDIA", "dx", "NVIDIA dx"], list(body)
+assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx"], list(body)
 base = "https://github.com/redcodeworks/octarine-os/actions/workflows/"
 def badge(cell, wf, br):
     m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
@@ -55,7 +61,8 @@ for img, wf in (("default", "build.yml"), ("dx", "build.yml"), ("NVIDIA", "build
     badge(body[img][0], wf, "main")
 for img in ("default", "dx"):
     badge(body[img][1], "build.yml", "testing")
-for img in ("NVIDIA", "NVIDIA dx"):
+badge(body["beta"][0], "build-beta.yml", "main")
+for img in ("beta", "NVIDIA", "NVIDIA dx"):
     assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
 PY
 
