@@ -117,7 +117,8 @@ fi
 # List of rpmfusion packages can be found here:
 # https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/<release>/x86_64/repoview/index.html&protocol=https&redirect=1
 
-# distrobox, ffmpeg and pam-u2f already ship in silverblue-main (dnf5 skips them).
+# distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips them; solaar-udev is listed anyway so it stays
+# if the base drops it). solaar (the Logitech device manager, GTK, Python) is the new one: 5.7 MiB plus three small Python dependencies.
 # Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
 # packages from the host are not used: gstreamer1-plugins-bad/-ugly (group `codecs`, optional because they
 # come from negativo17) are the negativo17 equivalents and replace the base's -free variants. They are
@@ -127,7 +128,7 @@ fi
 # CRITICAL (keep in step with the smoke test in .github/workflows/build.yml):
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
