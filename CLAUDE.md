@@ -143,7 +143,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
     in the same PR); a bad signature fails the run. The project agent may merge a Ghostty bump PR into `testing` once the checks are green; no 7-day soak (the kernel/mesa/mutter rule does not apply). The check-run on the PR does not build the
     binaries: validate a bump with `gh workflow run binaries.yml --ref bump/ghostty`.
   - *Cost.* Unmeasured until the first build (staged size, runtime libraries, CI minutes: a Zig build plus C++ dependencies, expected several minutes added to the binaries job, which runs once per tree hash).
-  - *Open pins.* The sha256 of `ghostty-1.4.0.tar.gz`, the Zig 0.17.0 tarball sha256 and the ziglang.org minisign public key were NOT known to the project agent (no network) and are empty in `upstream.env`: the build fails closed until the hub supplies them.
+  - *Pins* (hub-verified 2026-11-14): tarball sha256 `cb188ac6...`, Zig 0.17.0 (0.17.1 exists; keep 0.17.0 unless a build problem says otherwise), key from ziglang.org/download.
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).

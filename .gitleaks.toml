@@ -14,6 +14,9 @@ keywords = ["es256", "eddsa", "rs256"]
 # The minisign PUBLIC key that Ghostty publishes in its PACKAGING.md (binaries/ghostty/upstream.env, and the tests that check it):
 # it is what the build verifies the release tarball against, not a secret. Allowed by its exact value only.
 [[allowlists]]
-description = "Ghostty's published minisign public key"
+description = "Published minisign public keys (Ghostty, ziglang.org)"
 regexTarget = "match"
-regexes = ['''RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV''']
+regexes = [
+    '''RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV''',
+    '''RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti\+JO/wCYvhbAb/U''',
+]
