@@ -18,16 +18,12 @@ README of `ghcr.io/redcodeworks/dev-packages`). It signs `ghcr.io/redcodeworks/d
 the `octarine-os-dx` image installs; `build-dx.yml` verifies the digest pinned in `variants/dx/Containerfile` against it
 before every build and `just dev-packages-bump` verifies a new digest with it. Not this image's own signing key.
 
-`fedora-kernel-signer.pem` is the certificate that signs the kernel of the default image for Secure Boot: Fedora's `kernel-signer` (subject
-`/C=US/ST=Massachusetts/L=Cambridge/O=Red Hat, Inc./OU=Fedora Secure Boot Signer/OU=bkernel01 kernel/CN=kernel-signer`, issuer `Fedora Secure Boot CA 20200709`
-(`CN=fedoraca`), valid until 2037-01-19, SHA-256 fingerprint
-`01:BF:41:E5:46:87:72:FE:A3:5A:13:CC:D5:D6:E0:95:69:54:93:5F:60:4E:05:23:E6:72:C2:83:48:8B:37:8E`). Source: derived from the REAL kernel of the base image on
-2026-11-14 (kernel 7.3.3-300.fc45, `/usr/lib/modules/<kver>/vmlinuz` of `octarine-os:testing` built on `silverblue-main:45`): `sbverify --list` showed two
-signatures (Fedora's `kernel-signer` under the Fedora Secure Boot CA, which the shim of every Secure Boot machine trusts, and Universal Blue's own
-`ublue kernel` key, which would need a MOK enrollment), and `sbattach --detach` plus `openssl pkcs7 -print_certs` printed the first certificate that was pinned
-here. `.github/scripts/secureboot-check.sh` runs `sbverify --cert` with it on every built image and FAILS the build when the kernel does not verify. LIMIT: this is the
-LEAF certificate of one Fedora signing builder (bkernel01); Fedora has signed kernels with other builder certificates, and if a future kernel comes with another
-leaf under the same CA the check fails loudly: compare the signer printed by the script, then replace this file (the CA certificate itself, `Fedora Secure Boot CA
-20200709`, is not in the image: `/usr/share/pki/sb-certs` does not exist there; pinning it from Fedora's shim package is an open item for the hub). The NVIDIA kernel
-modules are checked differently: their `sig_key` must equal the subject key identifier of `/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key the MOK
-enrollment of `ujust hardware-setup` imports), see `nvidia-smoke.sh`.
+Secure Boot of the kernel (no file here): `.github/scripts/secureboot-check.sh` is Bluefin's and Aurora's `secureboot` recipe. It copies `vmlinuz` out of the built image and runs
+`sbverify --cert` with Universal Blue's kernel signing key, downloaded on every run from
+https://github.com/ublue-os/akmods/raw/main/certs/public_key.der (DER, converted to PEM; subject `O=Universal Blue, OU=kernel signing, CN=ublue kernel`, valid until 2124,
+SHA-256 fingerprint `4E:5C:68:47:4C:B1:33:FD:89:84:D9:59:97:62:CE:CE:91:00:C3:E6:CD:8A:97:09:AE:AA:BD:85:DD:9E:70:D1`). On 2026-11-14 this file was byte-identical to
+`/etc/pki/akmods/certs/akmods-ublue.der` of the built image. TRUST: the key is read live from the `main` branch of a third-party repository, so whoever controls that branch
+decides what passes; it is not pinned here on purpose (a pin would break at the first key rotation, and the check exists to prove the kernel matches what Universal Blue publishes).
+The Fedora signature (`kernel-signer`, Fedora Secure Boot CA) is printed by `sbverify --list` but never checked. The check proves the kernel boots on machines with the Universal Blue
+MOK enrolled, not on a stock Secure Boot machine. The NVIDIA kernel modules are checked differently: their `sig_key` must equal the subject key identifier of
+`/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key the MOK enrollment of `ujust hardware-setup` imports), see `nvidia-smoke.sh`.

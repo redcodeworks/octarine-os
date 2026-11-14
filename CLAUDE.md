@@ -527,15 +527,17 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   title, description, created, version, artifacthub keys). chunkah (`just rechunk`) starts from the image's own config
   (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
   `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
-- **Secure Boot check of the kernel (2026-11-14).** After the rechunk, `build.yml`, `build-beta.yml` and (after its smoke test) `build-nvidia.yml` run
-  `.github/scripts/secureboot-check.sh <image>`: the single kernel of the image is copied out, `sbverify --list` shows its signers, and `sbverify --cert keys/fedora-kernel-signer.pem`
-  must accept it, otherwise the build FAILS (a kernel signed by anyone else would not boot on a Secure Boot machine). Facts from the real image (silverblue-main:45, kernel 7.3.3-300.fc45):
-  TWO signatures, Fedora's `kernel-signer` (OU=Fedora Secure Boot Signer, bkernel01; issuer `Fedora Secure Boot CA 20200709`, which every shim trusts; valid to 2037) and Universal Blue's
-  `ublue kernel` key (needs a MOK enrollment, so it does not matter for booting). The pinned certificate, its fingerprint and how it was derived are in `keys/README.md`; it is the LEAF of one Fedora
-  signing builder, so a kernel signed by another Fedora builder certificate fails the check loudly until the file is replaced (the Fedora CA certificate itself is not in the image: open item for the hub).
+- **Secure Boot check of the kernel (2026-11-14, Bluefin's way).** After the rechunk, `build.yml`, `build-beta.yml` and (after its smoke test) `build-nvidia.yml` run
+  `.github/scripts/secureboot-check.sh <image>`, the same as Bluefin's and Aurora's `secureboot` recipe: the single kernel of the image is copied out, Universal Blue's kernel signing key is downloaded
+  (`fetch_key`, curl with 3 retries, from `https://github.com/ublue-os/akmods/raw/main/certs/public_key.der`; a failed download fails the check clearly), converted DER to PEM, `sbverify --list` is printed
+  and `sbverify --cert` must accept the kernel, otherwise the build FAILS ("Secureboot Signature Failed"). The Fedora signature is not checked. The earlier attempt to pin Fedora's leaf or CA certificate was dropped (Kevin,
+  2026-11-14: the leaf is one signing builder's, the CA is not in the image, and Bluefin's mechanism is proven). The key is read LIVE from the `main` branch of `ublue-os/akmods` on every run, so that repository's
+  controllers decide what passes (nothing is pinned, so key rotation needs no change here); `keys/README.md` has the fingerprint. What it proves: the kernel carries the signature that the Universal Blue MOK
+  (enrolled on nox) accepts; it does NOT prove the kernel boots on a stock Secure Boot machine. Facts from the real image (octarine-os:latest, kernel 7.2.15-300.fc45, checked 2026-11-14): THREE signatures, Fedora's
+  `kernel-signer` (bkernel01, Fedora Secure Boot CA 20200709), Universal Blue's `ublue kernel` and `ublue akmods`; the downloaded key is byte-identical to `/etc/pki/akmods/certs/akmods-ublue.der` of the image. The
+  runner has no sbverify: the step installs `sbsigntool` (apt); no alpine fallback (Bluefin needs one for its own runners). The first CI run was the old branch's discovery run, which failed on purpose for want of a pin.
   The NVIDIA smoke test (`nvidia-smoke.sh`) also requires every NVIDIA module's `sig_key` to equal the subject key identifier of `/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key
-  `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. The runner's `sbsigntool` (apt)
-  is installed in the step. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
+  `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
   Tests: `tests/secureboot-check.sh`, `tests/nvidia-variant.sh`.
 - **zizmor (`zizmor.yml`, 2026-11-14).** Audits `.github/` on pull requests that touch it, pushes to `testing`, weekly (Wednesday 06:00 UTC) and by dispatch; job and check name `zizmor`, NOT a required
   check (the ruleset is the owner's). The binary is zizmor 1.32.0, the release asset verified by its sha256 (like the gitleaks job); `.github/zizmor.yml` holds the narrow ignores with a reason each (the local
