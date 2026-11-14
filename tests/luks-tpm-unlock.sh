@@ -54,6 +54,7 @@ echo "Keyslots:"
 [ "$tpm" = yes ] && printf '  1: luks2\n\tKey:        512 bits\n'
 echo "Tokens:"
 [ "$tpm" = yes ] && printf '  0: systemd-tpm2\n\ttpm2-pcrs:  7\n\tKeyslot:    1\n'
+[ -n "${FAKE_SLOW:-}" ] && sleep 0.3   # keep writing after the TPM2 token line: a `| grep -q` would have closed the pipe by now
 echo "Digests:"
 printf '  0: pbkdf2\n\tKeyslot:    0\n'
 EOF2
@@ -134,6 +135,8 @@ check "a header that is not LUKS2 cannot be checked: refused, says so" bash -c "
 check "no run ever wipes every slot, a keyslot or a passphrase" bash -c "! grep -qE 'wipe-slot=(all|password|[0-9])|luksKillSlot|luksRemoveKey' '$LOG'"
 FAKE_TPM="/dev/nvme0n1p3 /dev/nvme1n1" run enroll --yes
 check "--yes without devices: only volumes without a TPM2 key are touched (here none: nothing runs, exit 0)" bash -c "[ $rc = 0 ] && ! grep -q '^cryptenroll' '$LOG' && grep -q 'Nothing selected' '$root/out'"
+FAKE_SLOW=1 FAKE_TPM="/dev/nvme0n1p3" run enroll --yes
+check "a luksDump that keeps writing after the TPM2 token line (SIGPIPE under pipefail) still counts as enrolled" bash -c "[ $rc = 0 ] && grep -q 'wipe-slot=tpm2 /dev/nvme1n1' '$LOG' && ! grep -q '^cryptenroll.*nvme0n1p3' '$LOG'"
 FAKE_TPM="/dev/nvme0n1p3" run enroll --yes
 check "--yes without devices: the volume without a TPM2 key is enrolled, the enrolled one is left alone" bash -c "[ $rc = 0 ] && grep -q 'wipe-slot=tpm2 /dev/nvme1n1' '$LOG' && ! grep -q '^cryptenroll.*nvme0n1p3' '$LOG'"
 FAKE_TPM="/dev/nvme0n1p3 /dev/nvme1n1" run enroll --force --yes

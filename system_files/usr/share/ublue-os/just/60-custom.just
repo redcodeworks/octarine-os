@@ -2167,7 +2167,10 @@ luks-tpm-unlock *args:
     cmdline=${OCTARINE_LUKS_CMDLINE:-/proc/cmdline}
     root_uuid=$(tr ' ' '\n' <"$cmdline" 2>/dev/null | sed -n 's/^rd\.luks\.uuid=luks-//p' | head -n1)
     for d in "${devs[@]}"; do
-        if sudo cryptsetup luksDump "$d" 2>/dev/null | grep -q systemd-tpm2; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
+        # read the whole dump first: `luksDump | grep -q` under pipefail fails when grep exits at its first match and luksDump then dies of
+        # SIGPIPE (status 141), which reported an enrolled volume as "none" now and then (a flaky test, and a wrong default on a real machine)
+        dump=$(sudo cryptsetup luksDump "$d" 2>/dev/null)
+        if grep -q systemd-tpm2 <<<"${dump}"; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
     done
     # other_unlock_slots DEVICE: how many keyslots do NOT belong to a systemd-tpm2 token (a passphrase, a recovery key, a FIDO2 key); "unknown"
     # when the header is not LUKS2 or cannot be read. Wiping the TPM2 slot of a volume with none leaves it without any way to unlock it.
