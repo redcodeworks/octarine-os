@@ -134,12 +134,12 @@ check "bump-pins.yml: after a push it dispatches Test on the branch, looks for t
   grep -q 'gh workflow run test.yml --ref \"\${branch}\"' '$wf' && grep -q -- '--event workflow_dispatch --commit \"\${tip}\"' '$wf' &&
   grep -q 'may not have started' '$wf' && grep -q 'Not verified on GitHub' '$wf' && grep -q 'gh workflow run test.yml --ref ' '$wf'"
 check "bump-pins.yml: the job runs bump-pin.sh and fails on every exit code but 0 and 10" bash -c "grep -q 'bump-pin.sh \"\${IMAGE}\"' '$wf' && grep -q '0 | 10) ;;' '$wf'"
-check "test.yml has a workflow_dispatch trigger and its jobs have no conditions, so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
+check "test.yml has a workflow_dispatch trigger and its jobs have no skipping conditions (test: always(), runs even when scope fails), so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert "workflow_dispatch" in (w.get(True) or w.get("on"))
 for k, j in w["jobs"].items():
-    assert "if" not in j and j["name"] == k, k
+    assert j.get("if", "always()") == "always()" and j["name"] == k, k
 PY
 check "bump-pin.sh parses and knows only dev-packages" bash -c "bash -n '$here/.github/scripts/bump-pin.sh' && ! grep -q 'scx-bin\|extest-bin' '$here/.github/scripts/bump-pin.sh'"
 

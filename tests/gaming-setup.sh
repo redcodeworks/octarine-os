@@ -255,10 +255,18 @@ mkdir -p "$HOME/.config"
 echo "; mine" >"$HOME/.config/gamemode.ini"
 run '' --yes gamemode
 check "gamemode: existing differing file shown as a diff" has "--- "
-check "gamemode: explicit step replaces with a backup" test -n "$(ls "$HOME"/.config/gamemode.ini.bak-* 2>/dev/null)"
+check "gamemode: naming the step with --yes does NOT replace an edited file (the question defaults to no)" bash -c "[ \"\$(cat '$HOME/.config/gamemode.ini')\" = '; mine' ] && [ -z \"\$(ls '$HOME'/.config/gamemode.ini.bak-* 2>/dev/null)\" ]"
+run 'y
+' gamemode
+check "gamemode: naming the step and answering y at the question replaces it with a backup" test -n "$(ls "$HOME"/.config/gamemode.ini.bak-* 2>/dev/null)"
 check "gamemode: replaced content" cmp -s "$shipped_ini" "$HOME/.config/gamemode.ini"
+check "gamemode: a named step without --yes still asks before replacing (the question was printed)" has "Replace it?"
+echo "; mine again" >"$HOME/.config/gamemode.ini"; sleep 1
+run 'y
+' gamemode
+check "gamemode: a SECOND replacement keeps the first backup pointer (the original file), not the copy of our own" bash -c "[ \$(ls '$HOME'/.config/gamemode.ini.bak-* | wc -l) = 2 ] && grep -qx '.*gamemode.ini.bak-.*' '$HOME/.local/state/octarine-os/gaming-setup/gamemode.backup' && [ \"\$(cat \"\$(cat '$HOME/.local/state/octarine-os/gaming-setup/gamemode.backup')\")\" = '; mine' ]"
 run '' reset --yes
-check "reset: backup restored" test "$(cat "$HOME/.config/gamemode.ini")" = "; mine"
+check "reset: the ORIGINAL file is restored after two replacements" test "$(cat "$HOME/.config/gamemode.ini")" = "; mine"
 reset
 run '' gamemode
 echo "; edited" >>"$HOME/.config/gamemode.ini"

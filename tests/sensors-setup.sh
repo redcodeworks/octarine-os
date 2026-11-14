@@ -104,15 +104,21 @@ check "two modules: both loaded" bash -c "grep -q 'modprobe nct6775' '$LOG' && g
 reset; FAKE_DETECT=bus run --yes
 check "bus modules come first and an odd module name is ignored" bash -c "[ \$(grep -v '^#' '$target' | head -n1) = i2c-piix4 ] && ! grep -q 'bad' '$target' && grep -q 'odd module name' '$root/out'"
 
-reset; echo "other" >"$target"; FAKE_DETECT=one run --no
+reset; echo "other" >"$target"; FAKE_DETECT=one run --no --redetect
 check "--no with an existing different file: untouched" bash -c "[ \$(cat '$target') = other ]"
-reset; echo "other" >"$target"; FAKE_DETECT=one run --yes
-check "existing different file with --yes: diff shown, backup made, replaced" bash -c "grep -q '^-other' '$root/out' && ls '$root/mld' | grep -q 'octarine-sensors.conf.bak-' && grep -qx nct6775 '$target'"
-reset; echo "other" >"$target"; FAKE_DETECT=one OCTARINE_MENU_FORCE_TTY=1 run --yes
+reset; echo "other" >"$target"; FAKE_DETECT=one run --yes --redetect
+check "existing different file with --yes --redetect: diff shown, backup made, replaced" bash -c "grep -q '^-other' '$root/out' && ls '$root/mld' | grep -q 'octarine-sensors.conf.bak-' && grep -qx nct6775 '$target'"
+reset; echo "other" >"$target"; FAKE_DETECT=one OCTARINE_MENU_FORCE_TTY=1 run --yes --redetect
 check "the backup keeps the old content" bash -c "grep -qx other '$root'/mld/octarine-sensors.conf.bak-*"
 
 reset; echo "nct6775" >"$legacy"; FAKE_DETECT=one run --yes
-check "legacy nct6775.conf: mentioned and moved to a backup with --yes" bash -c "grep -q 'older hand-made' '$root/out' && [ ! -e '$legacy' ] && ls '$root/mld' | grep -q 'nct6775.conf.bak-'"
+check "legacy nct6775.conf with --yes: mentioned and LEFT ALONE (--yes never moves a hand-made file), no backup made" bash -c "grep -q 'older hand-made' '$root/out' && grep -q 'Left .*nct6775.conf alone' '$root/out' && [ -e '$legacy' ] && ! ls '$root/mld' | grep -q 'nct6775.conf.bak-'"
+reset; echo "i2c-x" >"$target"; : >"$LOG"; run --yes
+check "an existing module list and no --redetect: 'Already done', exit 0, no sudo, no sensors-detect" bash -c "[ $rc = 0 ] && grep -q 'Already done' '$root/out' && ! grep -q 'sensors-detect' '$LOG' && ! grep -q '^sudo' '$LOG'"
+reset; echo "i2c-x" >"$target"; FAKE_DETECT=one run --yes --redetect
+check "--redetect probes again even though the list exists" bash -c "[ $rc = 0 ] && grep -q 'sensors-detect' '$LOG'"
+reset; echo "nct6775" >"$legacy"; FAKE_DETECT=one run --yes
+check "only a legacy file (no octarine-sensors.conf) is not 'already done': the probe runs" bash -c "grep -q 'sensors-detect' '$LOG'"
 check "legacy: the generated file is still written" bash -c "grep -qx nct6775 '$target'"
 
 reset; FAKE_SUDO_FAIL=1 FAKE_DETECT=one run --yes

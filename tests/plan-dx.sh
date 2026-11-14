@@ -94,6 +94,29 @@ run testing; expect "testing, no usable testing-<sha> (a default-image change in
 grep -q '::warning::.*floating' "$root/log" && pass "...and says so" || bad "fallback warning"
 : > "$MISSING"
 
+echo "== channel latest with a base digest handed over (the main pipeline publishes dated tags only; latest is not the base)"
+rm -f "$CFG"/*; : > "$ALIAS"; : > "$MISSING"
+pinned="sha256:$(base "testing-${older7}")"
+echo "ghcr.io/redcodeworks/octarine-os@${pinned} ghcr.io/redcodeworks/octarine-os:testing-${older7}" > "$ALIAS"
+BASE_DIGEST_PIN="${pinned}" run latest; expect "latest with a pinned base, nothing published: build" true false ""
+[[ "$(get base_digest)" == "${pinned}" && "${pinned}" != "${bl}" ]] && pass "the base is the pinned digest, not whatever latest is" || bad "pinned base (got $(get base_digest))"
+cfg latest "${pinned}" "${inputs}"; BASE_DIGEST_PIN="${pinned}" run latest; expect "latest, published dx image already on the pinned base and inputs: skip" false false ""
+cfg latest "${bl}" "${inputs}"; BASE_DIGEST_PIN="${pinned}" run latest; expect "latest, published dx image on another base than the pin: build" true false ""
+BASE_DIGEST_PIN="sha256:nothex" run latest; rc_bad=$?
+[[ $rc_bad != 0 ]] && grep -q "is not sha256" "$root/log" && pass "a malformed pin is refused" || bad "malformed pin"
+BASE_DIGEST_PIN="${other}" run latest
+[[ $? != 0 ]] && grep -qE "Cannot read|does not hash" "$root/log" && pass "a pin that does not exist in the registry is refused" || bad "missing pin"
+echo "ghcr.io/redcodeworks/octarine-os@${pinned}" > "$MISSING"
+BASE_DIGEST_PIN="${pinned}" run latest
+[[ $? != 0 ]] && pass "a pinned digest the registry cannot read is refused" || bad "unreadable pin"
+: > "$MISSING"
+BASE_DIGEST_PIN="${pinned}" run beta
+[[ $? != 0 ]] && grep -q "only for the channel latest" "$root/log" && pass "a pin on another channel is refused" || bad "pin on beta"
+printf '%s\n' "ghcr.io/redcodeworks/octarine-os@${pinned} ghcr.io/redcodeworks/octarine-os:beta" > "$ALIAS"
+BASE_DIGEST_PIN="${pinned}" run latest
+[[ $? != 0 ]] && grep -q "does not hash to its digest" "$root/log" && pass "a pin whose manifest hashes to another digest is refused" || bad "pin hash mismatch"
+: > "$ALIAS"; rm -f "$CFG"/*
+
 echo "== promotion sequence (testing build, default promote, dx latest plan)"
 rm -f "$CFG"/*
 run testing; expect "step 1, dx plan on testing: build" true false ""

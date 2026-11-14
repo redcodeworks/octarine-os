@@ -1,0 +1,148 @@
+---
+name: Publish latest
+# Moves the bare `latest` tag of the default image (octarine-os) and of the dx image (octarine-os-dx) TOGETHER, as the last step of a green dx
+# run on main, so `bootc upgrade` never sees a default image that the dx image has not been built and checked on. The main build and the
+# promotion publish dated tags only. Details and the failure table: CLAUDE.md "Promoting the default and dx images together".
+#
+#   workflow_call      from the dx run (build-dx.yml, job `publish`, channel latest on main): the pair is handed over by digest
+#   workflow_dispatch  by hand, on main: scope both (the pair belonging to a default image) or vanilla-only (the ESCAPE HATCH for a
+#                      security fix while dx is broken: only octarine-os:latest moves, dx latest stays behind and the summary says so);
+#                      dry_run (or any ref but main) only plans and reports: nothing is written
+#
+# No `signing` environment: the workflow only copies manifests and verifies signatures, it never signs, so the secret is not needed and an
+# environment would be a gate without a safety property (the dispatch is already a write action). It writes only on main (the script is
+# forced to a dry run on any other ref), never cancels a running publish, and is idempotent.
+on:
+  workflow_call:
+    inputs:
+      vanilla_digest:
+        description: "Digest of the default image to publish"
+        type: string
+        required: true
+      dx_digest:
+        description: "Digest of the dx image built or promoted for it (empty: the one already under latest)"
+        type: string
+        default: ""
+      main_sha:
+        description: "The main commit of the dx run (for the report)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Plan only"
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "both: the default image and the dx image built on it; vanilla-only: only the default image (security fixes while dx is broken)"
+        type: choice
+        options:
+          - both
+          - vanilla-only
+        default: both
+      vanilla_tag:
+        description: "Dated tag of the default image (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>); empty = the newest main commit with a published image"
+        type: string
+        default: ""
+      reason:
+        description: "Why (free text, goes into the run summary)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Plan and report only"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Move latest
+    runs-on: ubuntu-26.04
+    # one publish at a time, a running one is never cancelled (a pending one may be replaced by a newer one: each carries its whole target)
+    concurrency:
+      group: publish-latest
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      moved: ${{ steps.publish.outputs.moved }}
+    steps:
+      - name: Checkout with the full history (the main commit of an image is checked against it)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      # a checkout of another ref has no origin/main of its own: fetch it, the ancestor checks read it
+      - name: Fetch main
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Verify the pair and move latest
+        id: publish
+        env:
+          OWNER: ${{ github.repository_owner }}
+          # in a called workflow github.event_name is the CALLER's event, so the inputs of each trigger are told apart by name: an input
+          # the trigger does not declare is empty
+          SCOPE: ${{ inputs.scope || 'both' }}
+          VANILLA_DIGEST: ${{ inputs.vanilla_digest || '' }}
+          DX_DIGEST: ${{ inputs.dx_digest || '' }}
+          VANILLA_TAG: ${{ inputs.vanilla_tag || '' }}
+          REASON: ${{ inputs.reason || '' }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+          # writes only on main; any other ref is a dry run whatever the input says
+          WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
+        run: .github/scripts/publish-latest.sh
+
+  # `latest` moved: close the open failure issue (one issue at a time, see ci-issue.sh)
+  recover:
+    name: Close the failure issue
+    needs: publish
+    if: needs.publish.outputs.moved == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Comment "recovered" and close
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: .github/scripts/ci-issue.sh recover
+
+  # a failed publish: one issue, a comment per further failure
+  alert:
+    name: Report a failed publish
+    needs: publish
+    if: always() && needs.publish.result == 'failure' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Open the failure issue or comment on it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: .github/scripts/ci-issue.sh fail

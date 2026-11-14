@@ -65,7 +65,7 @@ exit 0
 F
 chmod +x "$bin/distrobox"
 export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
-export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
+export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
 
 osrel="$root/os-release"
@@ -139,6 +139,15 @@ FAKE_USB="" run --list
 check "fido-key hidden without a token" bash -c "grep -E '^fido-key +not applicable \(no security key found\)' '$root/out'"
 GAMING_SETUP_PSTATE_STATUS="$root/m/none" run --list
 check "amd-cpu-gaming hidden without amd-pstate active" bash -c "grep -E '^amd-cpu-gaming +not applicable' '$root/out'"
+mkdir -p "$root/home/.config"; printf '; shipped tuning\ndesiredgov=powersave\n' >"$root/shipped-gamemode.ini"
+export GAMING_SETUP_GAMEMODE_SRC="$root/shipped-gamemode.ini"
+cp "$root/shipped-gamemode.ini" "$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: a gamemode.ini identical to the shipped tuning is 'done'" bash -c "grep -E '^amd-cpu-gaming +done' '$root/out'"
+printf '; my own file\ndesiredgov=powersave\nrenice=3\n' >"$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: a user-edited gamemode.ini that merely contains desiredgov=powersave is NOT done (the step asks before replacing)" bash -c "grep -E '^amd-cpu-gaming +available' '$root/out'"
+rm -f "$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: no gamemode.ini: available" bash -c "grep -E '^amd-cpu-gaming +available' '$root/out'"
+unset GAMING_SETUP_GAMEMODE_SRC
 OCTARINE_SYSFS_DRM="$root/m/none" run --list
 check "amd-gpu and amd-kargs hidden without an AMD GPU" bash -c "grep -E '^amd-gpu +not applicable \(no AMD GPU\)' '$root/out' && grep -E '^amd-kargs +not applicable' '$root/out'"
 rm -rf "$root/m/dx"; mkdir -p "$root/m/dx"; : >"$root/m/dx/kvm"; : >"$root/m/dx/dev.just"; mkdir -p "$root/m/nvmod"
@@ -193,6 +202,9 @@ check "--yes installs LACT (system scope, Flathub)" logged "flatpak install -y -
 check "--yes runs the LACT daemon setup unattended" logged "flatpak run --env=LACT_UNATTENDED_SETUP=true io.github.ilya_zlobintsev.LACT"
 check "--yes runs gaming-setup gamemode" logged "ujust gaming-setup gamemode --yes"
 check "--yes runs the TPM recipe and the security-key step" bash -c "grep -q 'ujust luks-tpm-unlock' '$LOG' && grep -q pamu2fcfg '$LOG'"
+check "--yes runs the TPM recipe as 'enroll --yes' (volumes without a key only), so a second --yes run touches nothing that is enrolled" bash -c "grep -q 'ujust luks-tpm-unlock enroll --yes' '$LOG'"
+run --only tpm-luks --yes
+check "a named tpm-luks step re-enrolls: 'enroll --force --yes'" bash -c "grep -q 'ujust luks-tpm-unlock enroll --force --yes' '$LOG'"
 check "--yes never touches the optional kernel argument" notlogged "rpm-ostree kargs --append"
 check "--yes does not enroll the Secure Boot key (only ticked on NVIDIA images)" notlogged "enroll-secure-boot-key"
 check "the security key file was written, mode 600" bash -c "grep -q KEYDATA '$root/m/u2f_keys' && [ \$(stat -c %a '$root/m/u2f_keys') = 600 ]"
@@ -210,6 +222,13 @@ rm -f "$root/m/u2f_keys" "$root/m/modload/octarine-sensors.conf"
 run --only amd-kargs --yes
 check "amd-kargs appends the argument with the overdrive bit set (0xfff7bfff | 0x4000 = 0xffffffff)" logged "sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0xffffffff"
 check "amd-kargs prints the undo and says reboot" bash -c "grep -q 'delete-if-present' '$root/out' && grep -q 'Reboot' '$root/out'"
+check "amd-kargs after the apply says: reboot before the next image update, why, and the exact check on /proc/cmdline" bash -c "grep -q 'Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging)' '$root/out' && grep -q 'drops the argument' '$root/out' && grep -qF 'grep -qw -- amdgpu.ppfeaturemask=0xffffffff /proc/cmdline' '$root/out'"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: the argument is in the next boot's arguments but not in the running ones: 'pending reboot', not 'done' or 'available'" bash -c "grep -E '^amd-kargs +pending reboot' '$root/out'"
+echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: once the running command line has it: plain done" bash -c "grep -E '^amd-kargs +done$' '$root/out'"
+echo quiet >"$root/m/cmdline"
 echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
 run --only amd-kargs --yes
 check "amd-kargs is done when the running command line has it" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'kargs --append' '$LOG'"
