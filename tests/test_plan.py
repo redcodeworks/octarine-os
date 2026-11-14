@@ -490,8 +490,10 @@ def test_tests_and_pyproject_are_not_image_inputs(sandbox, repo_root):
     for p in ("Containerfile", "build_files/build.sh", "system_files/etc/x", ".github/workflows/test.yml", "Justfile"):
         assert not _is_docs(sandbox, p), p
     # whatever the shell tests were, the real tests directory contributes nothing to either hash
-    listed = sandbox.run(["git", "ls-files", "tests", "pyproject.toml"], cwd=repo_root).out.split()
-    assert listed and all(_is_docs(sandbox, p) and not _dx_only(sandbox, p) for p in listed)
+    listed = [str(f.relative_to(repo_root)) for f in (repo_root / "tests").rglob("*")
+              if f.is_file() and "__pycache__" not in f.parts] + ["pyproject.toml"]
+    assert len(listed) > 5
+    assert all(_is_docs(sandbox, p) and not _dx_only(sandbox, p) for p in listed)
 
 
 def test_inputs_hash_usage_and_unknown_revision(sandbox, hashes):

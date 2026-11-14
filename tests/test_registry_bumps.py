@@ -648,7 +648,7 @@ def _rows():
     return [
         ("tag pin: the pinned tag is the latest release", tagpin, [rel("v1.1.4")], "current", None),
         ("tag pin: a newer release", tagpin, [rel("v1.1.5"), com("v1.1.5", sha("b"))], "bump", f"v1.1.5 {sha('b')}"),
-        ("tag pin: versions compare numerically", tagpin, [rel("v1.10.0"), com("v1.10.0", sha("c"))], "bump", f"v1.10.0 {sha('c')}"),
+        ("tag pin: versions compare numerically", dict(tag="v1.9.0"), [rel("v1.10.0"), com("v1.10.0", sha("c"))], "bump", f"v1.10.0 {sha('c')}"),
         ("tag pin: a pin ahead of the latest release is current", tagpin, [rel("v1.0.9")], "current", None),
         ("tag pin: upstream unreachable fails soft", tagpin, [], "unreachable", None),
         ("tag pin: a tag that cannot be resolved to a commit fails soft", tagpin, [rel("v1.1.5")], "unreachable", None),
@@ -716,6 +716,7 @@ class BumpUpstream:
     def __init__(self, sandbox, stubs, rc=None):
         self.sbx, self.stubs = sandbox, stubs
         self.gh = GhTable(stubs, rc=rc)
+        stubs.add("git", script='exec /usr/bin/git "$@"')   # a logging pass-through: lets a test see how the script pushes
         self.origin = sandbox.tmp / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "testing", str(self.origin)], check=True)
         self.wc = sandbox.tmp / "wc"
@@ -747,11 +748,20 @@ class BumpUpstream:
     def pr_calls(self, kind):
         return [c for c in self.gh_calls() if c[1:3] == ["pr", kind]]
 
+    def pushes(self):
+        return [c for c in self.stubs["git"].calls if c[1] == "push"]
+
     def dispatches(self):
         return [c for c in self.gh_calls() if c[1:3] == ["workflow", "run"]]
 
     def branch_file(self, branch="bump/img", path="img/upstream.env"):
         return self.git("show", f"{branch}:{path}", repo=self.origin)
+
+
+def _forced(pushes):
+    """True when any push uses --force, --force-with-lease, -f or a +refspec."""
+    return any(a in ("-f", "--force") or a.startswith("--force") or a.startswith("+") or re.match(r"^-[a-z]*f", a)
+               for c in pushes for a in c[2:])
 
 
 def flag(call, name):
@@ -789,6 +799,7 @@ def test_bump_opens_one_pull_request_and_dispatches_the_checks(bu):
     assert sha("b") in bu.branch_file()
     assert bu.git("diff", "--name-only", "testing", "bump/img", repo=bu.origin).split() == ["img/upstream.env"]
     assert "co-authored-by" not in bu.git("log", "--format=%B", "bump/img", repo=bu.origin).lower()
+    assert bu.pushes() and not _forced(bu.pushes())
 
 
 def test_bump_failed_dispatch_is_a_warning(sandbox, stubs):
@@ -813,6 +824,8 @@ def test_bump_updates_an_open_pr_for_an_older_version_without_force_push(bu):
 
     OLD: upstream-check: bump: a PR for an older version is updated, not duplicated, and the checks are dispatched again
     OLD: upstream-check: bump: the update is a new commit on the same branch (no force-push)
+
+    The push arguments are asserted too (a logging pass-through `git` stub): the old test could not see a `-f`.
     """
     assert bu.bump("v1.1.5", sha("b")).rc == 0
     first_tip = bu.git("rev-parse", "bump/img", repo=bu.origin)
@@ -825,6 +838,7 @@ def test_bump_updates_an_open_pr_for_an_older_version_without_force_push(bu):
     assert bu.git("merge-base", "--is-ancestor", first_tip, "bump/img", repo=bu.origin) == ""
     assert int(bu.git("rev-list", "--count", "testing..bump/img", repo=bu.origin)) >= 2
     assert sha("c") in bu.branch_file()
+    assert not _forced(bu.pushes())
 
 
 def test_bump_of_a_fork_links_the_followed_project(bu):
