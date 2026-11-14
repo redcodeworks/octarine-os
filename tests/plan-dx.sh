@@ -183,11 +183,4 @@ want_ag "plan failed" 1 failure skipped skipped skipped "" ""
 want_ag "plan cancelled" 1 cancelled skipped skipped skipped "" ""
 want_ag "run dx is not built for (plan skipped)" 0 skipped skipped skipped skipped "" ""
 want_ag "plan skipped but a job ran" 1 skipped success skipped skipped "" ""
-# BASE is the base build's aggregate result (set by build.yml; unset by the old workflow_run version, which must keep working)
-want_ag_b() { local name=$1 rc=$2 base=$3; shift 3; BASE=$base ag "$@"; local got=$?; [[ "$got" == "$rc" ]] && pass "aggregate: $name" || { bad "aggregate: $name (rc ${got}, want ${rc})"; sed 's/^/     /' "$root/aglog"; }; }
-want_ag_b "base ok, dx built" 0 success success success skipped success true false
-want_ag_b "base failed: dx was not built on it, fails" 1 failure "" "" "" "" "" ""
-want_ag_b "base cancelled: fails" 1 cancelled skipped skipped skipped "" "" ""
-want_ag_b "no dx result reported at all (call did not start): fails" 1 success "" "" "" "" "" ""
-want_ag_b "base ok, legitimate skip" 0 success success skipped skipped skipped false false
 exit "${fail}"
