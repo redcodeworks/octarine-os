@@ -2840,7 +2840,9 @@ scheduler *args:
     fi
 
     sched_state() { cat "$sysfs/state" 2>/dev/null || echo unknown; }
-    active_sched() { local o; o=$(cat "$sysfs/root/ops" 2>/dev/null); if [ -n "$o" ] && is_inst "$o"; then echo "$o"; elif [ -n "$o" ]; then echo "$o (not one of ours)"; fi; }
+    # the kernel's ops name carries a version suffix (rusty_1.1.4_x86_64_unknown_linux_gnu): an instance is `name` or `name_...`, longest wins
+    ops_inst() { local o=$1 x best=""; for x in "${inst[@]}"; do if [ "$o" = "$x" ] || [ "${o#"${x}"_}" != "$o" ]; then [ "${#x}" -gt "${#best}" ] && best=$x; fi; done; printf '%s' "$best"; }
+    active_sched() { local o i; o=$(cat "$sysfs/root/ops" 2>/dev/null); [ -n "$o" ] || return 0; i=$(ops_inst "$o"); if [ -n "$i" ]; then echo "$i"; else echo "$o (not one of ours)"; fi; }
     enabled_insts() { local i; for i in "${inst[@]}"; do [ "$(systemctl is-enabled "scx@$i.service" 2>/dev/null)" = enabled ] && echo "$i"; done; }
     gm_current() {
         local v=""
@@ -2855,6 +2857,8 @@ scheduler *args:
         echo "sched_ext state:   $(sched_state)"
         a_txt=$a
         [ -n "$a_txt" ] || a_txt="none (the kernel default, EEVDF)"
+        raw_ops=$(cat "$sysfs/root/ops" 2>/dev/null)
+        [ -z "$raw_ops" ] || [ "$raw_ops" = "$a" ] || a_txt="$a_txt [kernel ops name: $raw_ops]"
         echo "active scheduler:  $a_txt"
         echo "boot choice:       ${e:-none} (the enabled scx@NAME.service)"
         echo "GameMode choice:   $(gm_current) ($conf)"
@@ -2866,6 +2870,16 @@ scheduler *args:
             fi
         done
         echo "disabled markers: ${dis:- none}"
+        cnt=""
+        for i in "${inst[@]}"; do
+            if [ -f "$state_dir/scx-failures/$i" ]; then cnt="$cnt $i=$(head -c 20 "$state_dir/scx-failures/$i")"; fi
+        done
+        echo "failure counters: ${cnt:- none} (a verified load failure counts one; the third writes the marker)"
+        for i in "${inst[@]}"; do
+            if [ -f "$state_dir/scx-disabled/$i" ] && [ "$(head -c 200 "$state_dir/scx-disabled/$i")" = "$kern" ]; then
+                echo "  to try $i again: sudo rm -- $state_dir/scx-disabled/$i $state_dir/scx-failures/$i   (or: ujust scheduler --boot $i, which asks), then see: journalctl -u scx@$i"
+            fi
+        done
         boot_first=$(enabled_insts | head -n1)
         a_inst=$(active_sched)
         if [ -n "$a_inst" ] && [ "$a_inst" != "$boot_first" ]; then
@@ -2969,7 +2983,7 @@ scheduler *args:
         # "already set" means enabled AND really running: the kernel reports that scheduler, and systemd says the unit is active
         sched_active_ok() {
             [ "$(systemctl is-active "scx@$1.service" 2>/dev/null)" = active ] || return 1
-            [ "$(sched_state)" = enabled ] && [ "$(cat "$sysfs/root/ops" 2>/dev/null)" = "$1" ]
+            [ "$(sched_state)" = enabled ] && [ "$(active_sched)" = "$1" ]
         }
         wait_active() {
             local t=${SCHEDULER_WAIT:-5} n=0
@@ -3044,7 +3058,7 @@ scheduler *args:
                             if [ "$why_kind" = marker ]; then
                                 m="$state_dir/scx-disabled/$boot_want"
                                 if [ "$mode" = ask ] && menu_confirm "Remove the marker ($m) and start scx@$boot_want again?" n; then
-                                    if sudo rm -- "$m" && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
+                                    if sudo rm -- "$m" && { [ ! -e "$state_dir/scx-failures/$boot_want" ] || sudo rm -- "$state_dir/scx-failures/$boot_want"; } && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
                                 else
                                     echo "  To try again anyway: sudo rm -- $m   (then: ujust scheduler --boot $boot_want). Nothing was removed." >&2
                                 fi

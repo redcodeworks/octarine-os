@@ -192,7 +192,28 @@ after install; the owner decides default-on after a soak. Whatever fails, the ma
   `scx-preflight` refuses quietly (exit 1, the unit is skipped, not failed) when `/sys/kernel/btf/vmlinux` is missing or the marker
   `/var/lib/octarine-os/scx-disabled/<name>` holds the running `uname -r`; `scx-run` runs the registry's binary (must be `/usr/bin/scx_*`) with the
   registry's flags and a cleared environment; `scx-verify` waits up to 5 s until `/sys/kernel/sched_ext/state` is `enabled` and
-  `/sys/kernel/sched_ext/root/ops` equals the instance (sysfs facts read from the kernel docs and a running nox; the `root` directory exists only while a scheduler is loaded).
+  `/sys/kernel/sched_ext/root/ops` BELONGS to the instance (the root directory exists only while a scheduler is loaded). **The kernel reports the ops
+  name with a version suffix, e.g. `rusty_1.1.4_x86_64_unknown_linux_gnu`, not the bare instance name** (first real start on nox, 2026-11-14: the busy
+  rule read our own scheduler as foreign and failed the start): `scx_ops_instance` (scx-lib.sh), `active_instance` (gamemode-lib.sh) and
+  `ops_inst`/`active_sched` (the recipe) match an instance when the string equals its name or starts with `<name>_`, longest match wins; a name that merely
+  starts with the instance (`rustyfoo_1.0`) does not match. `tests/schedulers.sh` fails if a registry name is ever another one followed by `_`. Busy = enabled
+  and the ops name is not this instance (another registered one or unknown): the start fails, nothing is counted.
+  **libbpf's kernel config.** A scheduler with `CONFIG_*` externs (`.kconfig`) makes libbpf read the kernel config, and libbpf v1.7.0 (the one in the scx
+  1.1.4 build, `bpf_object__read_kconfig_file`) tries only `/boot/config-<uname -r>` and `/proc/config.gz`. The image has neither (CONFIG_IKCONFIG off,
+  the ostree /boot holds no config), only `/usr/lib/modules/<release>/config`, so such a scheduler failed with "failed to open system Kconfig" / EINVAL (scx_lavd,
+  first real start). Static list (Tier 1, per scheduler): needs a config: lavd, bpfland, cosmos, flash, p2dq (`CONFIG_*`); cake has only `LINUX_KERNEL_VERSION`
+  (libbpf fills that without a file); rusty has none. `scx-run` therefore runs every scheduler in a private mount namespace (`unshare -m`): tmpfs on /boot,
+  `/boot/config-<release>` created and the image's config bound read-only onto it, then `env -i` and the binary; values and flags are positional parameters of
+  `sh -c`, never interpolated; skipped when libbpf already finds a config, a warning and a plain start when the image's file is missing, exit 75 when a mount
+  fails. Systemd mount properties (`TemporaryFileSystem=/boot` + `BindReadOnlyPaths=`) die with 226/NAMESPACE on the real machine and `%v` is not expanded in
+  them: do not use them. The Tier 1 check lists the `CONFIG_*` externs and FAILS the build when a scheduler has some and `scx-run` lacks the mechanism.
+  **Restart rule.** `Restart=on-failure` is for a scheduler that was active and then crashed. `scx-run` stays the main process (child + wait), and exits 75
+  (`RestartPreventExitStatus=75`) when the scheduler ended without `scx-verify` having left `/run/octarine-os/active-<INVOCATION_ID>` (a load failure, or a start
+  that verify judged failed and systemd stopped); a stop of an active scheduler exits 0, a crash keeps its status. Tested on systemd 262: a main process exiting 75
+  stops the restart although ExecStartPost failed, exit 1 restarts, and the unit-only options (`Restart=on-abnormal`, `RestartPreventExitStatus=SIGTERM`) also stop a restart in a simulation, but depend on how the real
+  binary dies when systemd stops it (unverified), whereas an explicit exit status does not. One user attempt is now ONE counted failure (before: three in sixteen seconds, so the marker
+  appeared after one game launch). The GameMode hook's failure message names the marker, the counter and `journalctl -u scx@NAME` when a marker of this kernel
+  exists; `ujust scheduler --status` shows the counters and the exact removal command, `--boot` asks before removing marker and counter.
 - **Safeguards (each tested in `tests/schedulers.sh`).** (a) The polkit rule is GENERATED at image build: `build_files/gen-schedulers.sh` fills the template `usr/share/octarine-os/polkit/50-octarine-scx.rules.in` with the exact alternation of the registry instance names and writes `usr/share/polkit-1/rules.d/50-octarine-scx.rules`. It grants `YES` for
   `org.freedesktop.systemd1.manage-units` ONLY when the `unit` detail matches `^scx@(rusty|lavd|cake|bpfland|cosmos|flash|p2dq)\.service$` (the real instances, nothing else: not `scx@evil`, not `scx@rusty2`, not a hyphenated or uppercase name) AND the `verb` detail is exactly `start` or
   `stop` (not `restart`, `try-restart`, `reload-or-restart`, `kill`, `reset-failed` or `set-property`: the hooks and the recipe only use start and stop, an in-place switch is a start of another instance and `Conflicts=` stops the running one) AND `subject.local && subject.active && subject.isInGroup("wheel")`; a request without those details never matches; nothing else is granted (not

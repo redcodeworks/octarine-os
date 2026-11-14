@@ -12,6 +12,7 @@ spec = importlib.util.spec_from_file_location("k", sys.argv[1])
 k = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(k)
 passed = failed = 0
+RUN_SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(sys.argv[1]))), "system_files/usr/libexec/octarine-os/scx-run")
 
 def result(ok, msg):
     global passed, failed
@@ -129,7 +130,7 @@ def binary(root, name, imports, members, objects=1):
 def run(kdir, names, root):
     out = io.StringIO()
     argv = sys.argv
-    sys.argv = ["x", "--kernel-dir", kdir, "--binary-dir", os.path.join(root, "bin")] + names
+    sys.argv = ["x", "--kernel-dir", kdir, "--binary-dir", os.path.join(root, "bin"), "--run-script", RUN_SCRIPT] + names
     try:
         with contextlib.redirect_stdout(out):
             rc = k.main()
@@ -153,6 +154,24 @@ with tempfile.TemporaryDirectory() as root:
     kd = kernel_dir(root, funcs=["scx_bpf_dsq_insert"])
     rc, out = run(kd, ["scx_ok"], root)
     result(rc == 0 and "ok   scx_ok: 4 required imports, 2 weak, 3 struct_ops members set" in out and "kernel BTF read from vmlinuz" in out, "everything present: exit 0 (kfunc in BTF, symbol only in System.map, CONFIG_ and LINUX_KERNEL_VERSION are libbpf's own)")
+    result(".kconfig externs (libbpf reads the kernel config at load time): CONFIG_NR_CPUS, CONFIG_PREEMPT_RT" in out and "need a kernel config at load time (CONFIG_* externs): scx_ok; run script provides it: yes" in out,
+           "the CONFIG_* externs are listed per scheduler (not LINUX_KERNEL_VERSION) and the summary names the schedulers that need a kernel config")
+    argv0 = sys.argv
+    sys.argv = ["x", "--kernel-dir", kd, "--binary-dir", os.path.join(root, "bin"), "--run-script", os.path.join(root, "no-such-scx-run"), "scx_ok"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc_nw = k.main()
+    sys.argv = argv0
+    result(rc_nw == 1 and "FAIL scx_ok" in buf.getvalue() and "does not give the scheduler one" in buf.getvalue(),
+           "a scheduler with CONFIG_* externs FAILS the build when scx-run lacks the kernel-config mechanism (libbpf finds no config in the image)")
+    stub = os.path.join(root, "scx-run-without")
+    open(stub, "w").write("#!/bin/sh\nexec \"$@\"\n")
+    sys.argv = ["x", "--kernel-dir", kd, "--binary-dir", os.path.join(root, "bin"), "--run-script", stub, "scx_ok"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc_nw2 = k.main()
+    sys.argv = argv0
+    result(rc_nw2 == 1, "an scx-run that merely execs the binary is not the mechanism")
     result("note: optional (weak) imports absent from the kernel" in out and "scx_bpf_dispatch___compat" in out, "a missing weak import is only a note")
 
     kd = kernel_dir(root, kver="6.98.0-test", funcs=[])
@@ -201,7 +220,7 @@ with tempfile.TemporaryDirectory() as root:
     open(os.path.join(root, "m.tsv"), "w").write("# c\nscx_ok\tbin/scx_ok\t\tA\nscx_var\tbin/scx_var\t\tB\n")
     out = io.StringIO()
     argv = sys.argv
-    sys.argv = ["x", "--kernel-dir", kernel_dir(root, kver="6.89.0-test", funcs=["scx_bpf_dsq_insert"]), "--binary-dir", os.path.join(root, "bin"), "--manifest", os.path.join(root, "m.tsv")]
+    sys.argv = ["x", "--kernel-dir", kernel_dir(root, kver="6.89.0-test", funcs=["scx_bpf_dsq_insert"]), "--binary-dir", os.path.join(root, "bin"), "--manifest", os.path.join(root, "m.tsv"), "--run-script", RUN_SCRIPT]
     with contextlib.redirect_stdout(out):
         rc = k.main()
     sys.argv = argv
