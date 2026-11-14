@@ -10,6 +10,7 @@
 
 SCX_REGISTRY=${OCTARINE_SCX_REGISTRY:-/usr/share/octarine-os/schedulers.d}
 SCX_SYSFS=${OCTARINE_SCX_SYSFS:-/sys/kernel/sched_ext}
+SCX_STATE=${OCTARINE_SCX_STATE:-/var/lib/octarine-os}
 USER_CONF=${OCTARINE_SCX_USER_CONF:-${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/octarine-os/scheduler.conf}
 RUN_DIR=${OCTARINE_SCX_RUN_DIR:-${XDG_RUNTIME_DIR:-/tmp}/octarine-scx}
 SYSTEMCTL_TIMEOUT=${OCTARINE_SCX_SYSTEMCTL_TIMEOUT:-9}
@@ -144,7 +145,14 @@ scheduler_start() {
         echo "${choice}" > "$(marker)"
         log "switched to ${choice} for the game (boot choice: ${boot:-none})"
     else
-        notify_failure "scheduler ${choice} did not start; restoring the boot choice"
+        # a disabled marker of this kernel (written after repeated verified load failures) explains it and says how to clear it
+        local mk="${SCX_STATE}/scx-disabled/${choice}" kern
+        kern=${OCTARINE_SCX_KERNEL:-$(uname -r)}
+        if [[ -f "${mk}" && "$(head -c 200 "${mk}" 2> /dev/null)" == "${kern}" ]]; then
+            notify_failure "scheduler ${choice} is disabled for this kernel after repeated load failures; restoring the boot choice. To try it again, as root: rm -- ${mk} ${SCX_STATE}/scx-failures/${choice}   (see: journalctl -u scx@${choice})"
+        else
+            notify_failure "scheduler ${choice} did not start; restoring the boot choice (see: journalctl -u scx@${choice})"
+        fi
         restore_boot
     fi
 }

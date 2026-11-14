@@ -155,6 +155,8 @@ check "--status: sched_ext state, the active scheduler, the boot unit, the GameM
 check "--status shows the instance name and the kernel's real ops string next to it" grep -q 'active scheduler:  lavd \[kernel ops name: lavd_1.1.4_x86_64_unknown_linux_gnu\]' "$root/out"
 reset; echo enabled >"$root/sys/state"; mkdir -p "$root/sys/root"; echo some_foreign_1.0 >"$root/sys/root/ops"; run '' --status
 check "--status: a scheduler that is not one of ours is shown by its raw name" grep -q 'active scheduler:  some_foreign_1.0 (not one of ours)' "$root/out"
+reset; echo enabled >"$root/sys/state"; mkdir -p "$root/state/scx-disabled" "$root/state/scx-failures"; echo 6.99.0-test >"$root/state/scx-disabled/rusty"; echo 3 >"$root/state/scx-failures/rusty"; run '' --status
+check "--status shows the failure counters and, for a marker of this kernel, the exact removal command" bash -c "grep -q 'failure counters:  *rusty=3' '$root/out' && grep -q 'sudo rm -- $root/state/scx-disabled/rusty $root/state/scx-failures/rusty' '$root/out'"
 reset; echo disabled >"$root/sys/state"; run '' --status
 check "--status with nothing set: kernel default, boot none, GameMode skip, no markers" bash -c "grep -q 'none (the kernel' '$root/out' && grep -q 'boot choice:       none' '$root/out' && grep -q 'GameMode choice:   skip' '$root/out' && grep -q 'disabled markers: *none' '$root/out'"
 

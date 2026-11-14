@@ -29,6 +29,11 @@ deadline=$((SECONDS + SCX_VERIFY_SECONDS))
 while :; do
     if active; then
         rm -f -- "${fdir}/${name}" "${mdir}/${name}"
+        # tell scx-run (the main process of this start) that the scheduler really was active: from now on its exit is a crash or a stop,
+        # before this it was a failed start, which must not be restarted automatically (see scx-run and scx@.service)
+        if [[ -n "${INVOCATION_ID-}" ]]; then
+            mkdir -p "${SCX_RUN_DIR}" 2> /dev/null && : > "${SCX_RUN_DIR}/active-${INVOCATION_ID}" 2> /dev/null
+        fi
         scx_log "verify ${name}: active (kernel ops name '$(cat "${ops}" 2> /dev/null)')"
         exit 0
     fi

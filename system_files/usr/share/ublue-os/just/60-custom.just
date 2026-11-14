@@ -2870,6 +2870,16 @@ scheduler *args:
             fi
         done
         echo "disabled markers: ${dis:- none}"
+        cnt=""
+        for i in "${inst[@]}"; do
+            if [ -f "$state_dir/scx-failures/$i" ]; then cnt="$cnt $i=$(head -c 20 "$state_dir/scx-failures/$i")"; fi
+        done
+        echo "failure counters: ${cnt:- none} (a verified load failure counts one; the third writes the marker)"
+        for i in "${inst[@]}"; do
+            if [ -f "$state_dir/scx-disabled/$i" ] && [ "$(head -c 200 "$state_dir/scx-disabled/$i")" = "$kern" ]; then
+                echo "  to try $i again: sudo rm -- $state_dir/scx-disabled/$i $state_dir/scx-failures/$i   (or: ujust scheduler --boot $i, which asks), then see: journalctl -u scx@$i"
+            fi
+        done
         boot_first=$(enabled_insts | head -n1)
         a_inst=$(active_sched)
         if [ -n "$a_inst" ] && [ "$a_inst" != "$boot_first" ]; then
@@ -3048,7 +3058,7 @@ scheduler *args:
                             if [ "$why_kind" = marker ]; then
                                 m="$state_dir/scx-disabled/$boot_want"
                                 if [ "$mode" = ask ] && menu_confirm "Remove the marker ($m) and start scx@$boot_want again?" n; then
-                                    if sudo rm -- "$m" && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
+                                    if sudo rm -- "$m" && { [ ! -e "$state_dir/scx-failures/$boot_want" ] || sudo rm -- "$state_dir/scx-failures/$boot_want"; } && sudo systemctl start "scx@$boot_want.service" && wait_active "$boot_want"; then okc=1; echo "Marker removed; scx@$boot_want is running."; fi
                                 else
                                     echo "  To try again anyway: sudo rm -- $m   (then: ujust scheduler --boot $boot_want). Nothing was removed." >&2
                                 fi

@@ -13,6 +13,7 @@ SCX_REGISTRY=${OCTARINE_SCX_REGISTRY:-/usr/share/octarine-os/schedulers.d}
 SCX_SYSFS=${OCTARINE_SCX_SYSFS:-/sys/kernel/sched_ext}
 SCX_BTF=${OCTARINE_SCX_BTF:-/sys/kernel/btf/vmlinux}
 SCX_STATE=${OCTARINE_SCX_STATE:-/var/lib/octarine-os}
+SCX_RUN_DIR=${OCTARINE_SCX_RUN:-/run/octarine-os}
 SCX_MAX_FAILURES=${OCTARINE_SCX_MAX_FAILURES:-3}
 SCX_VERIFY_SECONDS=${OCTARINE_SCX_VERIFY_SECONDS:-5}
 
