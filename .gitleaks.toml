@@ -10,3 +10,10 @@ id = "pam-u2f-registration"
 description = "A pam_u2f security key registration line"
 regex = '''[A-Za-z0-9._-]+:[A-Za-z0-9_\-+/=]{20,},[A-Za-z0-9_\-+/=]{20,},(es256|eddsa|rs256)(,|\s|$)'''
 keywords = ["es256", "eddsa", "rs256"]
+
+# The minisign PUBLIC key that Ghostty publishes in its PACKAGING.md (binaries/ghostty/upstream.env, and the tests that check it):
+# it is what the build verifies the release tarball against, not a secret. Allowed by its exact value only.
+[[allowlists]]
+description = "Ghostty's published minisign public key"
+regexTarget = "match"
+regexes = ['''RWQlAjJC23149WL2sEpT/l0QKy7hMIFhYdQOFy0Z7z7PbneUgvlsnYcV''']
