@@ -751,6 +751,15 @@ signed and the dx image was built on exactly that default digest.
   workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile` (keep
   them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults. CI and
   `just build` pass both as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
+- **Floating base with safeguards (2026-11-14; Kevin chose to keep the base FLOATING so `latest` keeps getting base fixes daily).** `.github/scripts/base-pin.sh`
+  (step `Check the base image can be pulled` of `build.yml` and `build-beta.yml`) resolves `${BASE_IMAGE}:${FEDORA_VERSION}` to a manifest digest ONCE at the start of
+  the run (sha256 of `skopeo inspect --raw`), verifies its cosign signature with the vendored `keys/ublue-os-main-cosign.pub` (the key of github.com/ublue-os/main, compared
+  with the upstream file on 2026-11-14: identical; the list digest, or for a manifest list the linux/amd64 child) and FAILS the build if it does not verify, with an error that
+  names a rotated key as a possible cause. The build is FROM that digest (`Containerfile`: `FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}`, `BASE_PIN` passed by
+  `just build`; a local build without it uses the tag), the pull is by digest, `BASE_INDEX_DIGEST` is the pin, and the image carries the new labels
+  `org.octarineos.upstream-base=<digest>` and `org.octarineos.upstream-base-verified`; the job summary names the digest and what verified. The dx labels
+  `org.opencontainers.image.base.digest` and `dx-inputs` are untouched (dx builds on OUR default image, nvidia on ours too). UNVERIFIED until the first CI run: that the base
+  images of Universal Blue verify with this key at the digest the tag names. Tests: `tests/base-pin.sh`.
 - Upgrade steps: (1) set the variable, `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo:
   `gh variable delete FEDORA_VERSION`), or edit the workflow default and the `Containerfile` ARG in a commit.
   (2) Changing a variable starts no build: run the `Build container image` workflow on `testing` (a push or manual

@@ -377,19 +377,22 @@ jobs:
           [[ -n "${BASE_IMAGE}" && "${FEDORA_VERSION}" =~ ^[0-9]+$ ]] || { echo "::error::BASE_IMAGE or FEDORA_VERSION missing or invalid (repository variable or workflow default)"; exit 1; }
           base="${BASE_IMAGE}:${FEDORA_VERSION}"
           echo "BASE_REF=${base}" >> "${GITHUB_ENV}"
-          if ! podman pull "${base}" >/dev/null; then
+          # the floating tag is resolved to a digest ONCE here and its signature is verified with the pinned Universal Blue key (fail closed);
+          # everything after this step uses that digest, so one run uses one base
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          if ! podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
-          podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
-          digest=$(podman image inspect "${base}" --format '{{.Digest}}')
+          podman image inspect "${BASE_IMAGE}@${BASE_PIN}" --format 'Base image {{.Id}} created {{.Created}}'
+          digest=$(podman image inspect "${BASE_IMAGE}@${BASE_PIN}" --format '{{.Digest}}')
           [[ "${digest}" == sha256:* ]] || { echo "::error::Cannot determine the digest of ${base}"; exit 1; }
           echo "Base image ${base} resolved to ${BASE_IMAGE}@${digest}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
-          # digest of the manifest list, the same value the scheduled skip check computes without pulling
-          index=$(skopeo inspect --raw "docker://${base}" | sha256sum | sed 's/ .*//')
-          [[ -n "${index}" ]] || { echo "::error::Cannot determine the manifest digest of ${base}"; exit 1; }
-          echo "BASE_INDEX_DIGEST=sha256:${index}" >> "${GITHUB_ENV}"
+          # the manifest (list) digest is the pin itself: the same value the scheduled skip check computes without pulling
+          echo "BASE_INDEX_DIGEST=${BASE_PIN}" >> "${GITHUB_ENV}"
 
       # This actually builds the container image
       - name: Build Image

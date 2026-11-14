@@ -65,7 +65,7 @@ Added by this image:
 - Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning
 - Firewall zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale)
 - Security-key (YubiKey) touch for sudo and polkit (the password still works without a key); 30-minute sudo timeout
-- Images are signed; after the second switch (Install, step 3) the system refuses unsigned updates
+- Images are signed, and the Universal Blue base image is checked against its signing key before every build (the build stops if it does not verify); after the second switch (Install, step 3) the system refuses unsigned updates
 
 ## Variants
 

@@ -115,6 +115,8 @@ build $target_image=image_name $tag=default_tag:
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
     if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
+    # CI resolves the floating base to a digest once and verifies its signature (base-pin.sh): the build is FROM that digest
+    if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
     # os-release IMAGE_VERSION: the build's version, `beta-` prefixed when the beta workflow sets IMAGE_VERSION_PREFIX
     BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=${IMAGE_VERSION_PREFIX:-}$(.github/scripts/image-version.sh)")
     LABELS=()
@@ -122,6 +124,9 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
     if [[ -n "${BASE_DIGEST:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.digest=${BASE_DIGEST}"); fi
     # The base's manifest-list digest: the scheduled run compares it with the current base to decide whether to skip the build
+    # the upstream base digest this image was built on and that it was verified against the pinned Universal Blue key (a new label; the
+    # dx labels org.opencontainers.image.base.digest and dx-inputs are not touched)
+    if [[ -n "${BASE_PIN:-}" ]]; then LABELS+=("--label" "org.octarineos.upstream-base=${BASE_PIN}" "--label" "org.octarineos.upstream-base-verified=cosign keys/ublue-os-main-cosign.pub"); fi
     if [[ -n "${BASE_INDEX_DIGEST:-}" ]]; then LABELS+=("--label" "io.github.redcodeworks.octarine-os.base-index-digest=${BASE_INDEX_DIGEST}"); fi
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
