@@ -183,4 +183,8 @@ want_ag "plan failed" 1 failure skipped skipped skipped "" ""
 want_ag "plan cancelled" 1 cancelled skipped skipped skipped "" ""
 want_ag "run dx is not built for (plan skipped)" 0 skipped skipped skipped skipped "" ""
 want_ag "plan skipped but a job ran" 1 skipped success skipped skipped "" ""
+DRY_RUN=true want_ag "dry run: the plan wanted a build, nothing ran: passes" 0 success skipped skipped skipped true false
+DRY_RUN=true want_ag "dry run: the plan wanted a promotion, nothing ran: passes" 0 success skipped skipped skipped false true
+DRY_RUN=true want_ag "dry run: a build ran anyway: fails" 1 success success skipped skipped true false
+DRY_RUN=true want_ag "dry run: the plan itself failed: fails" 1 failure skipped skipped skipped "" ""
 exit "${fail}"

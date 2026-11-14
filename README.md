@@ -13,12 +13,12 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 | Image | main | testing |
 |---|---|---|
 | default | [![default, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![default, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
-| dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Amain) | after each testing build, see the check on the commit |
+| dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Atesting) |
 | beta | [![beta, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
 
-The dx badge follows the latest dx run: it is a separate workflow that starts after each default build, and GitHub records all its runs on main. The NVIDIA dx badge shows "no status" until its first weekly run.
+The NVIDIA dx badge shows "no status" until its first weekly run.
 
 ## Requirements
 

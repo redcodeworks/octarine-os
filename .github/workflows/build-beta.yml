@@ -435,3 +435,23 @@ jobs:
             cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
+
+  # Starts the beta dx build (build-dx.yml, a separate re-runnable run) on main after the beta image is signed; one-way (nothing
+  # of the beta base needs this job). Fails when no dx run appears; re-running this job alone dispatches again.
+  dispatch_dx:
+    name: Start the dx build (beta)
+    needs: sign
+    if: always() && needs.sign.result == 'success' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Dispatch the dx workflow on main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: .github/scripts/dispatch-dx.sh beta "${GITHUB_SHA}"

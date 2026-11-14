@@ -90,6 +90,27 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     assert "pull_request" not in on and "pull_request_target" not in on, f
 PY
+check "a job whose if reads a needed job's RESULT has its own status function (always() or !cancelled()): GitHub adds an implicit success() otherwise, which is false when ANY ancestor was skipped" python3 - "$here" <<'PY'
+import sys, glob, re, yaml
+status = re.compile(r"always\(\)|!cancelled\(\)|failure\(\)|success\(\)|cancelled\(\)")
+bad = []
+for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
+    for n, j in yaml.safe_load(open(f))["jobs"].items():
+        cond = str(j.get("if", ""))
+        if re.search(r"needs\.[\w-]+\.result", cond) and not status.search(cond):
+            bad.append((f.split("/")[-1], n))
+# these two sign jobs are meant to be skipped together with a skipped build
+bad = [b for b in bad if b not in (('binaries.yml', 'sign'), ('build-nvidia-dx.yml', 'sign'))]
+assert not bad, bad
+PY
+check "workflow_run is used only by the NVIDIA dx chain; build-dx.yml is dispatched by the pipelines (dispatch_dx), never triggered by a finished run" python3 - "$here" <<'PY'
+import sys, glob, yaml
+for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
+    w = yaml.safe_load(open(f))
+    on = w.get(True) or w.get("on") or {}
+    if isinstance(on, dict) and "workflow_run" in on:
+        assert f.endswith("build-nvidia-dx.yml"), f
+PY
 check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Tuesday 07:00 dev-packages bump, Monday 07:00 upstream check" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
