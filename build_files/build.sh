@@ -2,11 +2,20 @@
 
 set -ouex pipefail
 
+# Log sections: every step below sits in a "::group::" ... "::endgroup::" pair, which GitHub Actions folds in the build log (anywhere
+# else it is just a line of text). Groups are never nested (Actions does not nest them), so the scripts this one runs print their own
+# and are called between two of ours. When the build fails inside a group, this trap closes it and prints an "::error::" line outside
+# it, so the failure is not folded away (the exit status is unchanged).
+trap 'rc=$?; if (( rc != 0 )); then echo "::endgroup::"; echo "::error::build.sh failed (exit ${rc})"; fi' EXIT
+
 # Which Fedora release is the base image? The log must say what this build started from.
+echo "::group::Base image"
 echo "== base image os-release"
 cat /usr/lib/os-release
+echo "::endgroup::"
 
 # --- Guard: refuse to build if secrets or personal key material ended up in system_files ---
+echo "::group::Guard: secrets in system_files"
 # A security key registration (pam_u2f's u2f_keys) or a private key copied here would be baked into a
 # public image. Check names first, then content (this also catches a renamed copy).
 forbidden=$(find /ctx/system_files \( -name 'u2f_keys' -o -name 'u2f_mappings' -o -name 'Yubico' \
@@ -20,6 +29,9 @@ if [[ -n "$forbidden" ]]; then
     echo "$forbidden" >&2
     exit 1
 fi
+echo "::endgroup::"
+
+echo "::group::System files"
 
 # Base recipe files that our own file of the same name wraps: keep the base copy as <name>-base.just. Our file imports it and
 # overrides single recipes (between two imported files the FIRST import wins, so a later file could not override them).
@@ -45,8 +57,10 @@ visudo -c
 # own setting always wins. A bad keyfile makes dconf exit non-zero and fails the build (set -e).
 dconf update
 test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os
+echo "::endgroup::"
 
 # --- Container signature policy for this image's registry path and its sibling ---
+echo "::group::Container signature policy"
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
 # Everything is derived from them, so a fork only changes image-template.env and cosign.pub. The default image and
 # the NVIDIA variant (<name>-nvidia, built weekly from the same files) and the developer image (<name>-dx, built from
@@ -84,8 +98,10 @@ else
     echo "IMAGE_ORG, IMAGE_NAME or cosign.pub missing: not adding a signature policy for this image"
 fi
 # --- end signature policy ---
+echo "::endgroup::"
 
 ### Install packages
+
 #
 # Release-specific parts of this script (the base tag in the Containerfile decides the Fedora release):
 # the package names below, since a package can be renamed, retired or not yet built for a release
@@ -132,6 +148,7 @@ fi
 # developer list on top; dnf5 skips what is already installed). cmake, ninja, meson and the development-tools group are still not here.
 #
 # CRITICAL (keep in step with the smoke tests in .github/workflows/build.yml and build-beta.yml; tests/compilers.sh checks it):
+echo "::group::Packages: critical"
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
     gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev \
@@ -141,6 +158,7 @@ dnf5 install -y \
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
 if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
 grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
+echo "::endgroup::"
 
 # OPTIONAL: one group per transaction. Format: "<group name>:<space separated packages>".
 mkdir -p /usr/share/octarine-os
@@ -157,7 +175,9 @@ optional_groups=(
 for entry in "${optional_groups[@]}"; do
     group="${entry%%:*}"
     read -r -a pkgs <<< "${entry#*:}"
+    echo "::group::Packages: optional group ${group}"
     if dnf5 install -y "${pkgs[@]}"; then
+        echo "::endgroup::"
         continue
     fi
     echo "WARNING: optional group ${group} failed as a whole, retrying its packages one by one"
@@ -167,6 +187,7 @@ for entry in "${optional_groups[@]}"; do
             echo "OPTIONAL PACKAGE MISSING: ${pkg}"
         fi
     done
+    echo "::endgroup::"
 done
 echo "== optional packages missing:"
 cat "${missing_file}"
@@ -175,6 +196,7 @@ cat "${missing_file}"
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
 # /usr/share/ublue-os/distrobox/dev-toolbox.ini (or on the dx image). Nothing in this build compiles from source.
 
+echo "::group::Remove base packages"
 # Remove RPMs the base ships that this image replaces, only if they are still present:
 # Firefox (use the Flatpak) and toolbox (distrobox covers it)
 for pkg in firefox firefox-langpacks toolbox; do
@@ -200,7 +222,9 @@ if rpm -q gnome-software &>/dev/null; then
     done
     dnf5 remove -y gnome-software
 fi
+echo "::endgroup::"
 
+echo "::group::Branding and image identity"
 # Name shown by the OS (GRUB, login screen, About). Only PRETTY_NAME changes: ID, NAME and
 # VERSION_ID stay as they are, because update tooling and third-party software read them.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="octarineOS"/' /usr/lib/os-release
@@ -257,8 +281,9 @@ DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add 
 chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
 lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
 # --- end branding ---
+echo "::endgroup::"
 
-# --- Prebuilt binaries: sched_ext schedulers and the extest libraries ---
+# --- Prebuilt binaries: sched_ext schedulers and the extest libraries (the two scripts print their own log groups) ---
 # Two signed files-only images from the fedora-toolbox repository, pinned by digest in the Containerfile and bind-mounted
 # at /binaries/<name>; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
 # no unit, no preset, nothing is started.
@@ -267,10 +292,12 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 # The sched_ext scheduler registry and unit drop-ins, generated from the manifest that install-binaries.sh just installed
 # (scx@.service, its helpers and the polkit rule come from system_files). Nothing is enabled: the preset says disable.
 /ctx/gen-schedulers.sh
+echo "::group::Checks of the scheduler files"
 for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x "/usr/libexec/octarine-os/${f}"; done
 test -f /usr/lib/systemd/system/scx@.service
 test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 ! grep -q "@INSTANCES@" /usr/share/polkit-1/rules.d/50-octarine-scx.rules
+echo "::endgroup::"
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/candy-for-gnome).
@@ -291,6 +318,7 @@ test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 # libvirt's packaged presets and socket activation. The base image already enables automatic update staging (rpm-ostreed-automatic.timer).
 # The Flatpak preinstall list is installed by `ujust flatpak-preinstall` from a desktop session, not by a boot unit:
 # a root service has no session bus, and on a stock-installed machine the fedora OCI remote needs one.
+echo "::group::Services and presets"
 # pcp is an optional package: enable its units only when it was installed
 if rpm -q pcp &>/dev/null; then
     systemctl enable pmcd.service pmlogger.service
@@ -310,9 +338,10 @@ systemctl --global enable podman.socket
 # and when edac_mce_amd is loaded, and our drop-in (50-octarine-intel-only.conf) skips it on any non-Intel CPU, so AMD machines
 # get no failed unit and Intel machines keep machine-check logging.
 test -f /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf
+echo "::endgroup::"
 
-# --- Every repository that is enabled must be one the base enables (see validate-repos.sh) ---
+# --- Every repository that is enabled must be one the base enables (see validate-repos.sh; prints its own log group) ---
 /ctx/validate-repos.sh
 
-# --- Last step: nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (see final-cleanup.sh) ---
+# --- Last step: nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (see final-cleanup.sh; prints its own log group) ---
 /ctx/final-cleanup.sh
