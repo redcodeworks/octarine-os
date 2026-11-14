@@ -7,9 +7,9 @@
 #
 # Finding the run. The dispatch API answers 204 unless the request carries `return_run_details: true`; `gh` 2.87.0 and later sends it and
 # prints the run URL when stdout is not a terminal. So: the URL printed by `gh workflow run` is used when there is one (its trailing
-# number is the run id; the run is then checked against the title and the branch). A `gh` that prints no URL (an older one on the runner) gets
+# number is the run id; the run is then checked for event and branch). A `gh` that prints no URL (an older one on the runner) gets
 # the snapshot approach: the ids of the runs of this workflow on this branch are listed BEFORE the dispatch, and the run is the first id that is
-# not in that list and whose title (`dx <channel> <sha>`, the run-name of build-dx.yml) and branch match. No clock is used anywhere. Either
+# not in that list, on this branch, with the run-name (`dx <channel> <sha>`) or the workflow name as its title (a fresh run has the workflow name until the run-name applies; the title is informational, never a reason to fail). No clock is used anywhere. Either
 # way, no run found within the time fails the step (the base build stays green, this job is red, and re-running it dispatches again).
 # The dx run itself is not waited for.
 set -euo pipefail
@@ -44,15 +44,17 @@ started() {
     exit 0
 }
 
-# 1. the URL that gh printed (the API returned the run id)
+# 1. the URL that gh printed (the API returned the run id). The run is checked by branch and event only: its title is the workflow name
+# ("Build dx image") for the first seconds and becomes the run-name (`dx <channel> <sha>`) later, so a title check would race (it did, on the
+# first real run: gh 2.103.3 on the runner printed the right URL and the old check rejected the title of a run that had just been created).
 url=$(grep -oE "https://[^ ]+/actions/runs/[0-9]+" <<< "${out}" | tail -n1 || true)
 if [[ -n "${url}" ]]; then
     id=${url##*/}
     for ((i = 1; i <= 3; i++)); do
-        if info=$(gh run view "${id}" -R "${repo}" --json displayTitle,headBranch 2> /dev/null); then
-            t=$(jq -r .displayTitle <<< "${info}"); b=$(jq -r .headBranch <<< "${info}")
-            if [[ "${t}" == "${title}" && "${b}" == "${ref}" ]]; then started "${url}"; fi
-            echo "::error::run ${id} (from the dispatch) is titled '${t}' on '${b}', expected '${title}' on '${ref}'"
+        if info=$(gh run view "${id}" -R "${repo}" --json event,headBranch 2> /dev/null); then
+            e=$(jq -r .event <<< "${info}"); b=$(jq -r .headBranch <<< "${info}")
+            if [[ "${e}" == workflow_dispatch && "${b}" == "${ref}" ]]; then started "${url}"; fi
+            echo "::error::run ${id} (from the dispatch) is a '${e}' run on '${b}', expected a workflow_dispatch run on '${ref}'"
             exit 1
         fi
         sleep "${POLL_WAIT:-10}"
@@ -65,8 +67,11 @@ fi
 echo "gh printed no run URL: looking for a run that was not there before the dispatch"
 tries="${POLL_TRIES:-12}"
 for ((i = 1; i <= tries; i++)); do
-    found=$(list_runs | jq -r --arg t "${title}" --arg b "${ref}" --arg before " ${before} " \
-        '[.[] | select(.displayTitle == $t and .headBranch == $b and (((.databaseId | tostring) as $i | $before | contains(" " + $i + " ")) | not))] | first | .url // empty' 2> /dev/null) || found=""
+    # a run that was not listed before the dispatch, on this branch, titled with the run-name or (for the first seconds, or for good when the
+    # run-name never applies) the workflow name; the exact run-name wins when both exist
+    found=$(list_runs | jq -r --arg t "${title}" --arg w "Build dx image" --arg b "${ref}" --arg before " ${before} " \
+        '[.[] | select((.displayTitle == $t or .displayTitle == $w) and .headBranch == $b and (((.databaseId | tostring) as $i | $before | contains(" " + $i + " ")) | not))]
+         | (map(select(.displayTitle == $t)) + .) | first | .url // empty' 2> /dev/null) || found=""
     if [[ -n "${found}" ]]; then started "${found}"; fi
     (( i == tries )) || sleep "${POLL_WAIT:-10}"
 done
