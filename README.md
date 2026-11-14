@@ -131,7 +131,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--restore] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
 | `ujust wake-on-lan [--status\|--off]` | Turn on Wake-on-LAN for the wired network card through NetworkManager (the BIOS or UEFI setting is yours) |
 | `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |
-| `ujust gnome-candy <recipe>` | Themes and icons from [gnome-themes](https://github.com/redcodeworks/gnome-themes), installed into your home directory |
+| `ujust gnome-candy <recipe>` | Themes and icons from [candy-for-gnome](https://github.com/redcodeworks/candy-for-gnome), installed into your home directory |
 | `ujust virthost-setup` (DX only) | Turn the machine into a KVM/libvirt host: check the CPU, verify the libvirt daemons, optional IOMMU kernel arguments for device passthrough, libvirt group and default connection, VM image directory, virtio driver ISO, a LAN bridge |
 | `ujust datastore start\|stop\|status\|logs` (DX only) | Start and stop the opt-in rootless datastore containers (PostgreSQL, Valkey, SeaweedFS; Kafka on request), all stopped until you start them |
 | `ujust datastore-setup` (DX only) | Create the datastore secrets, pin or update image versions, and back up the volumes |

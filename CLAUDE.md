@@ -365,7 +365,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   pushed; the aggregate job `Build and push image` still passes. Concurrency group is workflow plus ref,
   cancel-in-progress on (only `main` and the schedule are never cancelled). The workflow must exist on that branch.
   Test: `tests/build-triggers.sh`.
-- The owner's other repos (gnome-themes, fedora-toolbox, dot-files) still commit straight on `testing`.
+- The owner's other repos (candy-for-gnome, fedora-toolbox, dot-files) still commit straight on `testing`.
 
 ## Test workflow
 
@@ -639,7 +639,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - `datastore-setup` never creates a new `postgresql-password` while the volume `postgresql-data` exists (PostgreSQL keeps the password its data directory was created with): it prints the three ways out and exits 1; the other missing secrets are still created.
 - `toolbox`: the FIRST `conf ...` record is kept (it is what `--remove` restores), only `conf-value` follows later changes; a directory is recorded as created only after the installer succeeded and the directory exists (`note_dirs` / `confirm_dirs`); `--recreate` validates the definition and pulls the new image before it removes the box.
 - `dev --only java` sets the SDKMAN default only when none exists (a dangling `current` counts as none); `sensors-setup` does nothing (no sudo, no probe) when its module list exists, `--redetect` probes again, `--yes` never moves a hand-made `nct6775.conf`, and `hardware-setup` counts only `octarine-sensors.conf` as done; `toggle-updates enable` completes a half-enabled source (flatpak has two timers); `hardware-setup` treats `amd-cpu-gaming` as done only when `gamemode.ini` equals the shipped tuning.
-- `gnome-candy` runs recipes of the `main` branch of gnome-themes as the user, so a new revision is shown (commit, date, author, subject) and approved once (default no; the approved sha is `~/.local/state/octarine-os/gnome-candy-approved`); `GNOME_THEMES_REF=<full sha>` pins, `GNOME_THEMES_TRUST=1` skips the question (automation); without a terminal and without either it stops and says how.
+- `gnome-candy` runs recipes of the `main` branch of candy-for-gnome (the repository gnome-themes was renamed; the old URL redirects) as the user, so a new revision is shown (commit, date, author, subject) and approved once (default no; the approved sha is `~/.local/state/octarine-os/gnome-candy-approved`); `CANDY_FOR_GNOME_REF=<full sha>` pins, `CANDY_FOR_GNOME_TRUST=1` skips the question (automation), `CANDY_FOR_GNOME_URL` overrides the repository (default `https://github.com/redcodeworks/candy-for-gnome`); the old `GNOME_THEMES_*` names are gone, no alias; without a terminal and without either it stops and says how. An old `~/.cache/gnome-themes` is unused after the rename (the checkout lives in `~/.cache/candy-for-gnome/repo`) and can be deleted.
 - Deliberately NOT changed: the `fido-key` probe (a non-empty `u2f_keys` counts as done): the step writes the file by replacing it, so a stricter probe would make it overwrite another key's entries.
 ## Kernel arguments are pending until the reboot (and an image update drops them)
 
@@ -832,7 +832,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | Source | Entry | Decision | Reason |
   |---|---|---|---|
   | `20-interface.dconf` | `enable-hot-corners=false` | included | neutral behavior, one key, easy to undo |
-  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from gnome-themes |
+  | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from candy-for-gnome |
   | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
   | `30-enable-extensions.sh` | AppIndicator, GSConnect | included | shipped RPMs, GSConnect has a firewall service in the image |
@@ -1561,8 +1561,8 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
 - **Installer scripts.** SDKMAN and nvm (in the toolbox) are the only installer
   scripts; nothing here needs sudo.
-- **Other recipes.** `ujust gnome-candy` runs a recipe of the gnome-themes repo from a fresh checkout in
-  `~/.cache/gnome-themes/repo` (`GNOME_THEMES_REF` picks the ref).
+- **Other recipes.** `ujust gnome-candy` runs a recipe of the candy-for-gnome repo from a fresh checkout in
+  `~/.cache/candy-for-gnome/repo` (`CANDY_FOR_GNOME_REF` picks the ref).
   `user-setup [user] [--yes|--no] [--only STEP[,STEP...]]` replaced the seven single-purpose recipes `add-user-groups`,
   `flatpak-games-access`, `steam-flatpak-devices`, `vscode-flatpak-podman`, `podman-desktop-deny-docker-socket`,
   `chrome-flatpak-webapps` and `gearlever-applications` (removed, no aliases). It is an interactive y/n checklist; steps
