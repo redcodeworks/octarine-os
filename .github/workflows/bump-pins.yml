@@ -1,5 +1,5 @@
 name: Bump prebuilt image pins
-# Weekly check of the images pinned by digest from outside: chunkah (chunkah.env, the layer splitter of `just rechunk`; keyless signature), dev-packages (variants/dx/Containerfile), the shared developer package list
+# Weekly check of the images pinned by digest from outside: chunkah (config/chunkah.env, the layer splitter of `just rechunk`; keyless signature), dev-packages (variants/dx/Containerfile), the shared developer package list
 # built and signed by the fedora-toolbox repository, and the four datastore images of the dx Quadlets (postgresql, valkey, seaweedfs,
 # kafka; variants/dx/datastore/datastore.env): for those the newest tag inside the pinned MAJOR with its digest
 # (.github/scripts/datastore-pin-bump.sh); a newer major is only named in the pull request body, never applied. (The sched_ext schedulers and extest are built in this
@@ -139,7 +139,7 @@ jobs:
           fi
           {
             if [[ "${IMAGE}" == chunkah ]]; then
-              echo "Moves the chunkah pin (\`chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${OLD}\` to \`${NEW}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions OIDC, identity under github.com/coreos/chunkah) verified. A chunkah change alters how every image is split into layers: the build after the merge into \`testing\` is the first with it."
+              echo "Moves the chunkah pin (\`config/chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${OLD}\` to \`${NEW}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions OIDC, identity under github.com/coreos/chunkah) verified. A chunkah change alters how every image is split into layers: the build after the merge into \`testing\` is the first with it."
             elif [[ "${IMAGE}" == dev-packages ]]; then
               echo "Moves the ${IMAGE} pin from \`${OLD}\` to \`${NEW}\` (tag \`${TAG}\`): the digest of \`ghcr.io/redcodeworks/${IMAGE}:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`."
             else

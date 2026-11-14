@@ -28,12 +28,12 @@ COPY build_files /
 COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
-# Base image: `just build` and CI pass BASE_IMAGE and FEDORA_VERSION from image-template.env (the one place to edit,
+# Base image: `just build` and CI pass BASE_IMAGE and FEDORA_VERSION from config/image.env (the one place to edit,
 # for example for a Fedora major upgrade). Like the brew ARGs above, these must stay before the first FROM to be
 # usable in a FROM line; the defaults repeat the env file for a bare `podman build` and CI checks they agree.
 FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}
 
-# Passed in by `just build` from image-template.env; used to scope the signature policy to this image
+# Passed in by `just build` from config/image.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
 ARG IMAGE_NAME
 # The build's channel-neutral version (beta builds: `beta-` prefix), written to os-release IMAGE_VERSION by build.sh

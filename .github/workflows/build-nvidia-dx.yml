@@ -182,7 +182,7 @@ jobs:
       - name: Build the image
         run: |
           set -euo pipefail
-          set -a; . ./image-template.env; set +a
+          set -a; . ./config/image.env; set +a
           version=$(.github/scripts/image-version.sh)
           sha=$(git rev-parse HEAD)
           podman build -f variants/dx/Containerfile \

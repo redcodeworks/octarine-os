@@ -8,7 +8,7 @@ secrets, hostnames or personal data in it.
 
 A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) built on
 `${BASE_IMAGE}:${FEDORA_VERSION}` (now `ghcr.io/ublue-os/silverblue-main:45`; see the Containerfile bullet). It exists to make one desktop reproducible. See `README.md`
-for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setup.
+for the user-facing description and `docs/CONFIG-GUIDE.md` for the wider desktop setup.
 
 ## README policy
 
@@ -43,6 +43,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - `.github/workflows/`: `build-dx.yml` (the dx image, see "Input hashes and dx on testing"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
   environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
   signing flow").
+- `config/`: `image.env` (IMAGE_NAME, REPO_NAME and the label values; the Justfile loads it with `set dotenv-path`, the workflows read it by path; renamed from the template's `image-template.env` on 2026-11-14) and `chunkah.env` (the chunkah pin). Both are image-build inputs (any path outside `docs/`, `tests/` and top-level `*.md` is). `docs/` holds `CONFIG-GUIDE.md` (moved from the root 2026-11-14); `artifacthub-repo.yml` (template stub) was deleted the same day.
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
 
 ## Homebrew (files image)
@@ -434,7 +435,7 @@ Three jobs; `test` and `secrets` have these exact names because they are require
 - `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
   `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
   glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), the results printed in the order of the list with a PASS or FAIL line per test, the output of failing ones and a `Summary: N passed, M failed` line; any failure or timeout fails the job; the tests make their own temp directories, so they are independent). Measured on 2026-11-14 before this change: the job took about 170 s, of which the tool install was 25 s and the sequential test loop 133 s.
-  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells `test` whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). Then `test` skips `just check`, `bash -n` and the full run and runs only the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md, CONFIG-GUIDE.md or `docs/`, never a fixed list) plus a sanity check of the text (not empty, no merge conflict markers). A first push of a branch, a dispatch, a mixed push and any failure of the detection run everything; the job keeps its name and always runs (`if: always()`), so the required check never goes missing. The tool install stays unconditional because the documentation tests need it (it is 25 s; trimming it was not worth weakening the setup). Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
+  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells `test` whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). Then `test` skips `just check`, `bash -n` and the full run and runs only the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md or `docs/`, never a fixed list) plus a sanity check of the text (not empty, no merge conflict markers). A first push of a branch, a dispatch, a mixed push and any failure of the detection run everything; the job keeps its name and always runs (`if: always()`), so the required check never goes missing. The tool install stays unconditional because the documentation tests need it (it is 25 s; trimming it was not worth weakening the setup). Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
   skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
@@ -572,7 +573,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
   `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
   with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
-  The image is pinned by digest in `chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
+  The image is pinned by digest in `config/chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
   identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
   moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
   the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,
@@ -842,9 +843,9 @@ signed and the dx image was built on exactly that default digest.
 Shipped to everyone who uses the image as-is (moved here from the README's former "Personal choices" section):
 
 - **PAM:** `pam_u2f sufficient` for sudo and polkit: a security-key touch is accepted instead of the password; the
-  password still works when no key is registered; no PIN is required. Details in `CONFIG-GUIDE.md`.
+  password still works when no key is registered; no PIN is required. Details in `docs/CONFIG-GUIDE.md`.
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
-  Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
+  Tailscale's UDP port (`docs/CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
 - **Size and compilers:** the default image carries only `gcc`, `gcc-c++`, `make` and `binutils` since 2026-11-14 (the base had none; about 221 MiB); the dx image provides the full toolchain, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
@@ -1567,7 +1568,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 
 ## Forking
 
-Edit `image-template.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key
+Edit `config/image.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key
 (`COSIGN_PASSWORD="" cosign generate-key-pair`), commit `cosign.pub`, create a protected environment
 `signing` limited to `main` and `testing` (deployment branch policies through the API) and store the private key
 as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Point `disk_config/iso.toml` at the

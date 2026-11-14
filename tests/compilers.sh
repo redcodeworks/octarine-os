@@ -18,7 +18,7 @@ for w in build build-beta; do
 done
 check "gcc, gcc-c++, make and binutils are in the critical tier" bash -c "for p in gcc gcc-c++ make binutils; do grep -qw -- \$p <<<'$crit_build' || exit 1; done"
 check "the compilers are not in an optional group of build.sh" bash -c "! grep -E '^    \"[a-z]+:.*\\b(gcc|gcc-c\\+\\+|make|binutils)\\b' '$here/build_files/build.sh'"
-check "no test or script still says the default image has no compilers" bash -c "! grep -rIiE 'no compilers|carries no compilers|has none \\(neither' '$here/README.md' '$here/CLAUDE.md' '$here/CONFIG-GUIDE.md' '$here/build_files' '$here/system_files/usr/share/ublue-os/distrobox'"
+check "no test or script still says the default image has no compilers" bash -c "! grep -rIiE 'no compilers|carries no compilers|has none \\(neither' '$here/README.md' '$here/CLAUDE.md' '$here/docs/CONFIG-GUIDE.md' '$here/build_files' '$here/system_files/usr/share/ublue-os/distrobox'"
 for w in build build-beta; do
     check "$w.yml runs the compiler smoke test on the built image" python3 -I - "$here/.github/workflows/$w.yml" <<'PY'
 import sys, yaml

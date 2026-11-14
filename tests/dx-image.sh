@@ -428,7 +428,7 @@ work="$root/work"; bin="$root/bin"
 mkdir -p "$bin" "$work/keys" "$work/variants/dx"
 cp "$here/Justfile" "$work/Justfile"; cp "$cf" "$work/variants/dx/Containerfile"
 echo key >"$work/keys/redcodeworks-toolbox-cosign.pub"
-cp "$here/image-template.env" "$work/image-template.env"
+mkdir -p "$work/config"; cp "$here/config/image.env" "$work/config/image.env"
 [ -d "$here/githooks" ] && cp -r "$here/githooks" "$work/githooks"
 cat >"$bin/skopeo" <<'F'
 #!/usr/bin/env bash
