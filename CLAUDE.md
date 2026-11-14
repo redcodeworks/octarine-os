@@ -675,7 +675,7 @@ signed and the dx image was built on exactly that default digest.
   (optionally `-f vanilla_tag=latest-<date>-<sha7>`; default: the newest main commit with a published `latest-<sha7>`). It needs no dx image, moves
   only `octarine-os:latest`, and says in the summary that `octarine-os-dx:latest` is behind. It refuses `testing-*`, `beta*`, `latest` and anything
   that is not a dated tag, an unsigned image and an image whose revision is not on main. A later green dx run catches dx up.
-- **dx on main is grouped per commit** (`build-dx-latest-<sha7>`; testing and beta stay per channel): with one group GitHub cancels a PENDING run
+- **dx on main is grouped per commit** (`build-dx-latest-<full sha>`; testing and beta stay per channel): with one group GitHub cancels a PENDING run
   when a third arrives, which would silently drop a default image that never gets its pair. `cancel-in-progress` stays false.
 - **Failure and re-run table.** Daily run changes the base, dx build fails: `latest` stays on the previous pair, `Build container image` is
   green, `Build dx image` is red, an issue is opened; re-run the failed dx run (a green re-run publishes) or use the escape hatch. dx fails then is

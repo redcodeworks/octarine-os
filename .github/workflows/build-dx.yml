@@ -58,7 +58,7 @@ env:
 # one, silently dropping a default image that then never gets its dx pair; runs of different commits build side by side and Publish latest
 # serializes the moves
 concurrency:
-  group: build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', substring(inputs.sha || github.sha, 0, 7)) || inputs.channel }}
+  group: build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
   cancel-in-progress: false
 
 permissions:

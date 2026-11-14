@@ -39,7 +39,7 @@ check "build-dx.yml: channel latest is grouped per commit (testing and beta per 
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 g = w["concurrency"]["group"]
-assert "format('latest-{0}', substring(inputs.sha || github.sha, 0, 7))" in g and "inputs.channel" in g, g
+assert "format('latest-{0}', inputs.sha || github.sha)" in g and "inputs.channel" in g, g
 assert w["concurrency"]["cancel-in-progress"] is False
 plan = next(s for s in w["jobs"]["plan"]["steps"] if s.get("id") == "plan")
 assert plan["env"]["BASE_DIGEST_PIN"] == "${{ inputs.channel == 'latest' && inputs.base_digest || '' }}"
@@ -99,4 +99,13 @@ PY
 check "no workflow other than publish-latest.yml writes a bare :latest tag of the default or the dx image (skopeo copy or push-tags to a :latest tag)" bash -c "
     ! grep -nE 'skopeo copy[^#]*(octarine-os|octarine-os-dx|IMAGE)[^ ]*:latest( |\$)' $wf/build.yml $wf/build-dx.yml $wf/build-beta.yml &&
     grep -q 'docker://\$1:latest' '$here/.github/scripts/publish-latest.sh'"
+check "every expression of every workflow uses only functions that GitHub has (a run with an unknown one fails as a 'workflow file issue' with no job, e.g. substring)" python3 - "$wf" <<'PY'
+import glob, re, sys
+ok = {"contains", "startswith", "endswith", "format", "join", "tojson", "fromjson", "hashfiles", "success", "failure", "always", "cancelled"}
+for f in glob.glob(sys.argv[1] + "/*.yml"):
+    for m in re.finditer(r"\$\{\{(.*?)\}\}", open(f).read(), re.S):
+        expr = re.sub(r"'[^']*'", "''", m.group(1))
+        for fn in re.findall(r"\b([A-Za-z_]\w*)\s*\(", expr):
+            assert fn.lower() in ok, (f, fn, m.group(1).strip()[:80])
+PY
 exit "$fail"

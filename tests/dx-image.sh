@@ -61,7 +61,7 @@ check "workflow: channel, sha and dry_run are the inputs; the group build-dx-<ch
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert w["env"] == {"CHANNEL": "${{ inputs.channel }}", "FORCE": "${{ inputs.force || false }}", "SHA": "${{ inputs.sha || github.sha }}", "DRY_RUN": "${{ inputs.dry_run || false }}"}, w["env"]
-assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', substring(inputs.sha || github.sha, 0, 7)) || inputs.channel }}" and w["concurrency"]["cancel-in-progress"] is False
+assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}" and w["concurrency"]["cancel-in-progress"] is False
 assert w["jobs"]["build"]["env"]["CHANNEL"] == "${{ needs.plan.outputs.channel }}"
 assert w["jobs"]["build"]["env"]["BASE_DIGEST"] == "${{ needs.plan.outputs.base_digest }}"
 assert w["jobs"]["build"]["env"]["BASE_TAG"] == "${{ needs.plan.outputs.base_tag }}"
