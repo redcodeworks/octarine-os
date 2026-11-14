@@ -91,6 +91,19 @@ assert re.fullmatch(r"\d+\.\d+\.\d+", inst["env"]["GITLEAKS_VERSION"])
 assert re.fullmatch(r"[0-9a-f]{64}", inst["env"]["GITLEAKS_SHA256"])
 assert "--retry" in inst["run"] and "sha256sum -c" in inst["run"]
 PY
+check "every image workflow checks the free disk space first and runs the old cleanup action only as a fallback when less than 60 GiB are free" python3 - "$here" <<'PY'
+import sys, yaml
+for f in ("build", "build-beta", "build-dx", "build-nvidia", "build-nvidia-dx"):
+    w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/%s.yml" % f))
+    job = next(j for j in w["jobs"].values() if any(s.get("name") == "Check disk space" for s in j.get("steps", [])))
+    steps = job["steps"]
+    names = [s.get("name") for s in steps]
+    i = names.index("Check disk space")
+    chk, fb = steps[i], steps[i + 1]
+    assert chk["id"] == "disk" and '-lt 60' in chk["run"], f
+    assert fb["name"].startswith("Maximize build space (fallback") and fb["if"] == "steps.disk.outputs.low == 'true'", f
+    assert fb["uses"].startswith("ublue-os/remove-unwanted-software@") and len(fb["uses"].split("@")[1]) == 40, f
+PY
 check "build.yml: no pull_request trigger (the image builds only on testing and main pushes, schedule, dispatch)" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))

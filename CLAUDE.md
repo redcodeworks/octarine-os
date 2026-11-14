@@ -388,6 +388,10 @@ Test: `tests/test-workflow.sh`.
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
 
+## Runner disk space (2026-11-14)
+
+The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s on the default build, 73 s on dx). Measured on `ubuntu-26.04` with two non-publishing dispatches of `build.yml` from `exp/disk-a` and `exp/disk-b`: the root disk is 145 GB with 57 GB used and 88 GB free BEFORE any cleanup; after the action 26 GB used and 119 GB free; after the default image build and rechunk 44 GB used and 102 GB free, so the whole build needs about 18 GB on top of the cleaned runner (about 5 times less than the free space at the start). Every image workflow (`build.yml`, `build-beta.yml`, `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`) therefore runs a step `Check disk space` (id `disk`) and the action only as `Maximize build space (fallback, only when the disk is low)` when fewer than 60 GiB are free at the start. `build.yml` and `build-dx.yml` also print the free space after the build (job summary) and warn below 15 GiB. Only the default image was measured on a branch (dx and the NVIDIA builds publish, so they are only measured by their own runs: the summary line of the first dx build after this change is the number to look at). If a build ever fails with "no space left on device", lower nothing: remove the `if:` of the fallback step (the old behavior) and read the summary lines.
+
 ## Rules
 
 - Home- or user-level configuration (themes, icons, dotfiles) never goes in the image. It lives in its own
