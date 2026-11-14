@@ -26,7 +26,7 @@ case "$1 $2" in
         : >"$STATE/dispatched"
         [ "${FAKE_PRINT_URL:-1}" = 1 ] && echo "https://github.com/redcodeworks/octarine-os/actions/runs/777"
         exit 0 ;;
-    "run view") printf '{"displayTitle":"%s","headBranch":"%s"}' "${FAKE_VIEW_TITLE:-$title}" "${FAKE_VIEW_BRANCH:-$FAKE_REF}"; exit 0 ;;
+    "run view") printf '{"displayTitle":"Build dx image","event":"%s","headBranch":"%s"}' "${FAKE_VIEW_EVENT:-workflow_dispatch}" "${FAKE_VIEW_BRANCH:-$FAKE_REF}"; exit 0 ;;
     "run list")
         old="{\"databaseId\":5,\"displayTitle\":\"$title\",\"headBranch\":\"$FAKE_REF\",\"url\":\"https://example/old\"}"
         new="{\"databaseId\":6,\"displayTitle\":\"$title\",\"headBranch\":\"$FAKE_REF\",\"url\":\"https://example/new\"}"
@@ -43,9 +43,9 @@ unset GITHUB_STEP_SUMMARY
 run() { : >"$LOG"; rm -f "$STATE/dispatched"; PATH="$root/bin" REF=${REF:-testing} bash "$script" "$@" >"$root/out" 2>&1; rc=$?; }
 
 run testing "$sha"
-check "gh prints the run URL: dispatched on the ref with channel and sha, the run is checked and reported, exit 0, the gh version is printed" bash -c "[ $rc = 0 ] && grep -qx 'gh workflow run build-dx.yml -R redcodeworks/octarine-os --ref testing -f channel=testing -f sha=$sha' '$LOG' && grep -q 'Started: https://github.com/redcodeworks/octarine-os/actions/runs/777' '$root/out' && grep -q 'gh version 2.102.0' '$root/out'"
-FAKE_VIEW_TITLE="dx latest $sha" run testing "$sha"
-check "the run behind the printed URL has another title: fails loudly" bash -c "[ $rc = 1 ] && grep -q 'is titled' '$root/out'"
+check "gh prints the run URL: dispatched on the ref with channel and sha, the run (still titled with the workflow name, as a fresh run is) is accepted by event and branch, exit 0, the gh version is printed" bash -c "[ $rc = 0 ] && grep -qx 'gh workflow run build-dx.yml -R redcodeworks/octarine-os --ref testing -f channel=testing -f sha=$sha' '$LOG' && grep -q 'Started: https://github.com/redcodeworks/octarine-os/actions/runs/777' '$root/out' && grep -q 'gh version 2.102.0' '$root/out'"
+FAKE_VIEW_EVENT=push run testing "$sha"
+check "the run behind the printed URL is not a workflow_dispatch run: fails loudly" bash -c "[ $rc = 1 ] && grep -q 'expected a workflow_dispatch run' '$root/out'"
 FAKE_VIEW_BRANCH=main run testing "$sha"
 check "the run behind the printed URL is on another branch: fails loudly" bash -c "[ $rc = 1 ] && grep -q 'expected' '$root/out'"
 FAKE_PRINT_URL=0 run testing "$sha"
