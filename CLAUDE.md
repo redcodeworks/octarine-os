@@ -110,6 +110,24 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
+- **Fallback to the last good binaries image (daily build only; Kevin, 2026-11-14).** A failed binaries BUILD must not block the daily image; everything else still fails closed.
+  - *When.* ONLY the scheduled run on main (`build.yml` passes `allow_fallback: ${{ github.event_name == 'schedule' }}`; `binaries.yml` checks `schedule` and `refs/heads/main` again in the `fallback` job's `if`) and ONLY when the `build` job
+    failed (compile, fetch or verify of the upstream sources). Not for: a push to testing, a pull request, a promotion, `build-beta.yml`, a dispatch; a failed lookup; a failed SIGNING of the new image (build succeeded, `sign` failed: the result job stops);
+    a last-good image whose signature does not verify; one that fails the layout contract.
+  - *Which image.* The moving tag `last-good` of `octarine-os-binaries`, moved by the `track` job (`continue-on-error`, so it never blocks a build) with `skopeo copy --all --preserve-digests` to the digest of a signed build or reuse on main
+    (only `reused` and `built`, never a fallback). The tag is a pointer: `binaries-fallback.sh` resolves it to a manifest digest, verifies the cosign signature of THAT digest with `cosign.pub`, and the image build still copies from the digest
+    (`binaries-use.sh` verifies it again), never from the tag. `last-good` lags the newest tree by design: it moves only on main runs where the binaries job ran.
+  - *Contract.* Before use the candidate is exported and must pass `binaries-layout.sh` against THIS tree's `schedulers.tsv` (every scheduler of the tree, both extest libraries, SOURCE, BUILDINFO, LICENSES per component) and THIS tree's
+    `install-binaries.sh` run on it (`BINARIES_ROOT` and a scratch `DESTDIR`); otherwise the fallback is refused, the build fails and nothing ships without a component. A Fedora library change that breaks a binary at link time is NOT covered: an old image would hit the same failure; only a rebuild fixes it.
+  - *Visible.* The binaries job summary and a warning annotation say `FALLBACK: using binaries image <digest> (last-good, tree <hash>, built <date>) because the binaries build failed` (`build.yml` repeats it); the image carries the labels
+    `org.octarineos.binaries-fallback=true` and `org.octarineos.binaries-tree=<hash>` (`Justfile`, from `BINARIES_FALLBACK_TREE` which the workflow exports) and the installed `SOURCE` and `BUILDINFO` of both components and
+    `/usr/share/licenses/octarine-os-binaries/FALLBACK` say the binaries are NOT from this commit's `binaries/` tree and which tree they are from (`install-binaries.sh`); the `track` job opens ONE issue with the label `ci-failure-binaries`
+    (a comment per later fallback, closed with a comment when a main run builds or reuses the binaries without fallback; same mechanics as `ci-failure-dx`: `.github/scripts/ci-issue.sh` with `LABEL=ci-failure-binaries`).
+  - *Never kept.* `plan-skip.sh` reads the label of `latest` (`LATEST_FALLBACK`): an image built with fallback binaries is never skipped, so the next daily run builds again (and tries the real binaries); the label `io.github.redcodeworks.octarine-os.binaries` records the digest actually used.
+  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=true -f fallback_dry_run=true`: skips the reuse, fails the build step on purpose, runs the fallback checks on the real `last-good` image (signature, layout, installer)
+    and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
+  - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
+  - The binaries image has two components (scx, extest).
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).
@@ -724,6 +742,9 @@ signed and the dx image was built on exactly that default digest.
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
   variable, so set it only when the next scheduled build should use it.
+  (5) In the SAME change move the binaries builder: `ARG BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/Containerfile` (re-resolve the digest as
+  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/` tree also gives a new tree hash, so the next build
+  rebuilds them for the new release. The fallback to the last good binaries image does not help here: an old image built for release N-1 may not link on N, and only a rebuild fixes that.
 
 ## Logo files
 

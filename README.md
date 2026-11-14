@@ -155,7 +155,7 @@ The shipped niri key bindings and defaults follow niri's own default configurati
 
 The image ships prebuilt [extest](https://github.com/Supreeeme/extest) libraries (by Supreeeme and contributors, MIT license, built
 from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sched_ext schedulers](https://github.com/sched-ext/scx)
-(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`.
+(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`. If the daily build cannot rebuild these binaries it reuses the last good ones, says so in the build log and an issue, and labels the image.
 
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 

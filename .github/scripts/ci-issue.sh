@@ -9,7 +9,8 @@
 #
 # Environment: GH_TOKEN (permission issues: write), GITHUB_REPOSITORY, SHA (the commit of the run), CHANNEL (default latest), RUN_URL
 # (default: this run), NEEDS_JSON (toJSON(needs), optional: names the failed jobs), LABEL (default ci-failure-dx), DOCS_URL
-# (the CLAUDE.md section), NOW (default: today's date, for tests). Tools: gh, jq.
+# (the CLAUDE.md section), NOW (default: today's date, for tests), and for another kind of failure (the binaries fallback uses
+# LABEL=ci-failure-binaries): ISSUE_TITLE, ISSUE_BODY (the text of a new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT. Tools: gh, jq.
 set -euo pipefail
 mode="${1:?fail or recover}"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY}"
@@ -19,6 +20,7 @@ label="${LABEL:-ci-failure-dx}"
 run_url="${RUN_URL:-${GITHUB_SERVER_URL:-https://github.com}/${repo}/actions/runs/${GITHUB_RUN_ID:-0}}"
 docs="${DOCS_URL:-https://github.com/${repo}/blob/main/CLAUDE.md#promoting-the-default-and-dx-images-together}"
 now="${NOW:-$(date -u +%Y-%m-%d)}"
+label_desc="${LABEL_DESC:-dx or latest was not published (one open issue at a time)}"
 short="${sha:0:7}"
 
 failed=""
@@ -32,9 +34,15 @@ open_issue() {
 
 case "${mode}" in
     fail)
-        gh label create "${label}" -R "${repo}" --color B60205 --description "dx or latest was not published (one open issue at a time)" 2> /dev/null || true
+        gh label create "${label}" -R "${repo}" --color B60205 --description "${label_desc}" 2> /dev/null || true
         num=$(open_issue)
-        if [[ -z "${num}" ]]; then
+        if [[ -z "${num}" && -n "${ISSUE_BODY:-}" ]]; then
+            gh issue create -R "${repo}" --title "${ISSUE_TITLE:?ISSUE_TITLE}" --label "${label}" --body "${ISSUE_BODY}"
+            echo "opened an issue for ${run_url}"
+        elif [[ -n "${num}" && -n "${FAIL_COMMENT:-}" ]]; then
+            gh issue comment "${num}" -R "${repo}" --body "${FAIL_COMMENT} (${now}): ${run_url} (commit ${sha})."
+            echo "commented on #${num} for ${run_url}"
+        elif [[ -z "${num}" ]]; then
             body="The dx image of channel ${channel} (or the publication of \`latest\`) failed on main, so \`latest\` of both images stays on the previous pair.
 
 - Run: ${run_url}
@@ -54,7 +62,8 @@ Later failures are added to this issue as comments; it closes itself when \`late
     recover)
         num=$(open_issue)
         if [[ -z "${num}" ]]; then echo "no open ${label} issue: nothing to close"; exit 0; fi
-        gh issue comment "${num}" -R "${repo}" --body "recovered: ${run_url} moved \`latest\` (commit ${sha}, ${now})."
+        if [[ -n "${RECOVER_COMMENT:-}" ]]; then rmsg="recovered: ${RECOVER_COMMENT} (${run_url}, commit ${sha}, ${now})."; else rmsg="recovered: ${run_url} moved \`latest\` (commit ${sha}, ${now})."; fi
+        gh issue comment "${num}" -R "${repo}" --body "${rmsg}"
         gh issue close "${num}" -R "${repo}"
         echo "closed #${num}"
         ;;
