@@ -16,6 +16,12 @@ What it checks (nothing is loaded, no BPF runs; a real machine still has to load
          guards them with bpf_ksym_exists) and are only listed as notes.
        - every member of struct sched_ext_ops that its struct_ops sets with a program must exist in the kernel's own
          struct sched_ext_ops (members are found through the relocations of the .struct_ops* sections and the object's BTF).
+  4. The runtime model of libbpf's kernel-config lookup. A BPF object with `.kconfig` externs (extern ... CONFIG_* __kconfig) makes
+     libbpf read the kernel config at load time, and libbpf (v1.7.0) tries exactly /boot/config-<uname -r> and /proc/config.gz. The
+     image has neither (CONFIG_IKCONFIG is off, the ostree /boot has no config), so such a scheduler fails with "failed to open
+     system Kconfig" / EINVAL (scx_lavd, first real start 2026-11-14). The check lists the CONFIG_* externs of every scheduler and
+     FAILS when there are any and --run-script (default /usr/libexec/octarine-os/scx-run) does not carry the mechanism that gives the
+     scheduler a config (a private mount namespace with the image's config bound at /boot/config-<release>).
   The check exits 1 when a required import or a set member is missing from the kernel. Limits (printed, not hidden): it does not
   prove that the verifier accepts the programs, that a member's meaning is unchanged, or that the userspace side works.
 """
@@ -211,6 +217,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel-dir", required=True)
     ap.add_argument("--binary-dir", default="/usr/bin")
+    ap.add_argument("--run-script", default="/usr/libexec/octarine-os/scx-run")
     ap.add_argument("--manifest", default="/usr/share/octarine-os/schedulers.tsv")
     ap.add_argument("names", nargs="*")
     args = ap.parse_args()
@@ -273,6 +280,13 @@ def main():
     if not names:
         print("FAIL no scheduler to check")
         return 1
+    # the mechanism that gives libbpf a kernel config (see 4. above): scx-run runs the scheduler in a private mount namespace
+    try:
+        run_text = open(args.run_script).read()
+    except OSError:
+        run_text = ""
+    wrapper = all(m in run_text for m in ("unshare", "--bind", "config-${rel}", "/usr/lib/modules"))
+    needing = []
     for name in names:
         path = os.path.join(args.binary_dir, name)
         try:
@@ -303,18 +317,28 @@ def main():
             return sym in kernel_funcs or sym in kernel_vars or sym in sysmap
         miss_req = sorted(s for s in req if not known(s))
         miss_weak = sorted(s for s in weak if not known(s) and not s.startswith("CONFIG_"))
+        kconfig = sorted(s for s in (req | weak) if s.startswith("CONFIG_"))
         miss_members = sorted(m for m in members if m not in kernel_members)
         status = "ok  "
         if miss_req or miss_members:
             status = "FAIL"
             failed = True
+        if kconfig and not wrapper:
+            status = "FAIL"
+            failed = True
         print("%s %s: %d required imports, %d weak, %d struct_ops members set" % (status, name, len(req), len(weak), len(members)))
+        if kconfig:
+            needing.append(name)
+            print("       .kconfig externs (libbpf reads the kernel config at load time): %s" % ", ".join(kconfig))
+            if not wrapper:
+                print("       FAIL: libbpf finds no kernel config here (no /boot/config-<release>, no /proc/config.gz) and %s does not give the scheduler one" % args.run_script)
         if miss_req:
             print("       required kernel symbols missing from %s: %s" % (kver, ", ".join(miss_req)))
         if miss_members:
             print("       struct sched_ext_ops members set by the scheduler but absent from the kernel: %s" % ", ".join(miss_members))
         if miss_weak:
             print("       note: optional (weak) imports absent from the kernel, the compat layer handles them: %s" % ", ".join(miss_weak))
+    print("schedulers that need a kernel config at load time (CONFIG_* externs): %s; run script provides it: %s" % (", ".join(needing) or "none", "yes" if wrapper else "no"))
     print("limits: static comparison only; verifier acceptance, changed semantics and the userspace side are not checked")
     return 1 if failed else 0
 

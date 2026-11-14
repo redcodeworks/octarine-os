@@ -78,12 +78,12 @@ for r in $dx_recipes; do
     check "README lists ujust $r as DX only" grep -qE "ujust $r.*\(DX only\)" "$readme"
 done
 names_only_real_recipes() {
-    local r known; known=" $(echo $default_recipes $dx_recipes) list enroll-secure-boot-key "
+    local r known; known=" $(echo $default_recipes $dx_recipes) list enroll-secure-boot-key toggle-motd toggle-user-motd "
     for r in $(grep -oE 'ujust [a-z][a-z-]*' "$readme" | sed 's/ujust //' | sort -u); do
         case "$known" in *" $r "*) ;; *) echo "unknown recipe $r"; return 1 ;; esac
     done
 }
-check "the README names no recipe that does not exist (enroll-secure-boot-key is the base's)" names_only_real_recipes
+check "the README names no recipe that does not exist (enroll-secure-boot-key is the base's, toggle-motd is in 00-default.just)" names_only_real_recipes
 
 # ---- variants: the image names in the table exist in the repo
 for img in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do

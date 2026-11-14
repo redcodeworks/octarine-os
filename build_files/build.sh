@@ -24,14 +24,14 @@ fi
 # Base recipe files that our own file of the same name wraps: keep the base copy as <name>-base.just. Our file imports it and
 # overrides single recipes (between two imported files the FIRST import wins, so a later file could not override them).
 # A missing base file fails the build, which is the signal that the base changed its layout.
-for f in 10-update 30-distrobox; do
+for f in 00-default 10-update 30-distrobox; do
     mv "/usr/share/ublue-os/just/${f}.just" "/usr/share/ublue-os/just/${f}-base.just"
 done
 
 # Copy the contents of system_files/ of the git repo to /
 cp -avf "/ctx/system_files"/. /
 
-# Our 15-luks.just, 40-nvidia.just and 50-akmods.just overwrite the base files of the same name (only 10-update and
+# Our 15-luks.just, 40-nvidia.just and 50-akmods.just overwrite the base files of the same name (only 00-default, 10-update and
 # 30-distrobox are renamed and imported). The base's toggle-nvk (builds image names that do not exist, rebases without the
 # signature policy) lived in 40-nvidia.just: it must be gone.
 if grep -rqE '^toggle-nvk' /usr/share/ublue-os/just/; then echo "ERROR: the base toggle-nvk recipe is still installed"; exit 1; fi
@@ -139,7 +139,7 @@ mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
 optional_groups=(
-    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
+    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone"
     "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
     "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
     "pcp:pcp python3-pcp"

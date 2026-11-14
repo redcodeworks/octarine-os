@@ -125,6 +125,7 @@ Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 | `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia, nvidia-dx) or channel (latest, beta, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
+| `ujust toggle-motd` | Turns the message of the day (a fastfetch summary, or a tip when fastfetch is not installed) on or off for every shell; `toggle-user-motd` is the same switch |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
 | `ujust hardware-setup [--list]` | Checklist of vendor and hardware specific setup; every step is hidden when your machine lacks that hardware (AMD or NVIDIA GPU, ROCm in a container, Secure Boot, TPM unlock, security key, fan sensors, Wake-on-LAN, IOMMU for passthrough) |
 | `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--restore] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
