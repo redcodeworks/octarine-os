@@ -801,3 +801,26 @@ jobs:
             cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
+
+  # Starts the dx workflow (build-dx.yml, a separate run that can be re-run on its own) for the commit just built, on the same
+  # ref, so its run is recorded on that branch and its file is the branch's own. One-way: it needs the base's aggregate result,
+  # nothing of the base needs it. always() because the implicit success() is false when any ancestor job was skipped (promote on
+  # a testing push). It waits until the dx run EXISTS (not until it ends) and fails if none appears; re-running this job alone
+  # dispatches again. Only for main and testing; there is no pull_request trigger.
+  dispatch_dx:
+    name: Start the dx build
+    needs: build_result
+    if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Dispatch the dx workflow on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}"
