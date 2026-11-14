@@ -916,11 +916,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   (`[0-9]{8}-[0-9a-f]{7,}`, with `beta-` for beta builds). `check-version-neutral.sh` also reads the image's os-release
   `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`, no `beta` in a stable image, and
   with `BETA=true` it must start with `beta-`. Tests: `tests/image-version.sh`, `beta-channel.sh`, `dx-image.sh`, `nvidia-variant.sh`.
-- fastfetch is NOT in the image and stays a Homebrew install (owner's rule); only a default configuration ships:
+- fastfetch: OUR build does not install it and must not (owner's rule; a Homebrew install is the owner's way); only a default configuration ships. On the owner's machine `/usr/bin/fastfetch` exists anyway (fastfetch-2.68.1-1.fc45, not layered): it is not in `build.sh`, the dx lists or the `packages.json` of ublue-os/main, so it comes with the upstream Fedora Silverblue set that the base image carries (to confirm with `rpm -qf /usr/bin/fastfetch`: open item for the hub); the motd script works with and without it. Default configuration:
   `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
   so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
   they are missing, and `n/a` elsewhere. Test: `tests/fastfetch-default.sh` (strips the `//` lines, then `jq`). Never add fastfetch to
   `build.sh` or a Brewfile.
+
+## The motd: one script, one switch for every shell
+
+- `/usr/libexec/octarine-os/motd` (`system_files/usr/libexec/octarine-os/motd`) is the only motd code: silent (exit 0) without a terminal on stdout, with the flag `~/.config/no-show-user-motd` (file present = off; the base image's flag), without `$HOME` or with `OCTARINE_MOTD_SHOWN` set; otherwise `fastfetch` when on PATH (it reads `~/.config/fastfetch/config.jsonc` then `/etc/xdg/fastfetch/config.jsonc`; no `--config`), else ONE random line of the base tip files `/usr/share/ublue-os/motd/tips/*.md` (one tip per line, markdown markup removed; the base's `/usr/libexec/ublue-motd` picker no longer exists in this base, so the picker is ours and reuses only the files), else `/etc/user-motd`. Never fails, no network. Test hooks `OCTARINE_MOTD_FORCE_TTY|TIPS|FILE`.
+- `/etc/profile.d/user-motd.sh` (ours, same name as the base file, so the `cp` of `system_files` replaces it) calls it for INTERACTIVE shells with a terminal only (`case $- in *i*)`, `[ -t 1 ]`), once (`USERMOTDSOURCED` guard): bash and zsh login shells. `bash -lc`, scripts and `ssh host cmd` never print it.
+- fish is NOT a login shell in the owner's terminals and never sources profile.d: it calls the script from the user's own greeting function, for example `~/.config/fish/functions/fish_greeting.fish`: `function fish_greeting` / `  test -x /usr/libexec/octarine-os/motd; and /usr/libexec/octarine-os/motd` / `end` (the flag is honored inside the script; the image ships no fish greeting).
+- The switch: `ujust toggle-motd` ("Toggle the motd (fastfetch summary or tips) in every shell"; prints "motd is now on/off") and `ujust toggle-user-motd` (the base recipe's name, a dependency on `toggle-motd`). `build.sh` keeps the base `00-default.just` as `00-default-base.just` (the way `10-update` and `30-distrobox` are kept); our `00-default.just` imports it and defines both names (a recipe of the importing file beats the imported one); the smoke tests check that each name is listed once. Tests: `tests/motd.sh`, `tests/just-recipes.sh`.
+- Only a real login shell can verify: an SSH login, a bash and a zsh login on a terminal, the fish greeting, and that the recipe wins over the base file in a real `ujust --list`.
 
 ## Beta channel (`octarine-os:beta`)
 

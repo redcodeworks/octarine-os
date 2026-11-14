@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# The message of the day for every shell: ONE script, ONE switch (~/.config/no-show-user-motd, the flag of the base image's
+# `ujust toggle-user-motd`: file present = off). Called by /etc/profile.d/user-motd.sh (bash and zsh login shells) and, when the
+# owner wires it, by a fish_greeting function. Prints `fastfetch` when it is installed (it reads ~/.config/fastfetch/config.jsonc,
+# then /etc/xdg/fastfetch/config.jsonc: no --config here), else one tip from the base image's tip files, else /etc/user-motd.
+# Silent (exit 0) without a terminal on stdout, with the flag, without $HOME, or when OCTARINE_MOTD_SHOWN is set. Never fails
+# the shell: always exit 0; no network; the tips are read from local files only.
+# Test hooks: OCTARINE_MOTD_FORCE_TTY=1 (pretend stdout is a terminal), OCTARINE_MOTD_TIPS (tip directory), OCTARINE_MOTD_FILE.
+set -u
+[ -z "${OCTARINE_MOTD_SHOWN:-}" ] || exit 0
+if [ "${OCTARINE_MOTD_FORCE_TTY:-}" != 1 ] && [ ! -t 1 ]; then exit 0; fi
+[ -n "${HOME:-}" ] && [ -d "${HOME}" ] || exit 0
+[ ! -e "${HOME}/.config/no-show-user-motd" ] || exit 0
+
+if command -v fastfetch > /dev/null 2>&1; then
+    fastfetch 2> /dev/null || true
+    exit 0
+fi
+
+tips_dir="${OCTARINE_MOTD_TIPS:-/usr/share/ublue-os/motd/tips}"
+shopt -s nullglob
+tip_files=("${tips_dir}"/*.md)
+if [ "${#tip_files[@]}" -gt 0 ]; then
+    # the base image ships one tip per line (markdown emphasis and code quotes); pick one at random and drop the markup
+    tips=$(cat -- "${tip_files[@]}" 2> /dev/null | grep -v '^[[:space:]]*$')
+    if [ -n "${tips}" ]; then
+        if command -v shuf > /dev/null 2>&1; then tip=$(printf '%s\n' "${tips}" | shuf -n 1); else tip=$(printf '%s\n' "${tips}" | head -n 1); fi
+        printf 'Tip: %s\n' "$(printf '%s' "${tip}" | sed 's/[*`]//g')"
+        exit 0
+    fi
+fi
+user_motd="${OCTARINE_MOTD_FILE:-/etc/user-motd}"
+if [ -s "${user_motd}" ]; then cat -- "${user_motd}" 2> /dev/null || true; fi
+exit 0
