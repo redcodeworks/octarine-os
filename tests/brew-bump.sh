@@ -15,7 +15,7 @@ cp "$here/../Justfile" "$work/Justfile"
 cp "$here/../Containerfile" "$work/Containerfile"
 echo key >"$work/keys/ublue-os-brew-cosign.pub"
 [ -d "$here/../githooks" ] && cp -r "$here/../githooks" "$work/githooks"
-[ -f "$here/../image-template.env" ] && cp "$here/../image-template.env" "$work/image-template.env"
+mkdir -p "$work/config"; [ -f "$here/../config/image.env" ] && cp "$here/../config/image.env" "$work/config/image.env"
 REAL_JUST=$(command -v just)
 export LOG="$root/log"
 

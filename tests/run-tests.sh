@@ -61,6 +61,6 @@ check "an empty before: full" test "$(sc push "" "$d1")" = full
 check "a manual dispatch: full" test "$(sc workflow_dispatch "$base" "$d1")" = full
 check "an empty diff: full" test "$(sc push "$d1" "$d1")" = full
 check "outside a repository (git fails): full, the default of every doubt" bash -c "cd '$root' && [ \"\$(bash '$scope' push $base $d1 2>/dev/null)\" = full ]"
-check "--doc-tests lists the tests that read README, CLAUDE, CONFIG-GUIDE or docs/ (derived, not a fixed list)" bash -c "cd '$here' && bash '$scope' --doc-tests | grep -q 'tests/readme-defaults.sh'"
+check "--doc-tests lists the tests that read README, CLAUDE or docs/ (the config guide is under docs/) (derived, not a fixed list)" bash -c "cd '$here' && bash '$scope' --doc-tests | grep -q 'tests/readme-defaults.sh'"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

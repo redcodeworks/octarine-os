@@ -10,7 +10,7 @@
 # unknown), a manual dispatch, an empty diff, a failing git. The job keeps its name and its required check either way.
 set -uo pipefail
 
-doc_tests() { grep -lE 'README\.md|CLAUDE\.md|CONFIG-GUIDE\.md|docs/' tests/*.sh 2> /dev/null || true; }
+doc_tests() { grep -lE 'README\.md|CLAUDE\.md|docs/' tests/*.sh 2> /dev/null || true; }
 if [[ "${1:-}" == --doc-tests ]]; then doc_tests; exit 0; fi
 
 is_doc_text() {

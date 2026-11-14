@@ -1,4 +1,4 @@
-set dotenv-filename := "image-template.env"
+set dotenv-path := "config/image.env"
 set dotenv-load
 
 export image_name := env_var("IMAGE_NAME")
@@ -169,7 +169,7 @@ build $target_image=image_name $tag=default_tag:
 
     podman build "${PODMAN_BUILD_ARGS[@]}" .
 
-# Split the image into layers for smaller updates (chunkah, like Aurora and Bazzite). The chunkah image is pinned by digest in chunkah.env and its
+# Split the image into layers for smaller updates (chunkah, like Aurora and Bazzite). The chunkah image is pinned by digest in config/chunkah.env and its
 # cosign signature is verified before it runs (.github/scripts/chunkah-ref.sh). chunkah starts from the image's own config (`podman inspect`), so
 # every label set by `just build` stays; the labels of an earlier ostree commit are dropped, as chunkah's own documentation does.
 # You may run into space issues on runners: this makes a complete copy of the image.

@@ -46,7 +46,7 @@ jobs:
           PRUNE_ENABLED: ${{ vars.PRUNE_ENABLED }}
         run: |
           set -euo pipefail
-          image=$(sed -n 's/^IMAGE_NAME=//p' image-template.env | tr -d '"')
+          image=$(sed -n 's/^IMAGE_NAME=//p' config/image.env | tr -d '"')
           image="${image,,}"
           kind=$(gh api "users/${OWNER}" --jq '.type')
           if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi

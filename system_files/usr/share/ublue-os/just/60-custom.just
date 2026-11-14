@@ -2706,7 +2706,7 @@ hardware-setup *args:
                 if pamu2fcfg -o pam://sudo -i pam://sudo >"$tmp" && [ -s "$tmp" ]; then
                     chmod 600 "$tmp"
                     mv -- "$tmp" "$u2f_file" || { rm -f "$tmp"; return 1; }
-                    echo "Wrote $u2f_file. Check: sudo -k; sudo true (asks for the touch). A second key: see CONFIG-GUIDE.md."
+                    echo "Wrote $u2f_file. Check: sudo -k; sudo true (asks for the touch). A second key: see docs/CONFIG-GUIDE.md."
                 else
                     rm -f "$tmp"
                     echo "No key was registered (nothing written)." >&2

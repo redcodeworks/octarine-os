@@ -103,17 +103,17 @@ on = w.get(True) or w.get("on")
 assert set(on) == {"schedule", "workflow_dispatch"}, set(on)
 assert on["schedule"] == [{"cron": "0 7 * * 2"}], on["schedule"]
 PY
-# ---- bump-pin.sh chunkah: chunkah.env, keyless verification
-cb="$root/chunkbump"; rm -rf "$cb"; mkdir -p "$cb"
+# ---- bump-pin.sh chunkah: config/chunkah.env, keyless verification
+cb="$root/chunkbump"; rm -rf "$cb"; mkdir -p "$cb/config"
 cdg() { printf 'manifest of docker://quay.io/coreos/chunkah:latest' | sha256sum | sed 's/ .*//'; }
-chunk_env() { printf 'CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_TAG=latest\nCHUNKAH_DIGEST=%s\n' "$1" >"$cb/chunkah.env"; : >"$LOG"; : >"$root/gho"; }
+chunk_env() { printf 'CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_TAG=latest\nCHUNKAH_DIGEST=%s\n' "$1" >"$cb/config/chunkah.env"; : >"$LOG"; : >"$root/gho"; }
 cbump() { (cd "$cb" && env "$@" PATH="$bin:$PATH" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/bump-pin.sh" chunkah) >"$root/run" 2>&1; rc=$?; }
 chunk_env "sha256:$(printf '0%.0s' {1..64})"; cbump X=1
-check "chunkah: a different latest is verified KEYLESS (OIDC issuer and the coreos/chunkah identity), then the pin in chunkah.env moves (exit 10)" bash -c "[ $rc = 10 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/chunkah.env' && grep -q 'cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github.com/coreos/chunkah/ quay.io/coreos/chunkah@sha256:$(cdg)' '$LOG' && ! grep -q -- '--key' '$LOG'"
+check "chunkah: a different latest is verified KEYLESS (OIDC issuer and the coreos/chunkah identity), then the pin in config/chunkah.env moves (exit 10)" bash -c "[ $rc = 10 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/config/chunkah.env' && grep -q 'cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github.com/coreos/chunkah/ quay.io/coreos/chunkah@sha256:$(cdg)' '$LOG' && ! grep -q -- '--key' '$LOG'"
 chunk_env "sha256:$(cdg)"; cbump X=1
-check "chunkah: equal digest: nothing to bump, exit 0, file untouched" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/chunkah.env'"
+check "chunkah: equal digest: nothing to bump, exit 0, file untouched" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/config/chunkah.env'"
 chunk_env "sha256:$(printf '0%.0s' {1..64})"; cbump COSIGN_RC=1
-check "chunkah: a signature that does not verify: exit 2, file untouched" bash -c "[ $rc = 2 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(printf '0%.0s' {1..64})' '$cb/chunkah.env'"
+check "chunkah: a signature that does not verify: exit 2, file untouched" bash -c "[ $rc = 2 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(printf '0%.0s' {1..64})' '$cb/config/chunkah.env'"
 check "bump-pins.yml: dev-packages, chunkah plus the four datastore images, no fail-fast, checks out testing, permissions contents, pull-requests and actions write, packages read" python3 -I - "$wf" <<'PY'
 import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
