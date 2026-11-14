@@ -21,7 +21,7 @@ in_order() { # headings in the order given, all present
 
 # ---- README structure
 check "sections in order: requirements, highlights, variants, install, recipes, then the closing block" \
-    in_order Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
+    in_order "Build status" Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
 check "the last second-level heading is About this repo (the disclaimer stays last)" \
     bash -c "[ \"\$(grep -E '^## ' '$readme' | tail -1)\" = '## About this repo' ]"
 check "the disclaimer text is in the About section" bash -c "awk '/^## About this repo/{f=1} f' '$readme' | grep -q 'excuse the slop'"
@@ -38,7 +38,10 @@ check "the Variants table has exactly the four images (no badge column in it)" b
 check "Build status table: header, four rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
 import re, sys, os
 text = open(sys.argv[1]).read(); repo = sys.argv[2]
-sec = text.split("### Build status", 1)[1].split("\n## ", 1)[0]
+assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
+assert text.index("CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
+assert "### Build status" not in text
+sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
 rows = [l for l in sec.splitlines() if l.startswith("|")]
 assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
 body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}

@@ -8,6 +8,17 @@ hardening and tuning defaults. It is built daily and signed. It makes one deskto
 parts of it are useful to you. It is one person's configuration with no promises: read what it changes before you run it.
 The wider desktop setup is in [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 
+## Build status
+
+| Image | main | testing |
+|---|---|---|
+| default | [![default, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![default, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
+| NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
+| dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
+| NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
+
+The dx image is built in the same pipeline as the default image, so its badges are the same. The NVIDIA dx badge shows "no status" until its first weekly run.
+
 ## Requirements
 
 - A PC that runs Fedora Silverblue (the current release, 45), with UEFI boot and enough disk for the image.
@@ -62,17 +73,6 @@ Added by this image:
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
-
-### Build status
-
-| Image | main | testing |
-|---|---|---|
-| default | [![default, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![default, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
-| NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
-| dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
-| NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
-
-The dx image is built in the same pipeline as the default image, so its badges are the same. The NVIDIA dx badge shows "no status" until its first weekly run.
 
 The default and dx images also have a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base
 that shows early what the next Fedora release would break. It is not tested for daily use. The NVIDIA images have only `latest`.

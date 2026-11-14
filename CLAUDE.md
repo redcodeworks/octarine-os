@@ -14,7 +14,7 @@ for the user-facing description and `CONFIG-GUIDE.md` for the wider desktop setu
 
 The README is user-facing for people who just need the concise what, why and basic how to use it. It is not a place
 for notes to yourself and carries no technical implementation details (those go here). Essential sections:
-Requirements, Highlights, Install (with the Variants table and the Recipes list: every `ujust` recipe, one line each, no
+Build status (a short badge table, image by main and testing, directly under the opening paragraph; the NVIDIA images never run on testing, so their testing cell is text), Requirements, Highlights, Install (with the Variants table and the Recipes list: every `ujust` recipe, one line each, no
 step lists, the recipes explain themselves), then the closing block Contributing, License, Credits and About this repo
 (personal project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs,
 forks encouraged; its `### Fork it` heading is linked from `AGENTS.md`), disclaimer last. No design rationale, process
