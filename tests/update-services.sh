@@ -152,6 +152,43 @@ check "a failing source does not stop the others, and is reported (exit 1)" bash
 FAKE_ENABLED="$all_on" run update bogus
 check "an unknown source is rejected (exit 2)" bash -c "[ $rc = 2 ]"
 
+# ---- a half-enabled source (flatpak: the system timer on, the user timer off) is completed by enable, not skipped
+FAKE_ENABLED="flatpak-system-update.timer" run toggle-updates enable flatpak --yes
+check "enable on a half-enabled flatpak: planned as completing it, BOTH timers get the enable (the user one is the missing one)" bash -c "[ $rc = 0 ] && grep -q 'completes it' '$root/out' && grep -q 'systemctl\[user\] enable --now user:flatpak-user-update.timer\|systemctl\[user\] enable --now flatpak-user-update.timer' '$LOG' && grep -q 'systemctl\[system\] enable --now flatpak-system-update.timer' '$LOG'"
+FAKE_ENABLED="flatpak-system-update.timer user:flatpak-user-update.timer" run toggle-updates enable flatpak --yes
+check "enable on a fully enabled flatpak: nothing to change, no systemctl call" bash -c "[ $rc = 0 ] && grep -q 'Nothing to change' '$root/out' && ! grep -q 'systemctl\[' '$LOG'"
+FAKE_ENABLED="flatpak-system-update.timer" run toggle-updates disable flatpak --yes
+check "disable on a half-enabled flatpak turns the whole source off" bash -c "[ $rc = 0 ] && grep -q 'turn off  flatpak' '$root/out' && grep -q 'disable --now flatpak-system-update.timer' '$LOG'"
+# ---- a pending kernel-argument change would be replaced by the staged image: warn, ask (default no), --yes goes on, --no is the plan
+mkdir -p "$root/kbin"
+cat >"$root/kbin/rpm-ostree" <<'EOF2'
+#!/bin/bash
+case "$1" in
+    kargs) echo "root=UUID=1 rw quiet ${FAKE_NEXT_EXTRA-}" ;;
+    status) echo '{"deployments":[{"booted":false,"requested-packages":[]},{"booted":true}]}' ;;
+esac
+EOF2
+chmod +x "$root/kbin/rpm-ostree"
+echo "root=UUID=1 rw quiet" >"$root/cmdline"
+krun() { # args...
+    : >"$LOG"
+    PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_UPDATE_LIB="$lib" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline" \
+        just --justfile "$root/Justfile" update "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+FAKE_NEXT_EXTRA="amdgpu.ppfeaturemask=0xffffffff" FAKE_ENABLED="$all_on" krun
+check "pending kernel argument, image source on, asked (default no): WARNING with the change, the image is NOT updated, the other sources still are, exit 0" bash -c "[ $rc = 0 ] && grep -q 'WARNING: a pending kernel-argument change would be lost by the image update' '$root/out' && grep -q '+amdgpu.ppfeaturemask=0xffffffff' '$root/out' && grep -q 'Image update skipped' '$root/out' && ! grep -q 'bootc upgrade' '$LOG' && grep -q 'flatpak update' '$LOG'"
+FAKE_NEXT_EXTRA="amdgpu.ppfeaturemask=0xffffffff" FAKE_ENABLED="$all_on" krun --yes
+check "pending kernel argument with --yes: the WARNING is printed and bootc upgrade runs" bash -c "[ $rc = 0 ] && grep -q 'WARNING' '$root/out' && grep -q -- '--yes: going on anyway' '$root/out' && grep -q 'bootc upgrade' '$LOG'"
+FAKE_NEXT_EXTRA="amdgpu.ppfeaturemask=0xffffffff" FAKE_ENABLED="$all_on" krun --no
+check "pending kernel argument with --no: the WARNING and the plan, nothing runs" bash -c "[ $rc = 0 ] && grep -q 'WARNING' '$root/out' && grep -q 'Would run: sudo bootc upgrade' '$root/out' && ! grep -q '^bootc' '$LOG'"
+FAKE_NEXT_EXTRA="" FAKE_ENABLED="$all_on" krun
+check "nothing pending: no warning, the image update runs without a question" bash -c "[ $rc = 0 ] && ! grep -q 'WARNING' '$root/out' && grep -q 'bootc upgrade' '$LOG'"
+FAKE_NEXT_EXTRA="iommu=pt" FAKE_ENABLED="$all_on" krun flatpak
+check "pending kernel argument but the image source is not part of the run: no warning" bash -c "[ $rc = 0 ] && ! grep -q 'WARNING' '$root/out'"
+FAKE_NEXT_EXTRA="iommu=pt" FAKE_ENABLED="rpm-ostreed-automatic.timer" krun
+check "pending kernel argument and image is the only source: skipped, exit 0, says reboot first" bash -c "[ $rc = 0 ] && grep -q 'Image update skipped' '$root/out' && ! grep -q 'bootc' '$LOG'"
+
 # ---- the units and the overrides of the base recipes
 u="$here/system_files/usr/lib/systemd/user"
 check "the distrobox service runs distrobox upgrade --all" grep -qx 'ExecStart=/usr/bin/distrobox upgrade --all' "$u/octarine-distrobox-upgrade.service"
