@@ -373,15 +373,16 @@ integration branch (GitLab's "main"); `main` is the production branch.
 minutes). Triggers: `push` with `branches-ignore: [main, testing]` and `workflow_dispatch`; no `pull_request`
 (the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
 `testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
-Two jobs, with these exact names because they become required checks:
+Three jobs; `test` and `secrets` have these exact names because they are required checks (`scope` is not required):
 
 - `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
   `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
-  glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
+  glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), the results printed in the order of the list with a PASS or FAIL line per test, the output of failing ones and a `Summary: N passed, M failed` line; any failure or timeout fails the job; the tests make their own temp directories, so they are independent). Measured on 2026-11-14 before this change: the job took about 170 s, of which the tool install was 25 s and the sequential test loop 133 s.
+  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells `test` whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). Then `test` skips `just check`, `bash -n` and the full run and runs only the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md, CONFIG-GUIDE.md or `docs/`, never a fixed list) plus a sanity check of the text (not empty, no merge conflict markers). A first push of a branch, a dispatch, a mixed push and any failure of the detection run everything; the job keeps its name and always runs (`if: always()`), so the required check never goes missing. The tool install stays unconditional because the documentation tests need it (it is 25 s; trimming it was not worth weakening the setup). Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
   skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
-Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
+Run the same locally: `just check; .github/scripts/run-tests.sh` (or the loop `for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`).
 Test: `tests/test-workflow.sh`.
 
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`

@@ -19,11 +19,13 @@ on = w.get(True) or w.get("on")
 assert set(on) == {"push", "workflow_dispatch"}, set(on)
 assert on["push"] == {"branches-ignore": ["main", "testing"]}, on["push"]
 PY
-check "test.yml: jobs are exactly test and secrets, named so" python3 - "$here" <<'PY'
+check "test.yml: jobs are scope, test and secrets, named so; test and secrets keep their required names, secrets needs nothing, test always runs" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
-assert set(w["jobs"]) == {"test", "secrets"}, set(w["jobs"])
-for k in ("test", "secrets"):
+assert set(w["jobs"]) == {"scope", "test", "secrets"}, set(w["jobs"])
+assert "needs" not in w["jobs"]["secrets"], "secrets must not wait for anything"
+assert w["jobs"]["test"]["needs"] == "scope" and w["jobs"]["test"]["if"] == "always()"
+for k in ("scope", "test", "secrets"):
     assert w["jobs"][k]["name"] == k, k
     assert w["jobs"][k]["runs-on"] == "ubuntu-26.04", k
 assert w["jobs"]["test"]["container"] == "fedora:45"
@@ -60,8 +62,24 @@ check "test.yml: tests/*.sh run by a glob, no hard-coded test list" python3 - "$
 import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 runs = "\n".join(s.get("run", "") for s in w["jobs"]["test"]["steps"])
-assert "for t in tests/*.sh" in runs, runs
+assert ".github/scripts/run-tests.sh --jobs 4" in runs and "--doc-tests" in runs, runs
 assert not re.search(r"tests/[\w-]+\.sh", runs.replace("tests/*.sh", "")), "a test is named by hand"
+PY
+check "test.yml: a documentation-only push skips just check, bash -n and the full run (steps keyed on DOCS_ONLY), the doc-reading tests are derived at run time" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
+j = w["jobs"]["test"]
+assert j["env"]["DOCS_ONLY"] == "${{ needs.scope.outputs.scope == 'docs' }}"
+st = {s["name"]: s for s in j["steps"]}
+for n in ("just check", "bash -n on every script", "Run every tests/*.sh"):
+    assert st[n]["if"] == "env.DOCS_ONLY != 'true'", n
+for n in ("Run the tests that read the documentation", "Sanity check of the documentation text"):
+    assert st[n]["if"] == "env.DOCS_ONLY == 'true'", n
+# the install and the pinned just stay unconditional: the documentation tests need them
+for n in ("Install the tools the tests need", "Install the pinned just"):
+    assert "if" not in st[n], n
+sc = w["jobs"]["scope"]
+assert any(s.get("with", {}).get("fetch-depth") == 0 for s in sc["steps"])
 PY
 check "test.yml: the secrets job scans the full history with a pinned gitleaks and checksum" python3 - "$here" <<'PY'
 import re, sys, yaml
