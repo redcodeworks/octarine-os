@@ -21,7 +21,7 @@ in_order() { # headings in the order given, all present
 
 # ---- README structure
 check "sections in order: requirements, highlights, variants, install, recipes, then the closing block" \
-    in_order Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
+    in_order "Build status" Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
 check "the last second-level heading is About this repo (the disclaimer stays last)" \
     bash -c "[ \"\$(grep -E '^## ' '$readme' | tail -1)\" = '## About this repo' ]"
 check "the disclaimer text is in the About section" bash -c "awk '/^## About this repo/{f=1} f' '$readme' | grep -q 'excuse the slop'"
@@ -33,7 +33,39 @@ check "no section of the old Developer menu" bash -c "! grep -q 'Developer menu'
 check "the old compilers sentence is gone" bash -c "! grep -q 'stay out of the host' '$readme'"
 check "no personal names" bash -c "! grep -qiE 'kevin|riley' '$readme'"
 check "no step-by-step recipe text (no per-step table of ujust dev, no u2f commands)" bash -c "! grep -qE 'pamu2fcfg|\`libvirt\` \\|' '$readme'"
-check "the Variants table has exactly the three images" bash -c "awk '/^## Variants/{f=1;next} /^## /{f=0} f' '$readme' | grep -c '^| \(default\|NVIDIA\|dx\) |' | grep -qx 3"
+check "the Variants table lists the four images in the order default, dx, NVIDIA, NVIDIA dx, and has no badge" python3 - "$readme" <<'PY'
+import re, sys
+sec = open(sys.argv[1]).read().split("\n## Variants", 1)[1].split("\n#", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("| ")]
+assert [r.split("|")[1].strip() for r in rows[1:]] == ["default", "dx", "NVIDIA", "NVIDIA dx"], rows
+assert "badge.svg" not in sec
+PY
+# ---- the Build status table: Image | main | testing, one linked badge per cell, natural size (no text beside it)
+check "Build status table: header, four rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
+import re, sys, os
+text = open(sys.argv[1]).read(); repo = sys.argv[2]
+assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
+assert text.index("CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
+assert "### Build status" not in text
+sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
+rows = [l for l in sec.splitlines() if l.startswith("|")]
+assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
+body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}
+assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx"], list(body)
+base = "https://github.com/redcodeworks/octarine-os/actions/workflows/"
+def badge(cell, wf, br):
+    m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
+    assert m, (wf, br, cell)
+    assert os.path.exists(os.path.join(repo, ".github/workflows", wf)), wf
+for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml"), ("NVIDIA", "build-nvidia.yml"), ("NVIDIA dx", "build-nvidia-dx.yml")):
+    badge(body[img][0], wf, "main")
+badge(body["default"][1], "build.yml", "testing")
+# dx is a workflow_run workflow: GitHub records every run on main, a testing badge would never show a status
+assert body["dx"][1] == "after each testing build, see the check on the commit", body["dx"]
+badge(body["beta"][0], "build-beta.yml", "main")
+for img in ("beta", "NVIDIA", "NVIDIA dx"):
+    assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
+PY
 
 # ---- recipes: every public recipe of the shipped recipe files is listed, marked DX only where dx-only
 recipes() { grep -hE '^[a-z][a-z0-9-]* (\*args)?:$' "$@" | sed -E 's/ .*//; s/:$//'; }
