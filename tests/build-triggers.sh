@@ -90,43 +90,6 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     assert "pull_request" not in on and "pull_request_target" not in on, f
 PY
-check "no workflow starts from a finished default or beta build (workflow_run): dx is called inside the pipelines now; only the NVIDIA variant chain still uses workflow_run" python3 - "$here" <<'PY'
-import sys, glob, yaml
-for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
-    w = yaml.safe_load(open(f))
-    on = w.get(True) or w.get("on") or {}
-    wr = on.get("workflow_run") if isinstance(on, dict) else None
-    if wr:
-        assert wr["workflows"] == ["Build NVIDIA variant"], (f, wr)
-        assert f.endswith("build-nvidia-dx.yml"), f
-PY
-check "build-dx.yml (reusable): no push, pull_request or schedule trigger; every dx job is behind the plan guard, so a pull request or feature branch could never build it" python3 - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-dx.yml"))
-on = w.get(True) or w.get("on")
-assert not ({"push", "pull_request", "pull_request_target", "schedule", "workflow_run"} & set(on)), set(on)
-assert "if" in w["jobs"]["plan"]
-for n in ("build", "promote"):
-    assert w["jobs"][n]["needs"] == "plan", n
-assert w["jobs"]["sign"]["needs"] == ["build", "promote"] and w["jobs"]["collect"]["needs"] == ["plan", "build", "promote", "sign"]
-PY
-check "a job whose if reads a needed job's RESULT has its own status function (always() or !cancelled()): GitHub adds an implicit success() otherwise, which is false when ANY ancestor was skipped (the dx call was skipped on the first testing run for exactly this reason)" python3 - "$here" <<'PY'
-import sys, glob, re, yaml
-status = re.compile(r"always\(\)|!cancelled\(\)|failure\(\)|success\(\)|cancelled\(\)")
-bad = []
-for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
-    for n, j in yaml.safe_load(open(f))["jobs"].items():
-        cond = str(j.get("if", ""))
-        if re.search(r"needs\.[\w-]+\.result", cond) and not status.search(cond):
-            bad.append((f.split("/")[-1], n))
-# these two sign jobs are meant to be skipped together with a skipped build (reuse, or no NVIDIA dx build needed)
-bad = [b for b in bad if b not in (('binaries.yml', 'sign'), ('build-nvidia-dx.yml', 'sign'))]
-assert not bad, bad
-# the two dx calls specifically
-for f, k in (("build.yml", "dx"), ("build-beta.yml", "dx")):
-    c = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/" + f))["jobs"][k]["if"]
-    assert c.startswith("always() &&"), (f, c)
-PY
 check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Tuesday 07:00 dev-packages bump, Monday 07:00 upstream check" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}

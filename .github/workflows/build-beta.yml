@@ -436,20 +436,3 @@ jobs:
             cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
-
-  # The beta developer image (octarine-os-dx:beta) on the beta base that was just signed, by the reusable workflow
-  # build-dx.yml. One-way: this job needs the base's sign job, nothing of the beta base needs this job, so a failed dx
-  # build only makes the run's overall conclusion red. Only for `main` (the schedule always is); not a required check.
-  dx:
-    name: dx image (beta)
-    needs: sign
-    # always(): see the dx job in build.yml (an implicit success() also looks at skipped ancestors)
-    if: always() && needs.sign.result == 'success' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/build-dx.yml
-    with:
-      channel: beta
-    permissions:
-      contents: read
-      packages: write
-    # the signing secret is a repository secret, which a called workflow only gets when it is passed on
-    secrets: inherit
