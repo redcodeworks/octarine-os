@@ -28,12 +28,19 @@ cat > "$root/bin/skopeo" <<'F'
 #!/usr/bin/env bash
 echo "skopeo $*" >> "${CALLS}"
 case "$1 $2" in
-    "inspect --raw") tag="${3##*:}"; [[ -f "${REG}/${tag}" ]] && cat "${REG}/${tag}" || exit 1 ;;
+    "inspect --raw") tag="${3##*:}"
+        # STALE_READS=N: the first N reads of a tag after it was written still answer with the previous manifest (a lagging registry)
+        if [[ -n "${STALE_READS:-}" && -f "${REG}/${tag}.old" ]]; then
+            n=$(cat "${REG}/${tag}.reads" 2>/dev/null || echo 0)
+            if (( n < STALE_READS )); then echo $((n + 1)) > "${REG}/${tag}.reads"; cat "${REG}/${tag}.old"; exit 0; fi
+        fi
+        [[ -f "${REG}/${tag}" ]] && cat "${REG}/${tag}" || exit 1 ;;
     "copy --all")
         [[ "$3" == --preserve-digests ]] || exit 1
         src="${4#docker://}"; dst="${5#docker://}"; want="${src##*@}"
         for f in "${REG}"/*; do
             [[ "sha256:$(sha256sum < "${f}" | sed 's/ .*//')" == "${want}" ]] || continue
+            [[ -z "${STALE_READS:-}" ]] || echo "previous manifest" > "${REG}/${dst##*:}.old"
             if [[ "${BREAK_COPY:-}" == 1 ]]; then echo "other" > "${REG}/${dst##*:}"; else cp "${f}" "${REG}/${dst##*:}"; fi
             exit 0
         done
@@ -42,7 +49,7 @@ case "$1 $2" in
 esac
 F
 chmod +x "$root/bin"/*
-export CALLS="$root/calls" REG="$root/reg"
+export CALLS="$root/calls" REG="$root/reg" READBACK_WAIT=0
 run() { rm -f "$REG"/*; : > "$CALLS"; : > "$root/out"; PATH="$root/bin:$PATH" GITHUB_OUTPUT="$root/out" bash "$script" "$@" > "$root/log" 2>&1; }
 dg() { echo "sha256:$(sha256sum < "$REG/$1" | sed 's/ .*//')"; }
 
@@ -61,6 +68,10 @@ run local:build ghcr.io/o/img latest-1 latest-20261110-abc1234 20261110-abc1234 
 run local:build ghcr.io/o/img only
 [[ $? -eq 0 && "$(grep -c '^skopeo copy' "$CALLS")" == 0 ]] && pass "one tag: a push and no copy" || bad "one tag"
 
+STALE_READS=2 run local:build ghcr.io/o/img a b
+[[ $? -eq 0 ]] && pass "a registry that answers the first two reads after a copy with the previous manifest: the read-back polls and passes" || { bad "stale reads"; sed 's/^/     /' "$root/log"; }
+STALE_READS=9 READBACK_TRIES=3 run local:build ghcr.io/o/img a b
+[[ $? -ne 0 ]] && grep -q 'after 3 reads' "$root/log" && pass "a registry that stays stale beyond the tries still fails, naming the tries" || bad "persistently stale"
 BREAK_COPY=1 run local:build ghcr.io/o/img a b
 [[ $? -ne 0 ]] && grep -q '::error::b is' "$root/log" && pass "a copy that changes the digest fails the step" || bad "broken copy"
 run local:build ghcr.io/o/img
