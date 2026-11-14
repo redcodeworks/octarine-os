@@ -34,8 +34,16 @@ on:
         description: "Commit to build (default: the tip of the ref); the pipeline passes the commit it just built"
         type: string
         default: ""
+      base_digest:
+        description: "Channel latest on main: the digest of the default image this run is built on (the pipeline passes the one it just published); empty = no new default image"
+        type: string
+        default: ""
       force:
         description: "Build even when the base digest is unchanged"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan and report only: nothing is built, pushed or signed, no commit status is posted"
         type: boolean
         default: false
 
@@ -43,6 +51,7 @@ env:
   CHANNEL: ${{ inputs.channel }}
   FORCE: ${{ inputs.force || false }}
   SHA: ${{ inputs.sha || github.sha }}
+  DRY_RUN: ${{ inputs.dry_run || false }}
 
 # One group per channel; a run that is already building is never cancelled (a newer trigger waits, only one can wait)
 concurrency:
@@ -112,7 +121,7 @@ jobs:
   build:
     name: Build dx image
     needs: plan
-    if: needs.plan.outputs.build == 'true'
+    if: needs.plan.outputs.build == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04
 
     outputs:
@@ -296,7 +305,7 @@ jobs:
   promote:
     name: Promote tested dx image
     needs: plan
-    if: needs.plan.outputs.promote == 'true'
+    if: needs.plan.outputs.promote == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04
 
     permissions:
@@ -426,7 +435,8 @@ jobs:
   # main can require it; both come from this one result, so they never disagree). A plan that was skipped (a ref or channel
   # that dx is not built for) posts nothing.
   dx_result:
-    name: ${{ (inputs.sha || github.sha) == github.sha && 'Build dx and push image' || 'Build dx (older commit)' }}
+    # a dry run never carries the required name (it must not satisfy the check on the tip)
+    name: ${{ inputs.dry_run && 'Build dx (dry run)' || ((inputs.sha || github.sha) == github.sha && 'Build dx and push image' || 'Build dx (older commit)') }}
     needs: [plan, build, promote, sign]
     if: always()
     runs-on: ubuntu-26.04
@@ -448,10 +458,11 @@ jobs:
           BUILD: ${{ needs.build.result }}
           PROMOTE: ${{ needs.promote.result }}
           SIGN: ${{ needs.sign.result }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
         run: .github/scripts/aggregate-dx.sh
 
       - name: Post the result as a commit status on the built commit
-        if: always() && needs.plan.result != 'skipped'
+        if: always() && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUTCOME: ${{ steps.result.outcome }}
