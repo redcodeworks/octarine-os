@@ -42,7 +42,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
-- Prebuilt sched_ext schedulers (`scx_*`, off until you pick one with `ujust scheduler`) and the extest libraries for Steam Input on Wayland
+- The [Ghostty](https://ghostty.org) terminal as an additional terminal (Ptyxis stays the GNOME default), prebuilt sched_ext schedulers (`scx_*`, off until you pick one with `ujust scheduler`) and the extest libraries for Steam Input on Wayland
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
 **Removed from the base**
@@ -154,8 +154,8 @@ The wordmark is set in JetBrains Mono (SIL OFL 1.1, © The JetBrains Mono Projec
 The shipped niri key bindings and defaults follow niri's own default configuration (GPL-3.0-or-later, by the niri authors).
 
 The image ships prebuilt [extest](https://github.com/Supreeeme/extest) libraries (by Supreeeme and contributors, MIT license, built
-from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sched_ext schedulers](https://github.com/sched-ext/scx)
-(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`.
+from the owner's fork) that `ujust gaming-setup` installs for Steam, the [sched_ext schedulers](https://github.com/sched-ext/scx)
+(scx, GPL-2.0, by the sched-ext authors) and the [Ghostty](https://ghostty.org) terminal (MIT license, by Mitchell Hashimoto and the Ghostty contributors; it is built from the project's signed release, and new stable releases are followed automatically); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`.
 
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 

@@ -129,6 +129,14 @@ dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
     gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo
 
+# The runtime libraries of Ghostty (binaries/ghostty, built with --system: every dependency but spirv-cross is linked
+# dynamically against the same Fedora release). Most ship in silverblue-main (dnf5 skips them); the ones that do not are
+# gtk4-layer-shell, oniguruma, glslang and simdutf. Critical: the ldd check after install-binaries.sh fails the build when one is
+# missing or its soname changed (then the binaries image has to be rebuilt: change binaries/).
+dnf5 install -y \
+    gtk4 libadwaita gtk4-layer-shell oniguruma glslang simdutf fontconfig freetype harfbuzz bzip2-libs libpng \
+    libwayland-client libX11 libxkbcommon libglvnd-egl libstdc++ zlib-ng-compat
+
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
 if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
@@ -250,11 +258,17 @@ chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
 lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
 # --- end branding ---
 
-# --- Prebuilt binaries: sched_ext schedulers and the extest libraries ---
-# Two signed files-only images from the fedora-toolbox repository, pinned by digest in the Containerfile and bind-mounted
-# at /binaries/<name>; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
+# --- Prebuilt binaries: sched_ext schedulers, the extest libraries and the Ghostty terminal ---
+# One signed files-only image (octarine-os-binaries, built from binaries/ in this repository), bind-mounted
+# at /binaries; install-binaries.sh installs it (checks, layout and licenses are described there). Installed only:
 # no unit, no preset, nothing is started.
 /ctx/install-binaries.sh
+# Ghostty is dynamically linked: every library it needs must resolve in THIS image, and it must start (the version print needs no display).
+if ldd /usr/bin/ghostty | grep 'not found'; then echo "ERROR: /usr/bin/ghostty has unresolved libraries (see above): add the package to the Ghostty runtime list or rebuild binaries/" >&2; exit 1; fi
+/usr/bin/ghostty --version
+infocmp xterm-ghostty > /dev/null
+# New icons: refresh the hicolor cache when one exists (GTK also finds the icons without it)
+if [[ -f /usr/share/icons/hicolor/icon-theme.cache ]] && command -v gtk-update-icon-cache > /dev/null; then gtk-update-icon-cache -f -t /usr/share/icons/hicolor; fi
 
 # The sched_ext scheduler registry and unit drop-ins, generated from the manifest that install-binaries.sh just installed
 # (scx@.service, its helpers and the polkit rule come from system_files). Nothing is enabled: the preset says disable.

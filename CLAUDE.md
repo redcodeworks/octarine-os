@@ -81,14 +81,14 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 ## Prebuilt binaries (binaries/)
 
 The default image ships binaries that are built in this repository, not compiled in the image build and not taken from a foreign
-registry: the sched_ext schedulers (`scx_*`) and the extest libraries. They are built from pinned upstream commits into ONE
+registry: the sched_ext schedulers (`scx_*`), the extest libraries and the Ghostty terminal. They are built from pinned upstream commits into ONE
 signed `FROM scratch` image, `ghcr.io/redcodeworks/octarine-os-binaries`, which the image build copies from. nvidia and the dx
 variants inherit them from the default image. (History: #61 first consumed two images built by the fedora-toolbox repository,
 pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries are built for this environment.)
 
 - **Sources.** `binaries/Containerfile` (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
-  `stage.sh`, `assemble.sh`), and per component `binaries/scx/` and `binaries/extest/`: `upstream.env` (`UPSTREAM_REPO`, optional
-  `UPSTREAM_WATCH`, `UPSTREAM_TAG`, `UPSTREAM_COMMIT`; parsed, never sourced), `build.sh`, and for scx `schedulers.tsv`.
+  `stage.sh`, `assemble.sh`), and per component `binaries/scx/`, `binaries/extest/` and `binaries/ghostty/`: `upstream.env` (`UPSTREAM_REPO`, optional
+  `UPSTREAM_WATCH`, `UPSTREAM_TAG`, `UPSTREAM_COMMIT`, and for ghostty `UPSTREAM_TAG_REGEX`, `UPSTREAM_TARBALL_URL/SHA256`, `UPSTREAM_MINISIGN_KEY`, `ZIG_*`; parsed, never sourced), `build.sh`, and for scx `schedulers.tsv`.
   `binaries/scx/schedulers.tsv` (name, minimum kernel (empty for all seven), description up to 120 characters, curated from the scheduler
   READMEs at v1.1.4) is the source of truth for the scheduler list: adding a scheduler is one line there plus the next bump (check the READMEs
   again then). scx: github.com/sched-ext/scx tag v1.1.4, peeled commit `e7b3a219...`, GPL-2.0; `scx_cake` has no LICENSE of its
@@ -110,6 +110,40 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
+- **Ghostty** (`binaries/ghostty/`, added 2026-11-14; an ADDITIONAL terminal, Ptyxis stays the GNOME default; Kevin dropped the default-terminal
+  mechanism: no xdg-terminal-exec, no `xdg-terminals.list`, no Ctrl+Alt+T binding, no dconf default; `tests/binary-images.sh` checks that none ships).
+  - *Source and verification chain* (the only component with an authenticity chain, scx and extest have commit pinning only): `upstream.env`
+    pins the tag (`v1.4.0`), its peeled commit, the sha256 of the signed release tarball `https://release.files.ghostty.org/<ver>/ghostty-<ver>.tar.gz`
+    and the minisign public key from PACKAGING.md. `lib/fetch-source.sh` (tarball branch, `UPSTREAM_TARBALL_URL` set) fails unless: `git ls-remote` says
+    the tag is still the pinned commit, `minisign -V` verifies the `.minisig` with the pinned key, the sha256 equals the pin (`lib/fetch-tarball.sh`,
+    fail closed: an empty sha or key refuses to build), and the tarball's `VERSION` is the tag. The tarball (not a git checkout) because PACKAGING.md says it
+    holds pre-generated files (GTK resources from the blueprints, frame data) and needs fewer build dependencies (no blueprint-compiler). Git tags are also
+    GPG-signed by the author (GitHub shows the tag object as verified); the build does not check that.
+  - *Zig.* v1.4.0 needs Zig 0.17 (`minimum_zig_version` in `build.zig.zon`: major and minor equal, patch at least); Fedora 45 packages 0.16 only, so
+    `fetch-zig.sh` downloads the official ziglang.org release, verified the same way (`ZIG_VERSION/URL/SHA256/MINISIGN_KEY` in `upstream.env`), unpacks it in
+    `/opt/zig`; `build.sh` re-reads `minimum_zig_version` (`zig-version.sh`) and fails when the pinned Zig does not satisfy it.
+  - *Build* (`ghostty/build.sh`, PACKAGING.md's system-package recipe): `nix/build-support/fetch-zig-cache.sh` is the ONLY step with network (every URL of
+    `build.zig.zon.txt`: deps.files.ghostty.org, plus one git dependency on github.com and one on codeberg.org); Zig stores a package under its content hash and the
+    `--system` build only finds a package under the hash `build.zig.zon` names, so altered content is not found and the build stops. Then
+    `DESTDIR=<src>/.stage zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dversion-string=<ver> -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=spirv-cross`
+    (a PIE, dependencies dynamic; Fedora 45 has no spirv-cross, built statically from the package; highway is static by default). A pkg-config preflight fails with the
+    module name when a -devel package is missing. Builder packages: git-core curl minisign tar xz file binutils gcc glibc-devel pkgconf, ncurses (tic), gettext, pandoc-cli (docs
+    and man pages are always built in system mode), the GTK/libadwaita/gtk4-layer-shell/wayland/glvnd/X11/xkbcommon -devel set, fontconfig freetype harfbuzz oniguruma glslang
+    simdutf bzip2 libpng zlib -devel. `stage.sh --tree` stages the whole install tree; smoke test `ghostty --version`; BUILDINFO records Zig and the library versions.
+  - *Image.* `/ghostty/usr/...` (plus LICENSES, SOURCE, BUILDINFO); `install-binaries.sh` copies it into `/usr` after checking that the desktop file, the D-Bus
+    service and the systemd user unit name `/usr/bin/ghostty` (D-Bus activation is on: the desktop file says `DBusActivatable=true`; the user unit is shipped but not enabled). It
+    also installs `xterm-ghostty` terminfo, icons, shell integration, completions, man pages, themes and, as upstream always does, the Nautilus extension (an "Open in Ghostty"
+    entry) and a KDE service menu (inert). Runtime libraries: the first `dnf5 install` block of `build.sh` (critical; the new ones over silverblue-main are expected to be
+    gtk4-layer-shell, oniguruma, glslang and simdutf), then `ldd /usr/bin/ghostty` must show no `not found` and `ghostty --version` and `infocmp xterm-ghostty` must run. The list is
+    a derived guess until the first CI build; BUILDINFO lists the real NEEDED libraries. A soname change of one of these libraries in a Fedora update fails the image build at the ldd check until `binaries/` is changed (rebuilt).
+  - *Following upstream (Kevin, 2026-11-14).* Ghostty is a user-facing app, so it follows the latest stable release with a pin for integrity: the weekly
+    `upstream-check.yml` finds the highest tag matching `UPSTREAM_TAG_REGEX` (`^v[0-9]+\.[0-9]+\.[0-9]+$`; Ghostty has no GitHub release objects; `vt-*` is libghostty-vt, `tip` a
+    nightly, both ignored) and opens a bump PR like scx. `binaries/ghostty/bump-extra.sh` (run by `bump-upstream.sh`) verifies the new tarball's signature, rewrites the sha256 only
+    after that, and reads `minimum_zig_version`: when the pinned Zig no longer fits, exit 3, the PR is still opened and its body carries a WARNING (do not merge before the `ZIG_*` pin changes
+    in the same PR); a bad signature fails the run. The project agent may merge a Ghostty bump PR into `testing` once the checks are green; no 7-day soak (the kernel/mesa/mutter rule does not apply). The check-run on the PR does not build the
+    binaries: validate a bump with `gh workflow run binaries.yml --ref bump/ghostty`.
+  - *Cost.* Unmeasured until the first build (staged size, runtime libraries, CI minutes: a Zig build plus C++ dependencies, expected several minutes added to the binaries job, which runs once per tree hash).
+  - *Open pins.* The sha256 of `ghostty-1.4.0.tar.gz`, the Zig 0.17.0 tarball sha256 and the ziglang.org minisign public key were NOT known to the project agent (no network) and are empty in `upstream.env`: the build fails closed until the hub supplies them.
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).

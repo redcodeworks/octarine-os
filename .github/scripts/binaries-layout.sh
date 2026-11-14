@@ -3,8 +3,8 @@
 #
 #   binaries-layout.sh <listing file> <schedulers.tsv>
 #
-# Every scheduler of the manifest as scx/bin/<name>, scx/schedulers.tsv, both extest libraries, and for each component and at the
-# top LICENSES/, SOURCE and BUILDINFO. Nothing else is judged here (the build already ran each --version and the ELF checks).
+# Every scheduler of the manifest as scx/bin/<name>, scx/schedulers.tsv, both extest libraries, the Ghostty binary and the files
+# GNOME, D-Bus, systemd and ncurses look for, and for each component and at the top LICENSES/, SOURCE and BUILDINFO. Nothing else is judged here (the build already ran each --version and the ELF checks).
 set -euo pipefail
 listing=${1:?listing}
 tsv=${2:?schedulers.tsv}
@@ -17,10 +17,15 @@ for n in ${names}; do need "scx/bin/${n}"; done
 need scx/schedulers.tsv
 need extest/lib/libextest.so
 need extest/lib64/libextest.so
-for c in scx extest; do need "${c}/SOURCE"; need "${c}/BUILDINFO"; done
+for f in usr/bin/ghostty usr/share/applications/com.mitchellh.ghostty.desktop usr/share/dbus-1/services/com.mitchellh.ghostty.service \
+    usr/lib/systemd/user/app-com.mitchellh.ghostty.service usr/share/terminfo/x/xterm-ghostty \
+    usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png usr/share/ghostty/shell-integration/bash/ghostty.bash; do
+    need "ghostty/${f}"
+done
+for c in scx extest ghostty; do need "${c}/SOURCE"; need "${c}/BUILDINFO"; done
 need SOURCE
 need BUILDINFO
 norm | grep -q '^LICENSES/.' || { echo "::error::the binaries image has no top-level LICENSES" >&2; status=1; }
-for c in scx extest; do norm | grep -q "^${c}/LICENSES/." || { echo "::error::the binaries image has no ${c}/LICENSES" >&2; status=1; }; done
+for c in scx extest ghostty; do norm | grep -q "^${c}/LICENSES/." || { echo "::error::the binaries image has no ${c}/LICENSES" >&2; status=1; }; done
 [[ "${status}" == 0 ]] && echo "binaries image layout ok: $(echo ${names})"
 exit "${status}"

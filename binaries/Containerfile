@@ -6,7 +6,7 @@
 #   /scx, /extest each also hold LICENSES/, SOURCE, BUILDINFO; /LICENSES, /SOURCE, /BUILDINFO combine both components
 # The builder is a Fedora 45 container (the release of the image the binaries go into) pinned by DIGEST, with the toolchain
 # from Fedora's own repositories. Each source is fetched at the pinned commit and the build fails unless the checkout is exactly
-# that commit; cargo runs with --locked. Nothing here runs on a pull request or a feature branch (see binaries.yml).
+# that commit (Ghostty: the signed release tarball is verified, see below); cargo runs with --locked. Nothing here runs on a pull request or a feature branch (see binaries.yml).
 ARG BUILDER=registry.fedoraproject.org/fedora:45@sha256:e15959f36d52307f176f8c068009f6f1451c3b238b37a1f03e56dbfa4526e8b1
 
 FROM ${BUILDER} AS scx
@@ -39,11 +39,37 @@ COPY extest /binaries/extest
 RUN /binaries/lib/fetch-source.sh /binaries/extest/upstream.env /src
 RUN STAGE_SH=/binaries/lib/stage.sh /binaries/extest/build.sh /binaries/extest/upstream.env /src /out
 
+FROM ${BUILDER} AS ghostty
+
+# Build dependencies from Fedora's repositories: the -devel packages of everything Ghostty links dynamically (--system), the tools
+# the source tarball still needs (tic from ncurses for the terminfo, msgfmt from gettext, pandoc for the man pages and docs,
+# wayland-scanner from wayland-devel) and the verification tools (minisign, curl, git-core for `ls-remote`). blueprint-compiler is NOT
+# needed: the release tarball carries the pre-generated GTK resources. Fedora 45 has no spirv-cross package (built statically).
+RUN dnf5 -y install --setopt=install_weak_deps=False --setopt=strict=1 \
+        git-core curl minisign tar xz gzip file binutils gcc glibc-devel pkgconf-pkg-config \
+        ncurses gettext pandoc-cli \
+        gtk4-devel libadwaita-devel gtk4-layer-shell-devel glib2-devel \
+        wayland-devel wayland-protocols-devel libglvnd-devel libX11-devel libxkbcommon-devel \
+        fontconfig-devel freetype-devel harfbuzz-devel oniguruma-devel glslang-devel simdutf-devel \
+        bzip2-devel libpng-devel zlib-devel \
+    && dnf5 clean all
+
+COPY lib /binaries/lib
+COPY ghostty /binaries/ghostty
+
+# Zig 0.17 from ziglang.org, verified against the pinned minisign key and sha256 (Fedora 45 has 0.16 only); then the signed Ghostty
+# release tarball, verified the same way (and the tag checked against the pinned commit).
+RUN /binaries/ghostty/fetch-zig.sh /binaries/ghostty/upstream.env
+RUN /binaries/lib/fetch-source.sh /binaries/ghostty/upstream.env /src
+# The Zig dependency cache (the one step with network access) and the build, then staging, SOURCE, BUILDINFO and `ghostty --version`.
+RUN STAGE_SH=/binaries/lib/stage.sh /binaries/ghostty/build.sh /binaries/ghostty/upstream.env /src /out
+
 FROM ${BUILDER} AS assemble
 
 COPY lib /binaries/lib
 COPY --from=scx /out /image/scx
 COPY --from=extest /out /image/extest
+COPY --from=ghostty /out /image/ghostty
 RUN /binaries/lib/assemble.sh /image
 
 FROM scratch
@@ -59,10 +85,10 @@ LABEL maintainer="redcodeworks/octarine-os" \
       org.opencontainers.image.authors="redcodeworks" \
       org.opencontainers.image.vendor="redcodeworks" \
       org.opencontainers.image.title="octarine-os-binaries" \
-      org.opencontainers.image.description="Prebuilt binaries for octarineOS: sched_ext schedulers (scx) and libextest.so (extest), 64-bit and 32-bit, built from pinned upstream commits" \
+      org.opencontainers.image.description="Prebuilt binaries for octarineOS: sched_ext schedulers (scx), libextest.so (extest), 64-bit and 32-bit, and the Ghostty terminal, built from pinned upstream sources" \
       org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
       org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \
-      org.opencontainers.image.licenses="GPL-2.0-only AND MIT" \
+      org.opencontainers.image.licenses="GPL-2.0-only AND MIT AND OFL-1.1" \
       org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.revision="${IMAGE_REVISION}" \
       org.opencontainers.image.created="${IMAGE_CREATED}"

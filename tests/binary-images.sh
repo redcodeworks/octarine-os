@@ -70,12 +70,15 @@ check "use: a malformed digest fails" test "$rc" != 0
 lay="$root/lay"; mkdir -p "$lay"
 tsvf="$here/binaries/scx/schedulers.tsv"
 { for n in $(grep -vE '^[[:space:]]*(#|$)' "$tsvf" | cut -f1); do echo "scx/bin/$n"; done
-  printf '%s\n' scx/schedulers.tsv extest/lib/libextest.so extest/lib64/libextest.so scx/SOURCE scx/BUILDINFO extest/SOURCE extest/BUILDINFO SOURCE BUILDINFO LICENSES/scx-LICENSE scx/LICENSES/scx-LICENSE extest/LICENSES/extest-LICENSE; } >"$lay/full"
+  printf '%s\n' scx/schedulers.tsv extest/lib/libextest.so extest/lib64/libextest.so scx/SOURCE scx/BUILDINFO extest/SOURCE extest/BUILDINFO SOURCE BUILDINFO LICENSES/scx-LICENSE scx/LICENSES/scx-LICENSE extest/LICENSES/extest-LICENSE ghostty/SOURCE ghostty/BUILDINFO ghostty/LICENSES/ghostty-LICENSE ghostty/usr/bin/ghostty ghostty/usr/share/applications/com.mitchellh.ghostty.desktop ghostty/usr/share/dbus-1/services/com.mitchellh.ghostty.service ghostty/usr/lib/systemd/user/app-com.mitchellh.ghostty.service ghostty/usr/share/terminfo/x/xterm-ghostty ghostty/usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png ghostty/usr/share/ghostty/shell-integration/bash/ghostty.bash; } >"$lay/full"
 bash "$here/.github/scripts/binaries-layout.sh" "$lay/full" "$tsvf" >"$root/run" 2>&1
 check "layout: a complete listing passes, for all seven schedulers of the real manifest" bash -c "[ $? = 0 ] || exit 1; true"
 grep -v 'scx/bin/scx_cake' "$lay/full" >"$lay/nocake"
 bash "$here/.github/scripts/binaries-layout.sh" "$lay/nocake" "$tsvf" >"$root/run" 2>&1
 check "layout: a scheduler of the manifest missing from the image fails and is named" bash -c "[ $? != 0 ] && grep -q 'lacks scx/bin/scx_cake' '$root/run'"
+grep -v 'ghostty/usr/share/terminfo/x/xterm-ghostty' "$lay/full" >"$lay/noterm"
+bash "$here/.github/scripts/binaries-layout.sh" "$lay/noterm" "$tsvf" >"$root/run" 2>&1
+check "layout: a missing Ghostty terminfo entry fails and is named" bash -c "[ $? != 0 ] && grep -q 'lacks ghostty/usr/share/terminfo/x/xterm-ghostty' '$root/run'"
 grep -v 'extest/lib/libextest.so' "$lay/full" >"$lay/no32"
 bash "$here/.github/scripts/binaries-layout.sh" "$lay/no32" "$tsvf" >"$root/run" 2>&1
 check "layout: a missing 32-bit library fails" test "$?" != 0
@@ -107,7 +110,15 @@ mk_images() { # dir
     printf '                    GNU GENERAL PUBLIC LICENSE\n' >"$1/scx/LICENSES/scx-LICENSE"
     printf 'MIT License\n' >"$1/extest/LICENSES/extest-LICENSE"
     echo 32 >"$1/extest/lib/libextest.so"; echo 64 >"$1/extest/lib64/libextest.so"
-    for i in scx extest; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
+    mkdir -p "$1/ghostty/LICENSES" "$1/ghostty/usr/bin" "$1/ghostty/usr/share/applications" "$1/ghostty/usr/share/dbus-1/services" \
+        "$1/ghostty/usr/lib/systemd/user" "$1/ghostty/usr/share/terminfo/x"
+    printf '#!/bin/sh\necho ghostty\n' >"$1/ghostty/usr/bin/ghostty"; chmod +x "$1/ghostty/usr/bin/ghostty"
+    printf 'Exec=/usr/bin/ghostty --gtk-single-instance=true\n' >"$1/ghostty/usr/share/applications/com.mitchellh.ghostty.desktop"
+    printf 'Exec=/usr/bin/ghostty --gtk-single-instance=true --initial-window=false\n' >"$1/ghostty/usr/share/dbus-1/services/com.mitchellh.ghostty.service"
+    printf 'ExecStart=/usr/bin/ghostty --gtk-single-instance=true --initial-window=false\n' >"$1/ghostty/usr/lib/systemd/user/app-com.mitchellh.ghostty.service"
+    echo term >"$1/ghostty/usr/share/terminfo/x/xterm-ghostty"
+    printf 'MIT License\n' >"$1/ghostty/LICENSES/ghostty-LICENSE"
+    for i in scx extest ghostty; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
 }
 imgs="$root/imgs"; dest="$root/dest"
 inst() { rm -rf "$dest"; (BINARIES_ROOT="$imgs" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") >"$root/run" 2>&1; rc=$?; }
@@ -116,7 +127,9 @@ check "install: schedulers in /usr/bin, executable" bash -c "[ $rc = 0 ] && test
 check "install: manifest at /usr/share/octarine-os/schedulers.tsv, unchanged" cmp "$imgs/scx/schedulers.tsv" "$dest/usr/share/octarine-os/schedulers.tsv"
 check "install: extest libraries under /usr/lib/extest/lib and lib64, executable, not swapped" bash -c "[ \"\$(cat '$dest/usr/lib/extest/lib/libextest.so')\" = 32 ] && [ \"\$(cat '$dest/usr/lib/extest/lib64/libextest.so')\" = 64 ] && test -x '$dest/usr/lib/extest/lib/libextest.so'"
 check "install: licenses, source and build info under /usr/share/licenses/octarine-os-binaries/<name>" bash -c "d='$dest/usr/share/licenses/octarine-os-binaries'; test -s \$d/scx/scx-LICENSE && test -s \$d/scx/SOURCE && test -s \$d/scx/BUILDINFO && test -s \$d/extest/extest-LICENSE && test -s \$d/extest/SOURCE && test -s \$d/extest/BUILDINFO"
-check "install: nothing under systemd paths" bash -c "! find '$dest' -path '*systemd*' | grep -q ."
+check "install: ghostty tree copied into /usr (binary executable, desktop file, D-Bus service, systemd user unit, terminfo), license and records shipped" bash -c "test -x '$dest/usr/bin/ghostty' && test -s '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' && test -s '$dest/usr/share/dbus-1/services/com.mitchellh.ghostty.service' && test -s '$dest/usr/lib/systemd/user/app-com.mitchellh.ghostty.service' && test -s '$dest/usr/share/terminfo/x/xterm-ghostty' && test -s '$dest/usr/share/licenses/octarine-os-binaries/ghostty/ghostty-LICENSE' && test -s '$dest/usr/share/licenses/octarine-os-binaries/ghostty/SOURCE'"
+check "install: the only systemd file is Ghostty's user unit (nothing is enabled: no wants link, no preset)" bash -c "[ \"\$(find '$dest' -path '*systemd*' -type f)\" = '$dest/usr/lib/systemd/user/app-com.mitchellh.ghostty.service' ] && ! find '$dest' -name '*.wants' | grep -q . && ! find '$dest' -name '*.preset' | grep -q ."
+check "install: no default terminal mechanism (no xdg-terminals.list, no xdg-terminal-exec)" bash -c "! find '$dest' -name 'xdg-terminals.list' -o -name 'xdg-terminal-exec' | grep -q ."
 mk_images "$imgs"; rm "$imgs/scx/bin/scx_cake"; inst
 check "install: a scheduler listed but missing fails" bash -c "[ $rc != 0 ] && grep -q 'scx_cake is listed in schedulers.tsv but missing' '$root/run'"
 mk_images "$imgs"; echo '#!/bin/sh' >"$imgs/scx/bin/scx_extra"; inst
@@ -129,6 +142,14 @@ mk_images "$imgs"; rm "$imgs/extest/LICENSES/extest-LICENSE"; inst
 check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text' '$root/run'"
 mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
+mk_images "$imgs"; rm "$imgs/ghostty/usr/bin/ghostty"; inst
+check "install: a missing ghostty binary fails" bash -c "[ $rc != 0 ] && grep -q 'ghostty lacks usr/bin/ghostty' '$root/run'"
+mk_images "$imgs"; rm "$imgs/ghostty/usr/share/terminfo/x/xterm-ghostty"; inst
+check "install: a missing ghostty terminfo fails" test "$rc" != 0
+mk_images "$imgs"; echo 'Exec=/tmp/stage/usr/bin/ghostty' >"$imgs/ghostty/usr/share/applications/com.mitchellh.ghostty.desktop"; inst
+check "install: a desktop file that does not name /usr/bin/ghostty (a staging path) fails" bash -c "[ $rc != 0 ] && grep -q 'does not name /usr/bin/ghostty' '$root/run'"
+mk_images "$imgs"; rm "$imgs/ghostty/LICENSES/ghostty-LICENSE"; inst
+check "install: no MIT text for ghostty fails" bash -c "[ $rc != 0 ]"
 
 # ---- the smoke assertions are in build.yml and build-beta.yml, identical
 check "smoke: ldd, --version and ELF class assertions in both workflows, same text" python3 -I - "$here" <<'PY'
@@ -137,13 +158,14 @@ root = sys.argv[1]
 blocks = []
 for w in ("build.yml", "build-beta.yml"):
     s = open(f"{root}/.github/workflows/{w}").read()
-    a = s.index("# prebuilt binaries (binaries/: scx, extest)")
-    b = s.index("\n", s.index("source and build records ship for both binary images"))
+    a = s.index("# prebuilt binaries (binaries/: scx, extest, ghostty)")
+    b = s.index("\n", s.index("source and build records ship for every binary image"))
     blocks.append(s[a:b])
 assert blocks[0] == blocks[1], "the smoke assertions drifted between build.yml and build-beta.yml"
 t = blocks[0]
 for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-bit", "/usr/lib/extest/lib/libextest.so",
-               "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv"):
+               "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
+               "/usr/bin/ghostty --version", "ldd /usr/bin/ghostty", "infocmp xterm-ghostty", "com.mitchellh.ghostty"):
     assert needle in t, needle
 assert "'" not in t, "a single quote would end the podman run bash -c string"
 PY

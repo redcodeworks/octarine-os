@@ -5,6 +5,7 @@
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
+#   ghostty usr/ (the install tree of the terminal: bin, share, lib/systemd/user), LICENSES/, SOURCE, BUILDINFO  ->  copied into /usr
 # The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<image>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 set -euo pipefail
@@ -12,6 +13,7 @@ root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
 scx=${root}/scx
 ext=${root}/extest
+gho=${root}/ghostty
 
 test -s "${scx}/schedulers.tsv" || { echo "ERROR: ${scx}/schedulers.tsv is missing or empty" >&2; exit 1; }
 # The manifest and the files must agree both ways: every line has four fields and a path of bin/<name>, every listed
@@ -33,7 +35,22 @@ test -f "${ext}/lib/libextest.so" && test -f "${ext}/lib64/libextest.so" || { ec
 install -Dm0755 "${ext}/lib/libextest.so" "${dest}/usr/lib/extest/lib/libextest.so"
 install -Dm0755 "${ext}/lib64/libextest.so" "${dest}/usr/lib/extest/lib64/libextest.so"
 
-for img in scx extest; do
+# Ghostty: the whole install tree as the build staged it (binary, desktop file, icons, terminfo, shell integration, man pages, completions, D-Bus
+# service, systemd user unit). It is an additional terminal: nothing here sets a default terminal. The files name /usr/bin/ghostty
+# (-Dinstalled-exe-path), checked below, because GNOME launches it through the desktop file and D-Bus activation.
+test -x "${gho}/usr/bin/ghostty" || { echo "ERROR: ghostty lacks usr/bin/ghostty" >&2; exit 1; }
+for f in usr/share/applications/com.mitchellh.ghostty.desktop usr/share/dbus-1/services/com.mitchellh.ghostty.service \
+    usr/lib/systemd/user/app-com.mitchellh.ghostty.service usr/share/terminfo/x/xterm-ghostty; do
+    test -s "${gho}/${f}" || { echo "ERROR: ghostty lacks ${f}" >&2; exit 1; }
+done
+grep -q '^Exec=/usr/bin/ghostty ' "${gho}/usr/share/applications/com.mitchellh.ghostty.desktop" \
+    && grep -q '^Exec=/usr/bin/ghostty ' "${gho}/usr/share/dbus-1/services/com.mitchellh.ghostty.service" \
+    && grep -q '^ExecStart=/usr/bin/ghostty ' "${gho}/usr/lib/systemd/user/app-com.mitchellh.ghostty.service" \
+    || { echo "ERROR: the ghostty desktop file, D-Bus service or systemd unit does not name /usr/bin/ghostty" >&2; exit 1; }
+install -d "${dest}/usr"
+cp -a "${gho}/usr/." "${dest}/usr/"
+
+for img in scx extest ghostty; do
     lic=${dest}/usr/share/licenses/octarine-os-binaries/${img}
     install -d "${lic}"
     cp -a "${root}/${img}/LICENSES/." "${lic}/"
@@ -41,4 +58,5 @@ for img in scx extest; do
 done
 grep -rqF 'GNU GENERAL PUBLIC LICENSE' "${dest}/usr/share/licenses/octarine-os-binaries/scx" || { echo "ERROR: no GPL text shipped with scx" >&2; exit 1; }
 grep -rqF 'MIT License' "${dest}/usr/share/licenses/octarine-os-binaries/extest" || { echo "ERROR: no MIT text shipped with extest" >&2; exit 1; }
-echo "Installed the prebuilt binaries: $(tr '\n' ' ' <<<"${listed}")"
+grep -rqF 'MIT License' "${dest}/usr/share/licenses/octarine-os-binaries/ghostty" || { echo "ERROR: no MIT text shipped with ghostty" >&2; exit 1; }
+echo "Installed the prebuilt binaries: $(tr '\n' ' ' <<<"${listed}") ghostty"

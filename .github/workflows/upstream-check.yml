@@ -1,8 +1,9 @@
 name: Check upstream releases
-# Weekly: for every component of binaries/ (binaries/scx, binaries/extest) ask upstream for its latest release and, when it is
+# Weekly: for every component of binaries/ (binaries/scx, binaries/extest, binaries/ghostty) ask upstream for its latest release and, when it is
 # newer than the pin in binaries/<name>/upstream.env (extest: asked of the real project, and only once our fork redcodeworks/extest
 # has the commit; the fork is never written to), open or update ONE bump pull request on the branch bump/<name> into `testing`.
-# It changes only upstream.env; nothing is built or published here (the merge into testing changes the tree hash of binaries/, and
+# It changes only upstream.env (ghostty: its tags only, `v<semver>`; `vt-*` and `tip` are ignored, and its bump also recomputes the tarball
+# sha256 after the minisign signature verified and FAILS this run when the pinned Zig no longer fits the new release); nothing is built or published here (the merge into testing changes the tree hash of binaries/, and
 # the build after it builds and signs the new binaries image). Monday 07:00 UTC; scheduled workflows run only from `main`, so
 # the first scheduled run follows the first promotion that carries this file. workflow_dispatch works from any branch that has it.
 #
@@ -37,6 +38,12 @@ jobs:
         with:
           ref: testing
           fetch-depth: 0
+
+      - name: Install minisign (the ghostty bump verifies the signed tarball)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends minisign
+          minisign -v
 
       - name: Ask upstream and open bump pull requests
         run: |

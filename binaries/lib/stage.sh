@@ -4,6 +4,7 @@
 #
 #   stage.sh --out DIR --env upstream.env --src SRCDIR
 #            --bin <path in SRCDIR>:<path in the image>     (repeat; installed mode 0755)
+#            --tree <dir in SRCDIR>:<dir in the image>        (repeat; a whole install tree copied with cp -a, before the --bin files)
 #            --license <path in SRCDIR>:<name in /LICENSES>  (repeat)
 #            --smoke <path in the image>:<arguments>         (repeat; run, must exit 0)
 #            --elf-x86-64 <path in the image>                (repeat; must be a 64-bit x86-64 ELF object)
@@ -20,13 +21,14 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${here}/upstream-env.sh"
 
 out="" envfile="" src=""
-bins=() licenses=() smokes=() elfs=() elfs32=() infos=()
+bins=() trees=() licenses=() smokes=() elfs=() elfs32=() infos=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out) out=$2; shift 2 ;;
         --env) envfile=$2; shift 2 ;;
         --src) src=$2; shift 2 ;;
         --bin) bins+=("$2"); shift 2 ;;
+        --tree) trees+=("$2"); shift 2 ;;
         --license) licenses+=("$2"); shift 2 ;;
         --smoke) smokes+=("$2"); shift 2 ;;
         --elf-x86-64) elfs+=("$2"); shift 2 ;;
@@ -40,6 +42,12 @@ done
 upstream_env_load "${envfile}"
 
 staged=()
+for pair in "${trees[@]}"; do
+    from="${src}/${pair%%:*}" to="${pair#*:}"
+    [[ -d "${from}" && -n "$(ls -A "${from}")" ]] || { echo "stage.sh: install tree missing or empty: ${from}" >&2; exit 1; }
+    mkdir -p "${out}/${to}"
+    cp -a "${from}/." "${out}/${to}/"
+done
 for pair in "${bins[@]}"; do
     from="${src}/${pair%%:*}" to="${pair#*:}"
     [[ -f "${from}" ]] || { echo "stage.sh: build output missing: ${from}" >&2; exit 1; }

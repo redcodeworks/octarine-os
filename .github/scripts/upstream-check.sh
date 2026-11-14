@@ -10,7 +10,8 @@
 #                              no bump PR; Kevin syncs the fork (`gh repo sync <fork>`) and the next run opens it
 #   unreachable <text>         upstream could not be asked; fail soft (exit 0), the next weekly run tries again
 #
-# Reads upstream.env (UPSTREAM_REPO, UPSTREAM_WATCH, UPSTREAM_TAG, UPSTREAM_COMMIT). Releases are asked of UPSTREAM_WATCH
+# Reads upstream.env (UPSTREAM_REPO, UPSTREAM_WATCH, UPSTREAM_TAG, UPSTREAM_COMMIT; UPSTREAM_TAG_REGEX switches the lookup from the latest
+# release to the highest tag matching that regex, for a project that publishes only tags). Releases are asked of UPSTREAM_WATCH
 # (the real project); when that differs from UPSTREAM_REPO the build source is our fork, the pin is a commit and a bump needs
 # the fork to contain the new commit. Tag pin: the latest release (not a draft or
 # pre-release) is newer when it sorts above the pinned tag by version. Commit pin (empty UPSTREAM_TAG): the latest
@@ -28,8 +29,19 @@ upstream_env_load "${root}/${dir}/upstream.env" || { echo "unreachable invalid $
 repo="${UPSTREAM_WATCH}"   # where releases are looked up
 fork="${UPSTREAM_REPO}"     # where the build clones from (the same unless it is a fork)
 
-latest=$(gh api "repos/${repo}/releases/latest" --jq .tag_name 2> /dev/null) || latest=""
-if [[ -z "${latest}" && ( -z "${UPSTREAM_TAG}" || "${repo}" != "${fork}" ) ]]; then
+if [[ -n "${UPSTREAM_TAG_REGEX}" ]]; then
+    # A project without GitHub release objects (ghostty): the newest tag that matches UPSTREAM_TAG_REGEX by version (sort -V), so tags
+    # such as `vt-1.0.1` (another product), `tip` (a nightly) and pre-releases never count.
+    if ! tagnames=$(gh api "repos/${repo}/tags" --paginate --jq '.[].name' 2> /dev/null); then
+        echo "unreachable cannot read the tags of ${repo}"
+        exit 0
+    fi
+    latest=$(grep -E -- "${UPSTREAM_TAG_REGEX}" <<<"${tagnames}" | sort -V | tail -n1) || latest=""
+    if [[ -z "${latest}" ]]; then echo "unreachable no tag of ${repo} matches ${UPSTREAM_TAG_REGEX}"; exit 0; fi
+else
+    latest=$(gh api "repos/${repo}/releases/latest" --jq .tag_name 2> /dev/null) || latest=""
+fi
+if [[ -z "${latest}" && -z "${UPSTREAM_TAG_REGEX}" && ( -z "${UPSTREAM_TAG}" || "${repo}" != "${fork}" ) ]]; then
     # a commit-pinned project may have tags but no release object
     if ! tags=$(gh api "repos/${repo}/tags" --jq '.[0].name // ""' 2> /dev/null); then
         echo "unreachable cannot read releases or tags of ${repo}"

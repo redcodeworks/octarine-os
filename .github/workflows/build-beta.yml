@@ -196,7 +196,7 @@ jobs:
 
             check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
             check "menu helper library shipped" "test -s /usr/share/octarine-os/lib/menu.sh"
-            # prebuilt binaries (binaries/: scx, extest): installed only; whether a scheduler loads is for a real machine to say
+            # prebuilt binaries (binaries/: scx, extest, ghostty): installed only; whether a scheduler loads is for a real machine to say
             check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
             for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
                 check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
@@ -207,11 +207,17 @@ jobs:
             check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
             check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
             check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
+            check "ghostty is executable and runs --version" "test -x /usr/bin/ghostty && /usr/bin/ghostty --version"
+            check "ghostty resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\""
+            check "ghostty desktop file, D-Bus service and systemd user unit name /usr/bin/ghostty" "grep -q \"^Exec=/usr/bin/ghostty \" /usr/share/applications/com.mitchellh.ghostty.desktop && grep -q \"^Exec=/usr/bin/ghostty \" /usr/share/dbus-1/services/com.mitchellh.ghostty.service && grep -q \"^ExecStart=/usr/bin/ghostty \" /usr/lib/systemd/user/app-com.mitchellh.ghostty.service"
+            check "ghostty terminfo xterm-ghostty is found by ncurses" "infocmp xterm-ghostty > /dev/null"
+            check "ghostty user service is not enabled (nothing starts it)" "! systemctl --global is-enabled app-com.mitchellh.ghostty.service 2>/dev/null"
+            check "MIT text ships with ghostty" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/ghostty"
             check "scheduler units: the template and the polkit rule ship, the helpers and the GameMode hooks are executable" "test -f /usr/lib/systemd/system/scx@.service && test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x /usr/libexec/octarine-os/\$f || exit 1; done"
             check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
             check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
             check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
-            check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
+            check "source and build records ship for every binary image" "for i in scx extest ghostty; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
             check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
@@ -224,7 +230,7 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo"
+            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo gtk4 libadwaita gtk4-layer-shell oniguruma glslang simdutf fontconfig freetype harfbuzz bzip2-libs libpng libwayland-client libX11 libxkbcommon libglvnd-egl libstdc++ zlib-ng-compat"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)

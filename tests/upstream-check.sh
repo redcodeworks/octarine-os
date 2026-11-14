@@ -81,6 +81,16 @@ reply repos_o_p_releases_latest 1.1.0
 ! grep -q 'repos/f/ork/tags\|repos/f/ork/releases' "${GH_LOG}" && ok "check (fork): releases are asked of the watched project, never of the fork" || bad "check asked the fork for releases"
 ! grep -qE 'gh (pr|repo|release) |--method|-X ' "${GH_LOG}" && ok "check: only reads (gh api GET)" || bad "check wrote something"
 
+# tag-regex project without release objects (ghostty): the highest matching tag, vt-*, tip and pre-releases ignored
+printf 'UPSTREAM_REPO=o/p\nUPSTREAM_TAG=v1.4.0\nUPSTREAM_COMMIT=%s\nUPSTREAM_TAG_REGEX=^v[0-9]+\\.[0-9]+\\.[0-9]+$\n' "$(sha a)" > "${crepo}/img/upstream.env"
+reply repos_o_p_tags "$(printf 'tip\nvt-1.0.1\nv1.4.0\nv1.3.1\nv1.5.0-rc1\nvt-9.9.9\n')"
+[[ "$(chk)" == current* ]] && ok "check (tag regex): vt-*, tip and pre-release tags are ignored: current" || bad "check regex current: $(chk)"
+reply repos_o_p_tags "$(printf 'tip\nvt-1.0.1\nv1.4.0\nv1.10.0\nv1.9.0\nv1.11.0-rc1\n')" repos_o_p_commits_v1.10.0 "$(sha b)"
+[[ "$(chk)" == "bump v1.10.0 $(sha b)" ]] && ok "check (tag regex): the highest stable tag by version is the bump (v1.10.0 above v1.9.0)" || bad "check regex bump: $(chk)"
+! grep -q 'releases/latest' "${GH_LOG}" && ok "check (tag regex): no release lookup" || bad "check regex asked for releases"
+reply
+[[ "$(chk)" == unreachable* ]] && ok "check (tag regex): tags unreadable: fail soft" || bad "check regex unreachable: $(chk)"
+
 
 # --- bump-upstream.sh: new PR, already open, older PR updated; a local origin, a stub gh, no force-push
 origin="${tmp}/origin.git"
@@ -122,6 +132,23 @@ printf '{"number":7,"title":"Bump img to v1.1.5"}\n' > "${tmp}/prlist"; : > "${G
 bump v1.1.6 "$(sha c)" && grep -q '^gh pr edit 7 --title Bump img to v1.1.6' "${GH_LOG}" && grep -qx 'gh workflow run test.yml --ref bump/img' "${GH_LOG}" && ok "bump: a PR for an older version is updated, not duplicated, and the checks are dispatched again" || bad "bump update: $(cat "${tmp}/bump.log")"
 [[ "$(git -C "${origin}" log --format=%s testing..bump/img | wc -l)" -ge 2 && "$(git -C "${origin}" show bump/img:img/upstream.env | grep -c "$(sha c)")" == 1 ]] && ok "bump: the update is a new commit on the same branch (no force-push)" || bad "bump update commit"
 ! git -C "${origin}" log --format=%B bump/img | grep -qi 'co-authored-by' && ok "bump: no commit trailers" || bad "bump trailer"
+
+# a component with a bump-extra.sh: exit 3 flags the Zig mismatch in the PR body, another failure stops before any push
+git -C "${wc}" checkout -q testing
+printf '# pin\nUPSTREAM_REPO=o/p\nUPSTREAM_TAG=v1.1.4\nUPSTREAM_COMMIT=%s\n' "$(sha a)" > "${wc}/img/upstream.env"
+printf '#!/usr/bin/env bash\necho "ZIG-MISMATCH 0.18.0"\nexit 3\n' > "${wc}/img/bump-extra.sh"; chmod +x "${wc}/img/bump-extra.sh"
+git -C "${wc}" add -A && git -C "${wc}" commit -q -m "extra" && git -C "${wc}" push -q origin testing
+git -C "${origin}" branch -q -D bump/img 2> /dev/null
+: > "${tmp}/prlist"; : > "${GH_LOG}"
+bump v1.1.5 "$(sha b)"; rc=$?
+[[ ${rc} == 0 ]] && grep -q 'gh pr create' "${GH_LOG}" && grep -q 'needs Zig 0.18.0' "${GH_LOG}" && grep -q 'do not merge before that' "${GH_LOG}" && ok "bump (extra, exit 3): the PR is still opened and its body flags the Zig the release needs" || bad "bump extra flag (rc ${rc}): $(cat "${GH_LOG}" "${tmp}/bump.log")"
+printf '#!/usr/bin/env bash\nexit 1\n' > "${wc}/img/bump-extra.sh"
+git -C "${wc}" checkout -q testing
+git -C "${origin}" branch -q -D bump/img 2> /dev/null; : > "${GH_LOG}"
+git -C "${wc}" commit -q -a -m "extra fails" && git -C "${wc}" push -q origin testing
+bump v1.1.6 "$(sha c)"; rc=$?
+[[ ${rc} != 0 ]] && ! grep -q 'gh pr create' "${GH_LOG}" && ! git -C "${origin}" rev-parse -q --verify bump/img > /dev/null && ok "bump (extra, other failure): no push, no pull request" || bad "bump extra failure (rc ${rc})"
+git -C "${wc}" checkout -q -f testing; rm -f "${wc}/img/bump-extra.sh"; git -C "${wc}" commit -q -a -m "no extra" && git -C "${wc}" push -q origin testing
 
 # a fork: the PR links the followed project and says the pin is the fork's commit
 git -C "${wc}" checkout -q testing
