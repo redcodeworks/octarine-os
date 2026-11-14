@@ -375,7 +375,7 @@ jobs:
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
-      # Secure Boot: the kernel image must verify with sbverify against the certificate pinned in keys/ (a base with an unsigned or differently
+      # Secure Boot: the kernel image must verify with sbverify against Universal Blue's kernel key (downloaded from the akmods repository) (a base with an unsigned or differently
       # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
       - name: Secure Boot check of the kernel
         run: |
