@@ -37,8 +37,8 @@ fi
 check "enabled-extensions keeps the packaged default (background-logo) first" grep -q "^enabled-extensions=\['background-logo@fedorahosted.org'," "$keyfile"
 check "extensions enabled are only ones the image ships (appindicator, gsconnect)" bash -c "grep '^enabled-extensions=' '$keyfile' | grep -o '[A-Za-z0-9.-]*@[a-zA-Z0-9.-]*' | sort | tr '\n' ' ' | grep -qx 'appindicatorsupport@rgcjonas.gmail.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io '"
 check "GPaste is shipped but not enabled by default" bash -c "! grep -qiE \"gpaste|just-perfection|ddterm|freon\" '$keyfile'"
-check "GPaste is in the misc optional group of build.sh" grep -q "^    \"misc:.* gpaste gnome-shell-extension-gpaste gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon " "$here/build_files/build.sh"
-check "smoke test maps Freon to its real schema id org.gnome.shell.extensions.freon (not .sensors)" bash -c "grep -q \"yahoo.com:freon\" \"$here/.github/workflows/build.yml\" \&\& grep -q \"yahoo.com:freon\" \"$here/.github/workflows/build-beta.yml\" \&\& ! grep -q \"yahoo.com:sensors\" \"$here/.github/workflows/build.yml\" \"$here/.github/workflows/build-beta.yml\""
+check "GPaste is in the misc optional group of build.sh" grep -q "^    \"misc:.* gpaste gnome-shell-extension-gpaste " "$here/build_files/build.sh"
+check "Just Perfection, ddterm and Freon are not installed by build.sh and the smoke tests assert they are not shipped" bash -c "! grep -q 'gnome-shell-extension-\(just-perfection\|ddterm\|freon\) ' '$here/build_files/build.sh' && grep -q 'are not shipped (packages and extension directories)' '$here/.github/workflows/build.yml' && grep -q 'are not shipped (packages and extension directories)' '$here/.github/workflows/build-beta.yml'"
 
 # fish syntax and behavior
 if command -v fish >/dev/null; then
