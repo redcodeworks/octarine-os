@@ -113,7 +113,7 @@ check "the dx and NVIDIA dx workflows build with the same Containerfile and the 
 import sys, yaml
 a = yaml.safe_load(open(sys.argv[1])); b = yaml.safe_load(open(sys.argv[2]))
 def step(w, job, name): return [s for s in w["jobs"][job]["steps"] if s.get("name") == name][0]
-for n in ("Maximize build space", "Check Just Syntax", "Check image size", "Rechunk with rpm-ostree"):
+for n in ("Check disk space", "Maximize build space (fallback, only when the disk is low)", "Check Just Syntax", "Check image size", "Rechunk with rpm-ostree"):
     sa, sb = step(a, "build", n), step(b, "build", n)
     assert {k: v for k, v in sa.items() if k != "run"} == {k: v for k, v in sb.items() if k != "run"}, n
 assert step(a, "build", "Check the dev-packages pin")["run"] == step(b, "build", "Check the dev-packages pin")["run"]

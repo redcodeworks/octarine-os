@@ -373,19 +373,24 @@ integration branch (GitLab's "main"); `main` is the production branch.
 minutes). Triggers: `push` with `branches-ignore: [main, testing]` and `workflow_dispatch`; no `pull_request`
 (the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
 `testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
-Two jobs, with these exact names because they become required checks:
+Three jobs; `test` and `secrets` have these exact names because they are required checks (`scope` is not required):
 
 - `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
   `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
-  glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
+  glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), the results printed in the order of the list with a PASS or FAIL line per test, the output of failing ones and a `Summary: N passed, M failed` line; any failure or timeout fails the job; the tests make their own temp directories, so they are independent). Measured on 2026-11-14 before this change: the job took about 170 s, of which the tool install was 25 s and the sequential test loop 133 s.
+  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells `test` whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). Then `test` skips `just check`, `bash -n` and the full run and runs only the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md, CONFIG-GUIDE.md or `docs/`, never a fixed list) plus a sanity check of the text (not empty, no merge conflict markers). A first push of a branch, a dispatch, a mixed push and any failure of the detection run everything; the job keeps its name and always runs (`if: always()`), so the required check never goes missing. The tool install stays unconditional because the documentation tests need it (it is 25 s; trimming it was not worth weakening the setup). Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
   skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
-Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
+Run the same locally: `just check; .github/scripts/run-tests.sh` (or the loop `for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`).
 Test: `tests/test-workflow.sh`.
 
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
+
+## Runner disk space (2026-11-14)
+
+The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s on the default build, 73 s on dx). Measured on `ubuntu-26.04` with two non-publishing dispatches of `build.yml` from `exp/disk-a` and `exp/disk-b`: the root disk is 145 GB with 57 GB used and 88 GB free BEFORE any cleanup; after the action 26 GB used and 119 GB free; after the default image build and rechunk 44 GB used and 102 GB free, so the whole build needs about 18 GB on top of the cleaned runner (about 5 times less than the free space at the start). A targeted removal of the biggest directories (dotnet, android, ghc, CodeQL, swift...) instead of the action was measured too and was SLOWER (119 s against 85 s for the action in the same measurement), so not deleting at all is the fast choice. Every image workflow (`build.yml`, `build-beta.yml`, `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`) therefore runs a step `Check disk space` (id `disk`) and the action only as `Maximize build space (fallback, only when the disk is low)` when fewer than 60 GiB are free at the start. `build.yml` and `build-dx.yml` also print the free space after the build (job summary) and warn below 15 GiB. Only the default image was measured on a branch (dx and the NVIDIA builds publish, so they are only measured by their own runs: the summary line of the first dx build after this change is the number to look at). If a build ever fails with "no space left on device", lower nothing: remove the `if:` of the fallback step (the old behavior) and read the summary lines.
 
 ## Rules
 
