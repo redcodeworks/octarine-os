@@ -50,14 +50,14 @@ v1=$(v)
 echo b >> .github/workflows/build.yml; commit workflow
 ne "a change to build.yml is a vanilla change" "$(v)" "${v1}"
 echo b >> tests/other.sh; commit othertest
-ne "a test that is not dx-only is a vanilla change" "$(v)" "$(v HEAD~1)"
+eq "a test file is not an image input (tests/** is listed with the docs)" "$(v)" "$(v HEAD~1)"; eq "...and not a dx input either" "$(d)" "$(d HEAD~1)"
 echo c > system_files/new; commit newfile
 ne "a new vanilla file changes vanilla_inputs" "$(v)" "$(v HEAD~1)"
 git mv variants/dx/f variants/dx/f2; commit rename
 eq "renaming inside variants/dx leaves vanilla_inputs equal" "$(v)" "$(v HEAD~1)"; ne "...and changes dx_inputs" "$(d)" "$(d HEAD~1)"
 
 # every literal path of is_dx_only that is not a glob exists in the real repository (a rename must update the list)
-for f in .github/workflows/build-dx.yml .github/scripts/dx-smoke.sh .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub tests/dx-image.sh tests/dev-setup.sh tests/plan-dx.sh; do
+for f in .github/workflows/build-dx.yml .github/scripts/dx-smoke.sh .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub ; do
     [[ -f "${here}/${f}" ]] && pass "dx-only path exists: ${f}" || bad "dx-only path missing: ${f}"
     ( source "${hash}"; is_dx_only "${f}" ) && pass "is_dx_only ${f}" || bad "is_dx_only ${f}"
 done
