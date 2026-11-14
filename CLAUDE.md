@@ -615,7 +615,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   dx testing image had recorded the floating `testing` digest as its base; the `latest` plan then never found a matching tested image and built
   (about 21 minutes per promotion). The fix: `.github/scripts/push-tags.sh <local image> <registry image> <tag>...` pushes the first tag once
   (`podman push --digestfile`), makes every other tag a registry-side `skopeo copy --all --preserve-digests` of that digest, and reads each
-  tag's digest back from the registry (a mismatch fails the step); it writes the single `digests=` output the sign job signs. `build.yml`,
+  tag's digest back from the registry (a mismatch fails the step; the read-back POLLS, 6 reads 5 s apart, because GHCR answered a read right after a copy with the previous manifest of the tag on 2026-11-14 and failed a green dx push of `testing`, leaving an unsigned `testing` image until a re-run); it writes the single `digests=` output the sign job signs. `build.yml`,
   `build-beta.yml`, `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
   with the stub podman/skopeo registry, plus the `dx-image` and `beta-channel` workflow checks). Images published before the fix still have
   two digests; the first promotion after it builds dx once because no tested dx image on a matching base exists yet.
