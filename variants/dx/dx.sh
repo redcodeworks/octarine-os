@@ -3,8 +3,12 @@
 # dev-packages image), then variants/dx/packages/extras.txt, the dx-only files and podman.socket. The kernel must be
 # exactly the same before and after (nothing here may pull in a new one).
 set -euo pipefail
+# Log groups: GitHub Actions folds each "::group::" ... "::endgroup::" pair in the build log (plain text elsewhere); never nested. The trap
+# closes a group left open by a failure and prints an "::error::" line outside it (exit status unchanged).
+trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::dx.sh failed (exit ${rc})"; fi' EXIT
 
 kernel_of() { rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core; }
+echo "::group::dx: shared developer packages"
 before=$(kernel_of)
 echo "Kernel of the base image: ${before}"
 
@@ -18,6 +22,8 @@ for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
 done
 
+echo "::endgroup::"
+echo "::group::dx: extra packages"
 # The extras (grouped list, one strict transaction; names the shared list or the base already installed are skipped)
 mapfile -t extras < <(sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' /ctx/extras.txt)
 [[ "${#extras[@]}" -gt 0 ]] || { echo "ERROR: /ctx/extras.txt lists no package"; exit 1; }
@@ -25,6 +31,9 @@ echo "Installing ${#extras[@]} extra packages"
 dnf5 -y install --setopt=strict=1 "${extras[@]}"
 dnf5 clean all
 rm -rf /var/cache/libdnf5 /var/cache/dnf /var/log/dnf5.log* /var/log/dnf.log* /root/.cache 2>/dev/null || true
+echo "::endgroup::"
+
+echo "::group::dx: files, recipes and datastore units"
 
 # dx-only files (the `ujust dev` recipe file, the sdk wrapper, the cargo PATH snippet)
 cp -avf /ctx/system_files/. /
@@ -59,6 +68,9 @@ grep -qxF "${virthost_import}" "${ujust_main}"
 
 # Docker-compatible API socket for developer tools (rootful); the default image already enables the user one globally
 systemctl enable podman.socket
+echo "::endgroup::"
+
+echo "::group::dx: image identity and kernel check"
 
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
 # version of THIS build (<YYYYMMDD>-<short sha>, `beta-` prefixed on the beta channel), passed in by the workflow; a promoted tag keeps it.
@@ -84,6 +96,10 @@ after=$(kernel_of)
 [[ "${after}" == "${before}" ]] || { echo "ERROR: the dx install changed the kernel (${before} -> ${after})"; exit 1; }
 [[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: /usr/lib/modules does not hold exactly ${before}"; exit 1; }
 echo "dx layer installed for kernel ${before}"
+echo "::endgroup::"
+
+# Every repository that is enabled must be one the base enables (prints its own log group)
+/ctx/validate-repos.sh
 
 # nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (build_files/final-cleanup.sh)
 /ctx/final-cleanup.sh

@@ -3,9 +3,13 @@
 # nvidia-install.sh of the akmods image, then writes what that script does not (nouveau blacklist, kernel
 # arguments) and rebuilds the initramfs. The kernel must be exactly the same before and after.
 set -euo pipefail
+# Log groups: GitHub Actions folds each "::group::" ... "::endgroup::" pair in the build log (plain text elsewhere); never nested. The trap
+# closes a group left open by a failure and prints an "::error::" line outside it (exit status unchanged).
+trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::nvidia.sh failed (exit ${rc})"; fi' EXIT
 
 kernel_of() { rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core; }
 
+echo "::group::nvidia: driver install"
 before=$(kernel_of)
 test "$(ls /usr/lib/modules | wc -l)" = 1
 kver=$(ls /usr/lib/modules)
@@ -15,6 +19,8 @@ echo "Kernel of the base image: ${before}"
 test -x /tmp/akmods-rpms/ublue-os/nvidia-install.sh
 IMAGE_NAME=silverblue /tmp/akmods-rpms/ublue-os/nvidia-install.sh
 
+echo "::endgroup::"
+echo "::group::nvidia: image identity and kernel check"
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
 # version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
 set_os_release_field() { # key value: replace the line when it exists, append it otherwise
@@ -37,6 +43,8 @@ after=$(kernel_of)
 test "$(ls /usr/lib/modules | wc -l)" = 1
 [[ "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: kernel module directory changed"; exit 1; }
 
+echo "::endgroup::"
+echo "::group::nvidia: CDI, kernel arguments and initramfs"
 # CDI (how a container gets the GPU, also what `ujust dev --only cuda` in the dx image uses): the akmods nvidia-install.sh
 # above installs the full nvidia-container-toolkit and enables nvidia-cdi-refresh.service/.path (per the ublue-os/akmods
 # sources, read 2026-11-10; the spec is written to /var/run/cdi/nvidia.yaml at boot). This is only a guarded fallback for when
@@ -78,6 +86,10 @@ echo "lsinitrd exit status: ${lsinitrd_rc}; nvidia entries of the new initramfs 
 grep -i nvidia "${lst}" | head -20 || true
 rm -f "${lst}"
 echo "NVIDIA driver installed for kernel ${before}"
+echo "::endgroup::"
+
+# Every repository that is enabled must be one the base enables (prints its own log group)
+/ctx/validate-repos.sh
 
 # nothing in /boot, /run, /tmp or /var that `bootc container lint --fatal-warnings` objects to (build_files/final-cleanup.sh)
 /ctx/final-cleanup.sh

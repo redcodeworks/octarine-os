@@ -14,6 +14,10 @@
 # The instance name is the scheduler name without the scx_ prefix (scx_rusty -> rusty): scx@rusty.service. Adding a scheduler is a
 # line in binaries/scx/schedulers.tsv plus the next bump of the binaries; nothing here changes.
 set -euo pipefail
+# Log group (folded in the GitHub Actions build log, plain text elsewhere); the trap closes it however the script ends and prints an
+# "::error::" line outside it on failure. Exit status unchanged.
+echo "::group::gen-schedulers.sh"
+trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::gen-schedulers.sh failed (exit ${rc})"; fi' EXIT
 dest=${DESTDIR:-}
 tsv="${dest}/usr/share/octarine-os/schedulers.tsv"
 reg="${dest}/usr/share/octarine-os/schedulers.d"

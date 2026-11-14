@@ -8,6 +8,10 @@
 # The lint prints exactly which paths it objects to; this script generates /usr/lib/tmpfiles.d/octarine-var.conf from what is really there, so
 # a package that ships a new /var directory needs no manual list.
 set -euo pipefail
+# Log group (folded in the GitHub Actions build log, plain text elsewhere); the trap closes it however the script ends and prints an
+# "::error::" line outside it on failure. Exit status unchanged.
+echo "::group::final-cleanup.sh"
+trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::final-cleanup.sh failed (exit ${rc})"; fi' EXIT
 shopt -s dotglob nullglob
 
 rm -rf /boot/* || true

@@ -8,6 +8,10 @@
 # The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<image>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 set -euo pipefail
+# Log group (folded in the GitHub Actions build log, plain text elsewhere); the trap closes it however the script ends and prints an
+# "::error::" line outside it on failure. Exit status unchanged.
+echo "::group::install-binaries.sh"
+trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-binaries.sh failed (exit ${rc})"; fi' EXIT
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
 scx=${root}/scx

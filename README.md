@@ -52,7 +52,8 @@ Added by this image:
 - The Firefox RPM (the Flatpak replaces it) and `toolbox` (distrobox replaces it)
 
 **Compilers and build tools**
-- The default image has none (neither does the base). The dx variant adds them (see Variants).
+- `gcc`, `g++`, `make` and the `binutils` linker (`ld`, `ar`, `as`) are installed, enough to compile and link small programs
+- Clang, CMake, Ninja, Meson, gdb and the `-devel` libraries are not in the default image; the dx variant adds them (see Variants)
 
 **Homebrew**
 - Installed on first boot; formulae update automatically, upgrades are manual
@@ -73,7 +74,7 @@ Added by this image:
 | Image | Description | URL |
 |---|---|---|
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
-| dx | Developer image: compilers and build tools, `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+| dx | Developer image: the full developer toolchain (Clang, CMake, Ninja, Meson, gdb), `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 
