@@ -26,6 +26,10 @@ else
     podman cp "${cid}:/usr/lib/modules/${kver}/vmlinuz" "${work}/vmlinuz"
     kernel=${work}/vmlinuz
 fi
+if [[ -z "${KERNEL_FILE:-}" ]]; then
+    echo "== Secure Boot certificates and packages in the image (discovery for a pin)"
+    podman run --rm --entrypoint sh "${image}" -c 'ls -l /usr/share/pki/sb-certs/ 2>&1; for f in /usr/share/pki/sb-certs/*; do [ -f "$f" ] && echo "$f" && openssl x509 -inform DER -in "$f" -noout -subject -issuer -fingerprint -sha256 2>&1; done; rpm -qa | grep -i -E "shim|sb-certs|secureboot|uefi-ca" | sort; ls /usr/lib/modules/*/ | head -20' || true
+fi
 echo "== kernel ${kver} of ${image}: sbverify --list"
 sbverify --list "${kernel}" || true
 echo "== signing certificates of the kernel (PEM, for a pin)"
