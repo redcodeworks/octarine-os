@@ -2101,17 +2101,19 @@ luks-tpm-unlock *args:
     action=""
     pcrs=7+14
     pin=0
+    force=0
     mode=ask
     want=()
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--yes|--no]`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--force] [--yes|--no]`. The result is the same however often it runs: enroll ALWAYS runs one systemd-cryptenroll call that enrolls the new TPM2 key and then wipes the old TPM2 slot (never any other slot: no --wipe-slot=all). Which devices are offered or ticked by default depends on a probe: a device that already has a TPM2 key is not ticked and `--yes` leaves it alone; naming a device, or --force (every device), re-enrolls it. It REFUSES to enroll or remove on a volume that has no unlock method other than the TPM2 key (a passphrase, recovery key or FIDO2 key): add a recovery key first with `sudo systemd-cryptenroll DEVICE --recovery-key --unlock-tpm2-device=auto`, or use `sudo cryptsetup luksAddKey`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
             enroll | remove) action=$a ;;
             --pcrs=*) pcrs=${a#--pcrs=} ;;
             --pin) pin=1 ;;
+            --force) force=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            -*) echo "Unknown option: $a (use --pcrs=7|7+14, --pin, --yes or --no)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --pcrs=7|7+14, --pin, --force, --yes or --no)" >&2; exit 2 ;;
             *) want+=("$a") ;;
         esac
     done
@@ -2135,6 +2137,16 @@ luks-tpm-unlock *args:
     for d in "${devs[@]}"; do
         if sudo cryptsetup luksDump "$d" 2>/dev/null | grep -q systemd-tpm2; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
     done
+    # other_unlock_slots DEVICE: how many keyslots do NOT belong to a systemd-tpm2 token (a passphrase, a recovery key, a FIDO2 key); "unknown"
+    # when the header is not LUKS2 or cannot be read. Wiping the TPM2 slot of a volume with none leaves it without any way to unlock it.
+    other_unlock_slots() {
+        sudo cryptsetup luksDump "$1" 2>/dev/null | awk '
+            /^[A-Za-z][A-Za-z ]*:[ ]*$/ { sec = $0; sub(/:.*/, "", sec); next }
+            sec == "Keyslots" && /^  [0-9]+: / { n = $1; sub(/:/, "", n); ks[n] = 1; seen = 1; next }
+            sec == "Tokens" && /^  [0-9]+: / { type = $2; next }
+            sec == "Tokens" && /^[ \t]+Keyslot:/ { if (type == "systemd-tpm2") tpm[$2] = 1; next }
+            END { if (!seen) { print "unknown"; exit }; c = 0; for (k in ks) if (!(k in tpm)) c++; print c }'
+    }
     describe() { # device
         local role=data
         [ -n "$root_uuid" ] && [ "${uuid_of[$1]}" = "$root_uuid" ] && role=root
@@ -2160,6 +2172,13 @@ luks-tpm-unlock *args:
             done
             [ -n "$hit" ] || { echo "No LUKS device matches: $w" >&2; exit 2; }
             chosen+=("$hit")
+        done
+    elif [ "$mode" = yes ] || [ "$force" = 1 ]; then
+        # no menu: the devices the checklist would tick (a probe: no TPM2 key yet for enroll, a TPM2 key for remove), or every device with --force
+        for d in "${devs[@]}"; do
+            if [ "$force" = 1 ]; then chosen+=("$d")
+            elif [ "$action" = enroll ] && [ "${tpm_of[$d]}" = no ]; then chosen+=("$d")
+            elif [ "$action" = remove ] && [ "${tpm_of[$d]}" = yes ]; then chosen+=("$d"); fi
         done
     elif menu_ready; then
         items=()
@@ -2196,19 +2215,27 @@ luks-tpm-unlock *args:
     failed=0
     root_done=0
     for d in "${chosen[@]}"; do
+        # never leave a volume without an unlock method: the TPM2 slot may only go when another keyslot (a passphrase, a recovery key, a
+        # FIDO2 key) exists. Two volumes of the owner were once left TPM-only by a wipe of every slot; this recipe wipes the tpm2 type only.
+        others=$(other_unlock_slots "$d")
+        if [ "$others" = unknown ] || [ "${others:-0}" -lt 1 ]; then
+            if [ "$others" = unknown ]; then echo "REFUSED $d: could not confirm another unlock method (the header is not LUKS2 or cannot be read), and the TPM2 slot must not be the only one." >&2
+            else echo "REFUSED $d: its only unlock method is the TPM2 key. Add a recovery key first, then run this again: sudo systemd-cryptenroll $d --recovery-key --unlock-tpm2-device=auto" >&2; fi
+            failed=1
+            continue
+        fi
         if [ "$action" = remove ]; then
             echo "== Removing the TPM2 key from $d"
             sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || failed=1
             continue
         fi
-        # One call enrolls the new TPM2 key first and wipes the old TPM2 slot only when that succeeded (systemd-cryptenroll(1),
-        # --wipe-slot=: "the enrollment is completed first, and only when successful the wipe operation executed"), so a
-        # cancelled or failed enrollment leaves the old key in place.
-        enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs")
+        # ONE call, always the same: enroll the new TPM2 key and wipe the TPM2 slots (only that type; the new slot is excluded). systemd-cryptenroll(1),
+        # --wipe-slot=: "the enrollment is completed first, and only when successful the wipe operation executed", so a cancelled or failed
+        # enrollment leaves the old key in place. With no old TPM2 slot the wipe has nothing to do. The end state is the same on every run.
+        enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs" --wipe-slot=tpm2)
         if [ "$pin" = 1 ]; then enroll_args+=(--tpm2-with-pin=yes); fi
         if [ "${tpm_of[$d]}" = yes ]; then
             echo "== Replacing the TPM2 key on $d (asks for the volume passphrase; the old key stays if this fails)"
-            enroll_args+=(--wipe-slot=tpm2)
         else
             echo "== Enrolling $d (asks for the volume passphrase)"
         fi
@@ -2616,7 +2643,11 @@ hardware-setup *args:
                 ;;
             cuda) "$ujust_cmd" dev --only cuda "${yes[@]}" ;;
             secure-boot) "$ujust_cmd" enroll-secure-boot-key ;;
-            tpm-luks) "$ujust_cmd" luks-tpm-unlock ;;
+            tpm-luks)
+                # named step: re-enroll every volume (a probe only sets the default); --yes alone: only volumes without a TPM2 key; else the menu
+                if [ -n "$only_list" ]; then "$ujust_cmd" luks-tpm-unlock enroll --force "${yes[@]}"
+                elif [ "$mode" = yes ]; then "$ujust_cmd" luks-tpm-unlock enroll --yes
+                else "$ujust_cmd" luks-tpm-unlock; fi ;;
             fido-key)
                 local dir tmp
                 dir=$(dirname "$u2f_file")
