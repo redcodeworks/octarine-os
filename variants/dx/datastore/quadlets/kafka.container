@@ -38,5 +38,8 @@ NoNewPrivileges=true
 [Service]
 Restart=always
 TimeoutStartSec=300
+# The broker shuts down cleanly on SIGTERM and exits with 143 (128 + 15); without this the generated unit is "failed" after every clean stop
+# (found on a real run: "shut down completed" in the log, status=143 in systemd). Only Kafka needs it: PostgreSQL and Valkey stop with 0.
+SuccessExitStatus=143
 
 # No [Install] section: pulled in by kafka-pod.service.

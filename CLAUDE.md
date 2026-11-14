@@ -273,9 +273,18 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
 - **Location, verified.** The user generator reads `/usr/share/containers/systemd/users/` (checked by running `quadlet --user --dryrun` as an unprivileged user on
   the default image with the rendered files mounted there: all units are generated). The dx smoke test repeats that dry run inside the built image.
 - **Pins.** Exact patch-level tags with digests (`Image=name:tag@sha256:...`; the tag stays for humans, the digest decides), recorded 2026-11-13: postgres
-  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `3.99`, kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
+  `17.12-alpine`, valkey `9.1.3-alpine`, seaweedfs `4.53` (digest `sha256:ccad23e1...`, the multi-arch index digest as `skopeo inspect --raw | sha256sum` gives it; moved from 3.99 on 2026-11-14, major 4), kafka `4.3.2` (the minor the owner runs; `4.4.0` exists and arrives as a bump pull request). No
   `AutoUpdate=` on any shipped unit: a stateful service never changes image unattended. Majors are never bumped automatically (PostgreSQL 17 to 18 needs dump
   and restore or `pg_upgrade`). `tests/datastore.sh` checks that every shipped `Image=` equals the pin file, is an exact tag with a digest, and is not `latest`.
+- **Stop behavior (found on a real run, 2026-11-14).** `kafka.container` has `SuccessExitStatus=143` (the broker shuts down cleanly on SIGTERM and exits 143, which made the unit `failed` after every clean stop; PostgreSQL and
+  Valkey stop with 0 and do not need it). `seaweedfs.container` has `StopTimeout=45` (Quadlet, `podman stop -t`) and `TimeoutStopSec=60` in `[Service]`: the all-in-one server exceeded podman's default 10 s and was SIGKILLed.
+  45 s lets master, volume, filer and S3 flush; the systemd limit is longer so systemd does not kill podman first. If SeaweedFS ignores SIGTERM altogether the stop simply takes 45 s and then kills, as before: look at the log before raising it.
+- **SeaweedFS 4.x (pin 4.53, UNVERIFIED on a real machine).** Research (release notes, wiki, issues; not tested here): 4.00 added a non-root user (uid and gid 1000, `seaweed`); the entrypoint starts as root, `chown`s `/data` when the owner
+  differs and drops privileges with su-exec, no documented switch. In rootless Podman that uid is a subuid on the host, so the first start changes the ownership of the volume's files (data is tiny on the owner's machine, a backup exists).
+  Checked against the shipped unit: no `User=`, `UserNS=` or `:U` volume option; capabilities are Podman's default set (CHOWN, SETUID and SETGID are in it) and `NoNewPrivileges=true` does not stop `setuid()` inside the container;
+  the S3 config secret is a `type=mount` podman secret, whose default mode is 0444, so the dropped-privilege process can read it (nothing changed in the unit). With identities in `-s3.config` S3 requires credentials; objects over 8 MiB return
+  multipart-style ETags; do not mix plain and `_large_disk` images on one volume (the pin is the plain image); a known deadlock (#12493, heavy bucket churn) exists in 4.48 to 4.53 and is fixed after 4.53 (low exposure here). The weekly bump
+  follows 4.x (`SEAWEEDFS_MAJOR=4`) and only reports a 5. A machine that pinned an older SeaweedFS with `ujust datastore-setup --pin seaweedfs=<tag>` removes that drop-in with `ujust datastore-setup --unpin seaweedfs` after this image arrives.
 - **Weekly bump.** `bump-pins.yml` (Tuesday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
   the newest tag of the same shape and suffix inside the pinned major, with its manifest digest (`skopeo inspect --raw | sha256sum`); release candidates and other
   suffixes never match; a NEWER MAJOR is only named in the pull request body ("newer major available, manual decision") and never changes the pin; one pull request
@@ -299,7 +308,8 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
   (stops the pod, exports, starts it again; a trap starts again exactly the pods this run stopped on Ctrl-C, SIGTERM or an early failure); files are private (umask 077). Restore is manual (`podman volume import`), nothing runs on a timer. These volumes are NOT covered by snapper or borg.
 - **Smoke test** (`dx-smoke.sh`): the eleven Quadlet files exist, no `[Install]`, every image an exact tag with a digest, no latest, `AutoUpdate=`, home path or local image, loopback ports only, the recipe file and helper
   ship, and the generator dry run produces the pod and container units. Tests: `tests/datastore.sh`, `tests/datastore-bump.sh`, `tests/dx-image.sh`.
-- **Unverified (real machine).** The first `systemctl --user start datastore-pod` (image pulls, healthchecks), the secret mounts, SELinux labels on the volumes, the owner's graphroot, a Kafka start with the pinned 4.3.2, and that the removal of the owner's own Quadlet copies leaves the same behavior (container names are kept: `pgsql` and the pod aliases).
+- **Verified on a real machine (2026-11-14, nox).** The owner's own Quadlets were moved away and the shipped units took over: secrets mounted, PostgreSQL 17.12 (data major 17 accepted), Valkey 9.1.3, SeaweedFS (3.24 through a local drop-in), Kafka 4.3.2 started healthy and shut down cleanly; Lakekeeper, Connect (the Debezium slot was reused), Trino, Airflow and Superset were started afterwards against them and were healthy. That run also found the stop behavior above.
+- **Unverified (real machine).** SeaweedFS 4.x on the shipped unit (the non-root drop, the chown of the volume, the S3 config read as uid 1000, the 45 s stop), the new `SuccessExitStatus` and `StopTimeout` effects, SELinux labels on the volumes and the owner's graphroot.
 
 ## virthost-setup and wake-on-lan
 

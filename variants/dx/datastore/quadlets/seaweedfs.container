@@ -26,8 +26,14 @@ HealthStartPeriod=30s
 
 NoNewPrivileges=true
 
+# The all-in-one server did not stop within podman's default 10 s on SIGTERM and was SIGKILLed (a hard kill is the likeliest cause of any
+# later volume or .idx complaint). 45 s gives master, volume server, filer and S3 gateway time to flush; more than a minute would only
+# hide a hang. systemd's own limit (TimeoutStopSec below) must be longer than this, or systemd would kill podman first.
+StopTimeout=45
+
 [Service]
 Restart=always
 TimeoutStartSec=300
+TimeoutStopSec=60
 
 # No [Install] section: pulled in by datastore-pod.service.
