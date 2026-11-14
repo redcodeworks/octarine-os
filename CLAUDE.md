@@ -529,6 +529,11 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. The runner's `sbsigntool` (apt)
   is installed in the step. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
   Tests: `tests/secureboot-check.sh`, `tests/nvidia-variant.sh`.
+- **zizmor (`zizmor.yml`, 2026-11-14).** Audits `.github/` on pull requests that touch it, pushes to `testing`, weekly (Wednesday 06:00 UTC) and by dispatch; job and check name `zizmor`, NOT a required
+  check (the ruleset is the owner's). The binary is zizmor 1.32.0, the release asset verified by its sha256 (like the gitleaks job); `.github/zizmor.yml` holds the narrow ignores with a reason each (the local
+  `./.github/actions/setup-tool` self-repository style hints, the two bump workflows that push with the persisted token, the `$GITHUB_ENV`/`$GITHUB_PATH` writes of setup-tool and `build-nvidia-dx.yml`, and its `workflow_run` trigger). The first run found
+  156 findings (all 97 pinnable `uses:` were already pinned by commit SHA; the "31 unpinned" count was the local `./.github/...` ones, which cannot be); fixed: `persist-credentials: false` on every checkout that does not push,
+  `secrets: inherit` replaced by the named `SIGNING_SECRET`, template expansions moved into `env`, read-only workflow permissions for `build.yml`, a Dependabot cooldown.
 - **Strict lint (2026-11-14).** Every Containerfile ends with `RUN --network=none bootc container lint --fatal-warnings --no-truncate` (Aurora's last step). The first full output showed three
   warnings on the default image: a non-empty `/boot` (extlinux), content in `/run` (cockpit, dnf, selinux-policy, setroubleshoot) and 493 `/var` entries missing tmpfiles.d (libvirt, pcp, iscsi,
   dnf state, PackageKit ...). `build_files/final-cleanup.sh`, the last step of `build.sh`, `dx.sh` and `nvidia.sh`, empties `/boot`, `/run` and `/tmp`, drops dnf and PackageKit state and crash dumps, and moves
@@ -541,7 +546,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
   moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
   the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,
-  up to 127 layers. UNVERIFIED: a real boot of a chunkah image (Kevin boots the testing image on nox before promoting) and the real signature verification of the pinned digest.
+  up to 127 layers. Measured after (non-publishing dispatches 43637709422 and 43638625094 on the branch): rechunk step 150 to 159 s, job `Build image` 468 s, 256 layers, 7035 MiB; the cosign verification of the pinned digest passed. UNVERIFIED: a real boot of a chunkah image (Kevin boots the testing image on nox before promoting).
   Undo: `git revert` the commit; `rpm-ostree compose build-chunked-oci` came back from git history.
 - **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
   shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
