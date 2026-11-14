@@ -509,12 +509,13 @@ dev *args:
         fi
         installed_ids=$(ls "$java_dir" 2>/dev/null)
         cur=$(basename "$(readlink "$java_dir/current" 2>/dev/null)" 2>/dev/null)
-        grep -Eq '^21[.+-].*-zulu$' <<<"$cur" && cur_ok=1
+        # a default that exists is the user's choice (any version): it is never replaced. Only a missing or dangling `current` gets Zulu 21.
+        if [ -n "$cur" ] && [ -e "$java_dir/current" ]; then cur_ok=1; fi
         for major in 8 11 17 21 25; do
             grep -Eq "^${major}[.+-].*-zulu\$" <<<"$installed_ids" && echo "  Zulu $major: already installed ($(grep -E "^${major}[.+-].*-zulu\$" <<<"$installed_ids" | sort -V | tail -n1))." || todo+=("$major")
         done
         if [ "$have_sdkman" = 1 ] && [ "${#todo[@]}" -eq 0 ] && [ "$cur_ok" = 1 ]; then
-            echo "  All Zulu LTS versions are installed and 21 is the default (already done)."
+            echo "  All Zulu LTS versions are installed and a default is set ($cur; already done)."
             record java "already done"
             return
         fi
@@ -570,7 +571,7 @@ dev *args:
             echo "  FAILED: no Zulu 21 to set as the default." >&2
             failed_ids+=("default")
         elif [ "$cur_ok" = 1 ]; then
-            echo "  Default java is already $cur."
+            echo "  Default java is already set to $cur: kept (only a missing default is set, to Zulu 21)."
         elif "$sdk_wrapper" default java "$default_id"; then
             echo "  Default java: $default_id."
             done_ids+=("default")

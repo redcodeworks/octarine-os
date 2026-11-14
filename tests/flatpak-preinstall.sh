@@ -13,7 +13,7 @@ bin="$root/bin"
 sysbin="$root/sysbin"
 mkdir -p "$bin" "$sysbin" "$root/lists"
 REAL_JUST=$(command -v just)
-for c in bash sh env cat grep mktemp rm tee id mkdir; do
+for c in bash sh env cat grep mktemp rm tee id mkdir sleep seq ls setsid; do
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 printf '[Flatpak Preinstall org.example.One]\nBranch=stable\n\n[Flatpak Preinstall org.example.Two]\nBranch=stable\n' >"$root/lists/a.preinstall"
@@ -26,7 +26,7 @@ cat >"$bin/flatpak" <<'F'
 echo "flatpak $*" >>"$LOG"
 case "$1" in
     remotes) cat "$REMOTES" ;;
-    preinstall) echo "$FP_OUT"; exit "$FP_STATUS" ;;
+    preinstall) [ -n "${FP_SLEEP:-}" ] && { echo started >"$FP_SLEEP"; sleep 30; }; echo "$FP_OUT"; exit "$FP_STATUS" ;;
 esac
 F
 cat >"$bin/getent" <<'F'
@@ -45,6 +45,18 @@ check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 has() { grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$LOG"; }
 reset() { unset OCTARINE_MENU_FORCE_TTY; : >"$LOG"; echo flathub >"$REMOTES"; unset NO_NET; export FP_STATUS=0 FP_OUT="Nothing to do."; export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent; }
+
+# Ctrl-C or a termination while the install runs: the recipe's temp file must not stay behind
+reset
+mkdir -p "$root/tmp-int"
+rm -f "$root/started"
+FP_SLEEP="$root/started" TMPDIR="$root/tmp-int" PATH="$bin:$sysbin" setsid "$REAL_JUST" --justfile "$justfile" --working-directory "$root" flatpak-preinstall >"$root/out" 2>&1 &
+ip=$!
+for _ in $(seq 1 50); do [ -e "$root/started" ] && break; sleep 0.1; done
+sleep 0.3
+kill -TERM -- "-$ip" 2>/dev/null
+wait "$ip" 2>/dev/null; irc=$?
+check "termination during the install: the recipe ends non-zero and leaves no temp file behind" bash -c "[ $irc -ne 0 ] && [ -z \"\$(ls -A '$root/tmp-int')\" ]"
 
 reset
 run --dry-run
