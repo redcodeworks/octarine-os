@@ -1499,6 +1499,7 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
 - Packages come from the base's repos (distrobox, ffmpeg and pam-u2f already ship in `silverblue-main`; its
   multimedia stack is negativo17, so `gstreamer1-plugins-bad/-ugly` replace the `-free` variants and there is no
   `mesa-va-drivers-freeworld`). Package names are release-specific; `dnf5 install` stops on an unknown name.
+- `solaar` and `solaar-udev` are in the critical `dnf5 install` block (added 2026-11-14; `solaar-udev` already ships in the base and stays listed in case the base drops it) and in the `CRITICAL` list of both smoke tests. Dry run on Fedora 45: `solaar` 1.1.20, 5.7 MiB, plus `python3-typing-extensions`, `python3-xlib` and the weak `python3-hid-parser` (8 MiB in all); no Qt, no service. The RPM ships `/etc/xdg/autostart/solaar.desktop` unchanged (the tray icon needs a tray extension, which the owner's desktop has; nothing here conflicts, no autostart override ships), `/usr/bin/solaar`, `/usr/bin/hidconsole` and the udev rules of `solaar-udev` (`42-logitech-unify-permissions.rules`). Not verifiable without a boot: that Solaar starts and sees a receiver (`solaar show`).
 - No compilers or build tools in the image: builds happen in a toolbox. Nothing compiles from source.
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
