@@ -113,12 +113,12 @@ assert 'cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}"' in text("
 assert 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}"' in text("build")
 names = [s.get("name") for s in w["jobs"]["build"]["steps"]]
 for a, b in (("Check the dev-packages pin", "Build the image"), ("Check image size", "Smoke test the image"),
-             ("Smoke test the image", "Rechunk with rpm-ostree"), ("Rechunk with rpm-ostree", "Push to GHCR"),
+             ("Smoke test the image", "Rechunk with chunkah"), ("Rechunk with chunkah", "Push to GHCR"),
              ("Check the version is channel-neutral", "Push to GHCR")):
     assert names.index(a) < names.index(b), (a, b)
 size = next(s for s in w["jobs"]["build"]["steps"] if s.get("name") == "Check image size")
 assert size["env"]["MAX_IMAGE_GIB"] == 15
-assert "dx-smoke.sh" in text("build") and 'just ostree-rechunk octarine-os-dx "${CHANNEL}"' in text("build")
+assert "dx-smoke.sh" in text("build") and 'just rechunk octarine-os-dx "${CHANNEL}"' in text("build")
 PY
 check "workflow: the build is by digest and has explicit labels (base name and digest, no inherited maintainer data)" bash -c "
   grep -q -- '--build-arg \"BASE_DIGEST=\${BASE_DIGEST}\"' '$wf'

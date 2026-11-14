@@ -502,7 +502,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   deployment.
 - **Build job.** Choose channel, `just check`, a base-pull step (pulls the base named by
   the workflow env, where repository variables override, logs its digest and fails naming the tag if it does not exist), `just build`, an image-size guard
-  (15 GiB), the smoke test, `just ostree-rechunk`, tags, push. The smoke test runs the image and checks
+  (15 GiB), the smoke test, `just rechunk`, tags, push. The smoke test runs the image and checks
   units, packages, PAM fallbacks, the signature policy, os-release (`ID=fedora`, and `VERSION_ID` against
   a numeric base tag), sudoers, firewalld, the toolbox definition `dev-toolbox.ini`/`dev-toolbox.conf` and the preinstall
   list. Add new packages and units to it.
@@ -516,9 +516,18 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Cancelling.** `build.yml` concurrency cancels the older run for any ref but `main` and any scheduled run. A cancelled run
   never turns `Build and push image` green; it can leave the `testing` tag unsigned until the next build.
 - **Labels.** `just build` sets the OCI labels (source `https://github.com/<owner>/<image>`, licenses,
-  title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
-  from the rootfs, so `ostree-rechunk` re-passes every label except `containers.bootc` and `ostree.*`
-  with `--label`; without that the pushed image lost them.
+  title, description, created, version, artifacthub keys). chunkah (`just rechunk`) starts from the image's own config
+  (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
+  `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
+- **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
+  `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
+  with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
+  The image is pinned by digest in `chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
+  identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
+  moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
+  the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,
+  up to 127 layers. UNVERIFIED: a real boot of a chunkah image (Kevin boots the testing image on nox before promoting) and the real signature verification of the pinned digest.
+  Undo: `git revert` the commit; `rpm-ostree compose build-chunked-oci` came back from git history.
 - **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
   shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
   (tests: `tests/image-version.sh`). A promoted image keeps the version it was built with, which is why it must
@@ -1318,7 +1327,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   in with `packages: read` because a new GHCR package is private until the owner makes it public. Build: setup tools, the pin
   check and signature verification, base verified again by digest and pulled, kernel of the base read, `podman build` with
   explicit labels (the `just build` set plus `base.name`/`base.digest`, `dx-tree` and `dev-packages`; inherited maintainer
-  labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just ostree-rechunk`, the
+  labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just rechunk`, the
   channel-neutral version check, push of `<channel>` and `<channel>-<date>-<sha>`. Sign job (`signing` environment): signs
   every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: one group per channel,
   `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.

@@ -608,23 +608,13 @@ jobs:
             echo "- \`${name}\`" >> "${GITHUB_STEP_SUMMARY}"
           done <<< "${missing}"
 
-      # This is optional, this provides smaller delta updates
-      - name: Rechunk with rpm-ostree
+      # Smaller delta updates: chunkah (pinned by digest in chunkah.env, signature verified first); same recipe in every image workflow
+      - name: Rechunk with chunkah
         id: rechunk
         run: |
-          just ostree-rechunk \
+          just rechunk \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
-
-      # If you are feeling adventurous, use the new distro agnostic rechunker
-      # https://github.com/coreos/chunkah
-      # You can delete the Rechunk with rpm-ostree portion then if you use this
-      #- name: Rechunk with Chunkah
-      #  id: rechunk
-      #  run: |
-      #    just rechunk \
-      #      ${IMAGE_NAME} \
-      #      ${DEFAULT_TAG}
 
       # A promoted image keeps its build's version, so no version may name a channel
       - name: Check the version is channel-neutral

@@ -241,9 +241,9 @@ jobs:
           podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
             -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" "octarine-os-nvidia-dx:${CHANNEL}" bash /smoke.sh present
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         run: |
-          just ostree-rechunk octarine-os-nvidia-dx "${CHANNEL}"
+          just rechunk octarine-os-nvidia-dx "${CHANNEL}"
 
       - name: Check the version is channel-neutral
         run: |

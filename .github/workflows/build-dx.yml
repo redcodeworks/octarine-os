@@ -275,9 +275,9 @@ jobs:
           podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
             "octarine-os-dx:${CHANNEL}" bash /smoke.sh
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         run: |
-          just ostree-rechunk octarine-os-dx "${CHANNEL}"
+          just rechunk octarine-os-dx "${CHANNEL}"
 
       - name: Disk after the build
         run: |

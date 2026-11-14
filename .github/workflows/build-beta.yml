@@ -358,10 +358,10 @@ jobs:
           podman run --rm -v "${PWD}/.github/scripts/scx-kernel-check.py:/scx-kernel-check.py:ro" "${IMAGE_NAME}:${DEFAULT_TAG}" \
             bash -c 'kver=$(ls /usr/lib/modules | head -n1); echo "kernel ${kver}"; python3 -I /scx-kernel-check.py --kernel-dir "/usr/lib/modules/${kver}"'
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         id: rechunk
         run: |
-          just ostree-rechunk \
+          just rechunk \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
 
