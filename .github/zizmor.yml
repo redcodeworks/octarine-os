@@ -27,9 +27,9 @@ rules:
   github-env:
     ignore:
       - action.yml:46:7
-      - build-nvidia-dx.yml:147:9
-      - build-nvidia-dx.yml:155:9
-      - build-nvidia-dx.yml:168:9
+      - build-nvidia-dx.yml:149:9
+      - build-nvidia-dx.yml:157:9
+      - build-nvidia-dx.yml:170:9
   # build-nvidia-dx.yml starts on `workflow_run` of "Build NVIDIA variant", restricted to branches [main], i.e. after a build of this
   # repository's own main finished; nothing from a fork or a pull request reaches it, and it checks out `inputs.sha`/main commits of this repository only.
   dangerous-triggers:
