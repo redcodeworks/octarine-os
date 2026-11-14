@@ -234,7 +234,7 @@ generate-default-tag $tag=default_tag:
 
 # Generate Tags
 [group('Utility')]
-generate-build-tags $target_image=image_name $tag=default_tag:
+generate-build-tags $target_image=image_name $tag=default_tag $bare="true":
     #!/usr/bin/env bash
     set -eoux pipefail
 
@@ -252,7 +252,11 @@ generate-build-tags $target_image=image_name $tag=default_tag:
     if [[ "$tag" == "latest" ]]; then
         BUILD_TAGS+=("${DATE}")
     fi
-    BUILD_TAGS+=("${tag}")
+    # bare=false: the tag list of a main build or promotion, which publishes only the dated tags; the bare `latest` of both the
+    # default and the dx image is moved by the publish-latest workflow once the pair has been checked
+    if [[ ! ( "$tag" == "latest" && "$bare" == "false" ) ]]; then
+        BUILD_TAGS+=("${tag}")
+    fi
     BUILD_TAGS+=("${tag}-${DATE}")
 
     echo "${BUILD_TAGS[@]}"

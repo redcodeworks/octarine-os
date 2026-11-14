@@ -645,6 +645,58 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 
 Seen on nox 2026-11-14: `sudo rpm-ostree kargs --append-if-missing=ARG` creates a PENDING deployment of the booted image that carries ARG. A later `bootc upgrade` stages the new image from the BOOTED deployment (without ARG) and replaces the pending one, so ARG was gone after the reboot (mechanism inferred from the journal and the boot entries). Rule: reboot between applying a kernel argument and the next image update. Implementation (`system_files/usr/share/octarine-os/lib/kargs.sh`, sourced the way `menu.sh` is, tests `tests/kargs.sh` and the cases in `hardware-setup.sh`, `virthost-setup.sh`, `switch-image.sh`, `update-services.sh`): `hardware-setup` (amd-kargs) and `virthost-setup` (iommu) print `kargs_notice` after a successful apply (reboot first, why, the exact `grep` on /proc/cmdline); `kargs_pending_change` reports a pending change by comparing the running arguments (/proc/cmdline) with `rpm-ostree kargs` (the next boot's) and, when `rpm-ostree status --json` has `.deployments[0].booted`, requires that the newest deployment is not the booted one; the JSON exposes no per-deployment kernel arguments, so nothing else is read, and without the field the comparison alone decides (BOOT_IMAGE=, initrd= and ostree= are ignored; a one-boot edit in the GRUB menu only counts while a pending deployment exists). `ujust update` (image source; new `--yes`) and `ujust switch-image` print a WARNING with the change and ask (default no; `--yes` goes on with the warning printed; `--no` is the plan); a declined image update skips only the image source. `hardware-setup --list` shows a karg step that is in the next boot's arguments but not the running ones as `pending reboot`, `virthost-setup` says so in its iommu step. Not covered: the automatic update staging (a timer) cannot ask, only the notice warns about it; a `bootc upgrade` typed by hand.
 
+## Promoting the default and dx images together
+
+Design approved by Kevin 2026-11-14 (reason: a dx build can fail because something changed in its base; the vanilla `latest` must not move to a
+base that breaks dx). Principle: the bare `latest` of `octarine-os` and `octarine-os-dx` moves in ONE final step, after both images exist, are
+signed and the dx image was built on exactly that default digest.
+
+- **Tags.** A build or promotion on main publishes only `latest-<sha7>`, `latest-<date>-<sha7>`, `<date>-<sha7>` and the same-day aliases
+  `<date>` and `latest-<date>` (kept on purpose: they are not `latest`); `just generate-build-tags <image> latest false` is that list (the
+  third parameter drops the bare `latest`; testing and the default call are unchanged). The dx run on channel `latest` pushes and promotes
+  `latest-<date>-<sha7>` only. `<sha7>` tags are not immutable (a daily rebuild of the same commit rewrites them), which is why every hand-over
+  is by DIGEST.
+- **Hand-over.** The last job of `build.yml` (`dispatch_dx`) passes the digest this run published or promoted (`needs.build_push.outputs.digests
+  || needs.promote.outputs.digests`; empty for a docs-only merge or an unchanged scheduled run) to `dispatch-dx.sh latest <sha> <digest>`, which
+  sets the `base_digest` input of `build-dx.yml`. `plan-dx.sh` with `BASE_DIGEST_PIN` builds on exactly that digest (checks that it exists, hashes to
+  itself and is signed); without a pin it uses the digest of the current `latest` (nothing new: the plan normally skips).
+- **`Publish latest`** (`publish-latest.yml`, `publish-latest.sh`, tests `tests/publish-latest.sh`, `publish-latest-workflow.sh`): the last job of the
+  dx run on main for channel `latest` (`publish`, a `workflow_call` with the digests, after a green result job); also `workflow_dispatch`
+  (`scope` both|vanilla-only, `vanilla_tag`, `reason`, `dry_run`). It verifies both signatures with `cosign.pub`, that the dx label
+  `org.opencontainers.image.base.digest` is the default digest (the pairing rule) and that the default image's `revision` label is a commit of main,
+  then copies with `skopeo copy --all --preserve-digests`, dx first and the default image last, reads both `latest` digests back and verifies the
+  signatures of the tags. Idempotent: equal digests are a green no-op (the daily skip case). No `signing` environment (it never signs, so no
+  secret is needed; a gate would not add safety), writes only on main (any other ref is forced to a dry run), group `publish-latest`, never cancels.
+  In a called workflow `github.event_name` is the CALLER's event: the workflow tells the triggers apart by input names.
+- **Ordering guard.** A re-run of an old green run must not move `latest` backwards: the candidate is held (a notice, exit 0) when its `revision` is
+  an ancestor of the one under `latest`, or the same commit built earlier (label `created`). Deviation from the first design: it compares the
+  labels, no walk through the tags.
+- **Escape hatch** (security fix while dx is broken): `gh workflow run publish-latest.yml --ref main -f scope=vanilla-only -f reason="<why>"`
+  (optionally `-f vanilla_tag=latest-<date>-<sha7>`; default: the newest main commit with a published `latest-<sha7>`). It needs no dx image, moves
+  only `octarine-os:latest`, and says in the summary that `octarine-os-dx:latest` is behind. It refuses `testing-*`, `beta*`, `latest` and anything
+  that is not a dated tag, an unsigned image and an image whose revision is not on main. A later green dx run catches dx up.
+- **dx on main is grouped per commit** (`build-dx-latest-<full sha>`; testing and beta stay per channel): with one group GitHub cancels a PENDING run
+  when a third arrives, which would silently drop a default image that never gets its pair. `cancel-in-progress` stays false.
+- **Failure and re-run table.** Daily run changes the base, dx build fails: `latest` stays on the previous pair, `Build container image` is
+  green, `Build dx image` is red, an issue is opened; re-run the failed dx run (a green re-run publishes) or use the escape hatch. dx fails then is
+  re-run green: `latest` moves at the re-run (inputs are reused: please check, see below). Docs-only merge: no digest, dx skips, Publish is a no-op.
+  Base build fails: nothing is dispatched. Dispatch does not start: re-run `dispatch_dx` alone. Publish fails halfway: both images are valid and
+  signed, re-run Publish (idempotent). Old green run re-run later: held by the ordering guard.
+- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) and of `publish-latest.yml` runs `ci-issue.sh fail`: it looks
+  for an OPEN issue with the label `ci-failure-dx` (created if missing; deduplicated on the label, not the title); none: one issue `dx/latest not
+  published: <channel> <sha7>` with the run URL, the failed jobs and what Kevin can do; one open: a comment per further failure. When Publish moves
+  `latest` the `recover` job comments "recovered: <run URL>" and closes it. A failed `dispatch_dx` (no dx run exists) is not covered: the red job
+  on the base run is the signal. Reason it exists: a failure of a run started by a token dispatch probably e-mails nobody.
+- **Consumers.** `ujust switch-image` and `bootc upgrade` see `latest` after Publish only; `build-nvidia.yml` uses `octarine-os:latest` and so follows
+  the published pair (the NVIDIA pair could later get its own publish scope); `plan-skip.sh` reads `latest`, so while dx blocks a new default image
+  every daily run rebuilds it (accepted by Kevin: an automatic daily retry); `prune-testing.py` never touches `latest*` of the default package and
+  keeps a bare `latest` dx version. The hub's `scripts/scheduled-runs.sh` must also judge the newest `build-dx.yml` run on main and the age of `latest`.
+- **Pipeline-only files** (`dispatch-dx.sh`, `publish-latest.sh`, `ci-issue.sh`, `publish-latest.yml` and their tests) are in neither input hash
+  (`is_pipeline_only` in `inputs-hash.sh`): changing them rebuilds neither image.
+- **Unverified until a real run:** the first Publish on main (both `latest` moves), the per-sha group behavior, that a re-run of a dispatched run reuses
+  its inputs (undocumented), that the check run of the result job satisfies the ruleset on a promotion PR (then the same-named commit status can go),
+  and the issue creation (`issues: write` with the default token).
+
 ## Base image and Fedora major upgrade
 
 - The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in the

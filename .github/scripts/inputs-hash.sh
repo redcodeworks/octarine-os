@@ -3,7 +3,7 @@
 #
 #   inputs-hash.sh vanilla|dx [<rev>]     print the hash of <rev> (default HEAD)
 #
-# Sourced, it provides is_dx_only, vanilla_inputs <rev>, dx_inputs <rev> and nearest_image_for_inputs.
+# Sourced, it provides is_dx_only, is_pipeline_only, vanilla_inputs <rev>, dx_inputs <rev> and nearest_image_for_inputs.
 #
 #   dx_inputs       hash of the committed files that only the developer image uses (is_dx_only)
 #   vanilla_inputs  hash of every other committed file, docs-only files (docs-only.sh) left out too
@@ -27,12 +27,24 @@ is_dx_only() {
     esac
 }
 
+# The pipeline-only paths: the files that decide how images are PUBLISHED, not what is in them (the dispatch of the dx run, the publication of
+# `latest`, the failure issue) and their tests. Neither hash counts them: changing one rebuilds neither image. (build.yml and build-dx.yml
+# still count: they contain the builds.)
+is_pipeline_only() {
+    case "$1" in
+        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/workflows/publish-latest.yml) return 0 ;;
+        tests/dispatch-dx.sh | tests/publish-latest.sh | tests/publish-latest-workflow.sh | tests/ci-issue.sh) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # <kind> <rev>: print the hash
 _inputs() {
     local kind=$1 rev=${2:-HEAD} meta path
     git rev-parse --verify --quiet "${rev}^{tree}" > /dev/null || { echo "inputs-hash: unknown revision '${rev}'" >&2; return 1; }
     {
         while IFS=$'\t' read -r meta path; do
+            ! is_pipeline_only "${path}" || continue
             if is_dx_only "${path}"; then
                 [[ "${kind}" == dx ]] || continue
             else
