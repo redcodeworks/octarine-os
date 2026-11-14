@@ -65,7 +65,7 @@ exit 0
 F
 chmod +x "$bin/distrobox"
 export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
-export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
+export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
 
 osrel="$root/os-release"
@@ -202,6 +202,9 @@ check "--yes installs LACT (system scope, Flathub)" logged "flatpak install -y -
 check "--yes runs the LACT daemon setup unattended" logged "flatpak run --env=LACT_UNATTENDED_SETUP=true io.github.ilya_zlobintsev.LACT"
 check "--yes runs gaming-setup gamemode" logged "ujust gaming-setup gamemode --yes"
 check "--yes runs the TPM recipe and the security-key step" bash -c "grep -q 'ujust luks-tpm-unlock' '$LOG' && grep -q pamu2fcfg '$LOG'"
+check "--yes runs the TPM recipe as 'enroll --yes' (volumes without a key only), so a second --yes run touches nothing that is enrolled" bash -c "grep -q 'ujust luks-tpm-unlock enroll --yes' '$LOG'"
+run --only tpm-luks --yes
+check "a named tpm-luks step re-enrolls: 'enroll --force --yes'" bash -c "grep -q 'ujust luks-tpm-unlock enroll --force --yes' '$LOG'"
 check "--yes never touches the optional kernel argument" notlogged "rpm-ostree kargs --append"
 check "--yes does not enroll the Secure Boot key (only ticked on NVIDIA images)" notlogged "enroll-secure-boot-key"
 check "the security key file was written, mode 600" bash -c "grep -q KEYDATA '$root/m/u2f_keys' && [ \$(stat -c %a '$root/m/u2f_keys') = 600 ]"
@@ -219,6 +222,13 @@ rm -f "$root/m/u2f_keys" "$root/m/modload/octarine-sensors.conf"
 run --only amd-kargs --yes
 check "amd-kargs appends the argument with the overdrive bit set (0xfff7bfff | 0x4000 = 0xffffffff)" logged "sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0xffffffff"
 check "amd-kargs prints the undo and says reboot" bash -c "grep -q 'delete-if-present' '$root/out' && grep -q 'Reboot' '$root/out'"
+check "amd-kargs after the apply says: reboot before the next image update, why, and the exact check on /proc/cmdline" bash -c "grep -q 'Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging)' '$root/out' && grep -q 'drops the argument' '$root/out' && grep -qF 'grep -qw -- amdgpu.ppfeaturemask=0xffffffff /proc/cmdline' '$root/out'"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: the argument is in the next boot's arguments but not in the running ones: 'pending reboot', not 'done' or 'available'" bash -c "grep -E '^amd-kargs +pending reboot' '$root/out'"
+echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: once the running command line has it: plain done" bash -c "grep -E '^amd-kargs +done$' '$root/out'"
+echo quiet >"$root/m/cmdline"
 echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
 run --only amd-kargs --yes
 check "amd-kargs is done when the running command line has it" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'kargs --append' '$LOG'"

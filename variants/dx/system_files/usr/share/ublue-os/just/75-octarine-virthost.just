@@ -8,6 +8,10 @@ virthost-setup *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_multi >/dev/null; then menu_multi() { return 3; }; menu_ready() { return 1; }; menu_confirm() { return 1; }; menu_title() { printf '%s\n' "$1"; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     all_steps="check daemons iommu connection image-dir virtio bridge libvirt-network"
     usage="Usage: ujust virthost-setup [--yes|--no] [--only STEP[,STEP...]] [--list] [--image-dir DIR] [--nic IFACE] [--bridge NAME] [--virtio stable|latest] [--pool NAME] [--force] [--yes-remote] [-h]"
     mode=ask
@@ -159,7 +163,9 @@ virthost-setup *args:
         else
             echo "  iommu=pt matters only for passing devices through to VMs; on an Intel CPU intel_iommu=on is required as well (the Fedora kernel does not enable it by default). AMD's IOMMU is on by default."
             todo=(); for a in "${args[@]}"; do in_cmdline "$a" || todo+=("$a"); done
-            if [ "${#todo[@]}" -eq 0 ]; then echo "  ${args[*]} already set."; record iommu "already done"
+            if [ "${#todo[@]}" -eq 0 ]; then
+                if OCTARINE_CMDLINE="$cmdline_file" kargs_pending_arg iommu=pt; then echo "  ${args[*]} already set, but pending a reboot: do not update the image before rebooting."; record iommu "already done (pending reboot)"
+                else echo "  ${args[*]} already set."; record iommu "already done"; fi
             else
                 cmd=(rpm-ostree kargs); for a in "${todo[@]}"; do cmd+=("--append-if-missing=$a"); done
                 undo="sudo rpm-ostree kargs"; for a in "${args[@]}"; do undo="$undo --delete-if-present=$a"; done
@@ -167,7 +173,7 @@ virthost-setup *args:
                 if ! do_apply; then echo "  Plan: sudo ${cmd[*]}"; record iommu "plan only"
                 elif ! confirm_or_default "Apply?" n; then record iommu "skipped"
                 else
-                    if run_sudo "${cmd[@]}"; then record iommu "applied (reboot to take effect)" "$undo, then reboot"; else fail_step iommu "run the command above"; fi
+                    if run_sudo "${cmd[@]}"; then kargs_notice "${todo[@]}"; record iommu "applied (reboot to take effect)" "$undo, then reboot"; else fail_step iommu "run the command above"; fi
                 fi
             fi
         fi
