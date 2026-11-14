@@ -9,7 +9,7 @@
 # prints the run URL when stdout is not a terminal. So: the URL printed by `gh workflow run` is used when there is one (its trailing
 # number is the run id; the run is then checked for event and branch). A `gh` that prints no URL (an older one on the runner) gets
 # the snapshot approach: the ids of the runs of this workflow on this branch are listed BEFORE the dispatch, and the run is the first id that is
-# not in that list and whose title (`dx <channel> <sha>`, the run-name of build-dx.yml) and branch match. No clock is used anywhere. Either
+# not in that list, on this branch, with the run-name (`dx <channel> <sha>`) or the workflow name as its title (a fresh run has the workflow name until the run-name applies; the title is informational, never a reason to fail). No clock is used anywhere. Either
 # way, no run found within the time fails the step (the base build stays green, this job is red, and re-running it dispatches again).
 # The dx run itself is not waited for.
 set -euo pipefail
@@ -67,8 +67,11 @@ fi
 echo "gh printed no run URL: looking for a run that was not there before the dispatch"
 tries="${POLL_TRIES:-12}"
 for ((i = 1; i <= tries; i++)); do
-    found=$(list_runs | jq -r --arg t "${title}" --arg b "${ref}" --arg before " ${before} " \
-        '[.[] | select(.displayTitle == $t and .headBranch == $b and (((.databaseId | tostring) as $i | $before | contains(" " + $i + " ")) | not))] | first | .url // empty' 2> /dev/null) || found=""
+    # a run that was not listed before the dispatch, on this branch, titled with the run-name or (for the first seconds, or for good when the
+    # run-name never applies) the workflow name; the exact run-name wins when both exist
+    found=$(list_runs | jq -r --arg t "${title}" --arg w "Build dx image" --arg b "${ref}" --arg before " ${before} " \
+        '[.[] | select((.displayTitle == $t or .displayTitle == $w) and .headBranch == $b and (((.databaseId | tostring) as $i | $before | contains(" " + $i + " ")) | not))]
+         | (map(select(.displayTitle == $t)) + .) | first | .url // empty' 2> /dev/null) || found=""
     if [[ -n "${found}" ]]; then started "${found}"; fi
     (( i == tries )) || sleep "${POLL_WAIT:-10}"
 done
