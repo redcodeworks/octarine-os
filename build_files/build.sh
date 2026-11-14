@@ -125,10 +125,17 @@ fi
 # optional, so a failed transaction leaves the -free GStreamer packages in place (dnf5 is atomic). There
 # is no negativo17 equivalent of mesa-va-drivers-freeworld.
 #
-# CRITICAL (keep in step with the smoke test in .github/workflows/build.yml):
+# gcc, gcc-c++, make and binutils (the linker ld, ar, as) are in the critical tier since 2026-11-14 (the owner's decision: compilers
+# and a linker are useful on any image, not only on a developer one; Bluefin's list is gcc, gcc-c++ and make). binutils is already in
+# the base and a dependency of gcc; it is named anyway so it stays when the base drops it. dnf5 adds glibc-devel, libstdc++-devel,
+# libxcrypt-devel and kernel-headers as dependencies. The dx and NVIDIA dx images inherit them (the dx layer installs the shared
+# developer list on top; dnf5 skips what is already installed). cmake, ninja, meson and the development-tools group are still not here.
+#
+# CRITICAL (keep in step with the smoke tests in .github/workflows/build.yml and build-beta.yml; tests/compilers.sh checks it):
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev \
+    gcc gcc-c++ make binutils
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
@@ -164,9 +171,9 @@ done
 echo "== optional packages missing:"
 cat "${missing_file}"
 
-# No compilers or build tools (gcc, make, cmake, ninja, meson, the development-tools group):
-# builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
-# /usr/share/ublue-os/distrobox/dev-toolbox.ini. Nothing here compiles from source.
+# Beyond the compilers and linker above (critical list) there are no build tools here (cmake, ninja, meson, the development-tools
+# group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
+# /usr/share/ublue-os/distrobox/dev-toolbox.ini (or on the dx image). Nothing in this build compiles from source.
 
 # Remove RPMs the base ships that this image replaces, only if they are still present:
 # Firefox (use the Flatpak) and toolbox (distrobox covers it)

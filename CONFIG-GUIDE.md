@@ -170,7 +170,7 @@ timers are installed but not enabled. Turn on what you use.
   `systemctl preset` line and the preset file; existing prefixes are untouched. If the prefix is missing,
   repair by hand (unverified): `sudo mkdir -p /var/home/linuxbrew/.linuxbrew`, chown it to your user, and
   `sudo systemctl start brew-setup.service` only if `/etc/.linuxbrew` is absent. The toolbox's tools come
-  with its image. The host has no compilers.
+  with its image. The host image has `gcc`, `g++`, `make` and the `binutils` linker; the rest of the toolchain is in the dx image or the toolbox.
 
 ## Containers
 
@@ -184,9 +184,9 @@ timers are installed but not enabled. Turn on what you use.
   data science, Arch for AUR and bleeding-edge tools, Debian as a stand-in on-prem server, an AI
   stack, and a Steam container. Only the Fedora one shares the real home; the others get an isolated
   one.
-- **No build tools on the host.** Builds belong in the dev-toolbox (`ujust toolbox dev-toolbox`): a distrobox
-  with a shared home whose build chain, `uv`, the rustup proxies and a few CLI tools are exported to
-  `~/.local/bin`, so the host feels like it has a compiler.
+- **Only a basic compiler set on the host.** The image has `gcc`, `g++`, `make` and `binutils`; larger builds belong in the dev-toolbox
+  (`ujust toolbox dev-toolbox`): a distrobox with a shared home whose build chain, `uv`, the rustup proxies and a few CLI tools are
+  exported to `~/.local/bin` (or on the dx image, which carries the full toolchain on the host).
 - Containers on the host network share loopback, so containers see host services. They also share `/tmp`.
 - **Datastores:** Postgres, Valkey and SeaweedFS run in one shared pod on loopback, with a
   least-privilege role per database.

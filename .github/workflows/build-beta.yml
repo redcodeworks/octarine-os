@@ -235,7 +235,7 @@ jobs:
             check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
             # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev"
+            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev gcc gcc-c++ make binutils"
             for p in $CRITICAL; do
               check "package $p" "rpm -q $p"
               # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
@@ -358,6 +358,12 @@ jobs:
             check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
+
+      # The compilers and the linker the image ships (gcc, gcc-c++, make, binutils) must work: compile, link and run a C and a C++ program
+      - name: Compiler smoke test
+        run: |
+          set -euo pipefail
+          podman run --rm -v "${PWD}/.github/scripts/compiler-smoke.sh:/compiler-smoke.sh:ro" "${IMAGE_NAME}:${DEFAULT_TAG}" bash /compiler-smoke.sh
 
       # Tier 1 compatibility check: every shipped scheduler against the kernel of THIS image, statically (kernel config, the
       # kernel's own BTF read out of vmlinuz, the kernel symbols and struct sched_ext_ops members each scheduler's embedded BPF
