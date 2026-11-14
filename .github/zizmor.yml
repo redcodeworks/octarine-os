@@ -1,0 +1,2 @@
+# Narrow ignores for zizmor, one per finding that cannot or should not be fixed, each with the reason. Nothing is disabled wholesale.
+rules: {}

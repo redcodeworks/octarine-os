@@ -1,0 +1,56 @@
+---
+name: Workflow audit
+# zizmor (https://github.com/zizmorcore/zizmor) audits .github/workflows and .github/actions for security problems: template injection, excessive permissions,
+# credential persistence (artipacked), unpinned actions, known-vulnerable actions and the like. Runs on pull requests that touch .github, on pushes to
+# testing, every week (new audits and new advisories arrive without a change here) and by hand. NOT a required status check (the ruleset is the owner's).
+# The binary is a pinned release verified by its sha256 (the way the gitleaks job of test.yml does it); to move it, read the release and replace both lines.
+# A finding that is fixed in the workflow is fixed; one that cannot or should not be fixed gets a narrow, documented entry in .github/zizmor.yml
+# (rule and file and line), never a disabled rule.
+on:
+  pull_request:
+    paths:
+      - ".github/**"
+  push:
+    branches: [testing]
+    paths:
+      - ".github/**"
+  schedule:
+    - cron: "0 6 * * 3"  # Wednesdays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned zizmor
+        env:
+          ZIZMOR_VERSION: 1.32.0
+          ZIZMOR_SHA256: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+        run: |
+          f="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${RUNNER_TEMP}/${f}" \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${f}"
+          echo "${ZIZMOR_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/zizmor"
+          tar -xzf "${RUNNER_TEMP}/${f}" -C "${RUNNER_TEMP}/zizmor"
+          echo "${RUNNER_TEMP}/zizmor" >> "${GITHUB_PATH}"
+
+      # exits non-zero on any finding; GH_TOKEN lets the online audits (known-vulnerable actions, impostor commits) ask the API
+      - name: Audit the workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --version && zizmor --no-progress --config .github/zizmor.yml .github
