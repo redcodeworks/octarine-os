@@ -12,7 +12,7 @@
 # Tools: podman (unless KERNEL_FILE), sbverify and sbattach (sbsigntool/sbsigntools), openssl.
 set -euo pipefail
 image=${1:?image}
-cert=${2:-keys/fedora-secureboot-ca.pem}
+cert=${2:-keys/fedora-kernel-signer.pem}
 work=$(mktemp -d)
 trap 'rm -rf "${work}"; [[ -z "${cid:-}" ]] || podman rm "${cid}" > /dev/null 2>&1 || true' EXIT
 cid=""

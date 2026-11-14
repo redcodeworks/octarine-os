@@ -519,6 +519,21 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   title, description, created, version, artifacthub keys). chunkah (`just rechunk`) starts from the image's own config
   (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
   `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
+- **Secure Boot check of the kernel (2026-11-14).** After the rechunk, `build.yml`, `build-beta.yml` and (after its smoke test) `build-nvidia.yml` run
+  `.github/scripts/secureboot-check.sh <image>`: the single kernel of the image is copied out, `sbverify --list` shows its signers, and `sbverify --cert keys/fedora-kernel-signer.pem`
+  must accept it, otherwise the build FAILS (a kernel signed by anyone else would not boot on a Secure Boot machine). Facts from the real image (silverblue-main:45, kernel 7.3.3-300.fc45):
+  TWO signatures, Fedora's `kernel-signer` (OU=Fedora Secure Boot Signer, bkernel01; issuer `Fedora Secure Boot CA 20200709`, which every shim trusts; valid to 2037) and Universal Blue's
+  `ublue kernel` key (needs a MOK enrollment, so it does not matter for booting). The pinned certificate, its fingerprint and how it was derived are in `keys/README.md`; it is the LEAF of one Fedora
+  signing builder, so a kernel signed by another Fedora builder certificate fails the check loudly until the file is replaced (the Fedora CA certificate itself is not in the image: open item for the hub).
+  The NVIDIA smoke test (`nvidia-smoke.sh`) also requires every NVIDIA module's `sig_key` to equal the subject key identifier of `/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key
+  `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. The runner's `sbsigntool` (apt)
+  is installed in the step. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
+  Tests: `tests/secureboot-check.sh`, `tests/nvidia-variant.sh`.
+- **Strict lint (2026-11-14).** Every Containerfile ends with `RUN --network=none bootc container lint --fatal-warnings --no-truncate` (Aurora's last step). The first full output showed three
+  warnings on the default image: a non-empty `/boot` (extlinux), content in `/run` (cockpit, dnf, selinux-policy, setroubleshoot) and 493 `/var` entries missing tmpfiles.d (libvirt, pcp, iscsi,
+  dnf state, PackageKit ...). `build_files/final-cleanup.sh`, the last step of `build.sh`, `dx.sh` and `nvidia.sh`, empties `/boot`, `/run` and `/tmp`, drops dnf and PackageKit state and crash dumps, and moves
+  what the packages put in `/var` into `/usr/lib/tmpfiles.d/octarine-var.conf` (`d` for directories with their mode and owner, `C` copies of files from `/usr/share/factory/var`, `L+` for symlinks), so the
+  directories and files come back at boot (a later layer appends). No warning is silenced. The dx and NVIDIA layers use the same script; UNVERIFIED until their first CI build with it.
 - **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
   `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
   with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).

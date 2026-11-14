@@ -193,7 +193,7 @@ check "Containerfile: dev-packages digest is sha256: plus 64 hex characters" tes
 check "Containerfile: the devpkgs stage uses the digest, the bind mount runs install.sh through dx.sh" bash -c "
   grep -qx 'FROM ghcr.io/redcodeworks/dev-packages@\${DEV_PACKAGES_DIGEST} AS devpkgs' '$cf'
   grep -q 'from=devpkgs,source=/,target=/dev-packages' '$cf' && grep -q 'bash /dev-packages/install.sh' '$here/variants/dx/dx.sh'"
-check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN bootc container lint --fatal-warnings --no-truncate'"
+check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN --network=none bootc container lint --fatal-warnings --no-truncate'"
 check "dx.sh: bash syntax, strict extras install, podman.socket, kernel unchanged" bash -c "
   bash -n '$here/variants/dx/dx.sh' && grep -q 'dnf5 -y install --setopt=strict=1' '$here/variants/dx/dx.sh' &&
   grep -q 'systemctl enable podman.socket' '$here/variants/dx/dx.sh' && grep -q 'changed the kernel' '$here/variants/dx/dx.sh'"
