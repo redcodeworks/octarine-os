@@ -65,7 +65,7 @@ exit 0
 F
 chmod +x "$bin/distrobox"
 export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
-export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
+export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
 
 osrel="$root/os-release"
@@ -210,6 +210,13 @@ rm -f "$root/m/u2f_keys" "$root/m/modload/octarine-sensors.conf"
 run --only amd-kargs --yes
 check "amd-kargs appends the argument with the overdrive bit set (0xfff7bfff | 0x4000 = 0xffffffff)" logged "sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0xffffffff"
 check "amd-kargs prints the undo and says reboot" bash -c "grep -q 'delete-if-present' '$root/out' && grep -q 'Reboot' '$root/out'"
+check "amd-kargs after the apply says: reboot before the next image update, why, and the exact check on /proc/cmdline" bash -c "grep -q 'Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging)' '$root/out' && grep -q 'drops the argument' '$root/out' && grep -qF 'grep -qw -- amdgpu.ppfeaturemask=0xffffffff /proc/cmdline' '$root/out'"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: the argument is in the next boot's arguments but not in the running ones: 'pending reboot', not 'done' or 'available'" bash -c "grep -E '^amd-kargs +pending reboot' '$root/out'"
+echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
+FAKE_KARGS="quiet amdgpu.ppfeaturemask=0xffffffff" run --list
+check "--list: once the running command line has it: plain done" bash -c "grep -E '^amd-kargs +done$' '$root/out'"
+echo quiet >"$root/m/cmdline"
 echo "quiet amdgpu.ppfeaturemask=0xffffffff" >"$root/m/cmdline"
 run --only amd-kargs --yes
 check "amd-kargs is done when the running command line has it" bash -c "grep -q 'Already done' '$root/out' && ! grep -q 'kargs --append' '$LOG'"
