@@ -17,8 +17,9 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](CONFIG-GUIDE.md).
 | beta | [![beta, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
+| binaries | [![binaries, main](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Amain) | [![binaries, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Atesting) |
 
-The NVIDIA dx badge shows "no status" until its first weekly run. The `latest` tag of the default and the dx image moves together, shortly after the daily build, only once both exist and have passed their checks.
+The NVIDIA dx and binaries badges show "no status" until their first run. The binaries row is the prebuilt programs the images carry (sched_ext schedulers, extest): it runs when they change and every Friday, and the Friday run only checks that they still build against the pinned sources and today's Fedora 45 packages, it publishes nothing. The `latest` tag of the default and the dx image moves together, shortly after the daily build, only once both exist and have passed their checks.
 
 ## Requirements
 
@@ -65,7 +66,7 @@ Added by this image:
 - Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning
 - Firewall zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale)
 - Security-key (YubiKey) touch for sudo and polkit (the password still works without a key); 30-minute sudo timeout
-- Images are signed; after the second switch (Install, step 3) the system refuses unsigned updates
+- Images are signed, and the Universal Blue base image is checked against its signing key before every build (the build stops if it does not verify); after the second switch (Install, step 3) the system refuses unsigned updates
 
 ## Variants
 

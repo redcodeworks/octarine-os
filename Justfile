@@ -115,6 +115,8 @@ build $target_image=image_name $tag=default_tag:
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
     if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
+    # CI resolves the floating base to a digest once and verifies its signature (base-pin.sh): the build is FROM that digest
+    if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
     # os-release IMAGE_VERSION: the build's version, `beta-` prefixed when the beta workflow sets IMAGE_VERSION_PREFIX
     BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=${IMAGE_VERSION_PREFIX:-}$(.github/scripts/image-version.sh)")
     LABELS=()
@@ -122,6 +124,9 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
     if [[ -n "${BASE_DIGEST:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.digest=${BASE_DIGEST}"); fi
     # The base's manifest-list digest: the scheduled run compares it with the current base to decide whether to skip the build
+    # the upstream base digest this image was built on and that it was verified against the pinned Universal Blue key (a new label; the
+    # dx labels org.opencontainers.image.base.digest and dx-inputs are not touched)
+    if [[ -n "${BASE_PIN:-}" ]]; then LABELS+=("--label" "org.octarineos.upstream-base=${BASE_PIN}" "--label" "org.octarineos.upstream-base-verified=cosign keys/ublue-os-main-cosign.pub"); fi
     if [[ -n "${BASE_INDEX_DIGEST:-}" ]]; then LABELS+=("--label" "io.github.redcodeworks.octarine-os.base-index-digest=${BASE_INDEX_DIGEST}"); fi
     if [[ -z "$(git status -s)" ]]; then
         GIT_SHA=$(git rev-parse --short HEAD)
@@ -164,20 +169,21 @@ build $target_image=image_name $tag=default_tag:
 
     podman build "${PODMAN_BUILD_ARGS[@]}" .
 
-# Split the image for smaller updates (New)!
+# Split the image into layers for smaller updates (chunkah, like Aurora and Bazzite). The chunkah image is pinned by digest in chunkah.env and its
+# cosign signature is verified before it runs (.github/scripts/chunkah-ref.sh). chunkah starts from the image's own config (`podman inspect`), so
+# every label set by `just build` stays; the labels of an earlier ostree commit are dropped, as chunkah's own documentation does.
+# You may run into space issues on runners: this makes a complete copy of the image.
+[group('Image')]
 rechunk $target_image=image_name $tag=default_tag:
     #!/usr/bin/env bash
 
     set -xeuo pipefail
 
-    # TODO: pin chunkah image to hash once mature enough
-    # You may run into space issues on github runners as we are making a
-    # complete copy of the image, which likely has no shared layers, unless your
-    # base image is also using chunkah
+    CHUNKAH_REF="$(.github/scripts/chunkah-ref.sh)"
+    STARTED="$(date +%s)"
     CHUNKAH_CONFIG_FILE="$(mktemp)"
 
-    # You may omit the current directory here if you are confident that you
-    # won't run out of space on /tmp for your image
+    # The output goes in the current directory, not /tmp (it may be small)
     CHUNKAH_OUTPUT_DIR="$(mktemp -d ./"${target_image}"_chunkah_XXXXXX)"
 
     trap 'rm -f "${CHUNKAH_CONFIG_FILE}"; rm -rf "${CHUNKAH_OUTPUT_DIR}"' EXIT
@@ -187,11 +193,11 @@ rechunk $target_image=image_name $tag=default_tag:
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
       -v "${CHUNKAH_OUTPUT_DIR}:/run/out:Z" \
-      quay.io/coreos/chunkah:latest@sha256:71e593421c5de7dcc7c8c5c50e98d3bac572055a76f399f61a491d123c20a523 \
+      "${CHUNKAH_REF}" \
       build \
       --verbose \
       --compressed \
-      --max-layers 128 \
+      --max-layers 256 \
       --prune /sysroot/ \
       --label ostree.commit- --label ostree.final-diffid- \
       --config /chunkah-config.json \
@@ -199,38 +205,11 @@ rechunk $target_image=image_name $tag=default_tag:
 
     CHUNKED_IMAGE="$(podman pull "oci:${CHUNKAH_OUTPUT_DIR}/chunked")"
     podman tag "${CHUNKED_IMAGE}" "${target_image}:${tag}"
-
-# Split the image for smaller updates (Classical)!
-ostree-rechunk $target_image=image_name $tag=default_tag:
-    #!/usr/bin/env bash
-
-    set -xeuo pipefail
-
-    # Use the already-built local image to avoid pulling from a remote registry
-    RPM_OSTREE_CHUNKER_IMAGE="localhost/${target_image}:${tag}"
-
-    GRAPHROOT="$(podman info --format '{{ '{{.Store.GraphRoot}}' }}')"
-
-    # build-chunked-oci starts from the rootfs, not from the image, so the labels set by `just build` would be
-    # dropped; pass them on (containers.bootc and ostree.* are set by --bootc itself)
-    LABEL_ARGS=()
-    while IFS= read -r l; do
-        if [[ -n "${l}" && ! "${l}" =~ ^(containers\.bootc|ostree\.) ]]; then LABEL_ARGS+=(--label "${l}"); fi
-    done < <(podman image inspect "${target_image}:${tag}" --format '{{ '{{range $k, $v := .Config.Labels}}{{$k}}={{$v}}{{"\n"}}{{end}}' }}')
-
-    podman run --rm --pull=never --privileged \
-      --mount=type=image,src="${target_image}:${tag}",target=/rpm-ostree \
-      --mount=type=bind,src=${GRAPHROOT},target=/run/host-container-storage,rw \
-      --mount=type=tmpfs,target=/run/rpm-ostree-storage \
-      --entrypoint /usr/bin/rpm-ostree \
-      "${RPM_OSTREE_CHUNKER_IMAGE}" \
-      compose build-chunked-oci \
-      --max-layers 127 \
-      --format-version=2 \
-      --bootc \
-      "${LABEL_ARGS[@]}" \
-      --rootfs /rpm-ostree \
-      --output "containers-storage:[overlay@/run/host-container-storage+/run/rpm-ostree-storage]localhost/${target_image}:${tag}"
+    LAYERS="$(podman image inspect "${target_image}:${tag}" --format '{{ '{{len .RootFS.Layers}}' }}')"
+    SIZE_MIB="$(( $(podman image inspect "${target_image}:${tag}" --format '{{ '{{.Size}}' }}') / 1048576 ))"
+    MSG="Rechunk (chunkah): ${target_image}:${tag}, $(( $(date +%s) - STARTED )) s, ${LAYERS} layers, ${SIZE_MIB} MiB, ${CHUNKAH_REF}"
+    echo "${MSG}"
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then echo "${MSG}" >> "${GITHUB_STEP_SUMMARY}"; fi
 
 # Generate Default Tag
 [group('Utility')]

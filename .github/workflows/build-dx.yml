@@ -92,6 +92,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.SHA }}
           fetch-depth: 0
 
@@ -149,6 +150,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.SHA }}
 
       # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
@@ -275,9 +277,9 @@ jobs:
           podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
             "octarine-os-dx:${CHANNEL}" bash /smoke.sh
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         run: |
-          just ostree-rechunk octarine-os-dx "${CHANNEL}"
+          just rechunk octarine-os-dx "${CHANNEL}"
 
       - name: Disk after the build
         run: |
@@ -351,6 +353,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.SHA }}
 
       - name: Login to GitHub Container Registry
@@ -405,6 +408,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ env.SHA }}
 
       - name: Login to GitHub Container Registry
@@ -479,6 +483,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Check the dx result
         id: result
@@ -538,6 +544,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Open the failure issue or comment on it
         env:

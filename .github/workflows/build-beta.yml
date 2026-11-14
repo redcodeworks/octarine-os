@@ -41,7 +41,8 @@ jobs:
       packages: write
       issues: write
     # the signing secret is a repository secret, which a called workflow only gets when it is passed on
-    secrets: inherit
+    secrets:
+      SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
 
   build:
     name: Build beta image
@@ -60,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
       # image build peaks at 44 GB used, 18 GB more than the 26 GB left after the cleanup action), so the cleanup action (38 to 85 s) is
@@ -136,7 +139,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify the binaries image
-        run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
+        env:
+          BIN_IMAGE: ${{ needs.binaries.outputs.image }}
+          BIN_DIGEST: ${{ needs.binaries.outputs.digest }}
+        run: .github/scripts/binaries-use.sh "${BIN_IMAGE}" "${BIN_DIGEST}"
 
       - name: Say which path the binaries image took
         env:
@@ -149,18 +155,22 @@ jobs:
         run: |
           base="${BASE_IMAGE}:${FEDORA_VERSION}"
           echo "BASE_REF=${base}" >> "${GITHUB_ENV}"
-          if ! podman pull "${base}" >/dev/null; then
+          # the floating tag is resolved to a digest ONCE here and its signature is verified with the pinned Universal Blue key (fail closed);
+          # everything after this step uses that digest, so one run uses one base
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          if ! podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
-          podman image inspect "${base}" --format 'Base image {{.Id}} created {{.Created}}'
-          digest=$(podman image inspect "${base}" --format '{{.Digest}}')
+          podman image inspect "${BASE_IMAGE}@${BASE_PIN}" --format 'Base image {{.Id}} created {{.Created}}'
+          digest=$(podman image inspect "${BASE_IMAGE}@${BASE_PIN}" --format '{{.Digest}}')
           [[ "${digest}" == sha256:* ]] || { echo "::error::Cannot determine the digest of ${base}"; exit 1; }
           echo "Base image ${base} resolved to ${BASE_IMAGE}@${digest}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
-          index=$(skopeo inspect --raw "docker://${base}" | sha256sum | sed 's/ .*//')
-          [[ -n "${index}" ]] || { echo "::error::Cannot determine the manifest digest of ${base}"; exit 1; }
-          echo "BASE_INDEX_DIGEST=sha256:${index}" >> "${GITHUB_ENV}"
+          # the manifest (list) digest is the pin itself: the same value the scheduled skip check computes without pulling
+          echo "BASE_INDEX_DIGEST=${BASE_PIN}" >> "${GITHUB_ENV}"
 
       - name: Build Image
         id: build-image
@@ -358,12 +368,20 @@ jobs:
           podman run --rm -v "${PWD}/.github/scripts/scx-kernel-check.py:/scx-kernel-check.py:ro" "${IMAGE_NAME}:${DEFAULT_TAG}" \
             bash -c 'kver=$(ls /usr/lib/modules | head -n1); echo "kernel ${kver}"; python3 -I /scx-kernel-check.py --kernel-dir "/usr/lib/modules/${kver}"'
 
-      - name: Rechunk with rpm-ostree
+      - name: Rechunk with chunkah
         id: rechunk
         run: |
-          just ostree-rechunk \
+          just rechunk \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
+
+      # Secure Boot: the kernel image must verify with sbverify against the certificate pinned in keys/ (a base with an unsigned or differently
+      # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
+      - name: Secure Boot check of the kernel
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/secureboot-check.sh "${IMAGE_NAME}:${DEFAULT_TAG}"
 
       - name: Check the version is channel-neutral
         run: |
@@ -411,6 +429,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -462,6 +482,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Dispatch the dx workflow on main
         env:

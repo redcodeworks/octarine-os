@@ -21,6 +21,7 @@ FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 
 FROM scratch AS ctx
 COPY variants/dx/dx.sh /dx.sh
+COPY build_files/final-cleanup.sh /final-cleanup.sh
 COPY variants/dx/packages/extras.txt /extras.txt
 COPY variants/dx/system_files /system_files
 COPY variants/dx/datastore /datastore
@@ -39,4 +40,4 @@ RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \
     --mount=type=cache,dst=/var/log \
     /ctx/dx.sh
 
-RUN bootc container lint
+RUN --network=none bootc container lint --fatal-warnings --no-truncate

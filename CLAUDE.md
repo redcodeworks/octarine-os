@@ -128,6 +128,14 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
     and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
   - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
   - The binaries image has two components (scx, extest).
+- **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
+  It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
+  WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
+  workflow `github.workflow` is the caller's name). The `check` job's step `final` decides: an own push run NEVER publishes (`nopublish`) but reuses an already signed image of the tree when the caller published it first, and builds
+  to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run and a dispatch with `validate_only` also ignore the reuse shortcut (`usable=false`) and
+  build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
+  `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
+  are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).
@@ -136,7 +144,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   `check` (tree hash; `binaries-lookup.sh`: the tag exists and `cosign verify --key cosign.pub` accepts its digest: green "binaries
   unchanged, nothing to build"; a missing tag, or an existing one whose signature fails, is built again), `build` (`podman build` in the pinned
   builder, `binaries-layout.sh` checks the exported file list, then `push-tags.sh` pushes ONE manifest digest), `sign` (environment `signing`,
-  the same `SIGNING_SECRET` (a repository secret: the calling jobs pass it on with `secrets: inherit`, without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
+  the same `SIGNING_SECRET` (a repository secret: the calling jobs pass it on by name (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}`, declared in `binaries.yml`'s `workflow_call`; no `secrets: inherit`), without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
   `main` publish; on any other ref (a validation dispatch) the binaries are built and checked but never pushed or signed, no digest is
   handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully exercised by the
   merge into `testing` (validate the binaries build alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no
@@ -502,7 +510,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   deployment.
 - **Build job.** Choose channel, `just check`, a base-pull step (pulls the base named by
   the workflow env, where repository variables override, logs its digest and fails naming the tag if it does not exist), `just build`, an image-size guard
-  (15 GiB), the smoke test, `just ostree-rechunk`, tags, push. The smoke test runs the image and checks
+  (15 GiB), the smoke test, `just rechunk`, tags, push. The smoke test runs the image and checks
   units, packages, PAM fallbacks, the signature policy, os-release (`ID=fedora`, and `VERSION_ID` against
   a numeric base tag), sudoers, firewalld, the toolbox definition `dev-toolbox.ini`/`dev-toolbox.conf` and the preinstall
   list. Add new packages and units to it.
@@ -516,9 +524,38 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Cancelling.** `build.yml` concurrency cancels the older run for any ref but `main` and any scheduled run. A cancelled run
   never turns `Build and push image` green; it can leave the `testing` tag unsigned until the next build.
 - **Labels.** `just build` sets the OCI labels (source `https://github.com/<owner>/<image>`, licenses,
-  title, description, created, version, artifacthub keys). `rpm-ostree compose build-chunked-oci` starts
-  from the rootfs, so `ostree-rechunk` re-passes every label except `containers.bootc` and `ostree.*`
-  with `--label`; without that the pushed image lost them.
+  title, description, created, version, artifacthub keys). chunkah (`just rechunk`) starts from the image's own config
+  (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
+  `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
+- **Secure Boot check of the kernel (2026-11-14).** After the rechunk, `build.yml`, `build-beta.yml` and (after its smoke test) `build-nvidia.yml` run
+  `.github/scripts/secureboot-check.sh <image>`: the single kernel of the image is copied out, `sbverify --list` shows its signers, and `sbverify --cert keys/fedora-kernel-signer.pem`
+  must accept it, otherwise the build FAILS (a kernel signed by anyone else would not boot on a Secure Boot machine). Facts from the real image (silverblue-main:45, kernel 7.3.3-300.fc45):
+  TWO signatures, Fedora's `kernel-signer` (OU=Fedora Secure Boot Signer, bkernel01; issuer `Fedora Secure Boot CA 20200709`, which every shim trusts; valid to 2037) and Universal Blue's
+  `ublue kernel` key (needs a MOK enrollment, so it does not matter for booting). The pinned certificate, its fingerprint and how it was derived are in `keys/README.md`; it is the LEAF of one Fedora
+  signing builder, so a kernel signed by another Fedora builder certificate fails the check loudly until the file is replaced (the Fedora CA certificate itself is not in the image: open item for the hub).
+  The NVIDIA smoke test (`nvidia-smoke.sh`) also requires every NVIDIA module's `sig_key` to equal the subject key identifier of `/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key
+  `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. The runner's `sbsigntool` (apt)
+  is installed in the step. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
+  Tests: `tests/secureboot-check.sh`, `tests/nvidia-variant.sh`.
+- **zizmor (`zizmor.yml`, 2026-11-14).** Audits `.github/` on pull requests that touch it, pushes to `testing`, weekly (Wednesday 06:00 UTC) and by dispatch; job and check name `zizmor`, NOT a required
+  check (the ruleset is the owner's). The binary is zizmor 1.32.0, the release asset verified by its sha256 (like the gitleaks job); `.github/zizmor.yml` holds the narrow ignores with a reason each (the local
+  `./.github/actions/setup-tool` self-repository style hints, the two bump workflows that push with the persisted token, the `$GITHUB_ENV`/`$GITHUB_PATH` writes of setup-tool and `build-nvidia-dx.yml`, and its `workflow_run` trigger). The first run found
+  156 findings (all 97 pinnable `uses:` were already pinned by commit SHA; the "31 unpinned" count was the local `./.github/...` ones, which cannot be); fixed: `persist-credentials: false` on every checkout that does not push,
+  `secrets: inherit` replaced by the named `SIGNING_SECRET`, template expansions moved into `env`, read-only workflow permissions for `build.yml`, a Dependabot cooldown.
+- **Strict lint (2026-11-14).** Every Containerfile ends with `RUN --network=none bootc container lint --fatal-warnings --no-truncate` (Aurora's last step). The first full output showed three
+  warnings on the default image: a non-empty `/boot` (extlinux), content in `/run` (cockpit, dnf, selinux-policy, setroubleshoot) and 493 `/var` entries missing tmpfiles.d (libvirt, pcp, iscsi,
+  dnf state, PackageKit ...). `build_files/final-cleanup.sh`, the last step of `build.sh`, `dx.sh` and `nvidia.sh`, empties `/boot`, `/run` and `/tmp`, drops dnf and PackageKit state and crash dumps, and moves
+  what the packages put in `/var` into `/usr/lib/tmpfiles.d/octarine-var.conf` (`d` for directories with their mode and owner, `C` copies of files from `/usr/share/factory/var`, `L+` for symlinks), so the
+  directories and files come back at boot (a later layer appends). No warning is silenced. The dx and NVIDIA layers use the same script; UNVERIFIED until their first CI build with it.
+- **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
+  `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
+  with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
+  The image is pinned by digest in `chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
+  identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
+  moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
+  the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,
+  up to 127 layers. Measured after (non-publishing dispatches 43637709422 and 43638625094 on the branch): rechunk step 150 to 159 s, job `Build image` 468 s, 256 layers, 7035 MiB; the cosign verification of the pinned digest passed. UNVERIFIED: a real boot of a chunkah image (Kevin boots the testing image on nox before promoting).
+  Undo: `git revert` the commit; `rpm-ostree compose build-chunked-oci` came back from git history.
 - **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
   shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
   (tests: `tests/image-version.sh`). A promoted image keeps the version it was built with, which is why it must
@@ -725,12 +762,32 @@ signed and the dx image was built on exactly that default digest.
   its inputs (undocumented), that the check run of the result job satisfies the ruleset on a promotion PR (then the same-named commit status can go),
   and the issue creation (`issues: write` with the default token).
 
+- **Rollback of `latest` (`rollback-latest.yml`, 2026-11-14).** Publish latest never moves `latest` backwards, so the sanctioned rollback is a dispatch on main:
+  inputs `vanilla_tag` (a dated tag of the DEFAULT image: `latest-<sha7>`, `latest-<date>-<sha7>`, `<date>-<sha7>`), `reason` (required), `default_only` (default false) and
+  `dry_run` (default TRUE; any ref but main is a dry run whatever the input says). First job `Cancel window`: 30 seconds (none in a dry run), cancel the run to stop it. Then
+  `publish-latest.sh` with `ALLOW_BACKWARDS=true` (same script, same verification: both signatures with `cosign.pub`, the dx image whose `base.digest` label is the default
+  image's digest, the default image built from main, digests preserved with a read-back, dx first and the default image LAST, nothing signed, no `signing` environment, the
+  concurrency group `publish-latest`); only the ordering guard is skipped and the summary says `ROLLBACK`. With no dx image built on that default image it REFUSES unless `default_only`
+  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback opens or updates the ONE `ci-failure-dx` issue. The next green dx run on main moves `latest`
+  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry), `tests/rollback-latest.sh` (the shape).
+  UNVERIFIED: a real rollback. GitHub only runs `workflow_dispatch` for a workflow file that exists on the default branch, so the first dry run is possible after the promotion that
+  carries the file: `gh workflow run rollback-latest.yml --ref main -f vanilla_tag=latest-<date>-<sha7> -f reason=trial -f dry_run=true`.
+
 ## Base image and Fedora major upgrade
 
 - The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in the
   workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile` (keep
   them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults. CI and
   `just build` pass both as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
+- **Floating base with safeguards (2026-11-14; Kevin chose to keep the base FLOATING so `latest` keeps getting base fixes daily).** `.github/scripts/base-pin.sh`
+  (step `Check the base image can be pulled` of `build.yml` and `build-beta.yml`) resolves `${BASE_IMAGE}:${FEDORA_VERSION}` to a manifest digest ONCE at the start of
+  the run (sha256 of `skopeo inspect --raw`), verifies its cosign signature with the vendored `keys/ublue-os-main-cosign.pub` (the key of github.com/ublue-os/main, compared
+  with the upstream file on 2026-11-14: identical; the list digest, or for a manifest list the linux/amd64 child) and FAILS the build if it does not verify, with an error that
+  names a rotated key as a possible cause. The build is FROM that digest (`Containerfile`: `FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}`, `BASE_PIN` passed by
+  `just build`; a local build without it uses the tag), the pull is by digest, `BASE_INDEX_DIGEST` is the pin, and the image carries the new labels
+  `org.octarineos.upstream-base=<digest>` and `org.octarineos.upstream-base-verified`; the job summary names the digest and what verified. The dx labels
+  `org.opencontainers.image.base.digest` and `dx-inputs` are untouched (dx builds on OUR default image, nvidia on ours too). UNVERIFIED until the first CI run: that the base
+  images of Universal Blue verify with this key at the digest the tag names. Tests: `tests/base-pin.sh`.
 - Upgrade steps: (1) set the variable, `gh variable set FEDORA_VERSION --body 46 -R <owner>/<image>` (undo:
   `gh variable delete FEDORA_VERSION`), or edit the workflow default and the `Containerfile` ARG in a commit.
   (2) Changing a variable starts no build: run the `Build container image` workflow on `testing` (a push or manual
@@ -1318,7 +1375,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   in with `packages: read` because a new GHCR package is private until the owner makes it public. Build: setup tools, the pin
   check and signature verification, base verified again by digest and pulled, kernel of the base read, `podman build` with
   explicit labels (the `just build` set plus `base.name`/`base.digest`, `dx-tree` and `dev-packages`; inherited maintainer
-  labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just ostree-rechunk`, the
+  labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just rechunk`, the
   channel-neutral version check, push of `<channel>` and `<channel>-<date>-<sha>`. Sign job (`signing` environment): signs
   every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: one group per channel,
   `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.

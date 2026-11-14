@@ -80,10 +80,10 @@ check "workflow: the labels are explicit, the dx inputs are recorded and the inh
 check "workflow: both smoke tests run on the built image (dx checks with the nvidia-dx IMAGE_ID, then the NVIDIA checks)" bash -c "
   grep -q 'EXPECT_IMAGE_ID=octarine-os-nvidia-dx' '$wf' && grep -q 'dx-smoke.sh:/smoke.sh:ro' '$wf'
   grep -q 'nvidia-smoke.sh:/smoke.sh:ro' '$wf' && grep -q 'bash /smoke.sh present' '$wf'
-  a=\$(grep -n 'dx-smoke.sh' '$wf' | head -1 | cut -d: -f1); b=\$(grep -n 'nvidia-smoke.sh' '$wf' | head -1 | cut -d: -f1); r=\$(grep -n 'ostree-rechunk' '$wf' | head -1 | cut -d: -f1)
+  a=\$(grep -n 'dx-smoke.sh' '$wf' | head -1 | cut -d: -f1); b=\$(grep -n 'nvidia-smoke.sh' '$wf' | head -1 | cut -d: -f1); r=\$(grep -n 'just rechunk' '$wf' | head -1 | cut -d: -f1)
   [ \$a -lt \$b ] && [ \$b -lt \$r ]"
 check "workflow: size guard, rechunk, neutral-version check, one push (push-tags.sh), the NVIDIA variant's tags" bash -c "
-  grep -q 'MAX_IMAGE_GIB: 15' '$wf' && grep -q 'just ostree-rechunk octarine-os-nvidia-dx \"\${CHANNEL}\"' '$wf'
+  grep -q 'MAX_IMAGE_GIB: 15' '$wf' && grep -q 'just rechunk octarine-os-nvidia-dx \"\${CHANNEL}\"' '$wf'
   grep -q 'BETA=false .github/scripts/check-version-neutral.sh' '$wf'
   [ \$(grep -c 'push-tags.sh' '$wf') = 1 ] && ! grep -q 'podman push' '$wf'
   grep -q 'alias_tags=\"latest-\${sha} latest-\${date}-\${sha} \${date}-\${sha} \${date} latest latest-\${date}\"' '$wf'
@@ -113,7 +113,7 @@ check "the dx and NVIDIA dx workflows build with the same Containerfile and the 
 import sys, yaml
 a = yaml.safe_load(open(sys.argv[1])); b = yaml.safe_load(open(sys.argv[2]))
 def step(w, job, name): return [s for s in w["jobs"][job]["steps"] if s.get("name") == name][0]
-for n in ("Check disk space", "Maximize build space (fallback, only when the disk is low)", "Check Just Syntax", "Check image size", "Rechunk with rpm-ostree"):
+for n in ("Check disk space", "Maximize build space (fallback, only when the disk is low)", "Check Just Syntax", "Check image size", "Rechunk with chunkah"):
     sa, sb = step(a, "build", n), step(b, "build", n)
     assert {k: v for k, v in sa.items() if k != "run"} == {k: v for k, v in sb.items() if k != "run"}, n
 assert step(a, "build", "Check the dev-packages pin")["run"] == step(b, "build", "Check the dev-packages pin")["run"]

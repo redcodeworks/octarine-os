@@ -16,6 +16,9 @@ ARG BINARIES_IMAGE
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
 ARG FEDORA_VERSION=45
+# The digest of ${BASE_IMAGE}:${FEDORA_VERSION} that the workflow resolved ONCE and verified (.github/scripts/base-pin.sh); empty for a local
+# `just build`, which then builds on the floating tag as before.
+ARG BASE_PIN=""
 FROM ${BREW_IMAGE} AS brew
 FROM ${BINARIES_IMAGE} AS binaries
 
@@ -28,7 +31,7 @@ COPY cosign.pub /cosign.pub
 # Base image: `just build` and CI pass BASE_IMAGE and FEDORA_VERSION from image-template.env (the one place to edit,
 # for example for a Fedora major upgrade). Like the brew ARGs above, these must stay before the first FROM to be
 # usable in a FROM line; the defaults repeat the env file for a bare `podman build` and CI checks they agree.
-FROM ${BASE_IMAGE}:${FEDORA_VERSION}
+FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}
 
 # Passed in by `just build` from image-template.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
@@ -78,4 +81,4 @@ RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
 
 ### LINTING
 ## Verify final image and contents are correct.
-RUN bootc container lint
+RUN --network=none bootc container lint --fatal-warnings --no-truncate

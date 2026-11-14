@@ -81,7 +81,7 @@ import sys
 def block(p):
     t = open(p).read()
     a = t.index("- name: Smoke test image")
-    b = t.index("# Optional packages that could not be installed") if "build.yml" in p else t.index("- name: Rechunk with rpm-ostree")
+    b = t.index("# Optional packages that could not be installed") if "build.yml" in p else t.index("- name: Rechunk with chunkah")
     # the only intended difference: the version pattern of the IMAGE_VERSION assertion (beta- prefix)
     return t[a:b].strip().replace("-e VERSION_RE='beta-[0-9]{8}", "-e VERSION_RE='[0-9]{8}")
 d = sys.argv[1] + "/.github/workflows/"

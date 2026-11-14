@@ -10,6 +10,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
+unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY   # exported by the CI runner as files this user cannot write
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/     run: /' "$root/run"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
@@ -118,7 +119,7 @@ root = sys.argv[1]
 w = yaml.safe_load(open(f"{root}/.github/workflows/binaries.yml"))
 on = w.get(True) or w.get("on")
 assert on["workflow_call"]["inputs"]["allow_fallback"]["default"] is False
-assert set(on["workflow_dispatch"]["inputs"]) == {"simulate_build_failure", "fallback_dry_run"}
+assert set(on["workflow_dispatch"]["inputs"]) == {"simulate_build_failure", "fallback_dry_run", "validate_only"}
 j = w["jobs"]["fallback"]
 c = " ".join(j["if"].split())
 for needle in ("needs.build.result == 'failure'", "needs.check.result == 'success'", "inputs.allow_fallback == true", "github.event_name == 'schedule'", "github.ref == 'refs/heads/main'", "github.event_name == 'workflow_dispatch' && inputs.fallback_dry_run == true"):

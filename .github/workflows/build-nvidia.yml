@@ -41,6 +41,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
       # image build peaks at 44 GB used, 18 GB more than the 26 GB left after the cleanup action), so the cleanup action (38 to 85 s) is
@@ -143,8 +145,15 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the variant
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" \
-            octarine-os-nvidia:build bash /smoke.sh present
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_MODULE_SIGNER="$(sed -n 's/^NVIDIA_MODULE_SIGNER=//p' keys/secureboot.env)" \
+            -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" octarine-os-nvidia:build bash /smoke.sh present
+
+      # Secure Boot: the kernel verifies against the pinned certificate (the variant adds modules, never a kernel)
+      - name: Secure Boot check of the kernel
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/secureboot-check.sh octarine-os-nvidia:build
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -185,6 +194,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
