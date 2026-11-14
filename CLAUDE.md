@@ -128,6 +128,14 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
     and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
   - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
   - The binaries image has two components (scx, extest).
+- **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
+  It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
+  WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
+  workflow `github.workflow` is the caller's name). The `check` job's step `final` decides: an own push run NEVER publishes (`nopublish`) but reuses an already signed image of the tree when the caller published it first, and builds
+  to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run and a dispatch with `validate_only` also ignore the reuse shortcut (`usable=false`) and
+  build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
+  `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
+  are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
 - **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
   `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
   (small).

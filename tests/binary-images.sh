@@ -154,7 +154,7 @@ wfb="$here/.github/workflows/binaries.yml"
 check "binaries.yml: reusable (workflow_call with digest and image outputs) and dispatchable, nothing else" python3 -I - "$wfb" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
-assert set(on) == {"workflow_call", "workflow_dispatch"}, set(on)
+assert set(on) == {"push", "schedule", "workflow_call", "workflow_dispatch"}, set(on)
 assert set(on["workflow_call"]["inputs"]) == {"allow_fallback"}
 assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "fallback", "fallback_hash", "fallback_created"}
 PY
