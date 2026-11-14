@@ -13,6 +13,8 @@
 #                    commit of main (first parent) that has a published latest-<sha7>
 #   MAIN_REF         the ref that holds main's history (default origin/main), MAX_WALK (default 60)
 #   DRY_RUN          true = plan and report only; WRITE must be true for any write (the workflow sets it only on main)
+#   ALLOW_BACKWARDS  true = a ROLLBACK (rollback-latest.yml): the ordering guard is skipped, so an older verified pair may be put under `latest`;
+#                    everything else (signatures, the pairing rule, the main-commit rule, the order dx then default image) is unchanged
 #   REASON           free text for the summary; GITHUB_STEP_SUMMARY, GITHUB_OUTPUT (moved=true|false) are used when set
 # Tools: skopeo, cosign (cosign.pub in the current directory), jq, git (history of main), the helper registry-digest.sh.
 #
@@ -35,6 +37,7 @@ max_walk="${MAX_WALK:-60}"
 dry="${DRY_RUN:-false}"
 write="${WRITE:-false}"
 reason="${REASON:-}"
+back="${ALLOW_BACKWARDS:-false}"
 l_rev="org.opencontainers.image.revision"
 l_created="org.opencontainers.image.created"
 l_base="org.opencontainers.image.base.digest"
@@ -111,8 +114,10 @@ Lv=$(tag_digest "${vimg}" latest) || Lv=""
 Ld=""
 [[ "${scope}" == vanilla-only ]] || { Ld=$(tag_digest "${dimg}" latest) || Ld=""; }
 held=""
-if [[ -n "${Lv}" && "${Lv}" != "${V}" ]] && older "${vimg}" "${V}" "${Lv}"; then held="${vimg}:latest (${Lv}) is newer than the candidate ${V}"; fi
-if [[ "${scope}" == both && -n "${Ld}" && "${Ld}" != "${E}" ]] && older "${dimg}" "${E}" "${Ld}"; then held="${dimg}:latest (${Ld}) is newer than the candidate ${E}"; fi
+if [[ "${back}" == true ]]; then
+    echo "ROLLBACK: the ordering guard is skipped; an older verified pair may be put under latest"
+elif [[ -n "${Lv}" && "${Lv}" != "${V}" ]] && older "${vimg}" "${V}" "${Lv}"; then held="${vimg}:latest (${Lv}) is newer than the candidate ${V}"; fi
+if [[ "${back}" != true && "${scope}" == both && -n "${Ld}" && "${Ld}" != "${E}" ]] && older "${dimg}" "${E}" "${Ld}"; then held="${dimg}:latest (${Ld}) is newer than the candidate ${E}"; fi
 if [[ -n "${held}" ]]; then
     summary "latest held: ${held}; nothing was moved${reason:+ (reason: ${reason})}"
     exit 0
@@ -144,9 +149,10 @@ move() { # image digest
 }
 if [[ "${scope}" == both && "${Ld}" != "${E}" ]]; then move "${dimg}" "${E}"; fi
 if [[ "${Lv}" != "${V}" ]]; then move "${vimg}" "${V}"; fi
+pre=""; [[ "${back}" != true ]] || pre="ROLLBACK, "
 if [[ "${scope}" == both ]]; then
-    summary "latest moved: ${vimg} ${Lv:-none} -> ${V}, ${dimg} ${Ld:-none} -> ${E} (main commit ${rev:0:7})${reason:+; reason: ${reason}}"
+    summary "${pre}latest moved: ${vimg} ${Lv:-none} -> ${V}, ${dimg} ${Ld:-none} -> ${E} (main commit ${rev:0:7})${reason:+; reason: ${reason}}"
 else
-    summary "latest moved (vanilla-only): ${vimg} ${Lv:-none} -> ${V} (main commit ${rev:0:7})${reason:+; reason: ${reason}}. ${dimg}:latest is NOT moved and is behind (still $(tag_digest "${dimg}" latest || echo none)); a later green dx run for this or a newer default image catches it up"
+    summary "${pre}latest moved (vanilla-only): ${vimg} ${Lv:-none} -> ${V} (main commit ${rev:0:7})${reason:+; reason: ${reason}}. ${dimg}:latest is NOT moved and is behind (still $(tag_digest "${dimg}" latest || echo none)); a later green dx run for this or a newer default image catches it up"
 fi
 out "moved=true"

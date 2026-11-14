@@ -734,6 +734,17 @@ signed and the dx image was built on exactly that default digest.
   its inputs (undocumented), that the check run of the result job satisfies the ruleset on a promotion PR (then the same-named commit status can go),
   and the issue creation (`issues: write` with the default token).
 
+- **Rollback of `latest` (`rollback-latest.yml`, 2026-11-14).** Publish latest never moves `latest` backwards, so the sanctioned rollback is a dispatch on main:
+  inputs `vanilla_tag` (a dated tag of the DEFAULT image: `latest-<sha7>`, `latest-<date>-<sha7>`, `<date>-<sha7>`), `reason` (required), `default_only` (default false) and
+  `dry_run` (default TRUE; any ref but main is a dry run whatever the input says). First job `Cancel window`: 30 seconds (none in a dry run), cancel the run to stop it. Then
+  `publish-latest.sh` with `ALLOW_BACKWARDS=true` (same script, same verification: both signatures with `cosign.pub`, the dx image whose `base.digest` label is the default
+  image's digest, the default image built from main, digests preserved with a read-back, dx first and the default image LAST, nothing signed, no `signing` environment, the
+  concurrency group `publish-latest`); only the ordering guard is skipped and the summary says `ROLLBACK`. With no dx image built on that default image it REFUSES unless `default_only`
+  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback opens or updates the ONE `ci-failure-dx` issue. The next green dx run on main moves `latest`
+  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry), `tests/rollback-latest.sh` (the shape).
+  UNVERIFIED: a real rollback. GitHub only runs `workflow_dispatch` for a workflow file that exists on the default branch, so the first dry run is possible after the promotion that
+  carries the file: `gh workflow run rollback-latest.yml --ref main -f vanilla_tag=latest-<date>-<sha7> -f reason=trial -f dry_run=true`.
+
 ## Base image and Fedora major upgrade
 
 - The base is `${BASE_IMAGE}:${FEDORA_VERSION}`, default `ghcr.io/ublue-os/silverblue-main:45`. The defaults are in the
