@@ -1,0 +1,11 @@
+# Tool configuration only (nothing here is packaged). The test suite is described in CLAUDE.md, "Test suite (pytest)".
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -n auto --timeout=120"
+markers = [
+    "static: reads repository files, starts no process",
+    "security: pins, signature checks, input validation, never-delete rules",
+    "docs: reads README, CLAUDE.md or other prose",
+    "slow: takes more than a couple of seconds",
+]
+xfail_strict = true

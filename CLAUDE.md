@@ -384,8 +384,42 @@ Two jobs, with these exact names because they become required checks:
 Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
 Test: `tests/test-workflow.sh`.
 
+After that loop the job runs a step `pytest (new suite)` (`runuser -u ci -- python3 -m pytest`, pytest, pytest-xdist and
+pytest-timeout from Fedora RPMs in the same `dnf install`). The shell tests are being ported to pytest in batches; until a batch is
+verified side by side (one green run of both) its old scripts stay. See "Test suite (pytest)".
+
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
+
+## Test suite (pytest)
+
+The shell tests under `tests/*.sh` are being rewritten as a pytest suite (plan: one batch per pull request; batch 0 is the scaffold,
+batch 1 the pipeline decisions). Old and new run next to each other in `test.yml` until a batch is verified; deleting an old script
+is a separate decision after one green side-by-side run and the mutation check of that batch.
+
+- **Run it.** `just test [pytest args]` (uv: `uv run --no-project --with pytest --with pytest-xdist --with pytest-timeout --with pyyaml
+  python -m pytest`; fails with a hint when `uv` is missing). CI uses the Fedora RPMs. Config is `pyproject.toml` (`-n auto`,
+  `--timeout=120`, markers `static`, `security`, `docs`, `slow`, `xfail_strict`); `tests/test_tools_present.py` lists missing host tools
+  (readelf, setpriv, node, gzip, git, jq, just) in one failure.
+- **Layout.** `tests/conftest.py` (fixtures: `sandbox` autouse, `stubs`, `git_repo`, `repo_root`), `tests/helpers/` (`stubs.py`,
+  `bashrun.py`, `gitrepo.py`, `trace.py`), `tests/test_plan.py` (aggregate-result, aggregate-dx, plan-build, plan-skip, plan-promote,
+  plan-dx, inputs-hash, plan-vanilla-reuse), `tests/test_registry_bumps.py` (push-tags, prune-testing, bump-pin, brew-bump,
+  datastore-pin-bump, upstream-check, bump-upstream).
+- **Stubs and the deny directory.** `Stubs.add(name, exit=, stdout=, script=)` writes an executable into `tmp_path/bin` that logs every call
+  as a JSON line to one shared log (`stub.calls`, `stubs.all_calls`); `exit` is an int, a per-call queue or a table keyed by the first
+  argument; `script=` is a bash body for tools that answer from state. `FakeRegistry` (skopeo and cosign over fake manifests whose digest is
+  a function of the reference) and `GhTable` (a `gh api` GET table) cover the pipeline scripts. Every test's PATH is: its stub directory,
+  then a directory of deny stubs (sudo, pkexec, systemctl, podman, rpm-ostree, virsh, flatpak, dconf, bootc, skopeo, cosign, modprobe, curl,
+  wget, gh, distrobox, ostree: they log to `$DENY_LOG` and exit 99), then `/usr/local/bin:/usr/bin:/bin`. An autouse fixture fails a test whose
+  deny log is not empty. The deny directory sits behind the stubs, not at the very end of PATH, so that an unstubbed tool never reaches the
+  real binary on a developer machine.
+- **Rules for new tests.** Assert on exit codes, file contents, output keys and stub calls, not on message wording; one scenario per test
+  with shared results instead of many micro-checks; decision tables are parametrized; exact literals that move with normal work (pins,
+  cron times, counts) are relaxed to the rule or taken from synthetic data. Every test docstring starts with `OLD: <script>: <check text>` lines
+  naming the old shell checks it covers (`*` matches anything); `python3 tests/helpers/trace.py` regenerates `tests/TRACE.md` (old check text
+  to new test) and fails when an old check is neither covered nor listed with a reason in `tests/trace-dropped.txt`.
+- **Image inputs.** `tests/**` and `pyproject.toml` are listed with the docs in `.github/scripts/docs-only.sh` (`is_docs`): they are in neither
+  input hash, so a push that changes only them builds nothing (`plan-build.sh` says false). Nothing in the Containerfiles copies or runs them.
 
 ## Rules
 
@@ -533,7 +567,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   and reinstalled. Bumping a tool means changing the version in the action (and the installer's `with:`).
 - **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
-  request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`
+  request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`, `tests/**`, `pyproject.toml`
   (the list is `is_docs` in `.github/scripts/docs-only.sh`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
   `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
   An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
@@ -572,8 +606,9 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **Two hashes, one script.** `.github/scripts/inputs-hash.sh` (tests: `tests/inputs-hash.sh`) hashes the sorted
   `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
   dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`, `.github/workflows/build-dx.yml`,
-  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx,nvidia-dx-image}.sh`.
-  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`). A new dx-only file must be
+  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`.
+  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`: top-level `*.md`, `docs/**`, `LICENSE`,
+  `.gitignore`, `tests/**` and `pyproject.toml`; the tests were dx or default-image inputs before the pytest suite). A new dx-only file must be
   added to `is_dx_only` (its test checks that each listed path exists); a file in neither group is a default-image input.
   Why hashes and not a `paths:` filter: a path filter on `build.yml` would leave the required check `Build and push image`
   missing on a dx-only commit and block the promotion pull request.
@@ -1293,7 +1328,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - **Plan.** `plan-dx.sh` with `CHANNEL=latest BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false`
   (the new switch skips the search for a tested testing image: there is no testing channel). Skip when the published
   `octarine-os-nvidia-dx:latest` has the same base digest (raw manifest of the verified `octarine-os-nvidia:latest`) and the same `dx_inputs`
-  as this commit; otherwise build. `is_dx_only` lists the new workflow and `tests/nvidia-dx-image.sh`, so a change to them changes
+  as this commit; otherwise build. `is_dx_only` lists the new workflow, so a change to it changes
   `dx_inputs` (dx rebuilds too) and never rebuilds the default image.
 - **Tags.** `latest`, `latest-<sha>`, `latest-<date>-<sha>`, `<date>-<sha>`, `<date>`, `latest-<date>` (the NVIDIA variant's set), one push through
   `push-tags.sh`, signed like the others (`cosign.pub`). No `testing`, no `beta`.

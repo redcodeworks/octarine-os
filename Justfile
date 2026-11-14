@@ -41,6 +41,18 @@ fix:
     echo "Checking syntax: Justfile"
     just --unstable --fmt -f Justfile || { exit 1; }
 
+# Run the pytest suite (uv fetches pytest into a cached, isolated environment)
+[group('Just')]
+test *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v uv > /dev/null; then
+        echo "uv is not installed: install it (brew install uv, or use the dx image), or run python3 -m pytest" >&2
+        echo "with pytest, pytest-xdist, pytest-timeout and pyyaml available." >&2
+        exit 1
+    fi
+    exec uv run --no-project --with pytest --with pytest-xdist --with pytest-timeout --with pyyaml python -m pytest {{ args }}
+
 # Clean Repo
 [group('Utility')]
 clean:

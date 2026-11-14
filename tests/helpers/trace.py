@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Generate tests/TRACE.md: every check an old shell test prints, mapped to the pytest test that covers it.
+
+    python3 tests/helpers/trace.py            # write tests/TRACE.md, exit 1 when anything is unmapped
+    python3 tests/helpers/trace.py --check    # same, but do not write
+
+Old side: the stable `ok`/`PASS` lines the in-scope shell tests print (the scripts are run in a clean environment
+with the deny directory, so nothing real is touched). New side: the `OLD: <script>: <check text>` lines in test
+docstrings (`*` in the text matches anything). Checks without a docstring line must be listed in
+tests/trace-dropped.txt as `<script><TAB><check text><TAB><reason>` (reason `DEFERRED ...` for work moved to a later
+batch, `DROPPED ...` for a deliberate removal). A docstring line that matches no old check is an error (a typo).
+"""
+from __future__ import annotations
+
+import ast
+import re
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+REPO = HERE.parents[2]
+sys.path.insert(0, str(REPO / "tests"))
+from helpers.stubs import write_deny_dir  # noqa: E402
+
+IN_SCOPE = ["aggregate-result", "plan-build", "plan-skip", "plan-promote", "plan-dx", "inputs-hash", "push-tags",
+            "prune-testing", "bump-pins", "brew-bump", "datastore-bump", "upstream-check"]
+LINE = re.compile(r"^(?:ok|PASS)\s+(.*\S)\s*$")
+OLD = re.compile(r"^\s*OLD:\s*([\w-]+):\s*(.*\S)\s*$")
+
+
+def old_checks() -> tuple[dict[str, list[str]], list[str]]:
+    checks: dict[str, list[str]] = {}
+    problems: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        deny = write_deny_dir(Path(tmp) / "deny")
+        home = Path(tmp) / "home"
+        home.mkdir()
+        for script in IN_SCOPE:
+            env = {"PATH": f"{deny}:/usr/local/bin:/usr/bin:/bin", "HOME": str(home), "LC_ALL": "C.UTF-8", "TZ": "UTC",
+                   "DENY_LOG": str(Path(tmp) / "deny.log")}
+            p = subprocess.run(["bash", str(REPO / "tests" / f"{script}.sh")], cwd=REPO, env=env, capture_output=True,
+                               text=True, stdin=subprocess.DEVNULL, start_new_session=True)
+            seen, names = set(), []
+            for line in p.stdout.splitlines():
+                m = LINE.match(line)
+                if m and m.group(1) not in seen:
+                    seen.add(m.group(1))
+                    names.append(m.group(1))
+            if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M):
+                problems.append(f"the old test {script}.sh fails (rc {p.returncode})")
+            checks[script] = names
+    return checks, problems
+
+
+def new_claims() -> dict[str, list[tuple[str, str]]]:
+    claims: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for f in sorted((REPO / "tests").glob("test_*.py")):
+        tree = ast.parse(f.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                doc = ast.get_docstring(node) or ""
+                for line in doc.splitlines():
+                    m = OLD.match(line)
+                    if m:
+                        claims[m.group(1)].append((m.group(2), f"tests/{f.name}::{node.name}"))
+    return claims
+
+
+def dropped() -> dict[tuple[str, str], str]:
+    out = {}
+    f = REPO / "tests" / "trace-dropped.txt"
+    if f.exists():
+        for line in f.read_text().splitlines():
+            if line.strip() and not line.startswith("#"):
+                script, text, reason = line.split("\t")
+                out[(script, text)] = reason
+    return out
+
+
+def regex(text: str) -> re.Pattern:
+    return re.compile("^" + ".*".join(re.escape(part) for part in text.split("*")) + "$")
+
+
+def main(argv: list[str]) -> int:
+    checks, problems = old_checks()
+    claims, drops = new_claims(), dropped()
+    rows, unmapped, used_drops, used_claims = [], [], set(), set()
+    for script in IN_SCOPE:
+        for name in checks[script]:
+            hits = [(i, where) for i, (text, where) in enumerate(claims[script]) if regex(text).match(name)]
+            if hits:
+                used_claims.update((script, i) for i, _ in hits)
+                rows.append((script, name, ", ".join(sorted({w for _, w in hits}))))
+            elif (script, name) in drops:
+                used_drops.add((script, name))
+                rows.append((script, name, drops[(script, name)]))
+            else:
+                unmapped.append(f"{script}: {name}")
+    for script in claims:
+        for i, (text, where) in enumerate(claims[script]):
+            if (script, i) not in used_claims:
+                problems.append(f"{where} claims an old check that does not exist: {script}: {text}")
+    for key in drops:
+        if key not in used_drops:
+            problems.append(f"trace-dropped.txt names an old check that does not exist: {key[0]}: {key[1]}")
+    lines = ["# Traceability: old shell checks -> pytest", "",
+             "Generated by `python3 tests/helpers/trace.py` (do not edit). Old side: the `ok`/`PASS` lines the shell tests print.",
+             "New side: `OLD:` lines in test docstrings; deliberate gaps are in `tests/trace-dropped.txt`.", "",
+             "| old script | old check | new test or reason |", "|---|---|---|"]
+    lines += [f"| {s} | {n.replace('|', '/')} | {w} |" for s, n, w in rows]
+    lines += ["", f"{len(rows)} old checks mapped, of {sum(len(v) for v in checks.values())} printed; "
+              f"{sum(1 for r in rows if r[2].startswith(('DROPPED', 'DEFERRED')))} dropped or deferred."]
+    if "--check" not in argv:
+        (REPO / "tests" / "TRACE.md").write_text("\n".join(lines) + "\n")
+    for u in unmapped:
+        print("UNMAPPED", u)
+    for p in problems:
+        print("PROBLEM", p)
+    print(f"{len(rows)} mapped, {len(unmapped)} unmapped, {len(problems)} problems")
+    return 1 if unmapped or problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

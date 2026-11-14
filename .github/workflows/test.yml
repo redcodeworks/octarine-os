@@ -29,7 +29,8 @@ jobs:
           for attempt in 1 2 3; do
             dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
               just jq fish zsh niri git python3 python3-pyyaml shellcheck gawk dconf bash-completion \
-              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils binutils nodejs && exit 0
+              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils binutils nodejs \
+              python3-pytest python3-pytest-xdist python3-pytest-timeout && exit 0
             echo "::warning::dnf install failed (attempt ${attempt}); retrying in 20 s"
             sleep 20
           done
@@ -85,6 +86,10 @@ jobs:
           done
           echo "Summary: ${pass} passed, ${#failed[@]} failed, $(( $(date +%s) - start )) s in total"
           if [ "${#failed[@]}" -gt 0 ]; then echo "::error::failed: ${failed[*]}"; exit 1; fi
+
+      # The new suite runs next to the old loop until every batch is ported and verified (see CLAUDE.md, "Test suite (pytest)").
+      - name: pytest (new suite)
+        run: runuser -u ci -- python3 -m pytest
 
   secrets:
     name: secrets
