@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ExecStartPost of scx@.service: did the scheduler really take over? Waits up to 5 seconds until the sched_ext state is `enabled`
-# and the active ops name (root/ops) is this instance. Exit 0 on success (and the failure count is reset), non-zero otherwise.
+# and the active ops name (root/ops, which carries a version suffix: see scx_ops_instance) belongs to this instance. Exit 0 on success (and the failure count is reset), non-zero otherwise.
 #
 # A failure counts only when the scheduler did not become active within the timeout AND sched_ext is not held by another scheduler
 # (a real load failure; a busy sched_ext fails the start without counting). The count is a root-owned
@@ -22,14 +22,14 @@ state=${SCX_SYSFS}/state
 ops=${SCX_SYSFS}/root/ops
 
 active() {
-    [[ "$(cat "${state}" 2> /dev/null)" == enabled && "$(cat "${ops}" 2> /dev/null)" == "${name}" ]]
+    [[ "$(cat "${state}" 2> /dev/null)" == enabled && "$(scx_ops_instance "$(cat "${ops}" 2> /dev/null)")" == "${name}" ]]
 }
 
 deadline=$((SECONDS + SCX_VERIFY_SECONDS))
 while :; do
     if active; then
         rm -f -- "${fdir}/${name}" "${mdir}/${name}"
-        scx_log "verify ${name}: active"
+        scx_log "verify ${name}: active (kernel ops name '$(cat "${ops}" 2> /dev/null)')"
         exit 0
     fi
     ((SECONDS >= deadline)) && break
@@ -42,8 +42,8 @@ done
 # then, the start fails, but nothing is counted and no marker is written: it says nothing about this kernel and this scheduler.
 cur_state=$(cat "${state}" 2> /dev/null)
 cur_ops=$(cat "${ops}" 2> /dev/null)
-if [[ "${cur_state}" == enabled && -n "${cur_ops}" && "${cur_ops}" != "${name}" ]]; then
-    scx_log "verify ${name}: busy, sched_ext is held by '${cur_ops}'; not a load failure, not counted"
+if [[ "${cur_state}" == enabled && -n "${cur_ops}" && "$(scx_ops_instance "${cur_ops}")" != "${name}" ]]; then
+    scx_log "verify ${name}: busy, sched_ext is held by '${cur_ops}' (instance: '$(scx_ops_instance "${cur_ops}")', empty = unknown); not a load failure, not counted"
     exit 1
 fi
 

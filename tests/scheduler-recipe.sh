@@ -44,11 +44,11 @@ cat >"$bin/systemctl" <<'F'
 echo "systemctl $*" >>"$LOG"
 case "$1" in
     is-enabled) grep -qx "${2#scx@}" <(sed 's/$/.service/' "$ENABLED_FILE") && { echo enabled; exit 0; }; echo disabled; exit 1 ;;
-    is-active) i=${2#scx@}; i=${i%.service}; [ "$(cat "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
+    is-active) i=${2#scx@}; i=${i%.service}; [ "$(sed 's/_1\.1\.4_x86_64_unknown_linux_gnu$//' "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { echo active; exit 0; }; echo inactive; exit 3 ;;
     start) [ "${FAKE_SYSTEMCTL_FAIL:-}" = 1 ] && exit 1
-        i=${2#scx@}; i=${i%.service}; mkdir -p "$SCHEDULER_SYSFS/root"; echo enabled >"$SCHEDULER_SYSFS/state"; echo "$i" >"$SCHEDULER_SYSFS/root/ops"; exit 0 ;;
+        i=${2#scx@}; i=${i%.service}; mkdir -p "$SCHEDULER_SYSFS/root"; echo enabled >"$SCHEDULER_SYSFS/state"; echo "${i}_1.1.4_x86_64_unknown_linux_gnu" >"$SCHEDULER_SYSFS/root/ops"; exit 0 ;;
     stop) [ "${FAKE_SYSTEMCTL_FAIL:-}" = 1 ] && exit 1
-        i=${2#scx@}; i=${i%.service}; [ "$(cat "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { rm -f "$SCHEDULER_SYSFS/root/ops"; echo disabled >"$SCHEDULER_SYSFS/state"; }; exit 0 ;;
+        i=${2#scx@}; i=${i%.service}; [ "$(sed 's/_1\.1\.4_x86_64_unknown_linux_gnu$//' "$SCHEDULER_SYSFS/root/ops" 2>/dev/null)" = "$i" ] && { rm -f "$SCHEDULER_SYSFS/root/ops"; echo disabled >"$SCHEDULER_SYSFS/state"; }; exit 0 ;;
 esac
 exit 0
 F
@@ -58,7 +58,7 @@ echo "sudo $*" >>"$LOG"
 [ "$1" = -v ] && exit "${FAKE_SUDO_V_FAIL:-0}"
 [ "${FAKE_SUDO_FAIL:-}" = 1 ] && exit 1
 sysfs=$SCHEDULER_SYSFS
-setops() { mkdir -p "$sysfs/root"; echo enabled >"$sysfs/state"; echo "$1" >"$sysfs/root/ops"; }
+setops() { mkdir -p "$sysfs/root"; echo enabled >"$sysfs/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$sysfs/root/ops"; }
 startit() { # a start of INST: Conflicts= stops the running one first; a failing start leaves nothing running
     rm -f "$sysfs/root/ops"; echo disabled >"$sysfs/state"
     case " ${FAKE_START_FAIL:-} " in *" $1 "*) return 1 ;; esac
@@ -73,7 +73,7 @@ if [ "$1" = systemctl ]; then
     inst=${unit#scx@}; inst=${inst%.service}
     case "$verb" in
         enable) grep -qx "$inst" "$ENABLED_FILE" || echo "$inst" >>"$ENABLED_FILE"; case " $* " in *" --now "*) startit "$inst" || { [ "${FAKE_START_RC:-0}" = 1 ] && exit 1; } ;; esac ;;
-        disable) grep -vx "$inst" "$ENABLED_FILE" >"$ENABLED_FILE.t"; mv "$ENABLED_FILE.t" "$ENABLED_FILE"; case " $* " in *" --now "*) [ "$(cat "$sysfs/root/ops" 2>/dev/null)" = "$inst" ] && { rm -f "$sysfs/root/ops"; echo disabled >"$sysfs/state"; } ;; esac ;;
+        disable) grep -vx "$inst" "$ENABLED_FILE" >"$ENABLED_FILE.t"; mv "$ENABLED_FILE.t" "$ENABLED_FILE"; case " $* " in *" --now "*) [ "$(sed 's/_1\.1\.4_x86_64_unknown_linux_gnu$//' "$sysfs/root/ops" 2>/dev/null)" = "$inst" ] && { rm -f "$sysfs/root/ops"; echo disabled >"$sysfs/state"; } ;; esac ;;
         start) startit "$inst" ;;
     esac
 fi
@@ -147,11 +147,14 @@ reset; run '' --list
 check "--list: every registry entry with its FULL description, none and skip explained" bash -c "[ $rc = 0 ] && grep -q 'rusty' '$root/out' && grep -q 'Test scheduler lavd' '$root/out' && grep -qF '$long' '$root/out' && grep -q 'none ' '$root/out' && grep -q 'skip ' '$root/out' && grep -q 'EEVDF' '$root/out'"
 
 # ---- --status
-reset; echo enabled >"$root/sys/state"; mkdir -p "$root/sys/root"; echo lavd >"$root/sys/root/ops"; echo rusty >"$ENABLED_FILE"
+reset; echo enabled >"$root/sys/state"; mkdir -p "$root/sys/root"; echo lavd_1.1.4_x86_64_unknown_linux_gnu >"$root/sys/root/ops"; echo rusty >"$ENABLED_FILE"
 mkdir -p "$(dirname "$conf")"; echo 'GAMEMODE_SCHED=flash' >"$conf"
 mkdir -p "$root/state/scx-disabled"; echo 6.99.0-test >"$root/state/scx-disabled/rusty"
 run '' --status
 check "--status: sched_ext state, the active scheduler, the boot unit, the GameMode choice and the disabled-for-this-kernel marker" bash -c "[ $rc = 0 ] && grep -q 'sched_ext state:   enabled' '$root/out' && grep -q 'active scheduler:  lavd' '$root/out' && grep -q 'boot choice:       rusty' '$root/out' && grep -q 'GameMode choice:   flash' '$root/out' && grep -q 'rusty (disabled for this kernel 6.99.0-test' '$root/out'"
+check "--status shows the instance name and the kernel's real ops string next to it" grep -q 'active scheduler:  lavd \[kernel ops name: lavd_1.1.4_x86_64_unknown_linux_gnu\]' "$root/out"
+reset; echo enabled >"$root/sys/state"; mkdir -p "$root/sys/root"; echo some_foreign_1.0 >"$root/sys/root/ops"; run '' --status
+check "--status: a scheduler that is not one of ours is shown by its raw name" grep -q 'active scheduler:  some_foreign_1.0 (not one of ours)' "$root/out"
 reset; echo disabled >"$root/sys/state"; run '' --status
 check "--status with nothing set: kernel default, boot none, GameMode skip, no markers" bash -c "grep -q 'none (the kernel' '$root/out' && grep -q 'boot choice:       none' '$root/out' && grep -q 'GameMode choice:   skip' '$root/out' && grep -q 'disabled markers: *none' '$root/out'"
 
@@ -169,11 +172,11 @@ check "--boot none again: already done, no sudo" bash -c "grep -q 'already done'
 reset; FAKE_SUDO_FAIL=1 run '' --boot rusty
 check "--boot, sudo fails: FAILED, exit 1, the exact command printed, never retried" bash -c "[ $rc = 1 ] && grep -q 'FAILED' '$root/out' && grep -q 'Failed: sudo systemctl enable --now scx@rusty.service' '$root/out' && [ \$(grep -c '^sudo systemctl' '$LOG') = 1 ]"
 # ---- --boot: "applied" means the scheduler really runs (A3)
-seed_running() { mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo "$1" >"$root/sys/root/ops"; echo "$1" >"$ENABLED_FILE"; }
+seed_running() { mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$root/sys/root/ops"; echo "$1" >"$ENABLED_FILE"; }
 reset; run '' --boot rusty
 check "--boot NAME: sudo -v primes sudo once before the first systemctl, then enable, and 'applied' only after it runs" bash -c "[ $rc = 0 ] && [ \$(grep -c '^sudo -v' '$LOG') = 1 ] && [ \$(grep -n '^sudo -v' '$LOG' | cut -d: -f1) -lt \$(grep -n '^sudo systemctl enable' '$LOG' | cut -d: -f1) ] && grep -q 'applied' '$root/out' && grep -q 'not guaranteed' '$root/out'"
 seed_running rusty; : >"$LOG"; run '' --boot lavd
-check "--boot other: the new instance is enabled and started first, the old one disabled only after (log order)" bash -c "[ $rc = 0 ] && [ \$(grep -n 'enable --now scx@lavd' '$LOG' | cut -d: -f1) -lt \$(grep -n 'disable --now scx@rusty' '$LOG' | cut -d: -f1) ] && [ \"\$(cat '$ENABLED_FILE')\" = lavd ] && [ \"\$(cat '$root/sys/root/ops')\" = lavd ]"
+check "--boot other: the new instance is enabled and started first, the old one disabled only after (log order)" bash -c "[ $rc = 0 ] && [ \$(grep -n 'enable --now scx@lavd' '$LOG' | cut -d: -f1) -lt \$(grep -n 'disable --now scx@rusty' '$LOG' | cut -d: -f1) ] && [ \"\$(cat '$ENABLED_FILE')\" = lavd ] && [ \"\$(cat '$root/sys/root/ops')\" = lavd_1.1.4_x86_64_unknown_linux_gnu ]"
 seed_running rusty; : >"$LOG"; rm -f "$root/sys/root/ops"
 run '' --boot rusty
 check "--boot NAME when it is enabled but NOT running: not 'already set', it is started and verified" bash -c "[ $rc = 0 ] && grep -qx 'sudo systemctl enable --now scx@rusty.service' '$LOG' && grep -q 'enabled but not running' '$root/out' && grep -q applied '$root/out' && ! grep -q 'Already set' '$root/out'"
@@ -193,9 +196,9 @@ reset; rm -f "$root/btf-vmlinux"; run '' --boot rusty
 check "no BTF: the scheduler does not run: FAILED with the BTF reason, the new instance is disabled again, exit 1" bash -c "[ $rc = 1 ] && grep -q 'FAILED' '$root/out' && ! grep -q 'applied' '$root/out' && grep -q 'no BTF' '$root/out' && [ ! -s '$ENABLED_FILE' ] && grep -qx 'sudo systemctl disable --now scx@rusty.service' '$LOG'"
 : >"$root/btf-vmlinux"
 reset; seed_running rusty; : >"$LOG"; FAKE_START_FAIL=lavd run '' --boot lavd
-check "start failure with another scheduler running: FAILED, the OLD instance is kept (still enabled, started again), the new one is not kept, journal lines shown" bash -c "[ $rc = 1 ] && grep -q 'FAILED' '$root/out' && ! grep -q 'applied' '$root/out' && [ \"\$(cat '$ENABLED_FILE')\" = rusty ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty ] && ! grep -q 'disable --now scx@rusty' '$LOG' && grep -qx 'sudo systemctl start scx@rusty.service' '$LOG' && grep -q 'could not load the BPF program' '$root/out' && grep -q 'Restored the previous scheduler: rusty' '$root/out'"
+check "start failure with another scheduler running: FAILED, the OLD instance is kept (still enabled, started again), the new one is not kept, journal lines shown" bash -c "[ $rc = 1 ] && grep -q 'FAILED' '$root/out' && ! grep -q 'applied' '$root/out' && [ \"\$(cat '$ENABLED_FILE')\" = rusty ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty_1.1.4_x86_64_unknown_linux_gnu ] && ! grep -q 'disable --now scx@rusty' '$LOG' && grep -qx 'sudo systemctl start scx@rusty.service' '$LOG' && grep -q 'could not load the BPF program' '$root/out' && grep -q 'Restored the previous scheduler: rusty' '$root/out'"
 reset; seed_running rusty; : >"$LOG"; FAKE_START_FAIL=lavd FAKE_START_RC=1 run '' --boot lavd
-check "start failure that makes systemctl itself fail: same, the old instance is back and no disable of it ran" bash -c "[ $rc = 1 ] && [ \"\$(cat '$ENABLED_FILE')\" = rusty ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty ] && ! grep -q 'disable --now scx@rusty' '$LOG' && grep -q 'FAILED' '$root/out'"
+check "start failure that makes systemctl itself fail: same, the old instance is back and no disable of it ran" bash -c "[ $rc = 1 ] && [ \"\$(cat '$ENABLED_FILE')\" = rusty ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty_1.1.4_x86_64_unknown_linux_gnu ] && ! grep -q 'disable --now scx@rusty' '$LOG' && grep -q 'FAILED' '$root/out'"
 reset; FAKE_SUDO_V_FAIL=1 run '' --boot rusty
 check "sudo -v refused: FAILED, no systemctl command ran, exit 1" bash -c "[ $rc = 1 ] && grep -q FAILED '$root/out' && ! grep -q '^sudo systemctl' '$LOG'"
 reset; seed_running rusty; : >"$LOG"; run '' --boot rusty
@@ -222,7 +225,7 @@ reset; run ''
 check "no flags and no terminal: nothing changes, exit 0, the usage and the names shown, no menu" bash -c "[ $rc = 0 ] && grep -q 'Nothing to change\\|No terminal menu' '$root/out' && ! grep -q 'ugum' '$LOG' && ! grep -q sudo '$LOG'"
 
 # ---- --restore: back to the boot choice after a crashed GameMode session
-setops() { mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo "$1" >"$root/sys/root/ops"; }
+setops() { mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$root/sys/root/ops"; }
 cat >"$bin/gamemoded" <<'F'
 #!/usr/bin/env bash
 case "${FAKE_GAMEMODED:-inactive}" in
@@ -235,13 +238,13 @@ chmod +x "$bin/gamemoded"
 reset; setops lavd; : >"$ENABLED_FILE"; run '' --restore
 check "restore, stale game scheduler and no boot instance: stops it (no sudo needed), back to the kernel default" bash -c "[ $rc = 0 ] && grep -qx 'systemctl stop scx@lavd.service' '$LOG' && ! grep -q '^sudo' '$LOG' && [ ! -e '$root/sys/root/ops' ] && grep -q 'kernel default' '$root/out'"
 reset; setops lavd; echo rusty >"$ENABLED_FILE"; run '' --restore
-check "restore, stale game scheduler and a boot instance enabled: starts the boot instance (which replaces the other)" bash -c "[ $rc = 0 ] && grep -qx 'systemctl start scx@rusty.service' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = rusty ] && ! grep -q '^sudo' '$LOG'"
+check "restore, stale game scheduler and a boot instance enabled: starts the boot instance (which replaces the other)" bash -c "[ $rc = 0 ] && grep -qx 'systemctl start scx@rusty.service' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = rusty_1.1.4_x86_64_unknown_linux_gnu ] && ! grep -q '^sudo' '$LOG'"
 reset; setops rusty; echo rusty >"$ENABLED_FILE"; run '' --restore
 check "restore, already consistent (boot instance running): nothing to do, nothing run" bash -c "[ $rc = 0 ] && grep -q 'Already consistent' '$root/out' && ! grep -qE 'systemctl (start|stop)' '$LOG'"
 reset; : >"$ENABLED_FILE"; echo disabled >"$root/sys/state"; run '' --restore
 check "restore, nothing enabled and nothing running: already consistent" bash -c "[ $rc = 0 ] && grep -q 'Already consistent' '$root/out' && ! grep -qE 'systemctl (start|stop)' '$LOG'"
 reset; setops lavd; echo rusty >"$ENABLED_FILE"; run '' --restore --no
-check "restore --no: prints the plan and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan only' '$root/out' && grep -q 'systemctl start scx@rusty.service' '$root/out' && ! grep -qE '^systemctl (start|stop)' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = lavd ]"
+check "restore --no: prints the plan and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan only' '$root/out' && grep -q 'systemctl start scx@rusty.service' '$root/out' && ! grep -qE '^systemctl (start|stop)' '$LOG' && [ \"\$(cat '$root/sys/root/ops')\" = lavd_1.1.4_x86_64_unknown_linux_gnu ]"
 reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_SYSTEMCTL_FAIL=1 run '' --restore
 check "restore, the unprivileged call is refused: the same command runs once through sudo and the sudo is logged" bash -c "grep -qx 'sudo systemctl start scx@rusty.service' '$LOG' && [ \$(grep -cx 'sudo systemctl start scx@rusty.service' '$LOG') = 1 ]"
 reset; setops lavd; echo rusty >"$ENABLED_FILE"; FAKE_SYSTEMCTL_FAIL=1 FAKE_SUDO_FAIL=1 run '' --restore
@@ -278,7 +281,7 @@ assert short and not short[0].endswith("\u2026"), short
 PY
 check "menu: --list still has the full text of the shortened entry" bash -c "PATH='$bin:$sysbin' '$REAL_JUST' --justfile '$justfile' --working-directory '$root' scheduler --list | grep -qF '$long'"
 reset; export OCTARINE_MENU_FORCE_TTY=1
-echo lavd >"$ENABLED_FILE"; ugumq 1 'lavd: Test scheduler lavd\n'; mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo lavd >"$root/sys/root/ops"
+echo lavd >"$ENABLED_FILE"; ugumq 1 'lavd: Test scheduler lavd\n'; mkdir -p "$root/sys/root"; echo enabled >"$root/sys/state"; echo lavd_1.1.4_x86_64_unknown_linux_gnu >"$root/sys/root/ops"
 printf '\n' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" scheduler >"$root/out" 2>&1; rc=$?
 check "menu: Esc or an empty answer on both steps: nothing changed, exit 0" bash -c "[ $rc = 0 ] && ! grep -q '^sudo' '$LOG'"
 reset; export OCTARINE_MENU_FORCE_TTY=1

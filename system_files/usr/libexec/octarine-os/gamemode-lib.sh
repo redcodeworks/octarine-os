@@ -63,7 +63,13 @@ chosen() {
 active_instance() {
     local ops
     ops=$(cat "${SCX_SYSFS}/root/ops" 2> /dev/null) || return 0
-    if registered "${ops}"; then echo "${ops}"; fi
+    local i best=""
+    [[ -n "${ops}" ]] || return 0
+    # the kernel's ops name carries a version suffix (`rusty_1.1.4_x86_64_unknown_linux_gnu`): <instance> or <instance>_..., longest wins
+    while IFS= read -r i; do
+        if [[ "${ops}" == "${i}" || "${ops}" == "${i}_"* ]]; then ((${#i} > ${#best})) && best=${i}; fi
+    done < <(instances)
+    [[ -z "${best}" ]] || echo "${best}"
 }
 
 # boot_instance: the instance `systemctl is-enabled` reports enabled, empty for none

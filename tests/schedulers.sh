@@ -34,6 +34,7 @@ gen() { DESTDIR="$1" bash "$here/build_files/gen-schedulers.sh" >"$root/run" 2>&
 gen "$d"
 reg="$d/usr/share/octarine-os/schedulers.d"
 check "gen: one registry file per scheduler, instance = name without scx_ (rusty lavd cake bpfland cosmos flash p2dq)" bash -c "[ $rc = 0 ] && [ \"\$(ls '$reg' | sed 's/.conf$//' | sort | tr '\n' ' ')\" = \"\$(echo $real_names | tr ' ' '\n' | sort | tr '\n' ' ')\" ]"
+check "gen: no registered instance name is another one followed by _ (the ops-name prefix match must stay unambiguous; a new scheduler that breaks this needs a smarter match)" bash -c "for a in \$(ls '$reg' | sed 's/.conf\$//'); do for b in \$(ls '$reg' | sed 's/.conf\$//'); do case \$b in \${a}_*) echo ambiguous: \$a \$b; exit 1;; esac; done; done"
 check "gen: registry fields NAME INSTANCE BINARY DESCRIPTION MIN_KERNEL FLAGS, empty minimum kernel kept empty" bash -c "grep -qx 'NAME=scx_rusty' '$reg/rusty.conf' && grep -qx 'INSTANCE=rusty' '$reg/rusty.conf' && grep -qx 'BINARY=/usr/bin/scx_rusty' '$reg/rusty.conf' && grep -qx 'MIN_KERNEL=' '$reg/rusty.conf' && grep -qx 'FLAGS=' '$reg/rusty.conf' && grep -q '^DESCRIPTION=.\\{10,\\}' '$reg/rusty.conf'"
 check "gen: every description of the registry is the manifest's, at most 120 characters" bash -c "for n in $real_names; do dsc=\$(sed -n 's/^DESCRIPTION=//p' '$reg'/\$n.conf); [ -n \"\$dsc\" ] && [ \${#dsc} -le 120 ] && grep -qF -- \"\$dsc\" '$root/real4.tsv' || exit 1; done"
 for n in $real_names; do
@@ -180,7 +181,7 @@ check "no sudo, pkexec or run0 in any helper, hook or the unit" bash -c "! grep 
 # verify: success, failures, threshold, reset, interrupts
 export OCTARINE_SCX_VERIFY_SECONDS=1
 ver() { bash "$lib/scx-verify" "$@" >"$root/run" 2>&1; rc=$?; }
-set_active() { echo enabled >"$root/sys/state"; echo "$1" >"$root/sys/root/ops"; }
+set_active() { echo enabled >"$root/sys/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$root/sys/root/ops"; }
 set_inactive() { echo disabled >"$root/sys/state"; rm -f "${root:?}/sys/root/ops"; }
 set_active rusty; ver rusty
 check "verify: the instance is the active scheduler: exit 0" test "$rc" = 0
@@ -190,6 +191,18 @@ for i in $(seq 1 12); do ver rusty; done
 check "verify: twelve start attempts while another scheduler is active (the ignore-dependencies attack) count nothing and write no marker" bash -c "[ -z \"\$(find '$root/state' -type f)\" ]"
 echo enabled >"$root/sys/state"; echo "some_foreign_sched" >"$root/sys/root/ops"; ver rusty
 check "verify: a scheduler that is not one of ours holding sched_ext is busy too, not counted" bash -c "[ $rc != 0 ] && [ -z \"\$(find '$root/state' -type f)\" ]"
+R=rusty_1.1.4_x86_64_unknown_linux_gnu; L=lavd_1.1.4_x86_64_unknown_linux_gnu
+echo enabled >"$root/sys/state"; echo "$R" >"$root/sys/root/ops"; ver rusty; rc_r=$rc
+check "verify: the kernel's REAL ops string ($R) is this instance: success, the raw string is in the log (observed on hardware 2026-11-14)" bash -c "[ $rc_r = 0 ] && grep -q \"active (kernel ops name '$R')\" '$root/run' && [ -z \"\$(find '$root/state' -type f)\" ]"
+echo "$L" >"$root/sys/root/ops"; ver rusty
+check "verify: the real string of ANOTHER registered instance ($L) is busy: non-zero, not counted, the log names the raw string and the instance" bash -c "[ $rc != 0 ] && grep -q \"held by '$L' (instance: 'lavd'\" '$root/run' && [ -z \"\$(find '$root/state' -type f)\" ]"
+echo "rustyfoo_1.0_x86_64" >"$root/sys/root/ops"; ver rusty
+check "verify: a name that merely STARTS with the instance but not followed by _ (rustyfoo) is not this instance: busy" bash -c "[ $rc != 0 ] && grep -q 'busy' '$root/run'"
+echo "rusty" >"$root/sys/root/ops"; ver rusty
+check "verify: the bare instance name still matches" test "$rc" = 0
+echo "$R" >"$root/sys/root/ops"; echo disabled >"$root/sys/state"; ver rusty
+check "verify: a leftover ops file while sched_ext is disabled is a real failure, counted" bash -c "[ $rc != 0 ] && [ \"\$(cat '$root/state/scx-failures/rusty')\" = 1 ]"
+rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
 set_inactive; ver rusty; set_active lavd; ver rusty; set_active lavd; ver rusty; set_inactive; ver rusty
 check "verify: mixed sequence (real failure, busy, busy, real failure) counts exactly the two real failures" bash -c "[ \"\$(cat '$root/state/scx-failures/rusty')\" = 2 ] && [ ! -e '$root/state/scx-disabled/rusty' ]"
 rm -rf "${root:?}/state/scx-failures" "${root:?}/state/scx-disabled"
@@ -229,7 +242,7 @@ case "$1" in
     start) i=${2#scx@}; i=${i%.service}
         [ "${SYSTEMCTL_FAIL:-}" = all ] && exit 1
         for f in $FAIL_START; do [ "$f" = "$i" ] && exit 1; done
-        echo enabled >"$OCTARINE_SCX_SYSFS/state"; mkdir -p "$OCTARINE_SCX_SYSFS/root"; echo "$i" >"$OCTARINE_SCX_SYSFS/root/ops" ;;
+        echo enabled >"$OCTARINE_SCX_SYSFS/state"; mkdir -p "$OCTARINE_SCX_SYSFS/root"; echo "${i}_1.1.4_x86_64_unknown_linux_gnu" >"$OCTARINE_SCX_SYSFS/root/ops" ;;
     stop) [ "${SYSTEMCTL_FAIL:-}" = all ] && exit 1
         echo disabled >"$OCTARINE_SCX_SYSFS/state"; rm -f "$OCTARINE_SCX_SYSFS/root/ops" ;;
 esac
@@ -243,7 +256,7 @@ export HLOG="$root/hlog" OCTARINE_SCX_RUN_DIR="$root/gmrun" OCTARINE_SCX_USER_CO
 unset OCTARINE_SCX_STATE
 hreset() { : >"$HLOG"; rm -rf "${root:?}/gmrun" "${root:?}/user.conf"; set_inactive; unset FAIL_START SYSTEMCTL_FAIL; export ENABLED=""; }
 hook() { PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-$1" >"$root/run" 2>&1; rc=$?; }
-ops_now() { cat "$root/sys/root/ops" 2>/dev/null; }
+ops_now() { sed 's/_1\.1\.4_x86_64_unknown_linux_gnu$//' "$root/sys/root/ops" 2>/dev/null; }
 
 hreset; hook start; r1=$rc; hook end; r2=$rc
 check "hooks: no choice file means skip: tuned as before, no systemctl start or stop, both exit 0" bash -c "[ $r1 = 0 ] && [ $r2 = 0 ] && grep -q 'tuned-adm profile latency-performance' '$HLOG' && grep -q 'tuned-adm profile balanced' '$HLOG' && ! grep -qE 'systemctl (start|stop)' '$HLOG'"
@@ -267,7 +280,7 @@ wait
 PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1 &
 PATH="$hb:/usr/bin:/bin" bash "$lib/gamemode-end" >/dev/null 2>&1
 wait
-check "hooks: two games overlapping (two starts, two ends at once): lavd is started once, the boot scheduler is restored once, the second end finds nothing to restore" bash -c "[ \$(grep -c 'systemctl start scx@lavd.service' '$HLOG') = 1 ] && [ \$(grep -c 'systemctl start scx@rusty.service' '$HLOG') = 1 ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty ]"
+check "hooks: two games overlapping (two starts, two ends at once): lavd is started once, the boot scheduler is restored once, the second end finds nothing to restore" bash -c "[ \$(grep -c 'systemctl start scx@lavd.service' '$HLOG') = 1 ] && [ \$(grep -c 'systemctl start scx@rusty.service' '$HLOG') = 1 ] && [ \"\$(cat '$root/sys/root/ops')\" = rusty_1.1.4_x86_64_unknown_linux_gnu ]"
 # a stale game-time scheduler from a crashed session (gamemoded died, end never ran) is repaired by the next start
 printf 'NAME=scx_cake\nINSTANCE=cake\nBINARY=/usr/bin/scx_cake\nDESCRIPTION=cake test\nMIN_KERNEL=\nFLAGS=\n' >"$root/reg/cake.conf"
 hreset; ENABLED=rusty; set_active cake; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; o1=$(ops_now)
