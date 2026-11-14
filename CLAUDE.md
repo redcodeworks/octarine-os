@@ -572,8 +572,8 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **Two hashes, one script.** `.github/scripts/inputs-hash.sh` (tests: `tests/inputs-hash.sh`) hashes the sorted
   `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
   dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`, `.github/workflows/build-dx.yml`,
-  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx,nvidia-dx-image}.sh`.
-  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`). A new dx-only file must be
+  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`.
+  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore` and, since 2026-11-14, the whole test suite `tests/**`: nothing in the image build copies or runs it, so a test-only push builds nothing and a test edit rebuilds neither image; the first push with this change rebuilds once because five tests used to be dx-only inputs and the rest default-image inputs; `.github/scripts/*.sh` and the workflows stay inputs). A new dx-only file must be
   added to `is_dx_only` (its test checks that each listed path exists); a file in neither group is a default-image input.
   Why hashes and not a `paths:` filter: a path filter on `build.yml` would leave the required check `Build and push image`
   missing on a dx-only commit and block the promotion pull request.
