@@ -204,11 +204,11 @@ for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
     j = w["jobs"]["binaries"]
     assert j["uses"] == "./.github/workflows/binaries.yml", f
     assert j["permissions"] == {"contents": "read", "packages": "write", "issues": "write"}, f  # issues: the track job files the fallback issue
-    assert j.get("secrets") == "inherit", f + ": the called workflow signs with SIGNING_SECRET, which it only gets through secrets: inherit"
+    assert j.get("secrets") == {"SIGNING_SECRET": "${{ secrets.SIGNING_SECRET }}"}, f + ": the called workflow signs with SIGNING_SECRET, which it gets only when the caller passes it (no secrets: inherit)"
     needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
     assert "binaries" in needs, f
     text = open(f"{root}/.github/workflows/{f}").read()
-    assert 'binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"' in text, f
+    assert 'binaries-use.sh "${BIN_IMAGE}" "${BIN_DIGEST}"' in text and "BIN_IMAGE: ${{ needs.binaries.outputs.image }}" in text and "BIN_DIGEST: ${{ needs.binaries.outputs.digest }}" in text, f
     assert "check-binary-pins" not in text, f
     if f == "build.yml":
         assert j["if"] == "needs.plan.outputs.build == 'true'", "binaries only when an image is built (not for a promotion or a docs-only push)"

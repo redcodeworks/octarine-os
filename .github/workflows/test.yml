@@ -31,6 +31,7 @@ jobs:
       - name: Check out the full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Documentation only?
@@ -69,6 +70,8 @@ jobs:
 
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # The container runs as root, but recipes and tests check that they are not run as root (no session bus), so
       # everything after the install runs as an ordinary user, like on the desktop.
@@ -135,6 +138,7 @@ jobs:
       - name: Check out the full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Install the pinned gitleaks

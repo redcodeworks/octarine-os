@@ -73,6 +73,7 @@ jobs:
       - name: Checkout with the full history (the main commit of an image is checked against it)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          persist-credentials: false
           ref: ${{ github.ref }}
           fetch-depth: 0
 
@@ -120,6 +121,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Comment "recovered" and close
         env:
@@ -139,6 +142,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Open the failure issue or comment on it
         env:

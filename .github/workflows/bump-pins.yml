@@ -78,9 +78,12 @@ jobs:
 
       - name: Nothing to bump
         if: steps.decide.outputs.result == 'equal'
+        env:
+          DIGEST: ${{ steps.decide.outputs.digest }}
+          PINTAG: ${{ steps.decide.outputs.tag }}
         run: |
-          echo "nothing to bump: ${IMAGE} is pinned to ${{ steps.decide.outputs.digest }} (${{ steps.decide.outputs.tag }})"
-          echo "### ${IMAGE}: nothing to bump (pin equals latest, ${{ steps.decide.outputs.digest }})" >> "${GITHUB_STEP_SUMMARY}"
+          echo "nothing to bump: ${IMAGE} is pinned to ${DIGEST} (${PINTAG})"
+          echo "### ${IMAGE}: nothing to bump (pin equals latest, ${DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: Create or update the bump pull request
         if: steps.decide.outputs.result == 'different'

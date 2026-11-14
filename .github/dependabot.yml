@@ -10,3 +10,6 @@ updates:
     target-branch: "testing"
     schedule:
       interval: "weekly"
+    # a new action release is proposed only after a week, so a compromised release is more likely to be pulled before it is offered
+    cooldown:
+      default-days: 7

@@ -22,6 +22,10 @@ name: Prebuilt binaries
 # skips the reuse) rehearses the whole decision on any branch without publishing or changing anything.
 on:
   workflow_call:
+    secrets:
+      SIGNING_SECRET:
+        description: "the cosign private key of the images (the sign job needs it); callers pass only this secret"
+        required: false
     inputs:
       allow_fallback:
         description: "true on the scheduled daily build: a failed binaries BUILD on main may fall back to the last good binaries image"
@@ -78,6 +82,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Tree hash of binaries/
         id: hash
@@ -100,7 +106,10 @@ jobs:
 
       - name: Published and signed already?
         id: lookup
-        run: .github/scripts/binaries-lookup.sh "${{ steps.hash.outputs.image }}" "${{ steps.hash.outputs.hash }}"
+        env:
+          IMAGE: ${{ steps.hash.outputs.image }}
+          HASH: ${{ steps.hash.outputs.hash }}
+        run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${HASH}"
 
       # a rehearsal of a failed build must not be short-circuited by an existing signed image of this tree
       - name: Usable (not for a rehearsal)
@@ -158,6 +167,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Simulated build failure (rehearsal only)
         if: github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure == true
@@ -237,6 +248,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -292,6 +305,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Set up cosign
         uses: ./.github/actions/setup-tool
@@ -397,6 +412,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         if: github.ref == 'refs/heads/main' && (needs.result.outputs.action == 'reused' || needs.result.outputs.action == 'built')

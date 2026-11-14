@@ -41,7 +41,8 @@ jobs:
       packages: write
       issues: write
     # the signing secret is a repository secret, which a called workflow only gets when it is passed on
-    secrets: inherit
+    secrets:
+      SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
 
   build:
     name: Build beta image
@@ -60,6 +61,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
       # image build peaks at 44 GB used, 18 GB more than the 26 GB left after the cleanup action), so the cleanup action (38 to 85 s) is
@@ -136,7 +139,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify the binaries image
-        run: .github/scripts/binaries-use.sh "${{ needs.binaries.outputs.image }}" "${{ needs.binaries.outputs.digest }}"
+        env:
+          BIN_IMAGE: ${{ needs.binaries.outputs.image }}
+          BIN_DIGEST: ${{ needs.binaries.outputs.digest }}
+        run: .github/scripts/binaries-use.sh "${BIN_IMAGE}" "${BIN_DIGEST}"
 
       - name: Say which path the binaries image took
         env:
@@ -423,6 +429,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -474,6 +482,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Dispatch the dx workflow on main
         env:
