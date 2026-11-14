@@ -105,6 +105,12 @@ check "an unknown option is rejected (exit 2)" bash -c "[ $rc = 2 ]"
 run --only nope
 check "an unknown step is rejected (exit 2)" bash -c "[ $rc = 2 ]"
 
+# wake-on-lan: stubs that only answer when FAKE_WOL_NIC is set (FAKE_ETHTOOL: g, none, or denied = the unprivileged "netlink error";
+# WOL_NET_DIR is a temp dir, FAKE_SYSFS_WAKEUP=1 creates the sysfs wakeup file of enp8s0)
+mk ip '[ "${FAKE_WOL_NIC:-}" = 1 ] && echo "default via 192.168.1.1 dev enp8s0 proto dhcp"; exit 0'
+mk ethtool '[ "${FAKE_WOL_NIC:-}" = 1 ] || exit 1; case "${FAKE_ETHTOOL:-g}" in g) echo "Supports Wake-on: pumbg" ;; none) echo "Supports Wake-on: d" ;; denied) echo "Settings for enp8s0:"; echo "	Speed: 1000Mb/s"; echo "netlink error: Operation not permitted" >&2; exit 0 ;; esac'
+mk nmcli 'case "$*" in *GENERAL.CONNECTION*) echo "br0-enp8s0" ;; *802-3-ethernet.wake-on-lan*) echo "${FAKE_WOL:-ignore}" ;; esac; exit 0'
+export WOL_NET_DIR="$root/m/net"; mkdir -p "$root/m/net"
 run --list
 check "--list shows every step" bash -c "[ \$(grep -cE '^[a-z-]+ ' '$root/out') -ge 10 ]"
 check "sensors available on bare metal" bash -c "[ \"$(state sensors; true)\" = '' ] || grep -E '^sensors +available' '$root/out'"
@@ -146,16 +152,23 @@ OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" HW_CMD
 echo "quiet iommu=pt" >"$root/m/cmdline-pt"
 OCTARINE_OS_RELEASE="$root/os-release-dx" HW_IOMMU_DIR="$root/m/dx/iommu" HW_CMDLINE="$root/m/cmdline-pt" run --list
 check "iommu done when iommu=pt is in the command line" bash -c "grep -E '^iommu +done' '$root/out'"
-# wake-on-lan: stubs that only answer when FAKE_WOL_NIC is set
-mk ip '[ "${FAKE_WOL_NIC:-}" = 1 ] && echo "default via 192.168.1.1 dev enp8s0 proto dhcp"; exit 0'
-mk ethtool '[ "${FAKE_WOL_NIC:-}" = 1 ] || exit 1; case "${FAKE_ETHTOOL:-g}" in g) echo "Supports Wake-on: pumbg" ;; none) echo "Supports Wake-on: d" ;; esac'
-mk nmcli 'case "$*" in *GENERAL.CONNECTION*) echo "br0-enp8s0" ;; *802-3-ethernet.wake-on-lan*) echo "${FAKE_WOL:-ignore}" ;; esac; exit 0'
 FAKE_WOL_NIC=1 run --list
 check "wake-on-lan available when the NIC supports magic packets and the setting is not yet magic" bash -c "grep -E '^wake-on-lan +available' '$root/out'"
 FAKE_WOL_NIC=1 FAKE_WOL=magic run --list
 check "wake-on-lan done when the profile of the physical NIC already says magic" bash -c "grep -E '^wake-on-lan +done' '$root/out'"
 FAKE_WOL_NIC=1 FAKE_ETHTOOL=none run --list
 check "wake-on-lan hidden when ethtool shows no g" bash -c "grep -E '^wake-on-lan +not applicable' '$root/out'"
+# the nox case: ethtool as a normal user answers "netlink error: Operation not permitted" (no Wake-on line): that is NOT "unsupported"
+mkdir -p "$root/m/net/enp8s0/device/power"; : >"$root/m/net/enp8s0/device/power/wakeup"
+FAKE_WOL_NIC=1 FAKE_ETHTOOL=denied run --list
+check "ethtool denied, sysfs wakeup file present: available, says the support is not readable without root and names the sudo command" bash -c "grep -E '^wake-on-lan +available \\(support not readable without root: sudo ethtool enp8s0 shows it' '$root/out' && ! grep -q 'sudo' '$LOG'"
+FAKE_WOL_NIC=1 FAKE_ETHTOOL=denied FAKE_WOL=magic run --list
+check "ethtool denied, port profile already magic: done" bash -c "grep -E '^wake-on-lan +done' '$root/out'"
+rm -rf "$root/m/net/enp8s0"
+FAKE_WOL_NIC=1 FAKE_ETHTOOL=denied FAKE_WOL=ignore run --list
+check "ethtool denied, no sysfs file and the profile not magic: not applicable (no sign of support)" bash -c "grep -E '^wake-on-lan +not applicable' '$root/out'"
+FAKE_WOL_NIC=1 FAKE_ETHTOOL=denied FAKE_WOL=magic run --list
+check "ethtool denied, no sysfs file but the profile says magic: done" bash -c "grep -E '^wake-on-lan +done' '$root/out'"
 card card1 0x10de
 HW_NVIDIA_MODULE="$root/m/nvmod" HW_DEV_JUST="$root/m/dx/dev.just" run --list
 check "nvidia available with an NVIDIA GPU and done with the module loaded" bash -c "grep -E '^nvidia +done' '$root/out'"
