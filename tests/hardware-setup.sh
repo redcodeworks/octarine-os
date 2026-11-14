@@ -193,6 +193,9 @@ check "--yes installs LACT (system scope, Flathub)" logged "flatpak install -y -
 check "--yes runs the LACT daemon setup unattended" logged "flatpak run --env=LACT_UNATTENDED_SETUP=true io.github.ilya_zlobintsev.LACT"
 check "--yes runs gaming-setup gamemode" logged "ujust gaming-setup gamemode --yes"
 check "--yes runs the TPM recipe and the security-key step" bash -c "grep -q 'ujust luks-tpm-unlock' '$LOG' && grep -q pamu2fcfg '$LOG'"
+check "--yes runs the TPM recipe as 'enroll --yes' (volumes without a key only), so a second --yes run touches nothing that is enrolled" bash -c "grep -q 'ujust luks-tpm-unlock enroll --yes' '$LOG'"
+run --only tpm-luks --yes
+check "a named tpm-luks step re-enrolls: 'enroll --force --yes'" bash -c "grep -q 'ujust luks-tpm-unlock enroll --force --yes' '$LOG'"
 check "--yes never touches the optional kernel argument" notlogged "rpm-ostree kargs --append"
 check "--yes does not enroll the Secure Boot key (only ticked on NVIDIA images)" notlogged "enroll-secure-boot-key"
 check "the security key file was written, mode 600" bash -c "grep -q KEYDATA '$root/m/u2f_keys' && [ \$(stat -c %a '$root/m/u2f_keys') = 600 ]"
