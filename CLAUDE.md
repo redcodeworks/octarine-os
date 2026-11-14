@@ -33,7 +33,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   Fedora major upgrade: set the variable (the owner runs `gh variable set FEDORA_VERSION --body 46`; undo
   `gh variable delete`), run the build workflow on `testing` (changing a variable starts no build), `bootc switch`
   to the `testing` image, soak about a week, keep a deployment pinned, then merge; promotion only retags a tested digest.
-- `build_files/build.sh`: guard against secrets in `system_files`, rename the base recipe files `10-update.just` and
+- `build_files/build.sh` (log sections as `::group::`, see "Image build steps added 2026-11-14"): guard against secrets in `system_files`, rename the base recipe files `10-update.just` and
   `30-distrobox.just` to `*-base.just` (our files of the same names import them; a missing one fails the build), copy
   `system_files` (which overwrites the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just` with ours), fail if a
   `toggle-nvk` recipe is still installed, generate the
@@ -356,6 +356,26 @@ Not included, by decision: a TuneD profile, package installation (dx ships the s
 
 Tests: `tests/virthost-setup.sh` (every step fresh, done and failing; Intel and AMD; NIC detection; nox bridge layout; SSH, Wi-Fi and root refusals; ACL, SELinux and pool; virtio download, existing, forced, offline; `nwbridge`; Wake-on-LAN with and without a bridge), `tests/hardware-setup.sh`, `tests/dev-setup.sh`. Only a real machine can verify: the bridge takeover, qemu with a custom directory and its label, WoL waking the machine, the group re-login, and the virtio download from a network that blocks scripts.
 
+## Image build steps added 2026-11-14 (repository validation, compilers, log groups)
+
+Compared with Bluefin's `build_files/` (shared/validate-repos.sh, base/04-packages.sh, shared/clean-stage.sh); the owner approved three items.
+
+- **Repository validation** (`build_files/validate-repos.sh`, run by `build.sh`, `dx.sh` and `nvidia.sh` after the last install and before `final-cleanup.sh`; the dx and NVIDIA `Containerfile`s copy it into their `ctx`). It FAILS the build when a repository other than the base's is enabled.
+  An ALLOW-LIST, not Bluefin's deny-list, because the base legitimately enables several: read from `dnf5 repolist --enabled` in a container of the testing image on 2026-11-14 (Fedora 45 base `silverblue-main`): `fedora`, `updates`, `updates-archive`
+  (Fedora's own, in `/usr/share/dnf5/repos.d` on Fedora 45), `fedora-cisco-openh264` (Fedora's file), `fedora-multimedia` (negativo17; its file says `enabled=0`, the base enables it through `/etc/dnf/repos.override.d/99-config_manager.repo`, so a check of the `.repo` files alone
+  would be wrong both ways) and the akmods COPR `copr:copr.fedorainfracloud.org:ublue-os:akmods`. No RPM Fusion repository is installed in the base. Two sources are compared with the list: dnf5's own enabled list (applies the override directory) and every `[section]` with
+  `enabled=1` in `/etc/yum.repos.d`, `/usr/share/dnf5/repos.d` and `/etc/dnf/repos.override.d`; a missing directory is fine. A new enabled id fails with its name; fix it at the step that added it (`dnf5 config-manager setopt <id>.enabled=0`) or, when the base
+  meant it, add the id to `ALLOWED`. The NVIDIA layer's `nvidia-install.sh` (akmods, read 2026-11-14) re-enables `fedora-multimedia` and disables the cisco, nvidia and staging repositories itself, so it ends inside the list (UNVERIFIED until the next NVIDIA build).
+  Tests: `tests/validate-repos.sh` (stub dnf5 and directories).
+- **Compilers on the default image** (reverses the earlier rule that the image has none; the owner, 2026-11-14): `gcc gcc-c++ make binutils` are in the CRITICAL tier of `build.sh` (Fedora vendor, a missing name fails the build) and in the CRITICAL list of both smoke tests
+  (`build.yml`, `build-beta.yml`). `binutils` is already in the base and a dependency of gcc; it is named so it stays. Measured with `dnf5 install --assumeno` on the testing image: 7 packages, 221 MiB installed (70 MiB download): gcc 121.8, gcc-c++ 46.8,
+  libstdc++-devel 41.3, kernel-headers 7.1 (surprising on a non-dev image, a gcc dependency through glibc-devel), glibc-devel 2.3, make 1.8, libxcrypt-devel 0.03 MiB. dx and the NVIDIA images inherit them; nothing in `variants/dx` listed any of them, so nothing was removed there.
+  The step `Compiler smoke test` (`.github/scripts/compiler-smoke.sh`, mounted into the built image by both workflows) compiles, links and runs a C and a C++ program, links through `ld` (`-fuse-ld=bfd`), runs `make` and assembles, links (`ld`) and runs a tiny program (`as`, `ar`).
+  Tests: `tests/compilers.sh` (the lists agree, the script and its wiring). Still absent from the default image: clang, cmake, ninja, meson, gdb, the development-tools group and `-devel` libraries.
+- **Grouped build logs.** Every section of `build.sh`, `dx.sh` and `nvidia.sh` and each of `install-binaries.sh`, `gen-schedulers.sh`, `final-cleanup.sh` and `validate-repos.sh` prints `::group::<name>` ... `::endgroup::` (folded in the GitHub Actions log; plain text elsewhere, and
+  `just build` output is only decorated). GitHub does not nest groups, so a script that runs another is called BETWEEN two of its own groups. The helper scripts open one group at the top and close it from an `EXIT` trap; `build.sh` and the layers also set an `EXIT` trap that
+  prints `::endgroup::` and then `::error::<script> failed (exit N)` outside the group, so a failure is not folded away; exit status, `set -x` and trap order are unchanged. Tests: `tests/build-log-groups.sh` (balanced and not nested per script, a failing script closes its group and prints the error).
+
 ## Branches and releases
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
@@ -493,7 +513,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (Esc, the single-call re-enroll, the image-off line).
 - `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
   three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (no image ships either; the iommu karg is opt-in).
-- The default image carries no compilers or build tools (the dx image does); the toolbox the definition describes is
+- The default image carries `gcc`, `gcc-c++`, `make` and `binutils` (critical tier of `build.sh`, the owner's decision of 2026-11-14, which reversed the earlier rule that the image has none; 221 MiB installed, dependencies glibc-devel, libstdc++-devel, libxcrypt-devel and kernel-headers) but no clang, cmake, ninja, meson or -devel libraries (the dx image has the full toolchain); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
   an image from the fedora-toolbox repo.
@@ -827,7 +847,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Tailscale's UDP port (`CONFIG-GUIDE.md` has the zone notes).
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
-- **Size and compilers:** the default image carries no compilers (the base never had them); the dx image provides them, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
+- **Size and compilers:** the default image carries only `gcc`, `gcc-c++`, `make` and `binutils` since 2026-11-14 (the base had none; about 221 MiB); the dx image provides the full toolchain, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
 - **First install and signatures:** step 2 of the README switches on a stock Fedora, whose container policy accepts any
@@ -1333,7 +1353,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - **What it is.** `ghcr.io/redcodeworks/octarine-os-dx`: the published default image plus the developer toolchain of the owner's
   `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`; no ROCm, see below), VM tooling,
   tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
-  use. The default image still has no compilers (see "Verifying changes"); nothing in `Containerfile` or `build.sh` installs the dx
+  use. The default image has only gcc, g++, make and binutils (see "Image build steps added 2026-11-14"), not the dx toolchain; nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
 - **Lineage (two channels).**
 
@@ -1559,7 +1579,7 @@ image, review `build.sh` and `system_files/`, enable Actions and make the GHCR p
   multimedia stack is negativo17, so `gstreamer1-plugins-bad/-ugly` replace the `-free` variants and there is no
   `mesa-va-drivers-freeworld`). Package names are release-specific; `dnf5 install` stops on an unknown name.
 - `solaar` and `solaar-udev` are in the critical `dnf5 install` block (added 2026-11-14; `solaar-udev` already ships in the base and stays listed in case the base drops it) and in the `CRITICAL` list of both smoke tests. Dry run on Fedora 45: `solaar` 1.1.20, 5.7 MiB, plus `python3-typing-extensions`, `python3-xlib` and the weak `python3-hid-parser` (8 MiB in all); no Qt, no service. The RPM ships `/etc/xdg/autostart/solaar.desktop` unchanged (the tray icon needs a tray extension, which the owner's desktop has; nothing here conflicts, no autostart override ships), `/usr/bin/solaar`, `/usr/bin/hidconsole` and the udev rules of `solaar-udev` (`42-logitech-unify-permissions.rules`). Not verifiable without a boot: that Solaar starts and sees a receiver (`solaar show`).
-- No compilers or build tools in the image: builds happen in a toolbox. Nothing compiles from source.
+- Only `gcc`, `gcc-c++`, `make` and `binutils` in the default image (2026-11-14; no cmake, ninja, meson, clang or -devel libraries): bigger builds happen in a toolbox or on the dx image. Nothing in the image build compiles from source.
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
 - Firefox and toolbox are removed when present (Flatpak Firefox, distrobox).

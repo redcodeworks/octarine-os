@@ -22,6 +22,7 @@ FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 FROM scratch AS ctx
 COPY variants/dx/dx.sh /dx.sh
 COPY build_files/final-cleanup.sh /final-cleanup.sh
+COPY build_files/validate-repos.sh /validate-repos.sh
 COPY variants/dx/packages/extras.txt /extras.txt
 COPY variants/dx/system_files /system_files
 COPY variants/dx/datastore /datastore
