@@ -214,6 +214,36 @@ export OCTARINE_MENU_FORCE_TTY=1
 runrecipe toolbox '' a --list
 check "toolbox with arguments: no menu" notlogged "ugum"
 
+# ---- gnome-candy runs code of a branch that can move: a new revision is shown and approved once (default no), the approval is remembered
+export HOME="$root/home-candy" XDG_STATE_HOME="$root/state-candy"; mkdir -p "$HOME"
+cat >"$bin/git" <<'F'
+#!/usr/bin/env bash
+if [ "$1" = clone ]; then mkdir -p "${@: -1}/.git"; echo "x:" >"${@: -1}/justfile"; fi
+if [ "$1" = -C ]; then
+    case "$3" in
+        rev-parse) [ "${4-}" = HEAD ] && echo "${FAKE_REV:-1111111111111111111111111111111111111111}" ;;
+        log) echo "  1111111  2026-11-14  Someone: a change" ;;
+    esac
+fi
+exit 0
+F
+chmod +x "$bin/git"
+reset; unset GNOME_THEMES_TRUST GNOME_THEMES_REF; rm -rf "$XDG_STATE_HOME"
+printf '' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy, a revision never approved, no terminal: shown, NOT run, says how to proceed, exit 0" bash -c "[ $rc = 0 ] && grep -q 'about to run as you' '$root/out' && grep -q 'a change' '$root/out' && grep -q 'GNOME_THEMES_TRUST=1' '$root/out' && ! grep -q 'list-themes' '$LOG' "
+reset; GNOME_THEMES_TRUST=1 PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy with GNOME_THEMES_TRUST=1: no question, runs the recipe" bash -c "[ $rc = 0 ] && ! grep -q 'about to run' '$root/out' && grep -q 'list-themes' '$LOG'"
+reset; GNOME_THEMES_REF=1111111111111111111111111111111111111111 PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy pinned to a full commit sha: no question, runs the recipe" bash -c "[ $rc = 0 ] && ! grep -q 'about to run' '$root/out' && grep -q 'list-themes' '$LOG'"
+reset; export OCTARINE_MENU_FORCE_TTY=1; printf 'y\n' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy, answered y: runs, and the approved commit is remembered" bash -c "[ $rc = 0 ] && grep -q 'list-themes' '$LOG' && [ \"\$(cat '$XDG_STATE_HOME/octarine-os/gnome-candy-approved')\" = 1111111111111111111111111111111111111111 ]"
+reset; export OCTARINE_MENU_FORCE_TTY=1; printf '' | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy, the same commit again: no question, runs" bash -c "[ $rc = 0 ] && ! grep -q 'about to run' '$root/out' && grep -q 'list-themes' '$LOG'"
+reset; export OCTARINE_MENU_FORCE_TTY=1; printf "" | GUM_CONFIRM_RC=1 FAKE_REV=2222222222222222222222222222222222222222 PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" gnome-candy list-themes >"$root/out" 2>&1; rc=$?
+check "gnome-candy, the repository moved: asked again (empty answer = no), not run" bash -c "[ $rc = 0 ] && grep -q 'about to run' '$root/out' && ! grep -q 'just.*list-themes' '$LOG'"
+# the menu tests below are about the menu, not the approval
+export GNOME_THEMES_TRUST=1
+
 # ---- scoped menus: gnome-candy with no arguments (recipes read from `just --dump --dump-format json`)
 JSON='{"first":"default","recipes":{
  "default":{"private":false,"doc":null,"attributes":[],"parameters":[]},

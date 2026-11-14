@@ -139,6 +139,15 @@ FAKE_USB="" run --list
 check "fido-key hidden without a token" bash -c "grep -E '^fido-key +not applicable \(no security key found\)' '$root/out'"
 GAMING_SETUP_PSTATE_STATUS="$root/m/none" run --list
 check "amd-cpu-gaming hidden without amd-pstate active" bash -c "grep -E '^amd-cpu-gaming +not applicable' '$root/out'"
+mkdir -p "$root/home/.config"; printf '; shipped tuning\ndesiredgov=powersave\n' >"$root/shipped-gamemode.ini"
+export GAMING_SETUP_GAMEMODE_SRC="$root/shipped-gamemode.ini"
+cp "$root/shipped-gamemode.ini" "$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: a gamemode.ini identical to the shipped tuning is 'done'" bash -c "grep -E '^amd-cpu-gaming +done' '$root/out'"
+printf '; my own file\ndesiredgov=powersave\nrenice=3\n' >"$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: a user-edited gamemode.ini that merely contains desiredgov=powersave is NOT done (the step asks before replacing)" bash -c "grep -E '^amd-cpu-gaming +available' '$root/out'"
+rm -f "$root/home/.config/gamemode.ini"; run --list
+check "amd-cpu-gaming: no gamemode.ini: available" bash -c "grep -E '^amd-cpu-gaming +available' '$root/out'"
+unset GAMING_SETUP_GAMEMODE_SRC
 OCTARINE_SYSFS_DRM="$root/m/none" run --list
 check "amd-gpu and amd-kargs hidden without an AMD GPU" bash -c "grep -E '^amd-gpu +not applicable \(no AMD GPU\)' '$root/out' && grep -E '^amd-kargs +not applicable' '$root/out'"
 rm -rf "$root/m/dx"; mkdir -p "$root/m/dx"; : >"$root/m/dx/kvm"; : >"$root/m/dx/dev.just"; mkdir -p "$root/m/nvmod"
