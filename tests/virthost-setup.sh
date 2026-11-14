@@ -26,7 +26,7 @@ for c in bash sh env cat grep awk sed cut tr date head sort dirname basename wc 
     p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 REAL_JUST=$(command -v just)
-export LOG="$root/log" HOME="$root/home" OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
+export LOG="$root/log" HOME="$root/home" OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export VIRTHOST_CPUINFO="$root/m/cpuinfo" VIRTHOST_CMDLINE="$root/m/cmdline" VIRTHOST_IOMMU_DIR="$root/m/iommu" VIRTHOST_KVM="$root/m/kvm" VIRTHOST_NET_DIR="$root/m/net" WOL_NET_DIR="$root/m/net"
 export VIRTHOST_IMAGE_DIR="$root/imgs" VIRTHOST_VIRTIO_MIN=10 STATE="$root/state"
 unset XDG_CONFIG_HOME SSH_CONNECTION
@@ -107,6 +107,9 @@ check "daemons --no: the plan only, no sudo" bash -c "grep -q 'plan only' '$root
 # ---- iommu
 reset; vh --only iommu --yes
 check "iommu, AMD: only iommu=pt is appended through rpm-ostree kargs, with the undo and a reboot note" bash -c "[ $rc = 0 ] && grep -qx 'sudo rpm-ostree kargs --append-if-missing=iommu=pt' '$LOG' && grep -q 'delete-if-present=iommu=pt' '$root/out' && grep -q 'reboot' '$root/out'"
+check "iommu apply: says to reboot before the next image update, why, and the exact check on /proc/cmdline" bash -c "grep -q 'Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging)' '$root/out' && grep -q 'drops the argument' '$root/out' && grep -qF 'grep -qw -- iommu=pt /proc/cmdline' '$root/out'"
+reset; FAKE_KARGS="quiet iommu=pt" vh --only iommu --yes
+check "iommu already in the next boot's arguments but not booted: not applied again, says it is pending a reboot and not to update before" bash -c "[ $rc = 0 ] && ! grep -q 'kargs --append' '$LOG' && grep -q 'already set, but pending a reboot' '$root/out' && grep -q 'already done (pending reboot)' '$root/out'"
 reset; printf 'vendor_id: GenuineIntel\nflags: vmx\n' >"$VIRTHOST_CPUINFO"; vh --only iommu --yes
 check "iommu, Intel: intel_iommu=on and iommu=pt, both undone by the undo line" bash -c "grep -qx 'sudo rpm-ostree kargs --append-if-missing=intel_iommu=on --append-if-missing=iommu=pt' '$LOG' && grep -q 'delete-if-present=intel_iommu=on' '$root/out'"
 reset; rm -f "$root/m/iommu/ivhd0"; vh --only iommu --yes

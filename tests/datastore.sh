@@ -167,6 +167,17 @@ reset; FAKE_SECRET_FAIL=valkey-password run datastore-setup --yes
 check "secrets failure: the failing one is reported, the others are still created, exit 1" bash -c "[ $rc = 1 ] && grep -q 'Failed: podman secret create valkey-password' '$root/out' && [ -s '$SECRETS/postgresql-password' ]"
 reset; run datastore-setup --no
 check "secrets --no: the plan only, nothing created" bash -c "[ $rc = 0 ] && grep -q 'Plan only' '$root/out' && [ -z \"\$(ls '$SECRETS')\" ]"
+# a lost postgresql-password with an existing data volume: a NEW password would not match the database (it keeps the one it was created with)
+reset; mkvol postgresql-data; echo old >"$SECRETS/valkey-password"; echo x >"$SECRETS/seaweedfs-s3-config"; run datastore-setup --yes
+check "secrets: postgresql-password missing while postgresql-data exists: NOT created, exit 1, the three ways out are named" bash -c "[ $rc = 1 ] && [ ! -e '$SECRETS/postgresql-password' ] && grep -q 'Not creating postgresql-password' '$root/out' && grep -q 'put the OLD password back' '$root/out' && grep -q 'ALTER USER' '$root/out' && grep -q 'datastore-setup --backup' '$root/out'"
+reset; mkvol postgresql-data; run datastore-setup --yes
+check "secrets: with the pg volume present the OTHER missing secrets are still created (valkey, seaweedfs), the exit is 1" bash -c "[ $rc = 1 ] && [ ! -e '$SECRETS/postgresql-password' ] && [ -s '$SECRETS/valkey-password' ] && [ -s '$SECRETS/seaweedfs-s3-config' ]"
+reset; mkvol postgresql-data; echo x >"$SECRETS/valkey-password"; echo x >"$SECRETS/seaweedfs-s3-config"; run datastore-setup --yes
+check "secrets: the pg password is the only one missing and the volume exists: nothing is created at all, exit 1" bash -c "[ $rc = 1 ] && ! grep -q 'secret create' '$LOG'"
+reset; mkvol valkey-data; mkvol seaweed-data; run datastore-setup --yes
+check "secrets: volumes of valkey or seaweedfs do not block their secrets (only PostgreSQL keeps a password in its data)" bash -c "[ $rc = 0 ] && [ -s '$SECRETS/postgresql-password' ] && [ -s '$SECRETS/valkey-password' ]"
+reset; run datastore-setup --yes; cp "$SECRETS/postgresql-password" "$root/pg1"; run datastore-setup --yes
+check "secrets run twice on a fresh machine: the second run changes nothing (no create call, the password is the same)" bash -c "[ $rc = 0 ] && cmp -s '$root/pg1' '$SECRETS/postgresql-password' && grep -q 'All secrets exist already' '$root/out'"
 reset; FAKE_GRAPHROOT="$root/home/.local/share/containers/storage" run datastore-setup --no
 check "storage: a graphroot under the home is warned about (not backed up, how to move it)" bash -c "grep -q 'inside your home' '$root/out' && grep -q 'storage.conf' '$root/out'"
 reset; run datastore-setup --no

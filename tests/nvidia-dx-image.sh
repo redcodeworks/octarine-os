@@ -113,7 +113,7 @@ check "the dx and NVIDIA dx workflows build with the same Containerfile and the 
 import sys, yaml
 a = yaml.safe_load(open(sys.argv[1])); b = yaml.safe_load(open(sys.argv[2]))
 def step(w, job, name): return [s for s in w["jobs"][job]["steps"] if s.get("name") == name][0]
-for n in ("Maximize build space", "Check Just Syntax", "Check image size", "Rechunk with rpm-ostree"):
+for n in ("Check disk space", "Maximize build space (fallback, only when the disk is low)", "Check Just Syntax", "Check image size", "Rechunk with rpm-ostree"):
     sa, sb = step(a, "build", n), step(b, "build", n)
     assert {k: v for k, v in sa.items() if k != "run"} == {k: v for k, v in sb.items() if k != "run"}, n
 assert step(a, "build", "Check the dev-packages pin")["run"] == step(b, "build", "Check the dev-packages pin")["run"]
@@ -146,9 +146,9 @@ check "nvidia.sh: tries nvidia-container-toolkit-base once, only as a warning, a
 check "no CUDA toolkit or NVIDIA CUDA repository anywhere in the image build" bash -c "! grep -rqiE 'cuda-toolkit|developer\.download\.nvidia\.com|cuda-nvcc' '$here/build_files' '$here/variants/nvidia' '$here/variants/dx/dx.sh' '$here/variants/dx/packages' '$here/Containerfile' '$here/variants/dx/Containerfile' '$here/system_files'"
 
 # ---- the dx-only inputs
-check "inputs: the nvidia-dx workflow and this test are dx-only inputs (a change rebuilds dx, never the default image)" bash -c "
+check "inputs: the nvidia-dx workflow is a dx-only input (a change rebuilds dx, never the default image)" bash -c "
   . '$here/.github/scripts/inputs-hash.sh'
-  is_dx_only .github/workflows/build-nvidia-dx.yml && is_dx_only tests/nvidia-dx-image.sh && ! is_dx_only .github/workflows/build-nvidia.yml"
+  is_dx_only .github/workflows/build-nvidia-dx.yml && ! is_dx_only .github/workflows/build-nvidia.yml"
 check "build-nvidia.yml and build-dx.yml never mention nvidia-dx (their triggers and results are unchanged)" bash -c "! grep -q 'nvidia-dx' '$here/.github/workflows/build-nvidia.yml' '$here/.github/workflows/build-dx.yml'"
 check "bash -n of the scripts touched" bash -c "bash -n '$here/.github/scripts/plan-dx.sh' && bash -n '$here/.github/scripts/dx-smoke.sh' && bash -n '$here/.github/scripts/nvidia-smoke.sh' && bash -n '$here/variants/dx/dx.sh'"
 

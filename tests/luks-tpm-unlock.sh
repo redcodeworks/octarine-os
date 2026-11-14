@@ -44,11 +44,18 @@ exec "$@"
 EOF2
 cat >"$root/fakebin/cryptsetup" <<'EOF2'
 #!/bin/bash
-# cryptsetup luksDump DEV
-case " ${FAKE_TPM:-} " in
-    *" $2 "*) printf 'Tokens:\n  0: systemd-tpm2\n' ;;
-    *) printf 'Tokens:\n' ;;
-esac
+# cryptsetup luksDump DEV: a LUKS2 header. FAKE_TPM lists devices with a TPM2 token (keyslot 1); FAKE_TPM_ONLY lists devices whose ONLY keyslot is
+# the TPM2 one (no passphrase, no recovery key); FAKE_LUKS1 lists devices with an old LUKS1 header
+case " ${FAKE_LUKS1:-} " in *" $2 "*) printf 'LUKS header information for %s\nKey Slot 0: ENABLED\n' "$2"; exit 0 ;; esac
+tpm=no; case " ${FAKE_TPM:-} ${FAKE_TPM_ONLY:-} " in *" $2 "*) tpm=yes ;; esac
+only=no; case " ${FAKE_TPM_ONLY:-} " in *" $2 "*) only=yes ;; esac
+echo "Keyslots:"
+[ "$only" = yes ] || printf '  0: luks2\n\tKey:        512 bits\n'
+[ "$tpm" = yes ] && printf '  1: luks2\n\tKey:        512 bits\n'
+echo "Tokens:"
+[ "$tpm" = yes ] && printf '  0: systemd-tpm2\n\ttpm2-pcrs:  7\n\tKeyslot:    1\n'
+echo "Digests:"
+printf '  0: pbkdf2\n\tKeyslot:    0\n'
 EOF2
 cat >"$root/fakebin/systemd-cryptenroll" <<'EOF2'
 #!/bin/bash
@@ -95,24 +102,46 @@ run enroll /dev/nvme1n1 --pcrs=9 --yes
 check "an unsupported PCR set is rejected (exit 2)" bash -c "[ $rc = 2 ]"
 
 run enroll /dev/nvme1n1 --yes
-check "enroll uses PCR 7+14 by default" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 /dev/nvme1n1"
+check "enroll uses PCR 7+14 by default" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --wipe-slot=tpm2 /dev/nvme1n1"
 run enroll /dev/nvme1n1 --pcrs=7 --yes
-check "--pcrs=7 binds to Secure Boot only" bash -c "grep -q 'pcrs=7 /dev/nvme1n1' '$LOG' && ! grep -q 'pcrs=7+14' '$LOG'"
+check "--pcrs=7 binds to Secure Boot only" bash -c "grep -q 'pcrs=7 --wipe-slot=tpm2 /dev/nvme1n1' '$LOG' && ! grep -q 'pcrs=7+14' '$LOG'"
 check "the PCR 7 note does not mention MOK keys" hasnt "MOK"
 run enroll /dev/nvme1n1 --yes
 check "the default note mentions the MOK keys" has "MOK keys"
-check "a first enrollment does not wipe anything" notlogged "wipe-slot"
+check "a first enrollment runs the same call (wipe-slot=tpm2 has nothing to wipe): the end state does not depend on a probe" logged "wipe-slot=tpm2"
+check "...and never any other wipe" notlogged "wipe-slot=all"
 check "enrolling the data volume gives no initramfs tip" hasnt "initramfs"
 run enroll "$data_uuid" --pin --yes
-check "a UUID selects the device; --pin passes through" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --tpm2-with-pin=yes /dev/nvme1n1"
+check "a UUID selects the device; --pin passes through" logged "cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --wipe-slot=tpm2 --tpm2-with-pin=yes /dev/nvme1n1"
 FAKE_TPM="/dev/nvme1n1" run enroll /dev/nvme1n1 --yes
 check "re-enrolling is one call: enroll the new TPM2 key and wipe the old slot (the tool wipes only after the enrollment succeeded)" bash -c "[ \$(grep -c '^cryptenroll' '$LOG') = 1 ] && grep -q 'cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14 --wipe-slot=tpm2 /dev/nvme1n1' '$LOG'"
 FAKE_TPM="/dev/nvme1n1" FAKE_ENROLL_FAIL=1 run enroll /dev/nvme1n1 --yes
 check "a failed re-enrollment never runs a separate wipe" bash -c "[ $rc = 1 ] && [ \$(grep -c '^cryptenroll' '$LOG') = 1 ] && ! grep -q 'cryptenroll --wipe-slot=tpm2 ' '$LOG'"
 run enroll /dev/nvme0n1p3 /dev/nvme1n1 --yes
-check "two devices are enrolled in one go" bash -c "grep -q 'pcrs=7+14 /dev/nvme0n1p3' '$LOG' && grep -q 'pcrs=7+14 /dev/nvme1n1' '$LOG'"
+check "two devices are enrolled in one go" bash -c "grep -q 'pcrs=7+14 --wipe-slot=tpm2 /dev/nvme0n1p3' '$LOG' && grep -q 'pcrs=7+14 --wipe-slot=tpm2 /dev/nvme1n1' '$LOG'"
 check "enrolling the root volume prints the initramfs tip and the reboot hint" bash -c "grep -q 'tpm2-tss' '$root/out' && grep -q 'Reboot' '$root/out'"
 check "the passphrases are never touched" hasnt "luksKillSlot"
+
+# ---- the same end state on every run, and never a volume without another unlock method
+FAKE_TPM_ONLY="/dev/nvme1n1" run enroll /dev/nvme1n1 --yes
+check "a volume whose only keyslot is the TPM2 one: REFUSED before anything runs, with the recovery-key command, exit 1" bash -c "[ $rc = 1 ] && grep -q 'REFUSED /dev/nvme1n1' '$root/out' && grep -q 'systemd-cryptenroll /dev/nvme1n1 --recovery-key --unlock-tpm2-device=auto' '$root/out' && ! grep -q '^cryptenroll' '$LOG'"
+FAKE_TPM_ONLY="/dev/nvme1n1" run remove /dev/nvme1n1 --yes
+check "remove is refused for such a volume too (it would leave it with no way to unlock)" bash -c "[ $rc = 1 ] && grep -q REFUSED '$root/out' && ! grep -q '^cryptenroll' '$LOG'"
+FAKE_TPM_ONLY="/dev/nvme1n1" run enroll /dev/nvme0n1p3 /dev/nvme1n1 --yes
+check "one refused volume does not stop the others (exit 1, the other is enrolled)" bash -c "[ $rc = 1 ] && grep -q 'wipe-slot=tpm2 /dev/nvme0n1p3' '$LOG' && ! grep -q '^cryptenroll.*nvme1n1' '$LOG'"
+FAKE_LUKS1="/dev/nvme1n1" run enroll /dev/nvme1n1 --yes
+check "a header that is not LUKS2 cannot be checked: refused, says so" bash -c "[ $rc = 1 ] && grep -q 'could not confirm another unlock method' '$root/out' && ! grep -q '^cryptenroll' '$LOG'"
+check "no run ever wipes every slot, a keyslot or a passphrase" bash -c "! grep -qE 'wipe-slot=(all|password|[0-9])|luksKillSlot|luksRemoveKey' '$LOG'"
+FAKE_TPM="/dev/nvme0n1p3 /dev/nvme1n1" run enroll --yes
+check "--yes without devices: only volumes without a TPM2 key are touched (here none: nothing runs, exit 0)" bash -c "[ $rc = 0 ] && ! grep -q '^cryptenroll' '$LOG' && grep -q 'Nothing selected' '$root/out'"
+FAKE_TPM="/dev/nvme0n1p3" run enroll --yes
+check "--yes without devices: the volume without a TPM2 key is enrolled, the enrolled one is left alone" bash -c "[ $rc = 0 ] && grep -q 'wipe-slot=tpm2 /dev/nvme1n1' '$LOG' && ! grep -q '^cryptenroll.*nvme0n1p3' '$LOG'"
+FAKE_TPM="/dev/nvme0n1p3 /dev/nvme1n1" run enroll --force --yes
+check "--force re-enrolls every volume, including the ones that already have a key (one call each, wipe-slot=tpm2)" bash -c "[ $rc = 0 ] && [ \$(grep -c '^cryptenroll' '$LOG') = 2 ] && grep -q 'wipe-slot=tpm2 /dev/nvme0n1p3' '$LOG' && grep -q 'wipe-slot=tpm2 /dev/nvme1n1' '$LOG'"
+FAKE_TPM="/dev/nvme1n1" run enroll /dev/nvme1n1 --yes
+check "naming an enrolled volume re-enrolls it (the explicit request wins over the probe)" bash -c "[ $rc = 0 ] && grep -q 'wipe-slot=tpm2 /dev/nvme1n1' '$LOG'"
+FAKE_TPM="/dev/nvme1n1" run --help
+check "--help states the rule: always the same call, probe only sets the default, refusal without another unlock method, no wipe of other slots" bash -c "grep -q 'ALWAYS runs one systemd-cryptenroll call' '$root/out' && grep -q 'REFUSES' '$root/out' && grep -q -- '--force' '$root/out' && grep -q 'no --wipe-slot=all' '$root/out'"
 
 FAKE_TPM="/dev/nvme0n1p3 /dev/nvme1n1" run remove /dev/nvme1n1 --yes
 check "remove deletes only the TPM2 key" bash -c "grep -q 'cryptenroll --wipe-slot=tpm2 /dev/nvme1n1' '$LOG' && ! grep -q 'tpm2-device' '$LOG'"

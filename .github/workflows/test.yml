@@ -18,11 +18,42 @@ permissions:
   contents: read
 
 jobs:
+  # How much of the test job a push needs (.github/scripts/test-scope.sh): `docs` when every changed file is documentation text, else `full`
+  # (a first push of a branch, a dispatch, a mixed push, a failing detection). The job `test` below always runs and keeps its name: it is a
+  # required check, and a path filter on the workflow would leave it missing.
+  scope:
+    name: scope
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      scope: ${{ steps.scope.outputs.scope }}
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Documentation only?
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          scope=$(.github/scripts/test-scope.sh "${EVENT}" "${BEFORE}" "${AFTER}") || scope=full
+          echo "scope=${scope}" >> "${GITHUB_OUTPUT}"
+          echo "Test scope: ${scope}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
   test:
     name: test
+    needs: scope
+    # always: a failed scope job means the full run, never a missing required check
+    if: always()
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     container: fedora:45
+    env:
+      DOCS_ONLY: ${{ needs.scope.outputs.scope == 'docs' }}
     steps:
       - name: Install the tools the tests need
         run: |
@@ -56,9 +87,11 @@ jobs:
         run: install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
 
       - name: just check
+        if: env.DOCS_ONLY != 'true'
         run: runuser -u ci -- just check
 
       - name: bash -n on every script
+        if: env.DOCS_ONLY != 'true'
         run: |
           fail=0
           while IFS= read -r f; do
@@ -68,23 +101,31 @@ jobs:
           [ "$fail" = 0 ] && echo "bash -n: all scripts parse"
           exit "$fail"
 
+      # four at a time, output buffered per test, results in a fixed order (.github/scripts/run-tests.sh)
       - name: Run every tests/*.sh
+        if: env.DOCS_ONLY != 'true'
+        shell: runuser -u ci -- bash -e {0}
+        run: .github/scripts/run-tests.sh --jobs 4
+
+      # documentation-only push: the tests that read the documentation (derived by grep, never a fixed list) and a quick sanity check of the text
+      - name: Run the tests that read the documentation
+        if: env.DOCS_ONLY == 'true'
         shell: runuser -u ci -- bash -e {0}
         run: |
-          start=$(date +%s)
-          pass=0; failed=()
-          for t in tests/*.sh; do
-            s=$(date +%s)
-            log=$(mktemp)
-            if bash "$t" >"$log" 2>&1; then
-              pass=$((pass + 1)); echo "PASS ${t} ($(( $(date +%s) - s )) s)"
-            else
-              failed+=("$t"); echo "FAIL ${t} ($(( $(date +%s) - s )) s)"
-              sed 's/^/     /' "$log"
-            fi
+          mapfile -t doc_tests < <(.github/scripts/test-scope.sh --doc-tests)
+          echo "Documentation only: running ${#doc_tests[@]} tests that read the documentation"
+          .github/scripts/run-tests.sh --jobs 4 "${doc_tests[@]}"
+
+      - name: Sanity check of the documentation text
+        if: env.DOCS_ONLY == 'true'
+        run: |
+          bad=0
+          for f in *.md docs/*.md; do
+            [ -f "$f" ] || continue
+            if [ ! -s "$f" ]; then echo "::error file=$f::empty"; bad=1; fi
+            if grep -qE '^(<<<<<<<|=======|>>>>>>>)( |$)' "$f"; then echo "::error file=$f::merge conflict marker"; bad=1; fi
           done
-          echo "Summary: ${pass} passed, ${#failed[@]} failed, $(( $(date +%s) - start )) s in total"
-          if [ "${#failed[@]}" -gt 0 ]; then echo "::error::failed: ${failed[*]}"; exit 1; fi
+          exit "$bad"
 
   secrets:
     name: secrets

@@ -71,6 +71,7 @@ case " ${FAKE_CURL_FAIL:-} " in *" $id "*) exit 22 ;; esac
 cat >"$out" <<EOS
 #!/bin/bash
 echo "installer $id args=\$* nonint=\${NONINTERACTIVE:-} path0=\${PATH%%:*}" >>"$LOG"
+case " \${FAKE_INSTALLER_FAIL:-} " in *" $id "*) exit 3 ;; esac
 if [ -n "\${FAKE_SUDO:-}" ]; then sudo true || exit 1; fi
 mk() { mkdir -p "\$(dirname "\$1")"; echo x >"\$1"; chmod +x "\$1"; }
 case "$id" in
@@ -122,6 +123,7 @@ cat >"$root/fakebin/podman" <<'EOF'
 case "$1" in
     pull)
         echo "podman pull $*" >>"$LOG"
+        [ -n "${FAKE_PULL_FAIL:-}" ] && exit 1
         cat "$FAKE_STATE/new_id"
         ;;
     inspect) cat "$FAKE_STATE/cur_id" ;;
@@ -647,6 +649,48 @@ check "recreate assembled again" logged "assemble "
 check "exports are made again" test -e "$HOME/.local/bin/gcc"
 check "shared home survives a recreate" test -s "$HOME/.sdkman/bin/sdkman-init.sh"
 
+# recreate pulls the new image BEFORE it removes anything: a failed pull leaves the existing box as it was
+newenv
+run "yyy" sdkman nvm
+: >"$LOG"
+FAKE_PULL_FAIL=1 run "y" --recreate
+check "recreate with a failing pull: the box is NOT removed, exit non-zero, says so" bash -c "[ $rc -ne 0 ] && grep -q 'existing box was NOT removed' '$root/out' && ! grep -q '^rm ' '$LOG' && grep -qx dev-toolbox '$FAKE_STATE/boxes'"
+check "...and the exports of the old box are still there" test -e "$HOME/.local/bin/gcc"
+: >"$LOG"
+run "y" --recreate
+check "recreate pulls the image first, then removes the box (log order)" bash -c "[ \$(grep -n '^podman pull' '$LOG' | head -1 | cut -d: -f1) -lt \$(grep -n '^rm --force dev-toolbox' '$LOG' | head -1 | cut -d: -f1) ]"
+
+# the default container changed twice: the FIRST record (how it came to be) is kept, only the written value follows
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_name_default="other"\n' >"$conf"
+run "third
+" --set-default
+run "fourth
+" --set-default
+check "conf changed twice: still ONE conf record, the original value 'other'" bash -c "[ \$(grep -c '^conf ' '$state') = 1 ] && grep -qxF 'conf changed other' '$state'"
+check "conf changed twice: the written value follows (conf-value fourth) and the file has it" bash -c "grep -qxF 'conf-value fourth' '$state' && grep -qx 'container_name_default=\"fourth\"' '$conf' && [ \$(grep -c '^conf-value ' '$state') = 1 ]"
+newenv
+mkbox
+run "third
+" --set-default
+run "fourth
+" --set-default
+check "conf created then changed: the 'created' record is kept (undo deletes the file we made)" bash -c "grep -qxF 'conf created' '$state' && ! grep -q '^conf changed' '$state' && grep -qxF 'conf-value fourth' '$state'"
+
+# a directory is recorded as created only after the installer succeeded and the directory is there
+newenv
+FAKE_INSTALLER_FAIL=sdkman run "yy" sdkman
+check "installer fails: the directory it would have made is NOT recorded as created" bash -c "! grep -qxF 'dir $HOME/.sdkman created' '$state' 2>/dev/null"
+check "installer fails: ~/.sdkman does not exist" bash -c "[ ! -e '$HOME/.sdkman' ]"
+mkdir -p "$HOME/.sdkman"; echo mine >"$HOME/.sdkman/user-file"
+run "yy" sdkman
+check "someone else created the directory in between: it is recorded as existed, never as created, so --remove would leave it" bash -c "grep -qxF 'dir $HOME/.sdkman existed' '$state' && ! grep -qxF 'dir $HOME/.sdkman created' '$state'"
+newenv
+run "yy" sdkman
+check "a successful install records the directory as created (after the fact)" instate "dir $HOME/.sdkman created"
+
 # ---- remove ---------------------------------------------------------------------------------------------------
 newenv
 mkdir -p "$HOME/.cargo/bin" # exists before the recipe runs, so it must survive --remove
@@ -706,6 +750,18 @@ run "yes
 " --remove
 check "remove restores the old default name" grep -qx 'container_name_default="other"' "$conf"
 check "remove keeps other settings" grep -qx 'container_manager="podman"' "$conf"
+newenv
+mkbox
+mkdir -p "$(dirname "$conf")"
+printf 'container_manager="podman"\ncontainer_name_default="other"\n' >"$conf"
+run "y" nvm
+run "third
+" --set-default
+run "fourth
+" --set-default
+run "yes
+" --remove
+check "changed twice, then --remove: the ORIGINAL default name comes back (the first record was kept), not an intermediate one" bash -c "grep -qx 'container_name_default=\"other\"' '$conf' && grep -qx 'container_manager=\"podman\"' '$conf'"
 newenv
 mkbox
 run "y" nvm

@@ -25,6 +25,11 @@ expect "docs only push" false push "${base}" "${c1}"
 expect "pull_request is not an event of the build workflow" "" pull_request "${base}" "${c1}"
 mkdir -p docs/sub; echo b > docs/sub/deep.png; c2=$(commit deepdoc)
 expect "docs/** nested" false push "${c1}" "${c2}"
+mkdir -p tests; echo t > tests/x.sh; c2t=$(commit testonly)
+expect "a test-only push builds nothing (tests/** is listed with the docs)" false push "${c2}" "${c2t}"
+mkdir -p .github/scripts; echo t > .github/scripts/x.sh; c2s=$(commit pipelinescript)
+expect ".github/scripts stay image inputs" true push "${c2t}" "${c2s}"
+git reset -q --hard "${c2}" 2>/dev/null || true
 echo b >> system_files/x; c3=$(commit code)
 expect "non-docs file" true push "${c2}" "${c3}"
 expect "mixed range includes a non-docs file" true push "${base}" "${c3}"

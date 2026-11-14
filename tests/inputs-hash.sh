@@ -41,6 +41,11 @@ echo b >> variants/dx/f; commit dx1
 eq "dx-only change (variants/dx): vanilla_inputs equal" "$(v)" "${v0}"; ne "dx-only change: dx_inputs differ" "$(d)" "${d0}"
 echo b >> .github/workflows/build-dx.yml; echo b >> tests/dx-image.sh; echo b >> .github/scripts/dx-smoke.sh; echo b >> keys/redcodeworks-toolbox-cosign.pub; commit dx2
 eq "dx workflow, smoke script, dx test and key: vanilla_inputs equal" "$(v)" "${v0}"
+mkdir -p .github/scripts; echo a > .github/scripts/publish-latest.sh; echo a > .github/scripts/dispatch-dx.sh; echo a > tests/publish-latest.sh; commit pipelineonly0
+v0=$(v); d0=$(d)
+echo b >> .github/scripts/publish-latest.sh; echo b >> .github/scripts/dispatch-dx.sh; echo b >> tests/publish-latest.sh; commit pipelineonly
+eq "pipeline-only files (publish-latest, dispatch-dx and their tests): vanilla_inputs equal" "$(v)" "${v0}"; eq "...and dx_inputs equal" "$(d)" "${d0}"
+( source "${hash}"; is_pipeline_only .github/workflows/build.yml || is_pipeline_only .github/workflows/build-dx.yml || is_pipeline_only .github/scripts/plan-dx.sh || is_pipeline_only Justfile ) && bad "a build file is listed as pipeline-only" || pass "the build workflows and plan scripts are not pipeline-only"
 echo b >> README.md; echo b >> docs/n.md; commit docs
 eq "docs-only change: vanilla_inputs equal" "$(v)" "${v0}"; eq "docs-only change: dx_inputs equal to the commit before" "$(d)" "$(d HEAD~1)"
 d2=$(d)
@@ -50,14 +55,14 @@ v1=$(v)
 echo b >> .github/workflows/build.yml; commit workflow
 ne "a change to build.yml is a vanilla change" "$(v)" "${v1}"
 echo b >> tests/other.sh; commit othertest
-ne "a test that is not dx-only is a vanilla change" "$(v)" "$(v HEAD~1)"
+eq "a test file is not an image input (tests/** is listed with the docs)" "$(v)" "$(v HEAD~1)"; eq "...and not a dx input either" "$(d)" "$(d HEAD~1)"
 echo c > system_files/new; commit newfile
 ne "a new vanilla file changes vanilla_inputs" "$(v)" "$(v HEAD~1)"
 git mv variants/dx/f variants/dx/f2; commit rename
 eq "renaming inside variants/dx leaves vanilla_inputs equal" "$(v)" "$(v HEAD~1)"; ne "...and changes dx_inputs" "$(d)" "$(d HEAD~1)"
 
 # every literal path of is_dx_only that is not a glob exists in the real repository (a rename must update the list)
-for f in .github/workflows/build-dx.yml .github/scripts/dx-smoke.sh .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub tests/dx-image.sh tests/dev-setup.sh tests/plan-dx.sh; do
+for f in .github/workflows/build-dx.yml .github/scripts/dx-smoke.sh .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub; do
     [[ -f "${here}/${f}" ]] && pass "dx-only path exists: ${f}" || bad "dx-only path missing: ${f}"
     ( source "${hash}"; is_dx_only "${f}" ) && pass "is_dx_only ${f}" || bad "is_dx_only ${f}"
 done

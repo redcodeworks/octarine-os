@@ -69,6 +69,31 @@ rc=0
 base="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os:latest"
 dx="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"
 
+# ---- a pending kernel-argument change (rpm-ostree kargs applied, not rebooted) would be replaced by the switch: warn, ask (default no), --yes goes on
+mkdir -p "$root/kbin"
+cat >"$root/kbin/rpm-ostree" <<'EOF2'
+#!/bin/bash
+case "$1" in
+    kargs) echo "root=UUID=1 rw quiet ${FAKE_NEXT_EXTRA-}" ;;
+    status) echo '{"deployments":[{"booted":false},{"booted":true}]}' ;;
+esac
+EOF2
+chmod +x "$root/kbin/rpm-ostree"
+echo "root=UUID=1 rw quiet" >"$root/cmdline"
+krun() { # args...
+    : >"$LOG"
+    PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_KARGS_LIB="$here/../system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline"         OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+    rc=$?
+}
+FAKE_NEXT_EXTRA="iommu=pt" krun dx
+check "pending kernel argument, asked (default no): WARNING with the change, nothing switched, exit 0" bash -c "[ $rc = 0 ] && grep -q 'WARNING: a pending kernel-argument change would be lost by this switch' '$root/out' && grep -q '+iommu=pt' '$root/out' && grep -q 'Left as it is' '$root/out' && ! grep -q 'bootc switch' '$LOG'"
+FAKE_NEXT_EXTRA="iommu=pt" krun dx --yes
+check "pending kernel argument with --yes: the WARNING is printed and the switch goes on" bash -c "[ $rc = 0 ] && grep -q 'WARNING' '$root/out' && grep -q -- '--yes: going on anyway' '$root/out' && grep -q 'sudo bootc switch' '$LOG'"
+FAKE_NEXT_EXTRA="iommu=pt" krun dx --no
+check "pending kernel argument with --no: the WARNING and the plan, nothing run" bash -c "[ $rc = 0 ] && grep -q 'WARNING' '$root/out' && grep -q 'Would run' '$root/out' && ! grep -q 'bootc switch' '$LOG'"
+FAKE_NEXT_EXTRA="" krun dx --yes
+check "nothing pending: no warning, the switch runs" bash -c "[ $rc = 0 ] && ! grep -q 'WARNING' '$root/out' && grep -q 'sudo bootc switch' '$LOG'"
+
 # ---- staged but not booted: a second run must not call bootc again
 STAGED="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest"
 run "$base" dx --yes

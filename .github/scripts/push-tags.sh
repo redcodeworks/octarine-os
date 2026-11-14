@@ -8,7 +8,7 @@
 # to the digest) covers them. Pushing the same local image once per tag does not do that: podman writes a manifest
 # per push and the digests of the tags differ although the content is the same (observed 2026-11-10 on
 # octarine-os:testing vs testing-cc213cb), which is what kept the dx promotion from ever matching.
-# After every copy the digest of the tag is read back from the registry and must equal the pushed one.
+# After every copy the digest of the tag is read back from the registry (polled for up to 30 s: reads can lag a write) and must equal the pushed one.
 #
 # Output: `digests=<digest>` appended to $GITHUB_OUTPUT (when set), and printed. Tools: podman, skopeo, sha256sum.
 set -euo pipefail
@@ -27,14 +27,27 @@ digest=$(tr -d '[:space:]' < "${digestfile}")
 
 registry_digest() { echo "sha256:$(skopeo inspect --raw "docker://${registry_image}:$1" | sha256sum | sed 's/ .*//')"; }
 
+# The registry may answer a read right after a push or a copy with the PREVIOUS manifest of the tag (seen on GHCR 2026-11-14: the
+# read-back of `testing` right after the copy returned the old digest, the next read the new one). So the read-back polls: it passes as
+# soon as the tag shows the expected digest and fails only when it still shows another one after READBACK_TRIES reads (default 6,
+# READBACK_WAIT seconds apart, default 5). A tag that really holds other content (a wrong copy) still fails.
+settled() { # tag expected
+    local got="" i tries="${READBACK_TRIES:-6}"
+    for ((i = 1; i <= tries; i++)); do
+        got=$(registry_digest "$1") || got="unreadable"
+        [[ "${got}" != "$2" ]] || return 0
+        ((i == tries)) || sleep "${READBACK_WAIT:-5}"
+    done
+    echo "::error::$1 is ${got}, expected $2 (after ${tries} reads)" >&2
+    return 1
+}
+
 # podman's digestfile is the digest of the manifest it wrote; the registry must agree before anything is copied
-got=$(registry_digest "${first}")
-[[ "${got}" == "${digest}" ]] || { echo "::error::${first} is ${got} in the registry, podman pushed ${digest}" >&2; exit 1; }
+settled "${first}" "${digest}" || exit 1
 
 for tag in "$@"; do
     skopeo copy --all --preserve-digests "docker://${registry_image}@${digest}" "docker://${registry_image}:${tag}"
-    got=$(registry_digest "${tag}")
-    [[ "${got}" == "${digest}" ]] || { echo "::error::${tag} is ${got}, expected ${digest}" >&2; exit 1; }
+    settled "${tag}" "${digest}" || exit 1
 done
 echo "pushed ${first} $* -> ${digest}"
 echo "digests=${digest}"

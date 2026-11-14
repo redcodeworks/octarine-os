@@ -373,19 +373,24 @@ integration branch (GitLab's "main"); `main` is the production branch.
 minutes). Triggers: `push` with `branches-ignore: [main, testing]` and `workflow_dispatch`; no `pull_request`
 (the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
 `testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
-Two jobs, with these exact names because they become required checks:
+Three jobs; `test` and `secrets` have these exact names because they are required checks (`scope` is not required):
 
 - `test`: in a `fedora:45` container (tools match the image), installs the tools in one retried `dnf install`, then
   `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
-  glob (a per-script PASS/FAIL line and a summary; any failure fails the job). The tests use stubs for podman,
+  glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), the results printed in the order of the list with a PASS or FAIL line per test, the output of failing ones and a `Summary: N passed, M failed` line; any failure or timeout fails the job; the tests make their own temp directories, so they are independent). Measured on 2026-11-14 before this change: the job took about 170 s, of which the tool install was 25 s and the sequential test loop 133 s.
+  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells `test` whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). Then `test` skips `just check`, `bash -n` and the full run and runs only the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md, CONFIG-GUIDE.md or `docs/`, never a fixed list) plus a sanity check of the text (not empty, no merge conflict markers). A first push of a branch, a dispatch, a mixed push and any failure of the detection run everything; the job keeps its name and always runs (`if: always()`), so the required check never goes missing. The tool install stays unconditional because the documentation tests need it (it is 25 s; trimming it was not worth weakening the setup). Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
   skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
-Run the same locally: `just check; for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`.
+Run the same locally: `just check; .github/scripts/run-tests.sh` (or the loop `for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`).
 Test: `tests/test-workflow.sh`.
 
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
+
+## Runner disk space (2026-11-14)
+
+The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s on the default build, 73 s on dx). Measured on `ubuntu-26.04` with two non-publishing dispatches of `build.yml` from `exp/disk-a` and `exp/disk-b`: the root disk is 145 GB with 57 GB used and 88 GB free BEFORE any cleanup; after the action 26 GB used and 119 GB free; after the default image build and rechunk 44 GB used and 102 GB free, so the whole build needs about 18 GB on top of the cleaned runner (about 5 times less than the free space at the start). A targeted removal of the biggest directories (dotnet, android, ghc, CodeQL, swift...) instead of the action was measured too and was SLOWER (119 s against 85 s for the action in the same measurement), so not deleting at all is the fast choice. Every image workflow (`build.yml`, `build-beta.yml`, `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`) therefore runs a step `Check disk space` (id `disk`) and the action only as `Maximize build space (fallback, only when the disk is low)` when fewer than 60 GiB are free at the start. `build.yml` and `build-dx.yml` also print the free space after the build (job summary) and warn below 15 GiB. Only the default image was measured on a branch (dx and the NVIDIA builds publish, so they are only measured by their own runs: the summary line of the first dx build after this change is the number to look at). If a build ever fails with "no space left on device", lower nothing: remove the `if:` of the fallback step (the old behavior) and read the summary lines.
 
 ## Rules
 
@@ -572,8 +577,8 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **Two hashes, one script.** `.github/scripts/inputs-hash.sh` (tests: `tests/inputs-hash.sh`) hashes the sorted
   `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
   dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`, `.github/workflows/build-dx.yml`,
-  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`, `tests/{dx-image,dev-setup,plan-dx,nvidia-dx-image}.sh`.
-  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`). A new dx-only file must be
+  `.github/scripts/{dx-smoke,plan-dx,aggregate-dx}.sh`, `.github/workflows/build-nvidia-dx.yml`, `keys/redcodeworks-toolbox-cosign.pub`.
+  `vanilla_inputs` covers every other tracked file except the docs-only ones (`is_docs`, `docs-only.sh`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore` and, since 2026-11-14, the whole test suite `tests/**`: nothing in the image build copies or runs it, so a test-only push builds nothing and a test edit rebuilds neither image; the first push with this change rebuilds once because five tests used to be dx-only inputs and the rest default-image inputs; `.github/scripts/*.sh` and the workflows stay inputs). A new dx-only file must be
   added to `is_dx_only` (its test checks that each listed path exists); a file in neither group is a default-image input.
   Why hashes and not a `paths:` filter: a path filter on `build.yml` would leave the required check `Build and push image`
   missing on a dx-only commit and block the promotion pull request.
@@ -615,7 +620,7 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
   dx testing image had recorded the floating `testing` digest as its base; the `latest` plan then never found a matching tested image and built
   (about 21 minutes per promotion). The fix: `.github/scripts/push-tags.sh <local image> <registry image> <tag>...` pushes the first tag once
   (`podman push --digestfile`), makes every other tag a registry-side `skopeo copy --all --preserve-digests` of that digest, and reads each
-  tag's digest back from the registry (a mismatch fails the step); it writes the single `digests=` output the sign job signs. `build.yml`,
+  tag's digest back from the registry (a mismatch fails the step; the read-back POLLS, 6 reads 5 s apart, because GHCR answered a read right after a copy with the previous manifest of the tag on 2026-11-14 and failed a green dx push of `testing`, leaving an unsigned `testing` image until a re-run); it writes the single `digests=` output the sign job signs. `build.yml`,
   `build-beta.yml`, `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
   with the stub podman/skopeo registry, plus the `dx-image` and `beta-channel` workflow checks). Images published before the fix still have
   two digests; the first promotion after it builds dx once because no tested dx image on a matching base exists yet.
@@ -626,6 +631,71 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 - **NVIDIA dx.** `build-nvidia-dx.yml` reuses `plan-dx.sh` (`BASE_NAME`, `DX_NAME`, `PROMOTE_FROM_TESTING=false`) and builds the same `variants/dx` layer on `octarine-os-nvidia`; see "NVIDIA dx image and the CUDA toolbox".
 - **Dry run and finding the run (2026-11-14).** `build-dx.yml` has the inputs `dry_run` (plan and report only: build, promote and sign are skipped, no commit status, the aggregate job is named `Build dx (dry run)` so it can never satisfy the required `Build dx and push image` on a tip) and `base_digest` (declared for channel `latest` on main, wired by the part that publishes `latest` through `Publish latest`). The commit status of the required name is posted for channel `testing` only. `dispatch-dx.sh` takes the run from the URL that `gh workflow run` prints (the dispatch API returns the run id when the request sets `return_run_details`, `gh` 2.87.0 and later sends it and prints the URL when stdout is not a terminal; the job prints `gh --version`: the runner had 2.103.3 on the first real run), checks event and branch (NOT the title: a fresh run is still titled with the workflow name for a few seconds, and the first real run was rejected by a title check), and falls back to a snapshot of the run ids taken BEFORE the dispatch when no URL is printed (a new run on the branch titled with the run-name or the workflow name; the title never fails the step). `dispatch_dx` turns the whole `Build container image` run red when it fails; that is meant for "no dx run appeared" or "the run is not a dispatch on this branch" (re-run the job alone), and was wrongly triggered once by the title race of the first version; no clock. A failure to write the step summary never fails the step (the first version failed in CI because the runner's summary file is not writable for the test user; `tests/dispatch-dx.sh` isolates `GITHUB_STEP_SUMMARY`).
 - **First runs.** The dispatch path first runs on the first `testing` build after the merge (the file on the ref is used, no wait for a promotion). Only that run shows: that a `GITHUB_TOKEN` dispatch starts a run, the run-title lookup, the dynamic check name, and the old `workflow_run` run skipping.
+
+## Recipe idempotency rules found by the audit (2026-11-14)
+
+- A second run changes nothing and says so; interrupted runs leave nothing behind (temp files removed by an EXIT trap with `exit 130`/`143` for INT/TERM: `flatpak-preinstall`, `gaming-setup` gamemode, `scheduler`).
+- A step NAMED on the command line means "run it", never "replace my edited file": the replace question stays (default no); `--yes` answers the default. `gaming-setup gamemode` keeps the FIRST backup pointer (`gamemode.backup`), so `reset` restores the original file after any number of replacements.
+- `datastore-setup` never creates a new `postgresql-password` while the volume `postgresql-data` exists (PostgreSQL keeps the password its data directory was created with): it prints the three ways out and exits 1; the other missing secrets are still created.
+- `toolbox`: the FIRST `conf ...` record is kept (it is what `--remove` restores), only `conf-value` follows later changes; a directory is recorded as created only after the installer succeeded and the directory exists (`note_dirs` / `confirm_dirs`); `--recreate` validates the definition and pulls the new image before it removes the box.
+- `dev --only java` sets the SDKMAN default only when none exists (a dangling `current` counts as none); `sensors-setup` does nothing (no sudo, no probe) when its module list exists, `--redetect` probes again, `--yes` never moves a hand-made `nct6775.conf`, and `hardware-setup` counts only `octarine-sensors.conf` as done; `toggle-updates enable` completes a half-enabled source (flatpak has two timers); `hardware-setup` treats `amd-cpu-gaming` as done only when `gamemode.ini` equals the shipped tuning.
+- `gnome-candy` runs recipes of the `main` branch of gnome-themes as the user, so a new revision is shown (commit, date, author, subject) and approved once (default no; the approved sha is `~/.local/state/octarine-os/gnome-candy-approved`); `GNOME_THEMES_REF=<full sha>` pins, `GNOME_THEMES_TRUST=1` skips the question (automation); without a terminal and without either it stops and says how.
+- Deliberately NOT changed: the `fido-key` probe (a non-empty `u2f_keys` counts as done): the step writes the file by replacing it, so a stricter probe would make it overwrite another key's entries.
+## Kernel arguments are pending until the reboot (and an image update drops them)
+
+Seen on nox 2026-11-14: `sudo rpm-ostree kargs --append-if-missing=ARG` creates a PENDING deployment of the booted image that carries ARG. A later `bootc upgrade` stages the new image from the BOOTED deployment (without ARG) and replaces the pending one, so ARG was gone after the reboot (mechanism inferred from the journal and the boot entries). Rule: reboot between applying a kernel argument and the next image update. Implementation (`system_files/usr/share/octarine-os/lib/kargs.sh`, sourced the way `menu.sh` is, tests `tests/kargs.sh` and the cases in `hardware-setup.sh`, `virthost-setup.sh`, `switch-image.sh`, `update-services.sh`): `hardware-setup` (amd-kargs) and `virthost-setup` (iommu) print `kargs_notice` after a successful apply (reboot first, why, the exact `grep` on /proc/cmdline); `kargs_pending_change` reports a pending change by comparing the running arguments (/proc/cmdline) with `rpm-ostree kargs` (the next boot's) and, when `rpm-ostree status --json` has `.deployments[0].booted`, requires that the newest deployment is not the booted one; the JSON exposes no per-deployment kernel arguments, so nothing else is read, and without the field the comparison alone decides (BOOT_IMAGE=, initrd= and ostree= are ignored; a one-boot edit in the GRUB menu only counts while a pending deployment exists). `ujust update` (image source; new `--yes`) and `ujust switch-image` print a WARNING with the change and ask (default no; `--yes` goes on with the warning printed; `--no` is the plan); a declined image update skips only the image source. `hardware-setup --list` shows a karg step that is in the next boot's arguments but not the running ones as `pending reboot`, `virthost-setup` says so in its iommu step. Not covered: the automatic update staging (a timer) cannot ask, only the notice warns about it; a `bootc upgrade` typed by hand.
+
+## Promoting the default and dx images together
+
+Design approved by Kevin 2026-11-14 (reason: a dx build can fail because something changed in its base; the vanilla `latest` must not move to a
+base that breaks dx). Principle: the bare `latest` of `octarine-os` and `octarine-os-dx` moves in ONE final step, after both images exist, are
+signed and the dx image was built on exactly that default digest.
+
+- **Tags.** A build or promotion on main publishes only `latest-<sha7>`, `latest-<date>-<sha7>`, `<date>-<sha7>` and the same-day aliases
+  `<date>` and `latest-<date>` (kept on purpose: they are not `latest`); `just generate-build-tags <image> latest false` is that list (the
+  third parameter drops the bare `latest`; testing and the default call are unchanged). The dx run on channel `latest` pushes and promotes
+  `latest-<date>-<sha7>` only. `<sha7>` tags are not immutable (a daily rebuild of the same commit rewrites them), which is why every hand-over
+  is by DIGEST.
+- **Hand-over.** The last job of `build.yml` (`dispatch_dx`) passes the digest this run published or promoted (`needs.build_push.outputs.digests
+  || needs.promote.outputs.digests`; empty for a docs-only merge or an unchanged scheduled run) to `dispatch-dx.sh latest <sha> <digest>`, which
+  sets the `base_digest` input of `build-dx.yml`. `plan-dx.sh` with `BASE_DIGEST_PIN` builds on exactly that digest (checks that it exists, hashes to
+  itself and is signed); without a pin it uses the digest of the current `latest` (nothing new: the plan normally skips).
+- **`Publish latest`** (`publish-latest.yml`, `publish-latest.sh`, tests `tests/publish-latest.sh`, `publish-latest-workflow.sh`): the last job of the
+  dx run on main for channel `latest` (`publish`, a `workflow_call` with the digests, after a green result job); also `workflow_dispatch`
+  (`scope` both|vanilla-only, `vanilla_tag`, `reason`, `dry_run`). It verifies both signatures with `cosign.pub`, that the dx label
+  `org.opencontainers.image.base.digest` is the default digest (the pairing rule) and that the default image's `revision` label is a commit of main,
+  then copies with `skopeo copy --all --preserve-digests`, dx first and the default image last, reads both `latest` digests back and verifies the
+  signatures of the tags. Idempotent: equal digests are a green no-op (the daily skip case). No `signing` environment (it never signs, so no
+  secret is needed; a gate would not add safety), writes only on main (any other ref is forced to a dry run), group `publish-latest`, never cancels.
+  In a called workflow `github.event_name` is the CALLER's event: the workflow tells the triggers apart by input names.
+- **Ordering guard.** A re-run of an old green run must not move `latest` backwards: the candidate is held (a notice, exit 0) when its `revision` is
+  an ancestor of the one under `latest`, or the same commit built earlier (label `created`). Deviation from the first design: it compares the
+  labels, no walk through the tags.
+- **Escape hatch** (security fix while dx is broken): `gh workflow run publish-latest.yml --ref main -f scope=vanilla-only -f reason="<why>"`
+  (optionally `-f vanilla_tag=latest-<date>-<sha7>`; default: the newest main commit with a published `latest-<sha7>`). It needs no dx image, moves
+  only `octarine-os:latest`, and says in the summary that `octarine-os-dx:latest` is behind. It refuses `testing-*`, `beta*`, `latest` and anything
+  that is not a dated tag, an unsigned image and an image whose revision is not on main. A later green dx run catches dx up.
+- **dx on main is grouped per commit** (`build-dx-latest-<full sha>`; testing and beta stay per channel): with one group GitHub cancels a PENDING run
+  when a third arrives, which would silently drop a default image that never gets its pair. `cancel-in-progress` stays false.
+- **Failure and re-run table.** Daily run changes the base, dx build fails: `latest` stays on the previous pair, `Build container image` is
+  green, `Build dx image` is red, an issue is opened; re-run the failed dx run (a green re-run publishes) or use the escape hatch. dx fails then is
+  re-run green: `latest` moves at the re-run (inputs are reused: please check, see below). Docs-only merge: no digest, dx skips, Publish is a no-op.
+  Base build fails: nothing is dispatched. Dispatch does not start: re-run `dispatch_dx` alone. Publish fails halfway: both images are valid and
+  signed, re-run Publish (idempotent). Old green run re-run later: held by the ordering guard.
+- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) and of `publish-latest.yml` runs `ci-issue.sh fail`: it looks
+  for an OPEN issue with the label `ci-failure-dx` (created if missing; deduplicated on the label, not the title); none: one issue `dx/latest not
+  published: <channel> <sha7>` with the run URL, the failed jobs and what Kevin can do; one open: a comment per further failure. When Publish moves
+  `latest` the `recover` job comments "recovered: <run URL>" and closes it. A failed `dispatch_dx` (no dx run exists) is not covered: the red job
+  on the base run is the signal. Reason it exists: a failure of a run started by a token dispatch probably e-mails nobody.
+- **Consumers.** `ujust switch-image` and `bootc upgrade` see `latest` after Publish only; `build-nvidia.yml` uses `octarine-os:latest` and so follows
+  the published pair (the NVIDIA pair could later get its own publish scope); `plan-skip.sh` reads `latest`, so while dx blocks a new default image
+  every daily run rebuilds it (accepted by Kevin: an automatic daily retry); `prune-testing.py` never touches `latest*` of the default package and
+  keeps a bare `latest` dx version. The hub's `scripts/scheduled-runs.sh` must also judge the newest `build-dx.yml` run on main and the age of `latest`.
+- **Pipeline-only files** (`dispatch-dx.sh`, `publish-latest.sh`, `ci-issue.sh`, `publish-latest.yml` and their tests) are in neither input hash
+  (`is_pipeline_only` in `inputs-hash.sh`): changing them rebuilds neither image.
+- **Unverified until a real run:** the first Publish on main (both `latest` moves), the per-sha group behavior, that a re-run of a dispatched run reuses
+  its inputs (undocumented), that the check run of the result job satisfies the ruleset on a promotion PR (then the same-named commit status can go),
+  and the issue creation (`issues: write` with the default token).
 
 ## Base image and Fedora major upgrade
 
@@ -1007,6 +1077,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   in tests); otherwise the line and its comment are left out and the tuned `[custom]` part stays.
 - `switch-image nvidia|nvidia-dx` without an NVIDIA GPU (`0x10de`): says so and asks (default No); `--yes` alone refuses, `--force` proceeds.
 - `luks-tpm-unlock` exits 0 with a message when `/dev/tpmrm0` is missing (`OCTARINE_TPM_DEVICE` in tests).
+- `luks-tpm-unlock` is idempotent by END STATE (Kevin, 2026-11-14), not by detect-and-skip: every apply runs ONE call, `systemd-cryptenroll DEV --tpm2-device=auto --tpm2-pcrs=... --wipe-slot=tpm2 [--tpm2-with-pin=yes]` (enrollment first, then the old TPM2 slots are wiped and the new one is excluded: `man systemd-cryptenroll`), whether or not a TPM2 key exists. A probe (a `systemd-tpm2` token in `cryptsetup luksDump`) only sets the DEFAULT of the checklist: enrolled volumes are not ticked and `enroll --yes` without devices leaves them alone; naming a device or `--force` (every volume) re-enrolls. NEVER a wipe other than `tpm2` (no `--wipe-slot=all`, no keyslot numbers): two of Kevin's volumes were once left TPM-only by an `all` wipe. The recipe REFUSES (before running anything, per volume, exit 1) to enroll or remove on a volume whose keyslots all belong to a `systemd-tpm2` token, or whose header is not LUKS2 (cannot be checked), and prints `sudo systemd-cryptenroll DEV --recovery-key --unlock-tpm2-device=auto`. PCR choice unchanged: 7+14 by default (Secure Boot state plus the MOK keys, so any MOK change breaks the unlock until re-enrolled), `--pcrs=7` for Secure Boot only; the finishing note says which. `hardware-setup`'s `tpm-luks` step passes `enroll --yes` with `--yes`, `enroll --force` when named with `--only`, else opens the menu. Tests: `tests/luks-tpm-unlock.sh`, `tests/hardware-setup.sh`.
 - Tests: `tests/hardware-targeting.sh` and the cases added to `gaming-setup.sh`, `switch-image.sh`, `luks-tpm-unlock.sh`.
   Only real hardware shows: Wayland and FSR4 behavior in games, amd-pstate states, the mcelog unit on Intel, the retry after a wake.
 

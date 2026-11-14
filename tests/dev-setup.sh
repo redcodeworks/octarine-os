@@ -528,6 +528,19 @@ reset; installed_world
 rm -f "$HOME/.sdkman/candidates/java/current"
 run '' --yes --only java
 check "java: sets the default 21 when none is set" bash -c "grep -q 'sdk default java 21.0.12-zulu' '$LOG' && ! grep -q 'sdk install' '$LOG'"
+reset; installed_world
+ln -sfn "$HOME/.sdkman/candidates/java/17.0.20-zulu" "$HOME/.sdkman/candidates/java/current"
+run '' --yes --only java
+check "java: a default the user chose (17) is KEPT, never reset to 21: already done, no sdk default call" bash -c "[ $rc = 0 ] && grep -qE '^java +already done' '$root/out' && ! grep -q 'sdk default' '$LOG' && [ \"\$(basename \$(readlink '$HOME/.sdkman/candidates/java/current'))\" = 17.0.20-zulu ]"
+reset; installed_world
+rm -rf "$HOME/.sdkman/candidates/java/11.0.32-zulu"
+ln -sfn "$HOME/.sdkman/candidates/java/17.0.20-zulu" "$HOME/.sdkman/candidates/java/current"
+run '' --yes --only java
+check "java: installing a missing major while another default is set keeps that default" bash -c "grep -q 'sdk install java 11.0.32-zulu' '$LOG' && ! grep -q 'sdk default' '$LOG' && grep -q 'kept' '$root/out'"
+reset; installed_world
+ln -sfn "$HOME/.sdkman/candidates/java/gone-zulu" "$HOME/.sdkman/candidates/java/current"
+run '' --yes --only java
+check "java: a dangling default is replaced by Zulu 21" bash -c "grep -q 'sdk default java 21.0.12-zulu' '$LOG'"
 reset
 : >"$STATE/fail-sdklist"
 run '' --yes --only java

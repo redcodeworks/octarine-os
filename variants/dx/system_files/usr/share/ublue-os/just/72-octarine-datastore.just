@@ -284,6 +284,21 @@ datastore-setup *args:
         warn_graphroot
         exit 0
     fi
+    # PostgreSQL ignores POSTGRES_PASSWORD when its data directory already exists, so a NEW random password (after `podman secret rm` or a lost
+    # secret) would not match the password the database already has: the services that use the secret could never log in again
+    pg_refused=0
+    case " $miss" in
+        *" postgresql-password "*)
+            if podman volume exists postgresql-data 2>/dev/null; then
+                pg_refused=1
+                miss=${miss/postgresql-password /}
+                echo "Not creating postgresql-password: the volume postgresql-data already exists, and PostgreSQL keeps the password it was created with (it ignores the new one)." >&2
+                echo "  A new random password would not match it. Either put the OLD password back:  printf '%s' '<old password>' | podman secret create postgresql-password -" >&2
+                echo "  or set a new one inside the database and store the same value:  podman exec -it pgsql psql -U postgres -c \"ALTER USER postgres PASSWORD '<new>'\"  (then podman secret create it with that value)," >&2
+                echo "  or, if the data may be thrown away: ujust datastore-setup --backup DIR first, then podman volume rm postgresql-data." >&2
+            fi ;;
+    esac
+    if [ -z "${miss// /}" ]; then warn_graphroot; exit "$pg_refused"; fi
     echo "Creates the missing podman secrets with random values (never printed): $miss"
     echo "Undo: podman secret rm $miss"
     if [ "$mode" = no ]; then echo "Plan only."; warn_graphroot; exit 0; fi
@@ -305,6 +320,7 @@ datastore-setup *args:
         if [ "$ok" = 1 ]; then echo "Created $s"; else echo "Failed: podman secret create $s" >&2; failed=1; fi
     done
     warn_graphroot
+    [ "$pg_refused" = 0 ] || failed=1
     echo "Next: ujust datastore start"
     exit "$failed"
 

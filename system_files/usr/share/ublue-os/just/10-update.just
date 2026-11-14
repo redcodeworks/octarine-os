@@ -82,8 +82,11 @@ toggle-updates *args:
         if [ "$(us_state "$id")" = unavailable ]; then continue; fi
         on=0; us_on "$id" && on=1
         sel=0; in_list "$id" "${want[@]}" && sel=1
-        [ "$on" = "$sel" ] && continue
-        if [ "$sel" = 1 ]; then plan+=("turn on   $id"); else plan+=("turn off  $id"); fi
+        # a half-enabled source (some of its timers on, some off) is not "on": turning it on completes it
+        half=0; [ "$on" = 1 ] && ! us_full "$id" && half=1
+        if [ "$on" = "$sel" ] && [ "$half" = 0 ]; then continue; fi
+        if [ "$sel" = 1 ] && [ "$half" = 1 ]; then plan+=("turn on   $id (completes it: only some of its timers were on)")
+        elif [ "$sel" = 1 ]; then plan+=("turn on   $id"); else plan+=("turn off  $id"); fi
         while read -r scope unit; do
             [ -n "$unit" ] || continue
             if [ "$sel" = 1 ]; then
@@ -117,18 +120,28 @@ toggle-updates *args:
 update *args:
     #!/usr/bin/env bash
     set -uo pipefail
+    menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
+    if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     us_lib="${OCTARINE_UPDATE_LIB:-/usr/share/octarine-os/lib/update-services.sh}"
     # shellcheck source=/dev/null
     . "$us_lib" || { echo "Cannot read $us_lib" >&2; exit 1; }
     mode=run
+    yes=0
     all=0
     only=()
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Update now, but only the sources that `ujust toggle-updates` has switched on. `ujust update [SOURCE...] [--all] [--no]`. Sources: image (sudo bootc upgrade, or rpm-ostree upgrade when packages are layered; stages the image, reboot to use it), flatpak (system and user), distrobox (every container), brew-update (brew update), brew-upgrade (brew upgrade). Naming sources updates just those, --all updates every source whatever is switched on, --no only prints the plan. A failing source does not stop the others.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Update now, but only the sources that `ujust toggle-updates` has switched on. `ujust update [SOURCE...] [--all] [--yes] [--no]`. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be dropped by the image update: that source then prints a WARNING and asks (default no; --yes goes on with the warning printed; --no only prints the plan and the warning). Reboot first. Sources: image (sudo bootc upgrade, or rpm-ostree upgrade when packages are layered; stages the image, reboot to use it), flatpak (system and user), distrobox (every container), brew-update (brew update), brew-upgrade (brew upgrade). Naming sources updates just those, --all updates every source whatever is switched on, --no only prints the plan. A failing source does not stop the others.'; exit 0 ;;
             --all) all=1 ;;
+            --yes) yes=1 ;;
             --no) mode=plan ;;
-            -*) echo "Unknown option: $a (use --all or --no)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --all, --yes or --no)" >&2; exit 2 ;;
             *) if us_valid "$a"; then only+=("$a"); else echo "Unknown source: $a (use ${US_IDS[*]})" >&2; exit 2; fi ;;
         esac
     done
@@ -162,6 +175,16 @@ update *args:
             brew-upgrade) echo "${brew_bin:-brew} upgrade" ;;
         esac
     }
+    # a pending kernel-argument change would be replaced by the newer staged image: warn, ask (default no), never block silently
+    if in_list image "${run_list[@]}"; then
+        kmode=ask; [ "$yes" = 1 ] && kmode=yes; [ "$mode" = plan ] && kmode=no
+        if ! kargs_confirm_update "$kmode" "the image update"; then
+            echo "Image update skipped; reboot first, then run: ujust update image"
+            kept=(); for id in "${run_list[@]}"; do [ "$id" = image ] || kept+=("$id"); done
+            run_list=("${kept[@]}")
+            if [ "${#run_list[@]}" -eq 0 ]; then exit 0; fi
+        fi
+    fi
     failed=()
     for id in "${run_list[@]}"; do
         c=$(cmd_of "$id")

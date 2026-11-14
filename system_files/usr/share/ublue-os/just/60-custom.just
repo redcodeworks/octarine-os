@@ -810,6 +810,10 @@ flatpak-preinstall *args:
     if menu_tty && ! menu_confirm "Install these apps now?" y; then echo "Nothing installed."; exit 0; fi
     echo "Installing. If a polkit prompt appears, authorize it."
     out=$(mktemp)
+    # Ctrl-C or a termination must not leave the temp file behind
+    trap 'rm -f -- "$out"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
     "$flatpak_bin" preinstall -y 2>&1 | tee "$out"
     status=${PIPESTATUS[0]}
     if [ "$status" -eq 0 ]; then
@@ -876,7 +880,7 @@ gaming-setup *args:
         local def=$1 q=$2 reply hint="[Y/n]"
         [ "$def" = n ] && hint="[y/N]"
         if [ "$mode" = no ]; then answer=n; return; fi
-        if [ "$cur" != reset ] && explicit "$cur"; then answer=y; return; fi
+        if [ "$cur" != reset ] && [ "${ask_noexplicit:-0}" = 0 ] && explicit "$cur"; then answer=y; return; fi
         if [ "$mode" = yes ]; then answer=$def; return; fi
         printf '%s %s ' "$q" "$hint"
         read -r reply || reply=""
@@ -1142,6 +1146,9 @@ gaming-setup *args:
         if [ "$pstate_active" = 0 ]; then
             # not amd-pstate-epp: drop the desiredgov workaround (its comment block and the line); the rest stays
             gm_tmp=$(mktemp)
+            trap 'rm -f -- "$gm_tmp"' EXIT
+            trap 'exit 130' INT
+            trap 'exit 143' TERM
             sed '/^; Keep the CPU governor/,/^desiredgov=/d' "$src_ini" >"$gm_tmp"
             src_ini=$gm_tmp
             echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
@@ -1156,7 +1163,8 @@ gaming-setup *args:
                 echo "$dest_ini exists and differs:"
                 diff -u "$dest_ini" "$src_ini"
                 echo "Replacing it keeps a timestamped backup."
-                ask n "Replace it?"
+                # a step named on the command line means "run it", NOT "replace my edited file": this question is always asked (default no)
+                ask_noexplicit=1 ask n "Replace it?"
             else
                 echo "Installs the GameMode tuning (renice=10,$([ "$pstate_active" = 1 ] && echo " desiredgov=powersave,") tuned latency-performance while a game runs) as $dest_ini."
                 ask y "Apply?"
@@ -1172,7 +1180,9 @@ gaming-setup *args:
                 fi
                 if cp -- "$src_ini" "$dest_ini"; then
                     sha256sum "$dest_ini" | cut -d' ' -f1 >"$state_dir/gamemode.sha256"
-                    printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
+                    # the pointer keeps the FIRST state (the user's original file, or empty = there was none): a second replacement makes a
+                    # second backup, but `reset` must still restore the original, not an earlier copy of our own file
+                    [ -e "$state_dir/gamemode.backup" ] || printf '%s\n' "$backup" >"$state_dir/gamemode.backup"
                     echo "Installed $dest_ini${backup:+ (previous file saved as $backup)}."
                     record "gamemode" applied "ujust gaming-setup reset restores the backup or removes the file if unchanged"
                 else
@@ -1839,6 +1849,22 @@ gnome-candy *args:
         git clone --quiet "$url" "$dir"
     fi
     git -C "$dir" checkout --quiet --detach "$(git -C "$dir" rev-parse --verify --quiet "origin/$ref" || echo "$ref")"
+    # The recipes of gnome-themes run as you, from a branch that can move: the first time a new revision is about to run it is shown
+    # (commit, date, author, subject) and you are asked (default no); the approved commit is remembered, so the question comes back only
+    # when the repository has moved. GNOME_THEMES_REF=<full commit sha> pins it (no question); GNOME_THEMES_TRUST=1 skips the question
+    # (automation). Without a terminal and without either, it stops and says how.
+    rev=$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)
+    approved_file="${XDG_STATE_HOME:-$HOME/.local/state}/octarine-os/gnome-candy-approved"
+    if [ "${GNOME_THEMES_TRUST:-}" != 1 ] && ! [[ "$ref" =~ ^[0-9a-f]{40}$ ]] && { [ -z "$rev" ] || [ "$rev" != "$(cat "$approved_file" 2>/dev/null)" ]; }; then
+        echo "gnome-themes is about to run as you, from $url ($ref):"
+        git -C "$dir" log -1 --date=short --format='  %h  %ad  %an: %s' 2>/dev/null || echo "  (revision unknown)"
+        if menu_confirm "Run this version?" n; then
+            if [ -n "$rev" ]; then mkdir -p "$(dirname "$approved_file")" && printf '%s\n' "$rev" >"$approved_file"; fi
+        else
+            echo "Not run. Look at it first: $dir (git log), then run again and answer y; to skip the question: GNOME_THEMES_TRUST=1 ujust gnome-candy ..., or pin a commit: GNOME_THEMES_REF=<full sha>."
+            exit 0
+        fi
+    fi
     # No arguments in a terminal: a menu of the checked-out repository's public recipes (name - comment), read from the
     # structured `just --dump --dump-format json` (never from the human `just --list`, which prints group headings).
     # Private recipes and `default` are not offered; only REQUIRED parameters (no default) are asked for. A parser
@@ -1917,6 +1943,10 @@ switch-image *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     mode=ask
     list=0
     force=0
@@ -1924,7 +1954,7 @@ switch-image *args:
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2078,6 +2108,8 @@ switch-image *args:
         beta | testing) echo "The $channel channel is not tested for daily use." ;;
     esac
     cmd=(sudo bootc switch --enforce-container-sigpolicy "$ref")
+    # a pending kernel-argument change would be replaced by the staged image: warn, ask (default no; --yes goes on, --no is the plan)
+    if ! kargs_confirm_update "$mode" "this switch"; then echo "Left as it is. Reboot first, then switch."; exit 0; fi
     if [ "$mode" = no ]; then
         echo "Would run: ${cmd[*]}"
         exit 0
@@ -2101,17 +2133,19 @@ luks-tpm-unlock *args:
     action=""
     pcrs=7+14
     pin=0
+    force=0
     mode=ask
     want=()
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--yes|--no]`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--force] [--yes|--no]`. The result is the same however often it runs: enroll ALWAYS runs one systemd-cryptenroll call that enrolls the new TPM2 key and then wipes the old TPM2 slot (never any other slot: no --wipe-slot=all). Which devices are offered or ticked by default depends on a probe: a device that already has a TPM2 key is not ticked and `--yes` leaves it alone; naming a device, or --force (every device), re-enrolls it. It REFUSES to enroll or remove on a volume that has no unlock method other than the TPM2 key (a passphrase, recovery key or FIDO2 key): add a recovery key first with `sudo systemd-cryptenroll DEVICE --recovery-key --unlock-tpm2-device=auto`, or use `sudo cryptsetup luksAddKey`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
             enroll | remove) action=$a ;;
             --pcrs=*) pcrs=${a#--pcrs=} ;;
             --pin) pin=1 ;;
+            --force) force=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            -*) echo "Unknown option: $a (use --pcrs=7|7+14, --pin, --yes or --no)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --pcrs=7|7+14, --pin, --force, --yes or --no)" >&2; exit 2 ;;
             *) want+=("$a") ;;
         esac
     done
@@ -2135,6 +2169,16 @@ luks-tpm-unlock *args:
     for d in "${devs[@]}"; do
         if sudo cryptsetup luksDump "$d" 2>/dev/null | grep -q systemd-tpm2; then tpm_of[$d]=yes; else tpm_of[$d]=no; fi
     done
+    # other_unlock_slots DEVICE: how many keyslots do NOT belong to a systemd-tpm2 token (a passphrase, a recovery key, a FIDO2 key); "unknown"
+    # when the header is not LUKS2 or cannot be read. Wiping the TPM2 slot of a volume with none leaves it without any way to unlock it.
+    other_unlock_slots() {
+        sudo cryptsetup luksDump "$1" 2>/dev/null | awk '
+            /^[A-Za-z][A-Za-z ]*:[ ]*$/ { sec = $0; sub(/:.*/, "", sec); next }
+            sec == "Keyslots" && /^  [0-9]+: / { n = $1; sub(/:/, "", n); ks[n] = 1; seen = 1; next }
+            sec == "Tokens" && /^  [0-9]+: / { type = $2; next }
+            sec == "Tokens" && /^[ \t]+Keyslot:/ { if (type == "systemd-tpm2") tpm[$2] = 1; next }
+            END { if (!seen) { print "unknown"; exit }; c = 0; for (k in ks) if (!(k in tpm)) c++; print c }'
+    }
     describe() { # device
         local role=data
         [ -n "$root_uuid" ] && [ "${uuid_of[$1]}" = "$root_uuid" ] && role=root
@@ -2160,6 +2204,13 @@ luks-tpm-unlock *args:
             done
             [ -n "$hit" ] || { echo "No LUKS device matches: $w" >&2; exit 2; }
             chosen+=("$hit")
+        done
+    elif [ "$mode" = yes ] || [ "$force" = 1 ]; then
+        # no menu: the devices the checklist would tick (a probe: no TPM2 key yet for enroll, a TPM2 key for remove), or every device with --force
+        for d in "${devs[@]}"; do
+            if [ "$force" = 1 ]; then chosen+=("$d")
+            elif [ "$action" = enroll ] && [ "${tpm_of[$d]}" = no ]; then chosen+=("$d")
+            elif [ "$action" = remove ] && [ "${tpm_of[$d]}" = yes ]; then chosen+=("$d"); fi
         done
     elif menu_ready; then
         items=()
@@ -2196,19 +2247,27 @@ luks-tpm-unlock *args:
     failed=0
     root_done=0
     for d in "${chosen[@]}"; do
+        # never leave a volume without an unlock method: the TPM2 slot may only go when another keyslot (a passphrase, a recovery key, a
+        # FIDO2 key) exists. Two volumes of the owner were once left TPM-only by a wipe of every slot; this recipe wipes the tpm2 type only.
+        others=$(other_unlock_slots "$d")
+        if [ "$others" = unknown ] || [ "${others:-0}" -lt 1 ]; then
+            if [ "$others" = unknown ]; then echo "REFUSED $d: could not confirm another unlock method (the header is not LUKS2 or cannot be read), and the TPM2 slot must not be the only one." >&2
+            else echo "REFUSED $d: its only unlock method is the TPM2 key. Add a recovery key first, then run this again: sudo systemd-cryptenroll $d --recovery-key --unlock-tpm2-device=auto" >&2; fi
+            failed=1
+            continue
+        fi
         if [ "$action" = remove ]; then
             echo "== Removing the TPM2 key from $d"
             sudo systemd-cryptenroll --wipe-slot=tpm2 "$d" || failed=1
             continue
         fi
-        # One call enrolls the new TPM2 key first and wipes the old TPM2 slot only when that succeeded (systemd-cryptenroll(1),
-        # --wipe-slot=: "the enrollment is completed first, and only when successful the wipe operation executed"), so a
-        # cancelled or failed enrollment leaves the old key in place.
-        enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs")
+        # ONE call, always the same: enroll the new TPM2 key and wipe the TPM2 slots (only that type; the new slot is excluded). systemd-cryptenroll(1),
+        # --wipe-slot=: "the enrollment is completed first, and only when successful the wipe operation executed", so a cancelled or failed
+        # enrollment leaves the old key in place. With no old TPM2 slot the wipe has nothing to do. The end state is the same on every run.
+        enroll_args=(--tpm2-device=auto "--tpm2-pcrs=$pcrs" --wipe-slot=tpm2)
         if [ "$pin" = 1 ]; then enroll_args+=(--tpm2-with-pin=yes); fi
         if [ "${tpm_of[$d]}" = yes ]; then
             echo "== Replacing the TPM2 key on $d (asks for the volume passphrase; the old key stays if this fails)"
-            enroll_args+=(--wipe-slot=tpm2)
         else
             echo "== Enrolling $d (asks for the volume passphrase)"
         fi
@@ -2237,12 +2296,14 @@ sensors-setup *args:
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_confirm >/dev/null; then menu_confirm() { return 1; }; fi
     mode=ask
+    redetect=0
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--yes|--no]`. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Make the fan, pump and temperature chip of this board visible to Linux. `ujust sensors-setup [--redetect] [--yes|--no]`. When the module list of an earlier run exists it says so and does nothing (no sudo, no probe); --redetect probes again. --yes never moves an older hand-made nct6775.conf aside: only the question (without --yes) does. Some boards (many ASUS and other desktop boards) hide their fan headers until the kernel module of the Super I/O chip is loaded; the module depends on the chip (nct6775, it87, ...), so the image does not load any by default. This recipe runs `sensors-detect --auto` from lm_sensors (uses sudo once, YubiKey touch; sensors-detect also writes /etc/sysconfig/lm_sensors and /etc/modprobe.d/lm_sensors.conf and enables lm_sensors.service, which is how Fedora packages it), reads the modules it found, writes them to /etc/modules-load.d/octarine-sensors.conf, loads them now and shows the `sensors` fan and temperature lines. --yes asks nothing (a different existing file is replaced after a timestamped backup, and the older hand-made nct6775.conf is replaced too); --no only shows the plan and the current state and changes nothing. The setting lives in /etc and the driver ships with the kernel, so it survives image updates: do NOT re-run it after an update, only after a hardware change (new board or chip). Some boards also need the kernel argument acpi_enforce_resources=lax; this recipe does not set it.'; exit 0 ;;
+            --redetect) redetect=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
-            *) echo "Unknown argument: $a (use --yes, --no or --help)" >&2; exit 1 ;;
+            *) echo "Unknown argument: $a (use --redetect, --yes, --no or --help)" >&2; exit 1 ;;
         esac
     done
     sysconfig=${OCTARINE_SENSORS_SYSCONFIG:-/etc/sysconfig/lm_sensors}
@@ -2253,9 +2314,13 @@ sensors-setup *args:
         echo "sensors-detect is not installed (package lm_sensors, part of the image's optional packages); nothing changed." >&2
         exit 1
     fi
-    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
     [ -e "$target" ] && echo "Existing: $target"
     [ -e "$legacy" ] && echo "Existing (older hand-made name): $legacy"
+    if [ -e "$target" ] && [ "$redetect" = 0 ]; then
+        echo "Already done: $target exists (written by an earlier run); nothing was probed. Run 'ujust sensors-setup --redetect' to probe the hardware again."
+        exit 0
+    fi
+    echo "Plan: run 'sudo sensors-detect --auto', write the modules it finds to $target, load them with modprobe, show the sensors."
     if [ "$mode" = no ]; then echo "(--no: nothing was run or changed)"; exit 0; fi
     if [ "$mode" = ask ]; then
         menu_confirm "Probe the hardware with sensors-detect --auto and write the module list?" n || { echo "Left as it is."; exit 0; }
@@ -2322,7 +2387,8 @@ sensors-setup *args:
     if [ -e "$legacy" ]; then
         echo "Note: the older hand-made file $legacy exists; it loads modules too."
         doit=0
-        if [ "$mode" = yes ]; then doit=1; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
+        # only the question moves it: --yes never touches a file the user made by hand
+        if [ "$mode" = yes ]; then echo "Left $legacy alone (--yes does not move a hand-made file; run without --yes to be asked)."; elif menu_confirm "Replace $legacy with octarine-sensors.conf (a backup is kept)?" n; then doit=1; fi
         if [ "$doit" = 1 ]; then
             if sudo mv "$legacy" "$legacy.bak-$ts"; then echo "Moved $legacy to $legacy.bak-$ts (undo: sudo mv it back)"; else failed=1; fi
         else
@@ -2354,6 +2420,10 @@ hardware-setup *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
     valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan "
@@ -2366,7 +2436,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2521,10 +2591,12 @@ hardware-setup *args:
     # done_of <step>: already in place
     done_of() {
         case "$1" in
-            sensors) [ -e "$modload_dir/octarine-sensors.conf" ] || [ -e "$modload_dir/nct6775.conf" ] ;;
+            sensors) [ -e "$modload_dir/octarine-sensors.conf" ] ;;
             amd-gpu) [ "$(systemctl is-enabled lactd 2>/dev/null)" = enabled ] ;;
             amd-kargs) grep -q 'amdgpu.ppfeaturemask=' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -q 'amdgpu.ppfeaturemask=' ;;
-            amd-cpu-gaming) grep -qs '^desiredgov=powersave' "$gm_ini" ;;
+            # done = the file is exactly the shipped tuning (as gaming-setup compares it); a file that merely contains the line is the user's own
+            # edit: not done, and the step then asks before replacing it (default no)
+            amd-cpu-gaming) cmp -s "${GAMING_SETUP_GAMEMODE_SRC:-/usr/share/octarine-os/gamemode.ini}" "$gm_ini" 2>/dev/null ;;
             rocm)
                 box_exists rocm || return 1
                 # plan modes (--list, --no) stay pure: entering a distrobox starts a stopped container, so the box is not entered there
@@ -2600,6 +2672,7 @@ hardware-setup *args:
                 echo "Run once with sudo (a touch; not retried): sudo rpm-ostree kargs --append-if-missing=$arg"
                 sudo rpm-ostree kargs --append-if-missing="$arg" || return 1
                 echo "Reboot to apply it. The argument is NOT shipped by default; it unlocks LACT's overclocking controls."
+                kargs_notice "$arg"
                 ;;
             amd-cpu-gaming) "$ujust_cmd" gaming-setup gamemode "${yes[@]}" ;;
             rocm)
@@ -2616,7 +2689,11 @@ hardware-setup *args:
                 ;;
             cuda) "$ujust_cmd" dev --only cuda "${yes[@]}" ;;
             secure-boot) "$ujust_cmd" enroll-secure-boot-key ;;
-            tpm-luks) "$ujust_cmd" luks-tpm-unlock ;;
+            tpm-luks)
+                # named step: re-enroll every volume (a probe only sets the default); --yes alone: only volumes without a TPM2 key; else the menu
+                if [ -n "$only_list" ]; then "$ujust_cmd" luks-tpm-unlock enroll --force "${yes[@]}"
+                elif [ "$mode" = yes ]; then "$ujust_cmd" luks-tpm-unlock enroll --yes
+                else "$ujust_cmd" luks-tpm-unlock; fi ;;
             fido-key)
                 local dir tmp
                 dir=$(dirname "$u2f_file")
@@ -2649,9 +2726,18 @@ hardware-setup *args:
         fi
     done
     unchecked_note="the rocm box exists; not checked in plan mode, entering it would start the container"
+    # pending_reboot <step>: the kernel argument is in the next boot's arguments but not in the running ones
+    pending_reboot() {
+        case "$1" in
+            amd-kargs) OCTARINE_CMDLINE="$cmdline_file" kargs_pending_arg 'amdgpu.ppfeaturemask=' ;;
+            iommu) OCTARINE_CMDLINE="$cmdline_file" kargs_pending_arg 'iommu=pt' ;;
+            *) return 1 ;;
+        esac
+    }
     state_of() {
         if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
-        elif [ "${isdone[$1]}" = 1 ]; then echo done
+        elif [ "${isdone[$1]}" = 1 ]; then
+            if pending_reboot "$1"; then echo "pending reboot (applied, not booted yet: do not update the image before rebooting)"; else echo done; fi
         elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
         elif [ "$1" = wake-on-lan ] && [ "$(wol_support "$(wol_nic)")" = unknown ]; then echo "available (support not readable without root: sudo ethtool $(wol_nic) shows it)"
         else echo available; fi
@@ -3107,6 +3193,10 @@ scheduler *args:
             else
                 mkdir -p "$(dirname "$conf")" || true
                 tmp=$(mktemp "$conf.XXXXXX" 2>/dev/null)
+                # no temp file left behind on Ctrl-C or termination (removed again after the move: the file is gone then)
+                trap 'rm -f -- "${tmp:-}"' EXIT
+                trap 'exit 130' INT
+                trap 'exit 143' TERM
                 if [ -n "$tmp" ]; then
                     if [ -f "$conf" ]; then grep -v '^GAMEMODE_SCHED=' "$conf" >"$tmp" || true; else
                         printf '%s\n' "# Written by ujust scheduler. GAMEMODE_SCHED=skip|none|<scheduler name> (see ujust scheduler --list); absent means skip." >"$tmp"
@@ -3516,10 +3606,15 @@ toolbox *args:
 
     recorded() { grep -qxF -- "export $1" "$state_file" 2>/dev/null; }
 
-    # A new conf record replaces this toolbox's older one
-    drop_conf_records() {
+    # The FIRST `conf ...` record says how container_name_default came to be (created, appended, or the ORIGINAL value it replaced) and is what
+    # --remove restores, so a later change keeps it and only replaces the `conf-value` line (what this recipe wrote last)
+    drop_conf_value() {
         [ -f "$state_file" ] || return 0
-        sed -i -e '/^conf /d' -e '/^conf-value /d' "$state_file"
+        sed -i -e '/^conf-value /d' "$state_file"
+    }
+    record_conf() { # "conf created" | "conf appended" | "conf changed OLD": written only when there is no conf record yet
+        drop_conf_value
+        grep -qE '^conf (created|appended|changed)' "$state_file" 2>/dev/null || record "$1"
     }
 
     record() {
@@ -4057,6 +4152,22 @@ toolbox *args:
                 echo "   Kept the existing box."
                 return 0
             fi
+            # Nothing is removed before the replacement is certain: the definition must be usable and the new image must be pulled first,
+            # so a failed pull (network, registry) leaves the existing box as it was
+            if [ ! -r "$def_file" ] || ! grep -qx "\[$box\]" "$def_file"; then
+                echo "   $def_file is missing or has no [$box] section: the existing box was NOT removed."
+                failed=1
+                return 1
+            fi
+            new_image=${image_override:-$(def_image)}
+            if command -v podman >/dev/null 2>&1 && [ -n "$new_image" ]; then
+                echo "   Pulling $new_image first (the existing box stays if this fails)"
+                if ! podman pull -q "$new_image" >/dev/null; then
+                    echo "   Could not pull $new_image: the existing box was NOT removed. Check the network and run it again."
+                    failed=1
+                    return 1
+                fi
+            fi
             distrobox rm --force "$box" </dev/null || {
                 echo "   Could not remove $box."
                 failed=1
@@ -4213,19 +4324,16 @@ toolbox *args:
         mkdir -p -- "$(dirname -- "$conf_file")"
         if [ ! -f "$conf_file" ]; then
             printf 'container_name_default="%s"\n' "$new" >"$conf_file"
-            drop_conf_records
-            record "conf created"
+            record_conf "conf created"
         elif ! grep -qE '^[[:space:]]*container_name_default=' "$conf_file"; then
             if [ -s "$conf_file" ] && [ -n "$(tail -c1 "$conf_file")" ]; then printf '\n' >>"$conf_file"; fi
             printf 'container_name_default="%s"\n' "$new" >>"$conf_file"
-            drop_conf_records
-            record "conf appended"
+            record_conf "conf appended"
         else
             tmp="$work/distrobox.conf"
             awk -v v="container_name_default=\"$new\"" '/^[[:space:]]*container_name_default=/ { print v; next } { print }' "$conf_file" >"$tmp"
             cat "$tmp" >"$conf_file"
-            drop_conf_records
-            record "conf changed $cur"
+            record_conf "conf changed $cur"
         fi
         if [ "$new" != "$box" ]; then record "conf-value $new"; fi
         disable_shadow
@@ -4384,12 +4492,23 @@ toolbox *args:
         esac
     }
 
-    # Before an install step: remember, once, whether each directory already existed
+    # Before an install step: remember, once, which directories already exist. A directory that is still missing is NOT recorded as created
+    # yet (the installer may fail, or someone else may create it later, and --remove deletes what is recorded as created): confirm_dirs
+    # records it after the installer succeeded and the directory is there.
+    pending_dirs=" "
     note_dirs() {
         local d
         for d in $(row_dirs "$1"); do
             if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
-            if [ -e "$d" ]; then record "dir $d existed"; else record "dir $d created"; fi
+            if [ -e "$d" ]; then record "dir $d existed"; else pending_dirs="$pending_dirs$d "; fi
+        done
+    }
+    confirm_dirs() {
+        local d
+        for d in $(row_dirs "$1"); do
+            case "$pending_dirs" in *" $d "*) ;; *) continue ;; esac
+            if grep -qF -- "dir $d " "$state_file" 2>/dev/null; then continue; fi
+            if [ -e "$d" ]; then record "dir $d created"; fi
         done
     }
 
@@ -4422,6 +4541,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs rustup
         echo "   Installed rustup with a stable toolchain."
     }
 
@@ -4463,6 +4583,7 @@ toolbox *args:
             failed=1
             return 0
         fi
+        confirm_dirs "$t"
         echo "   Installed $label."
     }
 

@@ -106,7 +106,8 @@ timers are installed but not enabled. Turn on what you use.
   `/etc/skel/.zshrc`. Distrobox copies the host login shell, so toolbox images need zsh too for a zsh user
   (`gaming` unchecked).
 - CI, dx image: the developer image (`octarine-os-dx`) is built after the default image on `testing` (tags `testing`,
-  `testing-<sha>`) and promoted to `latest` on `main` when its base digest and dx inputs match, instead of being rebuilt.
+  `testing-<sha>`) and promoted on `main` when its base digest and dx inputs match, instead of being rebuilt. `latest` of the default and
+  the dx image is moved together by the `Publish latest` workflow after the dx run is green (a failed dx run holds `latest` on the previous pair).
   A change that touches only the dx files does not rebuild the default image, and a docs-only change builds nothing.
   The dx run is started by the last job of the pipeline; its result is the status (and check) `Build dx and push image` on the commit; details in `CLAUDE.md`.
 - CI, NVIDIA dx image: `octarine-os-nvidia-dx` is the same developer layer on the NVIDIA variant. It is built by its own workflow after
