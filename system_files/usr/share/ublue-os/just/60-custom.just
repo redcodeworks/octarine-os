@@ -1917,6 +1917,10 @@ switch-image *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     mode=ask
     list=0
     force=0
@@ -1924,7 +1928,7 @@ switch-image *args:
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2078,6 +2082,8 @@ switch-image *args:
         beta | testing) echo "The $channel channel is not tested for daily use." ;;
     esac
     cmd=(sudo bootc switch --enforce-container-sigpolicy "$ref")
+    # a pending kernel-argument change would be replaced by the staged image: warn, ask (default no; --yes goes on, --no is the plan)
+    if ! kargs_confirm_update "$mode" "this switch"; then echo "Left as it is. Reboot first, then switch."; exit 0; fi
     if [ "$mode" = no ]; then
         echo "Would run: ${cmd[*]}"
         exit 0
@@ -2381,6 +2387,10 @@ hardware-setup *args:
     # shellcheck source=/dev/null
     if [ -r "$menu_lib" ]; then . "$menu_lib"; fi
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; menu_multi() { return 3; }; fi
+    kargs_lib="${OCTARINE_KARGS_LIB:-/usr/share/octarine-os/lib/kargs.sh}"
+    # shellcheck source=/dev/null
+    if [ -r "$kargs_lib" ]; then . "$kargs_lib"; fi
+    if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
     valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan "
@@ -2393,7 +2403,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2627,6 +2637,7 @@ hardware-setup *args:
                 echo "Run once with sudo (a touch; not retried): sudo rpm-ostree kargs --append-if-missing=$arg"
                 sudo rpm-ostree kargs --append-if-missing="$arg" || return 1
                 echo "Reboot to apply it. The argument is NOT shipped by default; it unlocks LACT's overclocking controls."
+                kargs_notice "$arg"
                 ;;
             amd-cpu-gaming) "$ujust_cmd" gaming-setup gamemode "${yes[@]}" ;;
             rocm)
@@ -2680,9 +2691,18 @@ hardware-setup *args:
         fi
     done
     unchecked_note="the rocm box exists; not checked in plan mode, entering it would start the container"
+    # pending_reboot <step>: the kernel argument is in the next boot's arguments but not in the running ones
+    pending_reboot() {
+        case "$1" in
+            amd-kargs) OCTARINE_CMDLINE="$cmdline_file" kargs_pending_arg 'amdgpu.ppfeaturemask=' ;;
+            iommu) OCTARINE_CMDLINE="$cmdline_file" kargs_pending_arg 'iommu=pt' ;;
+            *) return 1 ;;
+        esac
+    }
     state_of() {
         if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
-        elif [ "${isdone[$1]}" = 1 ]; then echo done
+        elif [ "${isdone[$1]}" = 1 ]; then
+            if pending_reboot "$1"; then echo "pending reboot (applied, not booted yet: do not update the image before rebooting)"; else echo done; fi
         elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
         elif [ "$1" = wake-on-lan ] && [ "$(wol_support "$(wol_nic)")" = unknown ]; then echo "available (support not readable without root: sudo ethtool $(wol_nic) shows it)"
         else echo available; fi
