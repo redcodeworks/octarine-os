@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Print the verified reference of the chunkah image for `just rechunk`: <image>@<digest> from chunkah.env, after cosign accepted its
+# Print the verified reference of the chunkah image for `just rechunk`: <image>@<digest> from config/chunkah.env, after cosign accepted its
 # keyless signature (the GitHub Actions OIDC issuer, an identity under https://github.com/coreos/chunkah/). Fails (exit 1) when the pin is
-# malformed or the verification fails: a rechunk never runs an unverified image. The tag in chunkah.env is only a label.
-#   chunkah-ref.sh [chunkah.env]        (CHUNKAH_ENV overrides the path, for tests)
+# malformed or the verification fails: a rechunk never runs an unverified image. The tag in config/chunkah.env is only a label.
+#   chunkah-ref.sh [config/chunkah.env]        (CHUNKAH_ENV overrides the path, for tests)
 set -euo pipefail
-file=${1:-${CHUNKAH_ENV:-chunkah.env}}
+file=${1:-${CHUNKAH_ENV:-config/chunkah.env}}
 [[ -f "${file}" ]] || { echo "::error::${file} not found" >&2; exit 1; }
 declare -A v=()
 while IFS= read -r line || [[ -n "${line}" ]]; do
@@ -21,5 +21,5 @@ cosign verify \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     --certificate-identity-regexp '^https://github.com/coreos/chunkah/' \
     "${ref}" > /dev/null \
-    || { echo "::error::cosign verification of ${ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check chunkah.env)" >&2; exit 1; }
+    || { echo "::error::cosign verification of ${ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)" >&2; exit 1; }
 echo "${ref}"

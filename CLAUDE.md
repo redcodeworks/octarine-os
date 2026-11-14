@@ -572,7 +572,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
   `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
   with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
-  The image is pinned by digest in `chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
+  The image is pinned by digest in `config/chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
   identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
   moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
   the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,

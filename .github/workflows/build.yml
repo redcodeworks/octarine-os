@@ -628,7 +628,7 @@ jobs:
             echo "- \`${name}\`" >> "${GITHUB_STEP_SUMMARY}"
           done <<< "${missing}"
 
-      # Smaller delta updates: chunkah (pinned by digest in chunkah.env, signature verified first); same recipe in every image workflow
+      # Smaller delta updates: chunkah (pinned by digest in config/chunkah.env, signature verified first); same recipe in every image workflow
       - name: Rechunk with chunkah
         id: rechunk
         run: |

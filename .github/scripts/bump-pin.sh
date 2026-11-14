@@ -5,7 +5,7 @@
 #
 #   bump-pin.sh dev-packages|chunkah
 #
-# chunkah (quay.io/coreos/chunkah, pinned in chunkah.env as KEY=VALUE lines) is verified KEYLESS (the GitHub Actions OIDC issuer and an identity
+# chunkah (quay.io/coreos/chunkah, pinned in config/chunkah.env as KEY=VALUE lines) is verified KEYLESS (the GitHub Actions OIDC issuer and an identity
 # under https://github.com/coreos/chunkah/) instead of with a key file; everything else is the same decision table.
 #
 # Steps: resolve the digest of <image>:latest (skopeo inspect --raw, sha256 of the manifest, the way the pins are made),
@@ -23,7 +23,7 @@ set -uo pipefail
 image=${1:-}
 case "${image}" in
     dev-packages) file=variants/dx/Containerfile; prefix=DEV_PACKAGES; argp="ARG "; repo=ghcr.io/redcodeworks/${image} ;;
-    chunkah) file=${CHUNKAH_ENV:-chunkah.env}; prefix=CHUNKAH; argp=""; repo=quay.io/coreos/chunkah ;;
+    chunkah) file=${CHUNKAH_ENV:-config/chunkah.env}; prefix=CHUNKAH; argp=""; repo=quay.io/coreos/chunkah ;;
     *) echo "::error::unknown image '${image}' (dev-packages or chunkah)"; exit 3 ;;
 esac
 key=${COSIGN_KEY_FILE:-keys/redcodeworks-toolbox-cosign.pub}
