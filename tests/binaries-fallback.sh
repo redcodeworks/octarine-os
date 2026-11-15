@@ -105,8 +105,20 @@ dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=true
 check "decision: required, build failed, the last good image is usable (the daily run on main): status fallback with the fallback image's digest, key and date" bash -c "[ $rc = 0 ] && grep -qx 'status=fallback' '$root/gho' && grep -qx 'digest=$fbd' '$root/gho' && grep -q '::warning::FALLBACK: component scx' '$root/run' && grep -q 'FALLBACK: component scx uses its last good image' '$root/sum'"
 dec BUILD_OK=false SIGN=skipped FALLBACK=skipped
 check "decision: build failed and no fallback applies on this run (push, pull request, promotion, not main): fails closed, for a required component" bash -c "[ $rc = 1 ] && grep -q 'no fallback applies' '$root/run'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true
-check "decision: the same for an optional component (a validation run): fails visibly too" bash -c "[ $rc = 1 ]"
+dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true EVENT=push
+check "decision: an OPTIONAL component whose build failed on a run type without a fallback job (push or validation run on testing, pull request): status absent, exit 0, a loud warning and summary line: it never turns the run red" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q '::warning::OMITTED: optional component scx' '$root/run' && grep -q 'OMITTED' '$root/sum'"
+for ev in push schedule workflow_dispatch pull_request; do
+    dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true EVENT=$ev
+    check "decision: optional + failed build + no fallback job ($ev): never failed" bash -c "[ $rc = 0 ]"
+    dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=false EVENT=$ev
+    check "decision: REQUIRED + failed build + no fallback job ($ev): still fails" bash -c "[ $rc = 1 ]"
+done
+# end to end through the assemble decision: a failed optional component leaves the image green, a failed required one does not
+rm -f "$root/res2"/*; printf 'scx\trequired\ngh\toptional\n' >"$root/comps2.tsv"
+dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true COMPONENT=gh EVENT=push RESULT_DIR="$root/res2"
+dec BUILD_OK=true PUBLISHED=false SIGN=skipped RESULT_DIR="$root/res2"
+: >"$root/gho"; env GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-assemble.sh" "$root/comps2.tsv" "$root/res2" "$root/out3" >"$root/run" 2>&1; rc=$?
+check "assemble: a validation run with a failed optional component does not fail (validated for the rest), the omission is listed" bash -c "[ $rc = 0 ] && grep -qx 'degraded=gh:absent' '$root/gho'"
 dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false
 check "decision: required, the last good image was refused or does not exist: fails (never ships without a required component)" bash -c "[ $rc = 1 ] && grep -q 'required' '$root/run'"
 dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false OPTIONAL=true COMPONENT=scx

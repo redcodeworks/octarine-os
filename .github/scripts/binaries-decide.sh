@@ -46,6 +46,16 @@ if [[ "${BUILD_OK:-}" == true ]]; then
 fi
 # the build failed
 if [[ "${FALLBACK:-}" != success ]]; then
+    # no fallback job ran on this run type (a push or validation run, a pull request, a rehearsal): a REQUIRED component fails the run; an
+    # OPTIONAL one never does, on any run type: it is left out, loudly (annotation and summary), so a broken optional build can never keep
+    # the assemble job, the image build or the promotion PR red
+    if [[ "${OPTIONAL:-}" == true ]]; then
+        msg="OMITTED: optional component ${comp} is left out: its build failed and no last good image is looked for on this run type"
+        echo "::warning::${msg}"
+        sum "## ${msg}"
+        finish absent "" "" "" "build failed, no fallback on this run type"
+        exit 0
+    fi
     fail "the build failed and no fallback applies on this run (only the daily build on main for a required component; any publishing run for an optional one)"
 fi
 if [[ "${DRY_RUN:-}" == true && "${EVENT:-}" == workflow_dispatch ]]; then

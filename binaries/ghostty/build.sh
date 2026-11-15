@@ -29,27 +29,32 @@ mkdir -p "${ZIG_GLOBAL_CACHE_DIR}"
 (cd "${srcdir}" && ./nix/build-support/fetch-zig-cache.sh)
 dest="${srcdir}/.dest"
 rm -rf "${dest}"
+common=(--prefix /usr -Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true -Dversion-string="${version}" -Dinstalled-exe-path=/usr/bin/ghostty)
 zig_build() { # extra zig arguments
-    (cd "${srcdir}" && DESTDIR="${dest}" zig build \
-        --prefix /usr \
-        --system "${ZIG_GLOBAL_CACHE_DIR}/p" \
-        -Doptimize=ReleaseFast \
-        -Dcpu=baseline \
-        -Dstrip=true \
-        -Dversion-string="${version}" \
-        -Dinstalled-exe-path=/usr/bin/ghostty \
-        -fno-sys=glslang \
-        -fno-sys=spirv-cross "$@")
+    (cd "${srcdir}" && DESTDIR="${dest}" zig build "${common[@]}" "$@")
 }
-# The first CI build of this recipe died in the zig build step with "thread N panic: reached unreachable code" and no stack trace. When
-# the build fails, say what the environment looks like and try once more with one job, the build runner's own verbose output and
-# reference traces, so the next log shows where it stops; the failure itself still fails the component (it is optional).
-if ! zig_build; then
-    echo "::warning::zig build failed; collecting diagnostics and retrying once with -j1 --verbose -freference-trace"
-    { zig env; echo "nproc: $(nproc)"; ulimit -a; free -m 2>/dev/null; df -h /tmp /src 2>/dev/null; } >&2 || true
+# Attempt 1 is Ghostty's documented distro build (the offline cache, system libraries). The first two CI builds died in it with
+# "thread N panic: reached unreachable code" within a second (also with -j1), before any build output, in the zig driver itself (a new kernel
+# 7.0 and glibc 2.44 as the native target are the suspects). Attempts 2 and 3 are what a plain checkout does: no --system (Zig fetches the
+# packages itself, the libraries it knows are built from the vendored sources; GTK stays the system's), then the same with an explicit older
+# glibc as the target. The first attempt that works is used, and which one it was goes into BUILDINFO; when all fail the component fails
+# (it is optional).
+attempts=("system:--system ${ZIG_GLOBAL_CACHE_DIR}/p -fno-sys=glslang -fno-sys=spirv-cross" "plain:" "plain-glibc2.40:-Dtarget=x86_64-linux-gnu.2.40")
+used=""
+for a in "${attempts[@]}"; do
+    name=${a%%:*}; args=${a#*:}
+    echo "::group::zig build attempt: ${name}"
     rm -rf "${dest}"
-    zig_build -j1 --verbose -freference-trace=20 || { echo "build.sh: zig build failed twice" >&2; exit 1; }
-fi
+    # shellcheck disable=SC2086
+    if zig_build ${args}; then used=${name}; echo "::endgroup::"; break; fi
+    echo "::endgroup::"
+    echo "::warning::zig build attempt '${name}' failed"
+    if [[ "${name}" == system ]]; then
+        { zig env; echo "nproc: $(nproc)"; uname -r; ldd --version | head -n1; free -m 2>/dev/null; } >&2 || true
+    fi
+done
+[[ -n "${used}" ]] || { echo "build.sh: every zig build attempt failed" >&2; exit 1; }
+echo "zig build attempt that worked: ${used}"
 
 "${stage}" --out "${out}" --env "${envfile}" --src "${srcdir}" \
     --bin .dest/usr/bin/ghostty:root/usr/bin/ghostty \
@@ -57,7 +62,7 @@ fi
     --smoke root/usr/bin/ghostty:+version \
     --elf-x86-64 root/usr/bin/ghostty \
     --info "zig: $(zig version) ($(cat "${ZIG_RECORD:-/opt/zig/FETCH-RECORD}" 2> /dev/null || echo 'no fetch record'))" \
-    --info "ghostty: ${version}, zig build --prefix /usr --system -Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true -fno-sys=glslang -fno-sys=spirv-cross"
+    --info "ghostty: ${version}, zig build ${common[*]}, attempt that worked: ${used}"
 # the rest of the installed tree (the binary is already there with its mode)
 cp -a "${dest}/usr/." "${out}/root/usr/"
 (cd "${out}/root" && find . \( -type f -o -type l \) | sed 's#^\./##' | LC_ALL=C sort) > "${out}/FILES"
