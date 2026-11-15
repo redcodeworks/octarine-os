@@ -1,5 +1,5 @@
 name: Check upstream releases
-# Weekly: for every component of binaries/ (binaries/scx, binaries/extest) ask upstream for its latest release and, when it is
+# Weekly: for every component of binaries/ (binaries/scx, binaries/extest; Ghostty and its Zig toolchain have their own step, see ghostty-check.sh) ask upstream for its latest release and, when it is
 # newer than the pin in binaries/<name>/upstream.env (extest: asked of the real project, and only once our fork redcodeworks/extest
 # has the commit; the fork is never written to), open or update ONE bump pull request on the branch bump/<name> into `testing`.
 # It changes only upstream.env; nothing is built or published here (the merge into testing changes the tree hash of binaries/, and
@@ -50,6 +50,8 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
           for envfile in binaries/*/upstream.env; do
             dir=$(dirname "${envfile}")
+            # Ghostty has its own rules (stable tags only, the Zig toolchain follows from the tag): see below
+            [[ "${dir}" != binaries/ghostty ]] || continue
             decision=$(.github/scripts/upstream-check.sh "${dir}")
             echo "${dir}: ${decision}"
             echo "- \`${dir}\`: ${decision}" >> "${GITHUB_STEP_SUMMARY}"
@@ -70,4 +72,29 @@ jobs:
               *) echo "::notice::${dir}: nothing to bump (${decision})" ;;
             esac
           done
+
+          # Ghostty and its Zig toolchain (ghostty-check.sh): a newer STABLE tag (v<major>.<minor>.<patch>) moves upstream.env and zig.env in ONE
+          # pull request (the Zig minor follows from the tag); a newer patch of the pinned Zig minor is a separate low-priority one; a tag whose Zig
+          # minor has no published tarball yet opens nothing and says so here. An optional component: a failed bump never touches an image.
+          decision=$(.github/scripts/ghostty-check.sh)
+          echo "binaries/ghostty: ${decision}"
+          echo "- \`binaries/ghostty\`: ${decision}" >> "${GITHUB_STEP_SUMMARY}"
+          read -r verb a1 a2 a3 a4 a5 a6 <<<"${decision}"
+          case "${verb}" in
+            bump)
+              if ! .github/scripts/bump-ghostty.sh ghostty "${a1}" "${a2}" "${a3}" "${a4}" "${a5}" "${a6}"; then
+                echo "::error::could not open or update the Ghostty bump pull request"
+                failed=1
+              fi
+              ;;
+            zigbump)
+              if ! .github/scripts/bump-ghostty.sh zig "${a1}" "${a2}" "${a3}" "${a4}"; then
+                echo "::error::could not open or update the Zig bump pull request"
+                failed=1
+              fi
+              ;;
+            wait) echo "::notice::binaries/ghostty: ${decision#wait }" ;;
+            unreachable) echo "::warning::binaries/ghostty: ${decision}" ;;
+            *) echo "::notice::binaries/ghostty: nothing to bump (${decision})" ;;
+          esac
           exit "${failed}"

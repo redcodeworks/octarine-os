@@ -25,7 +25,7 @@ for c in "$@"; do
             for n in ${names}; do need "scx/bin/${n}"; done
             need scx/schedulers.tsv ;;
         extest) need extest/lib/libextest.so; need extest/lib64/libextest.so ;;
-        ghostty) need ghostty/bin/ghostty ;;
+        ghostty) need ghostty/root/usr/bin/ghostty; need ghostty/root/usr/share/applications/com.mitchellh.ghostty.desktop; need ghostty/FILES ;;
         *) echo "::error::binaries-layout.sh does not know the component '${c}'" >&2; exit 1 ;;
     esac
     need "${c}/SOURCE"; need "${c}/BUILDINFO"

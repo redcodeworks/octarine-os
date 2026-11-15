@@ -162,7 +162,38 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   - Tests: `tests/binaries-fallback.sh` (candidate checks, `binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, issue mechanics), `tests/binary-images.sh`
     (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until they run: the first matrix run, artifact hand-over,
     the first real fallback or omission, `last-good-<c>` first move (a component's first main run creates it), issue creation with the default token.
-  - The binaries image has two components (scx, extest).
+  - The binaries image has three components: scx and extest (required), ghostty (optional, 2026-11-15).
+- **Ghostty (optional component `binaries/ghostty/`; Kevin 2026-11-15: it replaces the third-party AppImage and must never block an image build).**
+  Source: the git tag `v1.4.0` pinned with its peeled commit `83fb9562...` in `upstream.env` (`fetch-source.sh` fails if the tag moved). There are no official Linux
+  binaries and no GitHub release objects (only `tip`); official source tarballs exist at `release.files.ghostty.org` with a minisign signature but no published sha256,
+  so the git tag is used (a git checkout needs `blueprint-compiler` 0.16+, Fedora 45 has 0.22.2, plus gettext, pandoc, ncurses `tic` and libxml2 `xmllint`).
+  Zig: Fedora 45 packages only 0.16.0; Ghostty 1.4.0 needs 0.17 (`build.zig.zon` `.minimum_zig_version = "0.17.0"`; `src/build/zig.zig` `requireZig` accepts the same
+  major.minor with any patch >= the minimum). `zig.env` pins the official tarball by URL, sha256 and size (0.17.1); `fetch-zig.sh` fails the build unless size and sha256
+  match, the sha256 equals what `ziglang.org/download/index.json` lists for that version, URL and size, and the minisign signature verifies with the pinned key (`minisign`
+  is installed in the builder; if it were missing the record in BUILDINFO says "minisign NOT installed" plainly). Dependencies: the offline distro-style build of PACKAGING.md
+  at the tag: `nix/build-support/fetch-zig-cache.sh` fetches the 37 packages of `build.zig.zon.txt` into an empty `ZIG_GLOBAL_CACHE_DIR` (the one network step, Zig checks every
+  package against its content hash), then `zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true
+  -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=glslang -fno-sys=spirv-cross` (`--system` links Fedora's freetype, harfbuzz, fontconfig, libpng, zlib, oniguruma, simdutf and
+  gtk4-layer-shell dynamically; Fedora 45 has no spirv-cross devel package and glslang's pkg-config files are unverified, so those two are built from the vendored packages).
+  The builder packages are the Fedora 45 names found in the repository metadata (see `binaries/ghostty/Containerfile`); the FIRST BUILD decides whether the list is complete.
+  Staged: `root/usr/...` (the whole installed tree: `bin/ghostty`, `share/applications/com.mitchellh.ghostty.desktop`, the D-Bus service, `lib/systemd/user/app-com.mitchellh.ghostty.service`
+  in system-package mode, metainfo, icons `com.mitchellh.ghostty`, `share/ghostty/{shell-integration,themes}`, terminfo, completions, vim/nvim/bat files, the Nautilus and KDE
+  integrations, locale files: inferred from `src/build/GhosttyResources.zig`; `FILES` lists the real ones), the MIT license, SOURCE and BUILDINFO (zig version and fetch
+  record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING) and the OS
+  image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
+  (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
+  owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
+  **Update path (weekly `upstream-check.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
+  (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one opens ONE pull request on `bump/ghostty` (`bump-ghostty.sh ghostty`)
+  that moves `upstream.env` (tag AND peeled commit) and `zig.env` (version, URL, sha256, size, signature URL) together: the Zig minor is read from `.minimum_zig_version` in that
+  tag's `build.zig.zon` and the newest published patch of that minor (x86_64-linux tarball) comes from `index.json`; when no tarball of that minor is published yet (or the newest is
+  below the minimum) NOTHING is opened and the job summary says `wait ...`. A newer patch of the PINNED Zig minor (checked against the minimum at the pinned tag) is a separate
+  low-priority pull request on `bump/zig` that changes only `zig.env`; a newer Zig minor alone never causes anything. Bump pull requests change pins only (nothing is published or signed); the
+  build after the merge into `testing` proves the bump, and a failing Ghostty bump degrades the optional component (last good, else left out) instead of touching the image.
+  Tests: `tests/ghostty-component.sh` (pins, recipe, `fetch-zig.sh` with a stub curl/minisign and a fake tarball, the installer cases, the version selection with stubbed `gh` and index.json
+  data: new tag same minor, new minor without a tarball, new minor with one, patch bump, pre-release ignored, same tag no-op, version sort, unreadable inputs, the bump pull requests).
+  UNVERIFIED until the first build: the builder package list and whether `zig build` succeeds with these flags, `ghostty +version` as the smoke run, `-fno-sys` spelling, the real file list,
+  that gtk4-layer-shell is the only extra runtime library, and the Zig minisign check (the tarball was verified here only through the sha256 the hub read from the official page).
 - **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
   WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
@@ -1198,17 +1229,27 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
+- **EXPERIMENTAL second launcher `ojust` (maintainer note only; deliberately undocumented elsewhere, Kevin 2026-11-15; a test checks that no README, doc or user-facing text mentions it).** `/usr/bin/ojust` runs
+  `just` with `JUST_JUSTFILE=/usr/share/octarine-os/justfile` (the mechanism `ujust` uses) and sets `OCTARINE_UJUST=/usr/bin/ojust` so `hardware-setup`'s self-calls stay in ojust. Its root justfile imports
+  ONLY our files, never one of Universal Blue's `ublue-os-just` package, so it works on a base without that package: `15-luks`, `40-nvidia`, `50-akmods`, `60-custom` and the dx files (same files as ujust), plus
+  `/usr/share/octarine-os/just/{motd,update,base-pieces}.just`. To make that possible the image's own `toggle-motd`/`toggle-user-motd` and `update`/`toggle-updates` moved out of the wrapper files
+  `00-default.just` and `10-update.just` into `motd.just` and `update.just`; the wrappers now import those FIRST and the renamed base file second (first import wins), so ujust resolves exactly the same
+  recipes (verified by comparing `just --dump --dump-format json` of the assembled root before and after: identical). `base-pieces.just` is ojust-only: copies of the package's `bios`, `bios-info`,
+  `logs-this-boot`, `logs-last-boot`, `enroll-secure-boot-key`, `check-local-overrides`, `device-info`, `changelogs`, `update-firmware`, `clean-system` and the aliases (Apache-2.0, attribution in its header);
+  NOT copied: `check-idle-power-draw`, `distrobox-assemble`, `distrobox-new`, `install-resolve`, `setup-distrobox-app` (they need `/usr/lib/ujust` helpers). The three helper libraries are NOT copied: no file
+  ojust imports sources them, and `ugum` is only an optional menu helper (`menu.sh` falls back without it). Keep new recipes free of `/usr/lib/ujust` sourcing and of imports of base files.
+  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`, `build-beta.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
+- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
 ## `ujust toggle-updates` and `ujust update`
 
-- Both live in `10-update.just` and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
+- Both live in `system_files/usr/share/octarine-os/just/update.just` (imported by the wrapper `10-update.just` and by ojust's root) and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
   sources: `image` (`rpm-ostreed-automatic.timer`, stages the image), `flatpak` (system `flatpak-system-update.timer` plus
   user `flatpak-user-update.timer`), `distrobox` (user `octarine-distrobox-upgrade.timer`, shipped here, off by default),
   `brew-update` (`brew-update.timer`), `brew-upgrade` (`brew-upgrade.timer`, off by default by `00-octarine-brew.preset`).
@@ -1730,7 +1771,20 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
   when nothing changes). `--yes` takes defaults; `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
+  non-zero. **`editor` step (2026-11-15, Kevin: "define a default editor"; a step of its own right after `shell`, no sudo):** options vi (always), nano, vim, nvim, hx, only when found (PATH, then
+  `/home/linuxbrew/.linuxbrew/bin`, then `~/.local/bin`; hooks `USER_SETUP_EDITOR_DIRS` and `USER_SETUP_EDITOR_SYSDIRS`); the default answer is "keep the current settings" (`--yes` alone keeps too);
+  `--editor NAME` (unknown or not installed: exit 2 listing the detected ones) implies `--only editor`. It writes ONE managed file, `~/.config/environment.d/50-editor.conf`
+  (`EDITOR`, `VISUAL`, `SUDO_EDITOR`, KEY=value, a header with the undo): SUDO_EDITOR is always the absolute path (sudoedit runs with sudo's restricted PATH), EDITOR and VISUAL the plain name only when the
+  binary is in `/usr/bin`, `/bin` or `/usr/local/bin`, else the absolute path (Homebrew and `~/.local/bin` are on PATH only in login shells, not for everything the session starts). Lines in the
+  user's own rc files (`.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`, `.bashrc.d/*`, fish `config.fish` and `conf.d`, other `environment.d` files) that set these
+  variables are listed with file and line, never edited, and the question to write anyway defaults to NO (an explicit `--editor` writes with a note). Verified in environment.d(5): the files are read by
+  the systemd user manager and passed to the services it starts (GNOME's terminal server is the example in the man page), SSH logins and plain TTY logins do not read them. FOUND on nox (not tested end to end):
+  the image's base ships `nano-default-editor` (`/etc/profile.d/nano-default-editor.sh` sets `EDITOR=/usr/bin/nano` only when unset, its fish twin in `vendor_conf.d` uses `set -q`), and
+  `systemctl --user show-environment` on nox shows `EDITOR=/usr/bin/nano`: a session's `systemctl --user import-environment` (niri-session does it, GNOME imports the login environment) copies the LOGIN
+  SHELL's environment, which lacks environment.d, over the manager's, so environment.d alone would probably lose for EDITOR. Hence two small image files read the SAME managed file for login shells:
+  `system_files/etc/profile.d/octarine-os-editor.sh` (bash, zsh; sorts after the nano one; accepts only the three keys and plain path characters, parsed never executed) and
+  `system_files/usr/share/fish/vendor_conf.d/octarine-os-40-editor.fish`; a user's own rc files still win. UNVERIFIED: the import ordering in a real niri and GNOME login. Test hooks:
+  `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
   flatpak, sudo, id, getent, usermod, gsettings, brew, fc-list). The dot-files steps (`dotfiles`, `brew`, `gnome` with its
   GNOME extension installer) were removed from `user-setup` on 2026-11-09 by Kevin's decision; the dot-files repo itself and its
   `just` recipes still exist, independent of this image.

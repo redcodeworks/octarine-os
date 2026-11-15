@@ -10,3 +10,9 @@ id = "pam-u2f-registration"
 description = "A pam_u2f security key registration line"
 regex = '''[A-Za-z0-9._-]+:[A-Za-z0-9_\-+/=]{20,},[A-Za-z0-9_\-+/=]{20,},(es256|eddsa|rs256)(,|\s|$)'''
 keywords = ["es256", "eddsa", "rs256"]
+
+# The minisign PUBLIC key of the Zig release signatures (binaries/ghostty/zig.env, its test): public by design, published on ziglang.org/download.
+# Allowed by its exact value only; no other key-looking string is.
+[[allowlists]]
+description = "Zig release signing key (minisign public key)"
+regexes = ['''RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti\+JO/wCYvhbAb/U''']

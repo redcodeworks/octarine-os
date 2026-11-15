@@ -304,7 +304,10 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   key registration for `sudo`. A step is listed only when the machine has the hardware; `--list` shows why one is hidden.
 - **`user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`:** an interactive checklist, one y/n question per step,
   in this order: `groups` (join `gamemode`, `input` and, where libvirt is installed (dx images), `libvirt`), `shell` (login shell to zsh with `usermod -s`; copies
-  the skeleton zsh files when you have none), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
+  the skeleton zsh files when you have none), `editor` (your default editor: `EDITOR`, `VISUAL` and `SUDO_EDITOR`, offered for
+  vi, nano, vim, nvim and hx, whichever are installed; the default answer keeps what you have; `--editor NAME` skips the menu;
+  one file, `~/.config/environment.d/50-editor.conf`, which you delete to undo; your own startup files are never edited and a
+  value you set there is reported), `flatpak` (games directory for Steam, Bottles and Lutris, Steam USB and
   input devices, VS Code and the rootless Podman socket, Podman Desktop without the Docker socket, Chrome web-app
   launchers, Gear Lever's `~/Applications`), `fonts` (Nerd Fonts from Homebrew casks: the 12-font developer set from
   `/usr/share/octarine-os/homebrew/fonts.Brewfile` by default, JetBrains Mono only, a pick from all Nerd Font casks, or
