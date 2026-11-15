@@ -98,7 +98,8 @@ else
         origin[${name}]=${org}; req[${name}]=${rq}; want+=("${name}")
     done < "${root}/COMPONENTS"
     for d in "${root}"/*/; do
-        [[ " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
+        # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
+        [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
     done
     for c in ${required}; do [[ " ${want[*]} " == *" ${c} "* ]] || err "the required component ${c} is not in the binaries image"; done
 fi

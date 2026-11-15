@@ -201,7 +201,7 @@ mkghostty() { # dir: a staged ghostty component (root/usr tree, FILES, LICENSES,
 }
 mkimg() { # dir: both required components, COMPONENTS with origins from the arguments
     local d=$1; shift
-    mkfix "$d.scx" scx; mkfix "$d.ext" extest; rm -rf "$d"; mkdir -p "$d"; cp -a "$d.scx/scx" "$d/"; cp -a "$d.ext/extest" "$d/"
+    mkfix "$d.scx" scx; mkfix "$d.ext" extest; rm -rf "$d"; mkdir -p "$d/LICENSES"; cp -a "$d.scx/scx" "$d/"; cp -a "$d.ext/extest" "$d/"; echo gpl >"$d/LICENSES/scx-LICENSE"; echo src >"$d/SOURCE"; echo build >"$d/BUILDINFO"   # the top-level union and records of an assembled image
     printf 'scx\trequired\t%s\t%s\t%s\tsha256:%s\nextest\trequired\t%s\t%s\t%s\tsha256:%s\n' "$H40" "${1:-built}" "${3:-}" "$(printf 'a%.0s' {1..64})" "$H40" "${2:-built}" "${4:-}" "$(printf 'b%.0s' {1..64})" >"$d/COMPONENTS"
     if [ "${WITH_GHOSTTY:-1}" = 1 ]; then
         mkghostty "$d"
