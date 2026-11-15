@@ -24,6 +24,7 @@ case "$1 $2" in
     "pr edit") exit 0 ;;
     "pr view") if [[ "$*" == *statusCheckRollup* ]]; then echo "${ROLLUP_N:-}"; else echo "https://github.com/o/r/pull/$3"; fi ;;
     "workflow run") [ -z "${GH_WF_FAIL:-}" ] ;;
+    "api repos/o/r/commits/"*) echo "${SUITES_N:-}" ;;
     *) exit 99 ;;
 esac
 F
@@ -54,6 +55,10 @@ before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
 printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
 ROLLUP_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
 check "helper, same title open but the PR has no test check (its commit already had a check suite): one EMPTY commit on the branch (no force-push, pin unchanged) and the checks are dispatched for the new commit" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $((before + 1)) ] && [ -z \"\$(git -C '$root/origin.git' diff --name-only bump/repair~1 bump/repair)\" ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG' && ! grep -qE '^gh pr (create|edit)' '$GH_LOG'"
+before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
+printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
+ROLLUP_N=0 SUITES_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
+check "helper, same title open, no test check and the tip has no Actions suite (an earlier repair commit): NO new commit, the checks are dispatched for the existing tip" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $before ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG'"
 w2="sed -i s/^BUILDER=.*/BUILDER=new2/ binaries/builder.env"
 printf '{"number":5,"title":"Bump the builder to one"}\n' >"$root/prlist"; : >"$GH_LOG"
 pr --branch bump/builder --title "Bump the builder to two" --body-file "$root/body.md" --message "m2" --file binaries/builder.env -- $w2
