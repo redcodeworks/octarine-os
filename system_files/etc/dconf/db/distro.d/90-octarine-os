@@ -6,6 +6,10 @@
 # No accidental overview from the top-left corner.
 enable-hot-corners=false
 
+[org/gnome/desktop/wm/preferences]
+# Minimize and maximize buttons next to close (stock GNOME shows only close). A button-layout the user has set wins.
+button-layout='appmenu:minimize,maximize,close'
+
 [org/gnome/shell]
 # Replaces the packaged default list, so the first entry is that default (Fedora's background logo). The other two
 # extensions ship with the image: tray icons for apps that still use them, and the phone integration whose firewall
