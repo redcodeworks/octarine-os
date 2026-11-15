@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ "${branch}" == bump/* && -n "${title}" && -f "${bodyfile}" && -n "${message}" && ${#files[@]} -gt 0 && $# -gt 0 ]] || { echo "bump-pr.sh: --branch bump/<name>, --title, --body-file, --message, --file and a writer command are required" >&2; exit 2; }
-emit() { echo "$1=$2"; [[ -z "${GITHUB_OUTPUT:-}" ]] || echo "$1=$2" >> "${GITHUB_OUTPUT}"; }
+emit() { echo "$1=$2"; [[ -z "${GITHUB_OUTPUT:-}" ]] || echo "$1=$2" >> "${GITHUB_OUTPUT}" || true; }
 cd "${root}"
 
 open=$(gh pr list --head "${branch}" --base "${base}" --state open --json number,title --jq '.[0] // empty')
