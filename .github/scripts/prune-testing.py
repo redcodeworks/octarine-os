@@ -11,7 +11,8 @@ Rules:
   * Delete the cosign signature version (`sha256-<digest>.sig`) of every deleted image, and any
     signature whose image no longer exists.
   * Delete untagged image versions older than UNTAGGED_DAYS.
-  * Refuse to delete more than MAX_DELETES versions in one run.
+  * Refuse to delete more than MAX_DELETES versions in one run (a safety net against a bug; 400 because a week of testing builds
+    plus their signatures is over 200 versions, and 60 made every weekly run refuse once the backlog had grown).
 
 PRUNE_KIND=released prunes a repository that has no `testing` tags (the NVIDIA variant, which publishes only
 `latest` and dated tags from main): the candidates are then versions whose tags are ALL dated or `latest-*`
@@ -29,7 +30,7 @@ version that carries a bare `latest` or `beta` tag is never deleted, and neither
 (it is not a candidate). Signatures of deleted images go with them; untagged versions are left alone.
 
 Environment: PRUNE_KIND (testing, the default, released, beta or dx), API_BASE (e.g. users/<owner>/packages/container/<image>), DRY_RUN (default true),
-KEEP (default 10), UNTAGGED_DAYS (default 7), MAX_DELETES (default 60).
+KEEP (default 10), UNTAGGED_DAYS (default 7), MAX_DELETES (default 400).
 """
 import json
 import os
@@ -40,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 
 KEEP = int(os.environ.get("KEEP") or 10)
 UNTAGGED_DAYS = int(os.environ.get("UNTAGGED_DAYS") or 7)
-MAX_DELETES = int(os.environ.get("MAX_DELETES") or 60)
+MAX_DELETES = int(os.environ.get("MAX_DELETES") or 400)
 DRY_RUN = (os.environ.get("DRY_RUN") or "true").lower() != "false"
 API_BASE = os.environ.get("API_BASE", "")
 KIND = os.environ.get("PRUNE_KIND") or "testing"

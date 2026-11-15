@@ -595,7 +595,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Pruning.** `prune-testing.yml` runs weekly from `main`: it keeps the newest 10 `testing` builds, deletes
   older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
   or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
-  hand with `dry_run` on to see the plan.
+  hand with `dry_run` on to see the plan. Safety cap `MAX_DELETES` (default 400, was 60): a plan over it makes the run FAIL without deleting (dry runs too). 2026-11-15 the weekly dry run failed with "Refusing to delete 216 versions (limit 60)": pruning was never enabled, so the backlog (83 testing builds plus signatures) outgrew 60; not a permission or API error, and it touches no image build or `latest`.
 - **Scheduled skip.** The 11:00 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
   when nothing changed") reads the published `latest` with `skopeo inspect --config` and compares: the base image's
   manifest-list digest now (`sha256sum` of `skopeo inspect --raw`) against the label
