@@ -88,6 +88,20 @@ rm -f "${lst}"
 echo "NVIDIA driver installed for kernel ${before}"
 echo "::endgroup::"
 
+# nvidia-install.sh enables the ublue-os staging COPR (for supergfxctl) and "disables" it again with `dnf5 config-manager setopt`,
+# which only writes enabled=0 into /etc/dnf/repos.override.d; the COPR's own file in /etc/yum.repos.d keeps enabled=1, and
+# validate-repos.sh's file scan (which does not apply overrides) then names it (CI failure 2026-11-14). Nothing needs the repo at
+# runtime (supergfxctl is already installed). Make the repo file itself say enabled=0 (the setopt is repeated for dnf5's own answer).
+staging="copr:copr.fedorainfracloud.org:ublue-os:staging"
+dnf5 config-manager setopt "${staging}.enabled=0"
+for f in /etc/yum.repos.d/*.repo; do
+    [[ -f "${f}" ]] || continue
+    if grep -qF "[${staging}]" "${f}"; then
+        sed -i -E 's/^(enabled[[:space:]]*=[[:space:]]*)(1|[Tt]rue)[[:space:]]*$/\10/' "${f}"
+        echo "staging COPR disabled in ${f}"
+    fi
+done
+
 # Every repository that is enabled must be one the base enables (prints its own log group)
 /ctx/validate-repos.sh
 

@@ -293,7 +293,7 @@ echo "::endgroup::"
 # (scx@.service, its helpers and the polkit rule come from system_files). Nothing is enabled: the preset says disable.
 /ctx/gen-schedulers.sh
 echo "::group::Checks of the scheduler files"
-for f in scx-preflight scx-run scx-verify gamemode-start gamemode-end; do test -x "/usr/libexec/octarine-os/${f}"; done
+for f in scx-preflight scx-wait-idle scx-run scx-verify gamemode-start gamemode-end; do test -x "/usr/libexec/octarine-os/${f}"; done
 test -f /usr/lib/systemd/system/scx@.service
 test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules
 ! grep -q "@INSTANCES@" /usr/share/polkit-1/rules.d/50-octarine-scx.rules
