@@ -13,13 +13,14 @@ user-setup *args:
     mode=ask
     only_list=""
     user=""
-    valid_steps=" groups shell flatpak fonts fish-terminal search "
+    valid_steps=" groups shell editor flatpak fonts fish-terminal search "
+    editor=""
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), editor (default editor: EDITOR, VISUAL and SUDO_EDITOR in one managed file, ~/.config/environment.d/50-editor.conf, for vi, nano, vim, nvim or hx, whichever are installed; the default answer keeps your current settings, your own startup files are never edited and a value you set there is reported; `--editor NAME` runs just this step without a menu; undo: delete the file), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -28,7 +29,13 @@ user-setup *args:
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no or --only STEP[,STEP...])" >&2; exit 2 ;;
+            --editor)
+                i=$((i + 1))
+                [ -n "${args[$i]:-}" ] || { echo "--editor needs a name (vi, nano, vim, nvim or hx)" >&2; exit 2; }
+                editor=${args[$i]}
+                ;;
+            --editor=*) editor=${a#--editor=} ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...] or --editor vi|nano|vim|nvim|hx)" >&2; exit 2 ;;
             *)
                 if [ -n "$user" ]; then echo "Only one user name is accepted" >&2; exit 2; fi
                 user=$a
@@ -81,6 +88,22 @@ user-setup *args:
         esac
     }
 
+    ed_cfg="${XDG_CONFIG_HOME:-$HOME/.config}"
+    ed_file="$ed_cfg/environment.d/50-editor.conf"
+    ed_names="vi nano vim nvim hx"
+    ed_label() { case "$1" in vi) echo "vi" ;; nano) echo "GNU nano (nano)" ;; vim) echo "Vim (vim)" ;; nvim) echo "Neovim (nvim)" ;; hx) echo "Helix (hx)" ;; esac; }
+    # ed_find <name>: the binary on PATH, else in the Homebrew prefix or ~/.local/bin (vi is always offered: its default is /usr/bin/vi)
+    ed_find() {
+        local n=$1 p d
+        p=$(command -v "$n" 2>/dev/null) || p=""
+        case "$p" in /*) [ -x "$p" ] && [ ! -d "$p" ] && { echo "$p"; return 0; } ;; esac
+        # the directories are overridable only for the tests
+        for d in $(printf '%s' "${USER_SETUP_EDITOR_DIRS:-/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin}" | tr ':' ' '); do
+            [ -x "$d/$n" ] && [ ! -d "$d/$n" ] && { echo "$d/$n"; return 0; }
+        done
+        [ "$n" = vi ] && { echo /usr/bin/vi; return 0; }
+        return 1
+    }
     in_list() { local n=$1; shift; local i; for i in "$@"; do [ "$i" = "$n" ] && return 0; done; return 1; }
     installed() { flatpak info "$1" >/dev/null 2>&1; }
 
@@ -128,6 +151,22 @@ user-setup *args:
         fi
     }
 
+    # --editor NAME: a known name that is installed here (exit 2 with the list of detected editors otherwise); it implies --only editor
+    if [ -n "$editor" ]; then
+        case " $ed_names " in
+            *" $editor "*) ;;
+            *) echo "Unknown editor: $editor (use vi, nano, vim, nvim or hx)" >&2; exit 2 ;;
+        esac
+        if ! ed_find "$editor" >/dev/null; then
+            ed_detected=""
+            for n in $ed_names; do ed_find "$n" >/dev/null && ed_detected="$ed_detected $n"; done
+            ed_detected=${ed_detected# }
+            echo "$editor is not installed here (not on PATH, in the Homebrew prefix or in ~/.local/bin). Found: ${ed_detected// /, }" >&2
+            exit 2
+        fi
+        [ -n "$only_list" ] || only_list=editor
+    fi
+
     # Terminal with gum: one checklist of steps up front, a summary and one confirmation; then the chosen steps run
     # like `--yes --only <steps>` (each still prints what it does and how to undo it). Without gum, or with --yes,
     # --no or --only, nothing here applies and the per-step questions are unchanged.
@@ -147,6 +186,7 @@ user-setup *args:
             "^Account^0" \
             "groups^Add $user to $menu_groups_text (sudo)^1" \
             "shell^Login shell zsh (sudo)^1" \
+            "editor^Default editor for terminals and sudoedit (no sudo)^1" \
             "^Apps^0" \
             "flatpak^Flatpak access overrides^1" \
             "fonts^Nerd Fonts from Homebrew casks^1" \
@@ -244,6 +284,113 @@ user-setup *args:
             echo "Failed: login-shell" >&2
             failed=1
             record "login-shell" "FAILED"
+        fi
+    fi
+
+    fi
+
+    if sel editor; then
+    cur_step=editor
+    # 1c. default editor: EDITOR, VISUAL and SUDO_EDITOR in ONE managed file, ~/.config/environment.d/50-editor.conf (KEY=value lines).
+    # The systemd user manager reads it (environment.d(5)) and passes it to the services it starts (terminals, the desktop session); the
+    # image's /etc/profile.d/octarine-os-editor.sh and its fish twin read the same file for login shells (SSH, TTY, and the login shell whose
+    # environment a session imports), so the Fedora nano default (nano-default-editor) does not win. Nobody's rc file is edited.
+    echo
+    echo "== editor"
+    ed_detected=""
+    for n in $ed_names; do ed_find "$n" >/dev/null && ed_detected="$ed_detected $n"; done
+    ed_detected=${ed_detected# }
+    if [ "$user" != "$(id -un)" ]; then
+        echo "Skipped: the default editor is set in your own home directory; run it as $user."
+        record "editor" "skipped (another user)"
+    else
+        echo "Current: EDITOR=${EDITOR:-<unset>} VISUAL=${VISUAL:-<unset>} SUDO_EDITOR=${SUDO_EDITOR:-<unset>}"
+        if [ -f "$ed_file" ]; then echo "Managed file $ed_file:"; grep -vE '^[[:space:]]*(#|$)' "$ed_file" | sed 's/^/  /'; fi
+        # lines in YOUR own startup files that set these variables (never edited here)
+        ed_conf=""
+        for f in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" "$HOME/.zshrc" "$HOME/.zshenv" "$HOME/.zprofile" "$HOME"/.bashrc.d/* \
+            "$ed_cfg/fish/config.fish" "$ed_cfg"/fish/conf.d/*.fish "$ed_cfg"/environment.d/*.conf; do
+            [ -f "$f" ] && [ "$f" != "$ed_file" ] || continue
+            m=$(grep -nE '^[[:space:]]*(export[[:space:]]+|set[[:space:]]+(-[A-Za-z]+[[:space:]]+)*|setenv[[:space:]]+)?(EDITOR|VISUAL|SUDO_EDITOR)([=[:space:]])' "$f" | sed "s|^|  $f:|")
+            [ -z "$m" ] || ed_conf="$ed_conf$m"$'\n'
+        done
+        if [ -n "$ed_conf" ]; then
+            echo "You already set these yourself (this step never edits your files; where they are read after the managed file, YOUR value wins):"
+            printf '%s' "$ed_conf"
+        fi
+        ed_missing=""
+        for n in $ed_names; do case " $ed_detected " in *" $n "*) ;; *) ed_missing="${ed_missing:+$ed_missing, }$n" ;; esac; done
+        echo "Found here: ${ed_detected// /, }${ed_missing:+ (not found: $ed_missing)}."
+        ed_pick=""
+        if [ "$mode" = no ]; then
+            if [ -n "$editor" ]; then echo "Plan: would set the editor to $editor in $ed_file."; else echo "Plan: would ask which editor to set (default: keep the current settings)."; fi
+            record "editor" "planned (would ask)"
+        elif [ -n "$editor" ]; then
+            ed_pick=$editor
+        elif [ "$mode" = yes ] && [ "$ui" != 1 ]; then
+            echo "Kept: --yes alone does not change the editor. Use --editor vi|nano|vim|nvim|hx."
+            record "editor" "skipped (kept current)"
+        else
+            ed_items=("keep^Keep the current settings (default)^")
+            for n in $ed_detected; do ed_items+=("$n^$(ed_label "$n")^"); done
+            if menu_ready_one; then
+                menu_one "Default editor (EDITOR, VISUAL, SUDO_EDITOR)" "${ed_items[@]}"
+                rc=$?
+                if [ "$rc" = 0 ]; then ed_pick=$MENU_ONE; elif [ "$rc" != 3 ]; then ed_pick=keep; fi
+            fi
+            if [ -z "$ed_pick" ]; then
+                echo "Default editor (EDITOR, VISUAL, SUDO_EDITOR):"
+                k=0
+                for s in "${ed_items[@]}"; do k=$((k + 1)); IFS='^' read -r _ t _ <<<"$s"; printf '  %d) %s\n' "$k" "$t"; done
+                printf 'Choose 1-%d (Enter keeps the current settings): ' "$k"
+                read -r reply || reply=""
+                ed_pick=keep
+                if [[ "$reply" =~ ^[0-9]+$ ]] && [ "$reply" -ge 2 ] && [ "$reply" -le "$k" ]; then
+                    IFS='^' read -r ed_pick _ _ <<<"${ed_items[$((reply - 1))]}"
+                fi
+            fi
+            if [ "$ed_pick" = keep ]; then
+                echo "Kept: nothing changed."
+                record "editor" "skipped (kept current)"
+                ed_pick=""
+            fi
+        fi
+        if [ -n "$ed_pick" ]; then
+            ed_path=$(ed_find "$ed_pick")
+            # SUDO_EDITOR is always the absolute path: sudoedit runs with sudo's restricted PATH. EDITOR and VISUAL: the plain name
+            # when the binary is in a system directory (resolves in every session), the absolute path otherwise (Homebrew and
+            # ~/.local/bin are not on the PATH of every program the desktop session starts, only of login shells).
+            ed_val=$ed_path
+            for d in ${USER_SETUP_EDITOR_SYSDIRS:-/usr/bin /bin /usr/local/bin}; do [ "$(dirname "$ed_path")" = "$d" ] && ed_val=$ed_pick; done
+            ed_new=$(printf '%s\n' \
+                "# Managed by 'ujust user-setup --only editor' (octarineOS). Delete this file to undo; run the step again to change it." \
+                "# environment.d(5): KEY=value lines read by the systemd user manager; the image's login-shell snippets read this file too." \
+                "EDITOR=$ed_val" "VISUAL=$ed_val" "SUDO_EDITOR=$ed_path")
+            if [ -f "$ed_file" ] && [ "$(cat "$ed_file")" = "$ed_new" ]; then
+                echo "Already set to $(ed_label "$ed_pick") (already done)."
+                record "editor" "already done"
+            else
+                echo "Will write $ed_file:"
+                printf '%s\n' "$ed_new" | grep -vE '^#' | sed 's/^/  /'
+                go=y
+                if [ -n "$ed_conf" ] && [ -z "$editor" ]; then
+                    ask n "Your own files set these too (listed above). Write the managed file anyway?"
+                    go=$answer
+                elif [ -n "$ed_conf" ]; then
+                    echo "Note: your own files listed above are read after it in the shells that read them, so they win there."
+                fi
+                if [ "$go" != y ]; then
+                    echo "Not written."
+                    record "editor" "skipped (your own setting kept)"
+                elif mkdir -p -- "$(dirname "$ed_file")" && printf '%s\n' "$ed_new" >"$ed_file"; then
+                    echo "Wrote $ed_file. New logins and new terminals started by the session pick it up; sudoedit uses SUDO_EDITOR=$ed_path."
+                    record "editor" "applied" "rm $ed_file (then log out and back in)"
+                else
+                    echo "Failed to write $ed_file" >&2
+                    failed=1
+                    record "editor" "FAILED"
+                fi
+            fi
         fi
     fi
 
