@@ -3,8 +3,8 @@
 # dated tag (YYYYMMDD, upstream rebuilds weekly) kept for humans. Bump both with `just brew-bump [tag]`, which resolves the
 # digest, verifies it with cosign against keys/ublue-os-brew-cosign.pub and writes both lines; CI checks the format
 # on every build and the signature whenever the pin changed. The pinned reference is logged by the build.
-ARG BREW_TAG=20261108
-ARG BREW_DIGEST=sha256:2993b28cf9a54efebdc418ef42228618f5c68e8b931430f2d60eddc190e30016
+ARG BREW_TAG=20261115
+ARG BREW_DIGEST=sha256:9e0492dbc471258657564c94dae18b58dd96ddb998a06f2b15e8209efb48042b
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-os-binaries is a FROM scratch image built from the binaries/
 # directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, and libextest.so for Steam Input on Wayland, 32-bit and
