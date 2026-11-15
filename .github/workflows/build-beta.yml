@@ -269,6 +269,8 @@ jobs:
             # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
             check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
             check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
+            echo "== optional packages missing (written by build.sh, empty is good)"
+            cat /usr/share/octarine-os/optional-packages-missing 2>/dev/null || true
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"

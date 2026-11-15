@@ -30,5 +30,8 @@ t "signature check failed builds" "build: latest is not verified as signed" SIGN
 t "no created date builds" "build: age of latest unknown" LATEST_CREATED=
 t "garbage date builds" "build: cannot read created date" LATEST_CREATED=garbage
 t "age limit variable respected" "skipped" MAX_AGE_DAYS=30 LATEST_CREATED=2026-10-20T10:05:00Z
+t "latest built with optional packages missing builds" "build: latest was built with optional packages missing (niri,fish)" LATEST_MISSING=niri,fish
+t "an image with no missing packages (label none) skips" "skipped" LATEST_MISSING=none
+t "an image from before the label (empty) skips as before" "skipped" LATEST_MISSING=
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
