@@ -34,6 +34,7 @@ if command -v dconf >/dev/null; then
 else
   check "keyfile has group headers and key=value lines only (no dconf here)" bash -c "grep -vE '^(#|\\[[a-z0-9/_-]+\\]|[a-z0-9-]+=.+|)\$' '$keyfile' | wc -l | grep -qx 0"
 fi
+check "button-layout default has minimize, maximize and close (no icon: prefix, that is a personal choice)" bash -c "awk '/^\\[org\\/gnome\\/desktop\\/wm\\/preferences\\]/{g=1;next} /^\\[/{g=0} g' '$keyfile' | grep -qx \"button-layout='appmenu:minimize,maximize,close'\""
 check "enabled-extensions keeps the packaged default (background-logo) first" grep -q "^enabled-extensions=\['background-logo@fedorahosted.org'," "$keyfile"
 check "extensions enabled are only ones the image ships (appindicator, gsconnect)" bash -c "grep '^enabled-extensions=' '$keyfile' | grep -o '[A-Za-z0-9.-]*@[a-zA-Z0-9.-]*' | sort | tr '\n' ' ' | grep -qx 'appindicatorsupport@rgcjonas.gmail.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io '"
 check "GPaste is shipped but not enabled by default" bash -c "! grep -qiE \"gpaste|just-perfection|ddterm|freon\" '$keyfile'"
@@ -73,7 +74,7 @@ done
 # nothing personal
 check "no excluded category in the shipped files (theme names, key model, editor, personal names and paths)" bash -c "! grep -nEi 'gruvbox|papirus|helix|\\bhx\\b|/home/kevin|/var/home/|nox|asgard|kevin|riley' $keyfile $gm ${fish_files[*]} && ! grep -nE '\\bMEH\\b|\\bHYPR\\b' $keyfile $gm ${fish_files[*]}"
 check "no theme, icon, cursor or font key in the keyfile" bash -c "! grep -E '^(gtk-theme|icon-theme|cursor-theme|monospace-font-name|font-name|color-scheme|name)=' '$keyfile'"
-check "no keybinding group in the keyfile" bash -c "! grep -Ei 'keybindings|\\[org/gnome/desktop/wm|tilingshell|arcmenu|dash-to-dock|auto-move' '$keyfile'"
+check "no keybinding group in the keyfile" bash -c "! grep -Ei 'keybindings|\\[org/gnome/desktop/wm/keybindings|tilingshell|arcmenu|dash-to-dock|auto-move' '$keyfile'"
 # VM hosting is a dx-only feature: the default image installs none of the hosting meta packages but keeps the libguestfs tools
 check "build.sh does not install libvirt, qemu-kvm or cockpit-machines (dx only)" bash -c "! grep -vE '^[[:space:]]*#' '$here/build_files/build.sh' | grep -qE '(^|[ \"])(libvirt|qemu-kvm|cockpit-machines)([ \"]|\\\\|\$)'"
 check "build.sh keeps the libguestfs group" grep -q 'libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v' "$here/build_files/build.sh"

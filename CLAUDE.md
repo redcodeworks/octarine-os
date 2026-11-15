@@ -944,6 +944,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | Source | Entry | Decision | Reason |
   |---|---|---|---|
   | `20-interface.dconf` | `enable-hot-corners=false` | included | neutral behavior, one key, easy to undo |
+  | (image only, 2026-11-15) | `[org/gnome/desktop/wm/preferences] button-layout='appmenu:minimize,maximize,close'` | included | owner wants minimize and maximize by default (stock GNOME: `appmenu:close`); a user-set value wins, the owner's own `icon:...` layout is personal and not copied |
   | | `color-scheme`, `gtk-theme`, `icon-theme`, `monospace-font-name` | excluded | visual theme and font taste, themes come from candy-for-gnome |
   | | `font-antialiasing='rgba'`, `font-hinting='full'` | excluded | depend on the display, differ from the GNOME default |
   | | `enable-animations`, `text-scaling-factor`, `toolkit-accessibility` | excluded | equal to the GNOME default, no effect |
@@ -968,7 +969,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | `gamemode.example.ini` | `renice=10` | included | generic |
   | | `desiredgov=performance`, `[custom]` tuned profile | excluded from `/etc` | governor choice and AMD amd-pstate behavior and needs tuned; stays in the `gaming-setup` user file |
 
-- **User-facing notes (formerly in the README's "Defaults" section).** GNOME: hot corners off, AppIndicator and GSConnect on;
+- **User-facing notes (formerly in the README's "Defaults" section).** GNOME: hot corners off, minimize and maximize buttons, AppIndicator and GSConnect on;
   `gsettings reset <schema> <key>` returns a key to the image default. fish: a user file of the same name disables a snippet (see
   Paths). GameMode needs the user in the `gamemode` group (`ujust user-setup` adds it). The files are `/etc/dconf/db/distro.d`,
   `/etc/gamemode.ini` and `/usr/share/fish`.
