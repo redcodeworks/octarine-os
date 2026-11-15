@@ -769,6 +769,20 @@ jobs:
             echo "promoted ${tag} -> ${after}"
           done
 
+      # Arms the daily's fallback: last-good-<component> of the binaries image -> the signed c-<component>-<key> images of this tree (the `track` job of
+      # binaries.yml only runs when main BUILDS, and a promotion never calls it). Never fails the promotion.
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Arm the binaries fallback (last-good tags)
+        continue-on-error: true
+        env:
+          BIN_IMAGE: ${{ needs.plan.outputs.image }}
+        run: |
+          .github/scripts/binaries-arm.sh "${BIN_IMAGE%/*}/octarine-os-binaries"
+
   # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
   # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
   # or was cancelled.

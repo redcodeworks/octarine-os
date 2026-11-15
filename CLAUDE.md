@@ -92,6 +92,8 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 
 ## Prebuilt binaries (binaries/)
 
+- **last-good tags are armed by every promotion (2026-11-15, L2).** The `track` job of `binaries.yml` moves `last-good-<component>` but runs only when a main run BUILDS; the normal main run is a promotion (build=false, binaries.yml not called), so on 2026-11-15 `ghcr.io/redcodeworks/octarine-os-binaries` had no `last-good-*` tag and the daily's fallback was unarmed. `build.yml`'s promote job now runs `.github/scripts/binaries-arm.sh` (continue-on-error) after the retag: for each component of `components.tsv` it verifies `c-<component>-<key>` of the promoted tree (`binaries-lookup.sh`, cosign.pub) and copies it to `last-good-<component>` with the digest kept; missing or unsigned images are skipped with a warning (an optional component left out keeps no tag). No hand step: the first promotion to main after this change arms them. `binaries-fallback.sh` reads exactly those tags (`last-good-${COMPONENT}` in `binaries-component.yml`). Test: `tests/binaries-arm.sh`.
+
 The default image ships binaries that are built in this repository, not compiled in the image build and not taken from a foreign
 registry: the sched_ext schedulers (`scx_*`) and the extest libraries. They are built from pinned upstream commits into ONE
 signed `FROM scratch` image, `ghcr.io/redcodeworks/octarine-os-binaries`, which the image build copies from. nvidia and the dx
