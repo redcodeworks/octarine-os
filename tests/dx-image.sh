@@ -410,8 +410,7 @@ import re, sys
 t = open(sys.argv[1] + "/.github/workflows/prune-testing.yml").read()
 i = t.index('API_BASE="${scope}/packages/container/${image}-dx"')
 tail = t[i:]
-assert re.search(r'gh api --paginate "\$\{API_BASE\}/versions\?per_page=100" \| python3 \.github/scripts/prune-testing\.py', tail), tail
-assert 'keep ${KEEP}' in tail
+assert re.search(r'pass "testing builds, keep \$\{KEEP\}" PRUNE_KIND=testing', tail), tail  # the generic pass (the pass function runs gh api ... | prune-testing.py)
 PY
 dx_tj() { cat <<EOJ
 [
