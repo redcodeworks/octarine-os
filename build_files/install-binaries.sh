@@ -182,4 +182,14 @@ if [[ -z "${dest}" || -n "${BINARIES_CHECK_NEEDED:-}" ]]; then
         installed_note[${c}]="REMOVED"
     done
 fi
+# Files copied into /usr by hand run no package trigger: refresh the icon and desktop caches for what a component installed (ghostty: hicolor icons and a desktop file).
+# Needed in an ostree image: the base's icon-theme.cache and the directory have the same normalized mtime (1970-01-01), so GTK trusts a STALE cache that does
+# not list the new icons and shows the generic icon (found 2026-11-15: Ghostty's app-grid entry had no icon). Only in the real build (empty DESTDIR).
+if [[ -z "${dest}" && " ${want[*]:-} " == *" ghostty "* && -e /usr/bin/ghostty ]]; then
+    for tool in gtk-update-icon-cache gtk4-update-icon-cache; do
+        if command -v "${tool}" > /dev/null 2>&1; then "${tool}" -f -t /usr/share/icons/hicolor && echo "${tool}: refreshed /usr/share/icons/hicolor" && break; fi
+    done
+    if command -v update-desktop-database > /dev/null 2>&1; then update-desktop-database -q /usr/share/applications && echo "update-desktop-database: refreshed /usr/share/applications"; fi
+    grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache 2> /dev/null || warn "the hicolor icon cache does not list com.mitchellh.ghostty (no cache tool found?): Ghostty may show a generic icon"
+fi
 echo "Installed the prebuilt binaries: $(for c in ${want[@]+"${want[@]}"}; do echo -n "${c} (${installed_note[${c}]:-}) "; done)"
