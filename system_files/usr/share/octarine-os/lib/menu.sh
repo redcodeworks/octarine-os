@@ -122,3 +122,9 @@ menu_confirm() {
     esac
     return 1
 }
+
+# Emoji prefixes on selected message lines (terminal only, off with NO_EMOJI or OCTARINE_PLAIN); see emoji.sh.
+_oe_dir="$(dirname -- "${BASH_SOURCE[0]}")"
+# shellcheck source=/dev/null
+[ -r "${_oe_dir}/emoji.sh" ] && . "${_oe_dir}/emoji.sh"
+unset _oe_dir

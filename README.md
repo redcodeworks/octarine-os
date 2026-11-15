@@ -118,6 +118,8 @@ sudo bootc rollback                                                             
 
 Run `ujust --list` for all of them; each recipe explains itself (`--help`).
 
+In a terminal, some status lines (errors, warnings, successes, things you must do) start with an emoji. Set `NO_EMOJI` to any non-empty value, or `OCTARINE_PLAIN=1`, to turn them off; piped or redirected output never has them.
+
 | Recipe | What it does |
 |---|---|
 | `ujust flatpak-preinstall` | Installs the Flatpak apps the image lists |

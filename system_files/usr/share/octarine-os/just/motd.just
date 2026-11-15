@@ -6,6 +6,7 @@
 [group('Setup')]
 toggle-motd:
     #!/usr/bin/env bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     set -uo pipefail
     flag="${HOME}/.config/no-show-user-motd"
     if [ -e "${flag}" ]; then
