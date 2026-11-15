@@ -358,7 +358,7 @@ jobs:
             for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
               check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
             done
-            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
 
