@@ -68,13 +68,20 @@ case "${mode}" in
         check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "test -n '${BASE_KERNEL:-}' && test '${kver}' = '${BASE_KERNEL:-}'"
         # Secure Boot: the NVIDIA modules must be signed with the key whose certificate the image ships for the MOK enrollment
         # (/etc/pki/akmods/certs/akmods-ublue.der, imported by `ujust hardware-setup`): the module's sig_key must equal that certificate's subject key
-        # identifier, otherwise an enrolled machine would refuse the modules. The modules must also be built for THIS kernel (vermagic starts with the
+        # identifier or serial number (see below), otherwise an enrolled machine would refuse the modules. The modules must also be built for THIS kernel (vermagic starts with the
         # kernel release). EXPECT_MODULE_SIGNER (keys/secureboot.env NVIDIA_MODULE_SIGNER, optional) pins the signer name as well. The DIAG line shows the real values.
         akmods_der=${AKMODS_CERT:-/etc/pki/akmods/certs/akmods-ublue.der}
         skid() { openssl x509 -inform DER -in "${akmods_der}" -noout -ext subjectKeyIdentifier 2>/dev/null | tail -n 1 | tr -d ' :' | tr 'a-f' 'A-F'; }
+        # The kernel reports a module's sig_key as the identifier the signature carries: the signing certificate's subject key identifier OR its serial
+        # number, depending on how the signer encoded it. Universal Blue's akmods build (ublue-os/akmods #632, 2026-11-11) switched from the first to the
+        # second for the SAME key: sig_key 7D:F8:... is the serial number of the published 2024 certificate certs/public_key.der (subject key identifier
+        # 2C:25:...). Both name this one certificate; the serial form must also come with the certificate's own common name as the module's signer.
+        serial() { openssl x509 -inform DER -in "${akmods_der}" -noout -serial 2>/dev/null | sed 's/^serial=//' | tr -d ' :' | tr 'a-f' 'A-F'; }
+        certcn() { openssl x509 -inform DER -in "${akmods_der}" -noout -subject -nameopt multiline 2>/dev/null | sed -n 's/^ *commonName *= *//p'; }
         modkey() { modinfo -F sig_key "$1" 2>/dev/null | tr -d ' :' | tr 'a-f' 'A-F'; }
-        for m in $(nvidia_modules | head -n 1); do echo "DIAG ${m}: signer='$(modinfo -F signer "${m}" 2>&1)' sig_key='$(modinfo -F sig_key "${m}" 2>&1)' vermagic='$(modinfo -F vermagic "${m}" 2>&1)'; akmods cert skid='$(skid)'"; done
-        check "every NVIDIA kernel module is signed with the key of ${akmods_der} (sig_key equals its subject key identifier)" "test -n \"\$(skid)\" && nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do test \"\$(modkey \"\$m\")\" = \"\$(skid)\" || exit 1; done )"
+        modok() { local k; k=$(modkey "$1"); [ -n "${k}" ] && { [ "${k}" = "$(skid)" ] || { [ "${k}" = "$(serial)" ] && [ "$(modinfo -F signer "$1")" = "$(certcn)" ]; }; }; }
+        for m in $(nvidia_modules | head -n 1); do echo "DIAG ${m}: signer='$(modinfo -F signer "${m}" 2>&1)' sig_key='$(modinfo -F sig_key "${m}" 2>&1)' vermagic='$(modinfo -F vermagic "${m}" 2>&1)'; akmods cert skid='$(skid)' serial='$(serial)' cn='$(certcn)'"; done
+        check "every NVIDIA kernel module is signed with the key of ${akmods_der} (sig_key equals its subject key identifier, or its serial number with the certificate's common name as signer)" "test -n \"\$(skid)\" && nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do modok \"\$m\" || exit 1; done )"
         if [ -n "${EXPECT_MODULE_SIGNER:-}" ]; then
             check "every NVIDIA kernel module names the pinned signer (${EXPECT_MODULE_SIGNER})" "( for m in \$(nvidia_modules); do test \"\$(modinfo -F signer \"\$m\")\" = '${EXPECT_MODULE_SIGNER}' || exit 1; done )"
         fi
