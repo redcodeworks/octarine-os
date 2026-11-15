@@ -49,7 +49,7 @@ fresh; bump nosuch TAGS=''
 check "an unknown service: exit 3" test "$rc" = 3
 fresh; sed -i 's/^POSTGRESQL_TAG=.*/POSTGRESQL_TAG=18.1-alpine/' "$root/ds.env"; bump postgresql TAGS='"18.1-alpine"'
 check "a tag outside the pinned major in the file is a bad pin" test "$rc" = 3
-check "the bump runner picks this script for the four datastore images and passes the major note to the pull request body" bash -c "grep -q 'datastore-pin-bump.sh' '$here/.github/scripts/bump-run.sh' && grep -q major_note '$here/.github/scripts/bump-run.sh'"
+check "the datastore bump script is DORMANT (Kevin, 2026-11-15: the datastore pins stay manual until they move into the fedora-toolbox list): it still parses, but neither the weekly workflow nor the bump runner uses it" bash -c "bash -n '$here/.github/scripts/datastore-pin-bump.sh' && ! grep -q datastore '$here/.github/scripts/bump-run.sh' '$here/.github/workflows/bump-pins.yml'"
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

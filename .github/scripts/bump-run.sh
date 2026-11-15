@@ -4,9 +4,9 @@
 # tab separated) whatever happens and exits non-zero when the pin's check FAILED (a registry that cannot be reached, a signature that does not verify,
 # a bad pin): nothing is changed then. Run from the repository root on a checkout of testing, with GH_TOKEN set for the PR step.
 #
-#   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|postgresql|valkey|seaweedfs|kafka|brew|builder
+#   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|brew|builder
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh, written by bump-upstream.sh and bump-ghostty.sh), image digest pins (bump-pin.sh, datastore-pin-bump.sh),
+# Kinds: source pins (upstream-check.sh and ghostty-check.sh, written by bump-upstream.sh and bump-ghostty.sh), image digest pins (bump-pin.sh; the datastore pin script is dormant: the datastore pins are manual since 2026-11-15),
 # the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs on every write) and the Fedora builder
 # digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for MIN_AGE_DAYS, default 7: the creation date of the
 # image is the stand-in for "has not been replaced since", a registry has no tag history).
@@ -62,15 +62,12 @@ case "${pin}" in
             unreachable) fail "${decision#unreachable }" ;;
             *) proposed="nothing to bump"; note="${decision}" ;;
         esac ;;
-    dev-packages | chunkah | postgresql | valkey | seaweedfs | kafka)
+    dev-packages | chunkah)
         go=$(mktemp)
-        case "${pin}" in
-            dev-packages | chunkah) script="${here}/bump-pin.sh"; branch="bump/${pin}-digest" ;;
-            *) script="${here}/datastore-pin-bump.sh"; branch="bump/${pin}-digest" ;;
-        esac
+        script="${here}/bump-pin.sh"; branch="bump/${pin}-digest"
         GITHUB_OUTPUT="${go}" "${script}" "${pin}"; rc=$?
         read_out() { sed -n "s/^$1=//p" "${go}" | tail -n1; }
-        result=$(read_out result); old=$(read_out previous); new=$(read_out digest); tag=$(read_out tag); major_note=$(read_out major_note)
+        result=$(read_out result); old=$(read_out previous); new=$(read_out digest); tag=$(read_out tag)
         current="${old:0:19}"; case "${rc}" in 0 | 10) ;; *) fail "the check failed (${result:-exit ${rc}})" ;; esac
         if [[ "${result}" == equal ]]; then proposed="nothing to bump"; note="pin equals latest"
         else
@@ -82,8 +79,6 @@ case "${pin}" in
                 case "${pin}" in
                     chunkah) echo "Moves the chunkah pin (\`config/chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${old}\` to \`${new}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions identity of the coreos/chunkah repository) verified." ;;
                     dev-packages) echo "Moves the dev-packages pin from \`${old}\` to \`${new}\` (tag \`${tag}\`): the digest of \`ghcr.io/redcodeworks/dev-packages:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`." ;;
-                    *) echo "Moves the ${pin} datastore image pin from \`${old}\` to \`${tag}\` (\`${new}\`): the newest tag inside the pinned major, with its manifest digest from the registry (a public image: no signature check)."
-                       if [[ -n "${major_note}" ]]; then echo; echo "**${major_note}.** Majors are never bumped automatically (a database or broker major needs a dump and restore)."; fi ;;
                 esac
                 echo; echo "Only ${file} changes. ${body_tail}"
             } > "${bodyfile}"
