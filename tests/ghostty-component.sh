@@ -19,12 +19,24 @@ sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 g="$here/binaries/ghostty"
 
 # ---- the pins and the recipe
-check "upstream.env: Ghostty v1.4.0 pinned by tag AND peeled commit (the build fails if the tag moved)" bash -c "grep -qx 'UPSTREAM_REPO=ghostty-org/ghostty' '$g/upstream.env' && grep -qx 'UPSTREAM_TAG=v1.4.0' '$g/upstream.env' && grep -qx 'UPSTREAM_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd' '$g/upstream.env' && source '$here/binaries/lib/upstream-env.sh' && upstream_env_load '$g/upstream.env' && [ \"\$UPSTREAM_WATCH\" = ghostty-org/ghostty ]"
-check "zig.env: Zig 0.17.0 (the version Ghostty 1.4.0 builds with), the official ziglang.org URL, a sha256, no pinned size and the minisign key, and nothing else" bash -c "
-  grep -qx 'ZIG_VERSION=0.17.0' '$g/zig.env' && grep -qx 'ZIG_URL=https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz' '$g/zig.env' &&
-  grep -qx 'ZIG_SHA256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026' '$g/zig.env' && ! grep -q '^ZIG_SIZE' '$g/zig.env' &&
-  grep -qx 'ZIG_SIGNATURE_URL=https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz.minisig' '$g/zig.env' && grep -qx 'ZIG_MINISIGN_KEY=RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U' '$g/zig.env' &&
-  [ \"\$(grep -vE '^[[:space:]]*(#|\$)' '$g/zig.env' | wc -l)\" = 5 ]"
+check "upstream.env: the repo, a stable v<semver> tag AND a 40-hex peeled commit (the build fails if the tag moved); the loader accepts it (format only: a bump PR moves the values)" bash -c "grep -qx 'UPSTREAM_REPO=ghostty-org/ghostty' '$g/upstream.env' && grep -qE '^UPSTREAM_TAG=v[0-9]+\\.[0-9]+\\.[0-9]+\$' '$g/upstream.env' && grep -qE '^UPSTREAM_COMMIT=[0-9a-f]{40}\$' '$g/upstream.env' && source '$here/binaries/lib/upstream-env.sh' && upstream_env_load '$g/upstream.env' && [ \"\$UPSTREAM_WATCH\" = ghostty-org/ghostty ]"
+check "zig.env: exactly the five keys, consistent with each other (URL and signature URL name the version, the signature URL is the tarball URL plus .minisig, the official ziglang.org host), a 64-hex sha256, no pinned size, a minisign key (format only: a Zig or Ghostty bump PR moves the values)" python3 -I - "$g/zig.env" <<'PY'
+import re, sys
+kv = {}
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line and not line.startswith("#"):
+        k, v = line.split("=", 1)
+        assert k not in kv, "duplicate " + k
+        kv[k] = v
+assert set(kv) == {"ZIG_VERSION", "ZIG_URL", "ZIG_SHA256", "ZIG_SIGNATURE_URL", "ZIG_MINISIGN_KEY"}, sorted(kv)
+v = kv["ZIG_VERSION"]
+assert re.fullmatch(r"\d+\.\d+\.\d+", v), v
+assert kv["ZIG_URL"] == "https://ziglang.org/download/%s/zig-x86_64-linux-%s.tar.xz" % (v, v), kv["ZIG_URL"]
+assert kv["ZIG_SIGNATURE_URL"] == kv["ZIG_URL"] + ".minisig", kv["ZIG_SIGNATURE_URL"]
+assert re.fullmatch(r"[0-9a-f]{64}", kv["ZIG_SHA256"]), kv["ZIG_SHA256"]
+assert re.fullmatch(r"RW[A-Za-z0-9+/]{40,}={0,2}", kv["ZIG_MINISIGN_KEY"]), kv["ZIG_MINISIGN_KEY"]
+PY
 check "Containerfile: builder from builder.env, the Zig and the source are fetched and verified before the build, a FROM scratch image holds only /ghostty, the packages include gtk4-layer-shell-devel, blueprint-compiler and minisign" bash -c "
   cf='$g/Containerfile'; grep -qx 'FROM \${BUILDER} AS build' \$cf && grep -q 'fetch-zig.sh /binaries/ghostty/zig.env /opt/zig' \$cf && grep -q 'fetch-source.sh /binaries/ghostty/upstream.env /src' \$cf &&
   grep -q 'gtk4-layer-shell-devel' \$cf && grep -q 'blueprint-compiler' \$cf && grep -qw 'minisign' \$cf && grep -q 'libadwaita-devel' \$cf && grep -qx 'COPY --from=build /out /ghostty' \$cf &&

@@ -22,9 +22,9 @@ rules:
   # mechanism (permissions contents: write for this job only), there is no other credential in the workflow.
   artipacked:
     ignore:
-      - bump-pins.yml:48:9
-      - bump-pins.yml:89:9
-      - bump-pins.yml:135:9
+      - bump-pins.yml:50:9
+      - bump-pins.yml:92:9
+      - bump-pins.yml:139:9
   # The only writes to $GITHUB_PATH/$GITHUB_ENV: setup-tool adds its own pinned tool directory under $HOME to PATH (no input reaches the value).
   # build-nvidia-dx.yml exports values it computed itself (digests, tags, image names from its own scripts and `skopeo inspect`), never text of a pull request.
   github-env:
