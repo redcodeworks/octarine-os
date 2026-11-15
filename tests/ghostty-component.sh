@@ -128,6 +128,7 @@ mkimg "$root/img"; mkdir -p "$root/img/ghostty/root/usr/share/terminfo/g"; echo 
 rm -rf "$dest"; mkdir -p "$dest/usr/share/terminfo/g"; echo base >"$dest/usr/share/terminfo/g/ghostty"
 env BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?
 check "installer: a terminfo file the image already has (ncurses-term ships ghostty) is KEPT and skipped, everything else of ghostty is installed, no conflict" bash -c "[ $rc = 0 ] && grep -q 'kept the image.s own terminfo: usr/share/terminfo/g/ghostty' '$root/run' && [ \"\$(cat '$dest/usr/share/terminfo/g/ghostty')\" = base ] && [ -x '$dest/usr/bin/ghostty' ] && [ ! -e '$lic/MISSING' ]"
+check "installer: the ghostty files are extracted into DESTDIR or, when DESTDIR is empty (the real image build), into / (tar -C with an empty string is not the root: the first real install put nothing at /usr/bin/ghostty)" bash -c "grep -q 'tar -C \"\\\${dest:-/}\" -xf -' '$here/build_files/install-binaries.sh'"
 mkimg "$root/img"; echo '../../etc/passwd' >>"$root/img/ghostty/FILES"; inst X=1
 check "installer: a FILES entry outside usr/ leaves ghostty out (nothing is written outside /usr)" bash -c "[ $rc = 0 ] && grep -q 'outside usr/' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ]"
 printf '#!/usr/bin/env bash\necho "\tlibgtk4-layer-shell.so.0 => not found"\n' >"$bin/ldd-missing"; chmod +x "$bin/ldd-missing"
