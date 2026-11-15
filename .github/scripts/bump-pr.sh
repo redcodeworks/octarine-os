@@ -17,6 +17,14 @@
 # BUMP_BASE (default testing) and REPO_ROOT exist for the tests.
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# This script checks out the bump branch (and its older copy of every script) while it runs, which would swap the files it and bump-checks.sh are
+# executed from (found 2026-11-15: the repair path ran the old bump-checks.sh of the branch). Run from a private copy of both, with REPO_ROOT fixed.
+if [[ -z "${BUMP_PR_COPY:-}" ]]; then
+    export REPO_ROOT="${REPO_ROOT:-$(cd "${here}/../.." && pwd)}"
+    copy=$(mktemp -d)
+    cp "${here}/bump-pr.sh" "${here}/bump-checks.sh" "${copy}/"
+    BUMP_PR_COPY=1 exec bash "${copy}/bump-pr.sh" "$@"
+fi
 root="${REPO_ROOT:-$(cd "${here}/../.." && pwd)}"
 base="${BUMP_BASE:-testing}"
 branch="" title="" bodyfile="" message="" files=()
@@ -44,10 +52,16 @@ if [[ -n "${open}" && "$(jq -r .title <<<"${open}")" == "${title}" ]]; then
     cnt=$(gh pr view "${n}" --json statusCheckRollup --jq '[.statusCheckRollup[]?|select(.name=="test")]|length' 2> /dev/null || true)
     if [[ "${cnt}" == 0 ]]; then
         git fetch -q origin
-        git checkout -q -B "${branch}" "origin/${branch}"
-        git commit -q --allow-empty -m "Re-run the checks of this bump (the earlier ones did not count for the pull request)"
-        git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
-        "${here}/bump-checks.sh" "${branch}" "$(git rev-parse HEAD)" || true
+        tip=$(git rev-parse "origin/${branch}")
+        # a tip without any GitHub Actions check suite takes the reported checks as it is (an earlier repair commit); one that has a suite needs a new commit
+        suites=$(gh api "repos/${GITHUB_REPOSITORY:-}/commits/${tip}/check-suites" --jq '[.check_suites[]|select(.app.slug=="github-actions")]|length' 2> /dev/null || true)
+        if [[ "${suites}" != 0 ]]; then
+            git checkout -q -B "${branch}" "origin/${branch}"
+            git commit -q --allow-empty -m "Re-run the checks of this bump (the earlier ones did not count for the pull request)"
+            git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
+            tip=$(git rev-parse HEAD)
+        fi
+        "${here}/bump-checks.sh" "${branch}" "${tip}" || true
     fi
     emit action noop; emit pr_number "${n}"; emit pr_url ""
     exit 0
