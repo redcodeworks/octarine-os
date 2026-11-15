@@ -1094,7 +1094,21 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
     With no `~/.config/niri/config.kdl` yet the step is skipped (run the `niri` step first). After writing it runs `niri validate -c
     ~/.config/niri/config.kdl` when niri is on PATH; on failure it restores every touched file from a snapshot, removes this run's backups,
     reports FAILED (exit 1, re-run hint); without niri it says validation was skipped.
-  - **"NO" is verifiable.** `40-binds.kdl` equals the `binds` block of `/usr/share/doc/niri/default-config.kdl` except Mod+D (fuzzel) and Super+Alt+L
+  - **Terminal for Mod+T (step `terminal`, 2026-11-15, Kevin: Alacritty stays the default).** The shipped `/etc/niri/40-binds.kdl` and the templates keep Alacritty (the
+  guard in `tests/niri-setup.sh`: no ghostty, ptyxis, kitty or foot in any shipped niri file; `60-window-rules.kdl` has niri's own default rule for the WezTerm app-id, the one exception). The step
+  (`--terminal alacritty|ptyxis|ghostty|kitty|wezterm|foot`, `--force`, or a picker in the checklist; `--yes` alone and `--no` change nothing) edits ONLY the user's copies: the one uncommented
+  `<modifier>+T ... spawn` line of `~/.config/niri/40-binds.kdl` and of `40-binds-standard.kdl` (the wizard's file), and records `terminal=<name>` in `~/.config/octarine-os/niri-terminal`
+  (a state file, because the wizard has to know the choice before any bind line exists; without it the choice is read back from the bind line). Detection: the binary on PATH, else
+  `/home/linuxbrew/.linuxbrew/bin`, else `~/.local/bin`; the picker lists only found terminals (Alacritty always, first) and names the missing ones; a terminal found outside PATH is spawned by
+  absolute path (the niri session may not have those directories on PATH). A not-installed terminal asks (default no) or needs `--force`; unknown names exit 2. The line is rewritten only when it is
+  exactly one the recipe writes (title `Open a Terminal: <name>`, `spawn "<name>"`, plus `"--new-window"` for Ptyxis); any other `+T` line is the user's: left alone, the exact line is printed,
+  the step is "skipped (your Mod+T line is customized)", not a failure. Templates use `@TERMINAL_NAME@` and `@TERMINAL_SPAWN@` (only `standard.kdl.in` has the terminal bind).
+  Spawn commands: `alacritty`, `ptyxis --new-window` (verified in `ptyxis --help`: "New terminal window"; the behavior with a running instance is not verified, `--new-window` makes
+  a window explicit), `ghostty` (the wrapper in `~/.local/bin` or the image's future `/usr/bin/ghostty`; not verified: single-instance behavior), `kitty` (not verified here: not installed),
+  `wezterm` (verified in wezterm's `main.rs`: no subcommand means `start`; Wayland on by default in its config), `foot` (not verified: the project is on Codeberg). Tests: `tests/niri-setup.sh`
+  (all six, detection, unknown and missing names, `--force`, `--no`, `--yes`, idempotence, switching, the protection of a user's line, no copy yet, `niri validate` when niri exists) and
+  `tests/niri-keybinds.sh` (the wizard uses the recorded choice, the step also edits the generated file).
+- **"NO" is verifiable.** `40-binds.kdl` equals the `binds` block of `/usr/share/doc/niri/default-config.kdl` except Mod+D (fuzzel) and Super+Alt+L
     (swaylock) removed (the image ships neither) and the playerctl and brightness keys guarded with `command -v`; Alacritty is niri's own default
     terminal. `tests/niri-keybinds.sh` fails on any other difference.
   - **Tests** `tests/niri-keybinds.sh`: the matrix (3 layouts x 12 ordered switch/move pairs x 5 other modifiers = 180 runs of the real recipe against

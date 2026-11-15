@@ -141,10 +141,10 @@ if dups:
 F
 # ---- templates
 check "three templates exist" bash -c "[ -f '$kbdir/standard.kdl.in' ] && [ -f '$kbdir/compact.kdl.in' ] && [ -f '$kbdir/hhkb.kdl.in' ]"
-check "templates use only the placeholders SWITCH, MOVE, OTHER (the DEFAULT_AUDIO ones are wpctl arguments)" bash -c "! grep -ohE '@[A-Z_]+@' '$kbdir'/*.kdl.in | grep -vE '^@(SWITCH|MOVE|OTHER|DEFAULT_AUDIO_SINK|DEFAULT_AUDIO_SOURCE)@\$' | grep -q ."
+check "templates use only the placeholders SWITCH, MOVE, OTHER, TERMINAL_NAME, TERMINAL_SPAWN (the DEFAULT_AUDIO ones are wpctl arguments)" bash -c "! grep -ohE '@[A-Z_]+@' '$kbdir'/*.kdl.in | grep -vE '^@(SWITCH|MOVE|OTHER|TERMINAL_NAME|TERMINAL_SPAWN|DEFAULT_AUDIO_SINK|DEFAULT_AUDIO_SOURCE)@\$' | grep -q ."
 check "templates hard-code no MEH, HYPR or personal launcher, folder or app" bash -c "! grep -hvE '^\s*//' '$kbdir'/*.kdl.in | grep -qEi 'Ctrl\\+Alt\\+Shift|Ctrl\\+Shift\\+Alt|ghostty|yazi|helix|fuzzel|swaylock|/home/|Documents|Downloads|Projects|firefox|zellij'"
 check "compact and HHKB use only the switch and move placeholders" bash -c "! grep -qF '@OTHER@' '$kbdir/compact.kdl.in' '$kbdir/hhkb.kdl.in'"
-check "standard template terminal is alacritty" grep -q 'spawn "alacritty"' "$kbdir/standard.kdl.in"
+check "standard template: the terminal comes from the TERMINAL_NAME and TERMINAL_SPAWN placeholders (the choice of ujust niri-setup), none is hard-coded" grep -q "Open a Terminal: @TERMINAL_NAME@\" { spawn @TERMINAL_SPAWN@; }" "$kbdir/standard.kdl.in"
 check "no ghostty or ptyxis in the shipped keybind files" bash -c "! grep -qiE 'ghostty|ptyxis' '$kbdir'/*"
 
 # ---- NO path: the shipped 40-binds.kdl is niri's upstream default, with documented deviations only
@@ -427,6 +427,26 @@ if [ "$have_niri" = 1 ]; then
 else
     echo "skip matrix (niri is not installed here)"
 fi
+
+# ---- the wizard writes the terminal chosen with `--only terminal` (the recorded choice); the terminal step also edits the generated file
+tb="$root/tbin"; mkdir -p "$tb"; for t in kitty ptyxis; do printf '#!/bin/sh\nexit 0\n' >"$tb/$t"; chmod +x "$tb/$t"; done
+reset; PATH_BIN="$bin:$tb"
+run '' --yes --only niri
+run '' --only keybinds --keybinds standard
+check "terminal and wizard: with no recorded choice the generated Mod+T line is Alacritty" bash -c "grep -q 'Mod+T hotkey-overlay-title=\"Open a Terminal: alacritty\" { spawn \"alacritty\"; }' '$(nd)/40-binds-standard.kdl'"
+run '' --only terminal --terminal kitty
+check "terminal after the wizard: the generated 40-binds-standard.kdl line AND the plain 40-binds.kdl line both change, nothing else in them" bash -c "grep -q 'Open a Terminal: kitty\" { spawn \"kitty\"; }' '$(nd)/40-binds-standard.kdl' && grep -q 'Open a Terminal: kitty\" { spawn \"kitty\"; }' '$(nd)/40-binds.kdl'"
+run '' --only keybinds --keybinds standard
+check "wizard re-run after the choice: regenerates the same file (already done, no diff, no backup)" bash -c "[ $rc = 0 ] && grep -qE '^keybinds +already done' '$root/out' && [ \$(ls '$(nd)'/40-binds-standard.kdl.bak-* 2>/dev/null | wc -l) = 0 ]"
+reset; PATH_BIN="$bin:$tb"
+run '' --yes --only niri
+run '' --only terminal --terminal ptyxis
+run '' --only keybinds --keybinds compact --other-mod ctrl-alt
+check "wizard after the choice (state before the generated files exist): the generated file uses it with the Ptyxis spawn arguments and the chosen modifier; no duplicate binds" bash -c "grep -q 'Ctrl+Alt+T hotkey-overlay-title=\"Open a Terminal: ptyxis\" { spawn \"ptyxis\" \"--new-window\"; }' '$(nd)/40-binds-standard.kdl' && python3 '$root/dups.py' '$(nd)/40-binds-standard.kdl' '$(nd)/41-binds-compact.kdl'"
+if [ "$have_niri" = 1 ]; then
+    check "terminal and wizard: niri validate accepts the result" bash -c "'$realbin/niri' validate -c '$(nd)/config.kdl' >/dev/null 2>&1"
+fi
+PATH_BIN="$bin"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
