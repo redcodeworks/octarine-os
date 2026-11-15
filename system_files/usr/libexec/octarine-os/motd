@@ -13,7 +13,8 @@ if [ "${OCTARINE_MOTD_FORCE_TTY:-}" != 1 ] && [ ! -t 1 ]; then exit 0; fi
 [ ! -e "${HOME}/.config/no-show-user-motd" ] || exit 0
 
 if command -v fastfetch > /dev/null 2>&1; then
-    fastfetch 2> /dev/null || true
+    # exactly one blank line below the fastfetch output, only when it ran and succeeded (the tip and /etc/user-motd branches below stay as they are)
+    if fastfetch 2> /dev/null; then printf '\n'; fi
     exit 0
 fi
 

@@ -42,8 +42,10 @@ OCTARINE_MOTD_SHOWN=1 run
 check "OCTARINE_MOTD_SHOWN set: silent (the caller already showed it)" bash -c "[ ! -s '$root/out' ]"
 withff; run
 check "fastfetch on PATH: it runs, with no tip and no static text next to it" bash -c "[ $rc = 0 ] && grep -qx fastfetch-ran '$root/out' && ! grep -q 'Tip:' '$root/out' && ! grep -q Static '$root/out'"
+check "fastfetch that ran: its output is followed by exactly ONE blank line (the output is fastfetch-ran and one empty line, nothing else)" bash -c "[ \"\$(od -An -c '$root/out' | tr -d ' \n')\" = 'fastfetch-ran\\n\\n' ]"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$root/bin/fastfetch"; run
 check "a failing fastfetch never fails the shell (exit 0)" test "$rc" = 0
+check "a failing fastfetch prints no blank line either (empty output)" bash -c "[ ! -s '$root/out' ]"
 noff; run
 check "no fastfetch: one tip from the base tip files, markdown emphasis and code quotes removed" bash -c "[ $rc = 0 ] && grep -qx 'Tip: Need a container? ujust toolbox can help.' '$root/out'"
 OCTARINE_MOTD_TIPS="$root/none" run
