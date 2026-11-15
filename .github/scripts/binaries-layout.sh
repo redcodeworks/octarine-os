@@ -14,9 +14,13 @@ listing=${1:?listing}
 tsv=${2:?schedulers.tsv}
 shift 2
 [[ $# -gt 0 ]] || { echo "binaries-layout.sh: name at least one component" >&2; exit 2; }
-norm() { sed 's#^\./##' "${listing}"; }
+# The normalized listing goes to a file ONCE: a `norm | grep -q` pipeline under pipefail fails with a SIGPIPE of sed as soon as grep -q finds its match
+# early in a long listing (the ghostty component lists 900 files: every need() reported the file as missing although it was there).
+normfile=$(mktemp); trap 'rm -f "${normfile}"' EXIT
+sed 's#^\./##' "${listing}" > "${normfile}"
+norm() { cat "${normfile}"; }
 status=0
-need() { norm | grep -qxF -- "$1" || { echo "::error::the binaries image lacks $1" >&2; status=1; }; }
+need() { grep -qxF -- "$1" "${normfile}" || { echo "::error::the binaries image lacks $1" >&2; status=1; }; }
 for c in "$@"; do
     case "${c}" in
         scx)
@@ -29,11 +33,11 @@ for c in "$@"; do
         *) echo "::error::binaries-layout.sh does not know the component '${c}'" >&2; exit 1 ;;
     esac
     need "${c}/SOURCE"; need "${c}/BUILDINFO"
-    norm | grep -q "^${c}/LICENSES/." || { echo "::error::the binaries image has no ${c}/LICENSES" >&2; status=1; }
+    grep -q "^${c}/LICENSES/." "${normfile}" || { echo "::error::the binaries image has no ${c}/LICENSES" >&2; status=1; }
 done
 if [[ "${assembled}" == 1 ]]; then
     need SOURCE; need BUILDINFO; need COMPONENTS
-    norm | grep -q '^LICENSES/.' || { echo "::error::the binaries image has no top-level LICENSES" >&2; status=1; }
+    grep -q '^LICENSES/.' "${normfile}" || { echo "::error::the binaries image has no top-level LICENSES" >&2; status=1; }
     extra=$(norm | cut -d/ -f1 | sort -u | grep -vxE 'SOURCE|BUILDINFO|COMPONENTS|LICENSES' | grep -vxF -f <(printf '%s\n' "$@") || true)
     [[ -z "${extra}" ]] || { echo "::error::the binaries image holds unexpected top-level entries: ${extra//$'\n'/ }" >&2; status=1; }
 fi
