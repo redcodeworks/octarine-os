@@ -156,20 +156,3 @@ jobs:
 
       - name: Scan the full history
         run: gitleaks git --config .gitleaks.toml --redact --no-banner .
-
-  report:
-    name: report
-    needs: [test]
-    if: always() && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-26.04
-    permissions:
-      checks: write
-    steps:
-      - name: Post check runs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-        run: |
-          for n in test secrets; do
-            gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" -f name="$n" -f head_sha="${SHA}" -f status=completed -f conclusion=success -f "output[title]=posted" -f "output[summary]=experiment"
-          done
