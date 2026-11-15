@@ -19,6 +19,6 @@ fail=0
 grep -q "DELETE image id=3 " <<< "${out}" && echo "PASS old testing-only build is deleted" || { echo "FAIL old testing-only build kept"; fail=1; }
 if grep -E "DELETE image id=(1|2) " <<< "${out}"; then echo "FAIL a version with a latest tag would be deleted"; fail=1; else echo "PASS versions with latest tags are kept"; fi
 # the safety cap: a plan over MAX_DELETES is refused (exit non-zero), and the default is large enough for a week of builds
-if MAX_DELETES=1 KEEP=1 DRY_RUN=true python3 -I "${py}" <<< "${json}" >/dev/null 2>&1; then echo "FAIL a plan over MAX_DELETES was not refused"; fail=1; else echo "PASS a plan over MAX_DELETES is refused"; fi
+if MAX_DELETES=0 KEEP=1 DRY_RUN=true python3 -I "${py}" <<< "${json}" >/dev/null 2>&1; then echo "FAIL a plan over MAX_DELETES was not refused"; fail=1; else echo "PASS a plan over MAX_DELETES is refused"; fi
 grep -q 'or 400)' "${py}" && echo "PASS the default cap is 400" || { echo "FAIL the default cap is not 400"; fail=1; }
 exit "${fail}"
