@@ -70,17 +70,24 @@ install_extest() {
     installed_note[extest]="libextest.so (32-bit and 64-bit)"
 }
 install_ghostty() {
-    local g=${root}/ghostty f
+    local g=${root}/ghostty f list=() skipped=()
     test -x "${g}/root/usr/bin/ghostty" && test -s "${g}/FILES" || { echo "ghostty lacks root/usr/bin/ghostty or FILES" >&2; return 1; }
     while IFS= read -r f; do
         [[ "${f}" == usr/* && "${f}" != *..* ]] || { echo "ghostty FILES holds a path outside usr/: ${f}" >&2; return 1; }
         test -e "${g}/root/${f}" || test -L "${g}/root/${f}" || { echo "ghostty FILES lists ${f}, which is not in the image" >&2; return 1; }
-        if test -e "${dest}/${f}" || test -L "${dest}/${f}"; then echo "ghostty would overwrite ${f}, which the image already has" >&2; return 1; fi
+        if test -e "${dest}/${f}" || test -L "${dest}/${f}"; then
+            # the terminfo entries ghostty and xterm-ghostty are already in the base (ncurses-term): the image's own file stays, it is the same
+            # terminal description; any other file the image already has is a real conflict
+            if [[ "${f}" == usr/share/terminfo/* ]]; then skipped+=("${f}"); continue; fi
+            echo "ghostty would overwrite ${f}, which the image already has" >&2; return 1
+        fi
+        list+=("${f}")
     done < "${g}/FILES"
-    cp -a "${g}/root/usr/." "${dest}/usr/"
-    while IFS= read -r f; do track ghostty "${dest}/${f}"; done < "${g}/FILES"
+    [[ ${#skipped[@]} -eq 0 ]] || echo "ghostty: kept the image's own terminfo: ${skipped[*]}"
+    printf '%s\n' "${list[@]}" | tar -C "${g}/root" -cf - -T - | tar -C "${dest}" -xf -
+    for f in "${list[@]}"; do track ghostty "${dest}/${f}"; done
     elfs[ghostty]+=" ${dest}/usr/bin/ghostty"
-    installed_note[ghostty]="$(wc -l < "${g}/FILES") files under /usr"
+    installed_note[ghostty]="${#list[@]} files under /usr (${#skipped[@]} terminfo files of the image kept)"
 }
 declare -A installed_note
 

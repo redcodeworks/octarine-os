@@ -179,7 +179,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   Staged: `root/usr/...` (the whole installed tree: `bin/ghostty`, `share/applications/com.mitchellh.ghostty.desktop`, the D-Bus service, `lib/systemd/user/app-com.mitchellh.ghostty.service`
   in system-package mode, metainfo, icons `com.mitchellh.ghostty`, `share/ghostty/{shell-integration,themes}`, terminfo, completions, vim/nvim/bat files, the Nautilus and KDE
   integrations, locale files: inferred from `src/build/GhosttyResources.zig`; `FILES` lists the real ones), the MIT license, SOURCE and BUILDINFO (zig version and fetch
-  record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING) and the OS
+  record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING; the exception: the terminfo entries `usr/share/terminfo/*`, which ncurses-term already ships for ghostty, are kept as the image has them and skipped) and the OS
   image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
   (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
   owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
