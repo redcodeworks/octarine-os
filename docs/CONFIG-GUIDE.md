@@ -202,7 +202,9 @@ timers are installed but not enabled. Turn on what you use.
   - Lutris cannot wrap Steam games with gamescope or GameMode. This is a known upstream limit.
 - **GameMode** with a twist: it switches `tuned` to `latency-performance` while a game runs and back
   to `balanced` after. If the daemon dies mid-game, run `tuned-adm profile balanced`. The shipped
-  config keeps the governor at `powersave`, working around an upstream bug on amd-pstate.
+  config sets the governor to `performance` during a game. On amd-pstate (active mode) an upstream bug (GameMode #419)
+  may leave the governor or energy preference at `performance` afterwards; if so, set `desiredgov=powersave` in
+  `~/.config/gamemode.ini`.
 - **Sunshine and Moonlight streaming:** Sunshine runs as a Flatpak user unit and is not autostarted.
   A prep command switches the display to the client's resolution and back, with separate niri,
   Hyprland and GNOME backends. A lock-watcher stops it when the session locks. Keep a rescue
