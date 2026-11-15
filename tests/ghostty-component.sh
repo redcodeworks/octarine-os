@@ -322,7 +322,7 @@ check "check: an unreadable index.json is unreachable" bash -c "[[ \"$out\" == u
 # ---- bump-ghostty.sh: a local origin and a stub gh
 origin="$root/origin.git"; git init -q --bare -b testing "$origin"
 wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty" "$wc/.github/scripts"
-cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$wc/.github/scripts/"
+cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$wc/.github/scripts/"
 cp "$g/upstream.env" "$g/zig.env" "$wc/binaries/ghostty/"
 git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$origin"; git -C "$wc" push -q origin testing
 cat >"$bin/gh" <<'F'
@@ -360,15 +360,9 @@ check "bump: Zig arguments that are not an official ziglang.org x86_64-linux ent
 check "bump: an unknown mode is refused" test "$rc" = 2
 
 # ---- the workflow and the documentation of the update path
-check "upstream-check.yml: the generic loop skips ghostty, which has its own step (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump), a wait is a notice and says so in the summary, nothing is published" python3 -I - "$here" <<'PY'
-import sys, yaml
-t = open(sys.argv[1] + "/.github/workflows/upstream-check.yml").read()
-assert "[[ \"${dir}\" != binaries/ghostty ]] || continue" in t
-for n in ("ghostty-check.sh", "bump-ghostty.sh ghostty", "bump-ghostty.sh zig", "wait)", "unreachable)", "echo \"- \\`binaries/ghostty\\`: ${decision}\" >> \"${GITHUB_STEP_SUMMARY}\""):
-    assert n in t, n
-assert "packages: write" not in t and "podman" not in t and "cosign" not in t
-yaml.safe_load(t)
-PY
+ghostty_in_bump_runner() { local r="$here/.github/scripts/bump-run.sh" w="$here/.github/workflows/bump-pins.yml"
+    grep -q 'ghostty-check.sh' "$r" && grep -q 'bump-ghostty.sh" ghostty' "$r" && grep -q 'bump-ghostty.sh" zig' "$r" && grep -q 'wait)' "$r" && grep -q 'pin: \[scx, extest, ghostty\]' "$w" && ! grep -q 'packages: write\|podman' "$w"; }
+check "bump-pins.yml: ghostty is one of the source pins (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump through bump-run.sh), a wait is not a failure, nothing is published" ghostty_in_bump_runner
 check "CLAUDE.md documents the update path: the Ghostty tag decides the Zig minor, a patch bump is separate and low priority, a missing Zig tarball opens nothing" bash -c "grep -q 'Ghostty tag decides the Zig minor' '$here/CLAUDE.md' && grep -q 'bump/zig' '$here/CLAUDE.md' && grep -q 'ghostty-check.sh' '$here/CLAUDE.md'"
 
 echo

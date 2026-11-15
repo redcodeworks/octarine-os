@@ -79,6 +79,15 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
   the CI steps and the smoke assertions; existing prefixes stay untouched.
 
+## Pin bumps (`bump-pins.yml`, one weekly workflow; 2026-11-15, Kevin: "consolidate the workflow, keep one PR per pin bump")
+
+- **One workflow, one schedule:** `.github/workflows/bump-pins.yml`, Monday 07:00 UTC plus `workflow_dispatch` (it replaced `upstream-check.yml`, Monday, and the old Tuesday `bump-pins.yml`; scheduled workflows run only from `main`, so the schedule starts after the first promotion; try it before with `gh workflow run bump-pins.yml --ref testing`: PRs appear only when something is newer). Independent jobs (matrices with `fail-fast: false`, a failing pin does not stop the others): `sources` (scx, extest, ghostty), `digests` (chunkah, dev-packages, postgresql, valkey, seaweedfs, kafka), `external` (brew, builder) and a `summary` job (`if: always()`) that writes ONE table (pin, current, proposed, PR or nothing to bump, status) and fails the run when any pin failed, which `scripts/scheduled-runs.sh` reports.
+- Pins bumped by bump-pins.yml: scx, extest, ghostty, chunkah, dev-packages, postgresql, valkey, seaweedfs, kafka, brew, builder.
+- **ONE PR per pin**, branch `bump/<name>` into `testing` (`bump/scx`, `bump/extest`, `bump/ghostty` and `bump/zig` for a Zig patch, `bump/chunkah-digest`, `bump/dev-packages-digest`, `bump/<datastore>-digest`, `bump/brew`, `bump/builder`), created or updated in place, only the pin lines changed, merged by the owner. Plumbing: `.github/scripts/bump-pr.sh` (branch from testing without force-push, the writer command, only the listed pin files may change, commit, push, PR create or edit, dispatch of the Test workflow so `test` and `secrets` attach; an open PR with the same title is a no-op). Decision: `.github/scripts/bump-run.sh <pin>` (per kind: `upstream-check.sh`, `ghostty-check.sh`, `bump-pin.sh`, `datastore-pin-bump.sh`, and the two new ones) and `bump-summary.sh`. A registry that cannot be reached or a signature that does not verify fails that pin (red) and changes nothing.
+- **brew** (new): the newest 8-digit dated tag of `ghcr.io/ublue-os/brew` (the rule of `just brew-bump`), only when newer than `ARG BREW_TAG`; `just brew-bump <tag>` IS the pin writer (digest and the cosign check against `keys/ublue-os-brew-cosign.pub`).
+- **builder** (new): `binaries/builder.env` keeps the Fedora major and moves to the current digest of `fedora:<major>` only once that digest has been the tag's value for `MIN_AGE_DAYS` (default 7; the image's creation date is the stand-in, a registry has no tag history; the same idea as a Dependabot cooldown, and it avoids rebuilding every component for a digest that Fedora replaces the next day). A builder bump changes the content key of EVERY binaries component (about 4.4 min scx, 1 min extest, 11 min Ghostty on a runner, in parallel): the PR body says so.
+- Stay MANUAL by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor in `setup-tool` and the workflows), bootc-image-builder, the runner label, the repository variables and the signing key. Tests: `tests/bump-run.sh` (helper, brew and builder with stub registries, the table, the workflow and this list), `tests/bump-pins.sh`, `tests/datastore-bump.sh`, `tests/upstream-check.sh`.
+
 ## Prebuilt binaries (binaries/)
 
 The default image ships binaries that are built in this repository, not compiled in the image build and not taken from a foreign
@@ -183,7 +192,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
   (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
   owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
-  **Update path (weekly `upstream-check.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
+  **Update path (weekly `bump-pins.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
   (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one opens ONE pull request on `bump/ghostty` (`bump-ghostty.sh ghostty`)
   that moves `upstream.env` (tag AND peeled commit) and `zig.env` (version, URL, sha256, size, signature URL) together: the Zig minor is read from `.minimum_zig_version` in that
   tag's `build.zig.zon` and the newest published patch of that minor (x86_64-linux tarball) comes from `index.json`; when no tarball of that minor is published yet (or the newest is
@@ -198,7 +207,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   **Dependency cache (2026-11-15; profile of the CI builds: scx cargo download under 1 percent of 261 s, extest under 2 percent of 53 s: no cache; Ghostty: the 37-package fetch is about 144 of 645 s, 22 percent, the compile 363 s, dnf 44 s; no prebuilt builder image by Kevin's decision).** `binaries-component.yml` restores and saves (pinned `actions/cache`, only for components `binaries-dep-key.sh` gives a key: ghostty; the key is a sha1 of upstream.env, zig.env and build.sh, so a new tag, Zig pin or fetch recipe starts a fresh cache) the directory `dep-cache`, mounted into `podman build` as `/dep-cache`; `build.sh` keeps the saved tarball of every package there (`ghostty-packages/<zig hash>.tar.gz`). It is an optimisation that is never trusted: the expected Zig hash of each URL is the key of that URL in `build.zig.zon.json` of the pinned checkout, a cached tarball is run through `zig fetch` again (which recomputes the content hash) and used only if it equals the expected hash, otherwise it is discarded with a warning and downloaded; a downloaded package must match the expected hash too; the Zig tarball itself is re-verified by fetch-zig.sh on every build; an empty or missing cache builds as before. The cache is saved only after a successful PUBLISHING build (push to testing or main, never a pull request), not for dnf packages and not for compiled output. Expected saving on a rebuild with the same tag: most of the 144 s and no dependence on deps.files.ghostty.org for the 35 tarball packages; no effect on a bump (new tag). Cache size: the saved tarballs are far smaller than the 670-750 MB Zig cache (the GitHub limit is 10 GB per repository; at the time only tool binaries were cached). Invalidation scope of `binaries/lib/` and the builder digest (every component rebuilds, about 11 minutes with Ghostty): left as it is: `fetch-source.sh`, `upstream-env.sh` and `stage.sh` are used by all three components, `assemble.sh` by none of the component builds, so only a split of `lib/` per file would narrow it, and "a wrong skip is worse than a spare build" decides: unchanged.
 - **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
-  WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
+  WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
   workflow `github.workflow` is the caller's name). The `check` job's step `final` decides: an own push run NEVER publishes (`nopublish`) but reuses an already signed image of the tree when the caller published it first, and builds
   to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run and a dispatch with `validate_only` also ignore the reuse shortcut (`usable=false`) and
   build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
@@ -225,7 +234,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
 - **Smoke test** (`build.yml`, copied into `build-beta.yml`; `tests/binary-images.sh` fails when they drift): the manifest exists; per scheduler
   it is executable, `--version` runs, and `ldd` shows no `not found`; the extest libraries are executable and `file` shows a 32-bit and
   a 64-bit ELF; the GPL-2.0 and MIT texts and the `SOURCE` and `BUILDINFO` records ship.
-- **Weekly upstream check** `.github/workflows/upstream-check.yml` (Monday 07:00 UTC plus `workflow_dispatch`; scheduled workflows run only from
+- **Weekly upstream check** (now the `sources` job of `bump-pins.yml`, see "Pin bumps" below; Monday 07:00 UTC plus `workflow_dispatch`; scheduled workflows run only from
   `main`, so the schedule starts after the first promotion). `upstream-check.sh` per `binaries/<name>/upstream.env`: scx asks `releases/latest`
   (not prereleases); extest asks the watched project and counts a release or tag only when it is NOT an ancestor of the pinned commit
   (compare API on the fork); when the fork lacks the new commit it ends green with the notice "the fork is behind upstream: sync it
@@ -240,7 +249,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   to create and approve pull requests" must be on (the hub turned it on 2026-11-13). UNVERIFIED on GitHub: whether a dispatched run satisfies the
   required checks of the pull request, and the first real run of either workflow (they must be on `main` first).
 - **dev-packages.** The only image still pinned by digest from outside is `dev-packages` (`variants/dx/Containerfile`, key
-  `keys/redcodeworks-toolbox-cosign.pub`). `.github/workflows/bump-pins.yml` (Tuesday 07:00 UTC plus dispatch) runs `.github/scripts/bump-pin.sh dev-packages`:
+  `keys/redcodeworks-toolbox-cosign.pub`). `.github/workflows/bump-pins.yml` (Monday 07:00 UTC plus dispatch, see "Pin bumps") runs `.github/scripts/bump-pin.sh dev-packages`:
   resolve `:latest` (`skopeo inspect --raw | sha256sum`), verify the signature, compare. Decisions (exit code, result): equal (0, `equal`,
   "nothing to bump"; the signature is still verified); different (10, `different`: the digest line and the tag line, the dated tag with the same
   digest or `latest`, nothing else; ONE pull request on `bump/dev-packages-digest` into `testing`); registry unreachable, `latest` missing or an
@@ -252,7 +261,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
 - **Unverified.** The first real binaries build (it first runs on a push to `testing` or by dispatching `binaries.yml`); that a scheduler loads
   on a real kernel (CI cannot load BPF; only `--version` and `ldd` run); the `$LIB` expansion inside Steam's Flatpak and a real Steam run (see
   the gaming-setup notes). The scheduler runtime (units, recipe) is separate work.
-- **Undo.** Remove `binaries/`, the three `binaries-*.sh` scripts, `binaries.yml`, `upstream-check.yml`, the `binaries` jobs and steps, the
+- **Undo.** Remove `binaries/`, the three `binaries-*.sh` scripts, `binaries.yml`, the `binaries` jobs and steps, the
   `BINARIES_IMAGE` argument and mount, `install-binaries.sh`, the smoke assertions and the tests; restore the cargo build in the `extest`
   step from git history.
 
@@ -373,7 +382,7 @@ lakekeeper or dvdrental, no `localhost/` image, no `%h` or home path.
   the S3 config secret is a `type=mount` podman secret, whose default mode is 0444, so the dropped-privilege process can read it (nothing changed in the unit). With identities in `-s3.config` S3 requires credentials; objects over 8 MiB return
   multipart-style ETags; do not mix plain and `_large_disk` images on one volume (the pin is the plain image); a known deadlock (#12493, heavy bucket churn) exists in 4.48 to 4.53 and is fixed after 4.53 (low exposure here). The weekly bump
   follows 4.x (`SEAWEEDFS_MAJOR=4`) and only reports a 5. A machine that pinned an older SeaweedFS with `ujust datastore-setup --pin seaweedfs=<tag>` removes that drop-in with `ujust datastore-setup --unpin seaweedfs` after this image arrives.
-- **Weekly bump.** `bump-pins.yml` (Tuesday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
+- **Weekly bump.** `bump-pins.yml` (Monday 07:00 UTC) now also checks `postgresql`, `valkey`, `seaweedfs` and `kafka` through `.github/scripts/datastore-pin-bump.sh`:
   the newest tag of the same shape and suffix inside the pinned major, with its manifest digest (`skopeo inspect --raw | sha256sum`); release candidates and other
   suffixes never match; a NEWER MAJOR is only named in the pull request body ("newer major available, manual decision") and never changes the pin; one pull request
   per image on `bump/<image>-digest` into `testing`, with the same default-token-plus-dispatch design as the other bump workflows. These are public registry

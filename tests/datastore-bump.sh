@@ -49,7 +49,7 @@ fresh; bump nosuch TAGS=''
 check "an unknown service: exit 3" test "$rc" = 3
 fresh; sed -i 's/^POSTGRESQL_TAG=.*/POSTGRESQL_TAG=18.1-alpine/' "$root/ds.env"; bump postgresql TAGS='"18.1-alpine"'
 check "a tag outside the pinned major in the file is a bad pin" test "$rc" = 3
-check "the workflow picks this script for the four datastore images and passes the major note to the pull request body" bash -c "grep -q 'datastore-pin-bump.sh \"\\\${IMAGE}\"' '$here/.github/workflows/bump-pins.yml' && grep -q 'MAJOR_NOTE' '$here/.github/workflows/bump-pins.yml' && grep -q 'Majors are never bumped automatically' '$here/.github/workflows/bump-pins.yml'"
+check "the bump runner picks this script for the four datastore images and passes the major note to the pull request body" bash -c "grep -q 'datastore-pin-bump.sh' '$here/.github/scripts/bump-run.sh' && grep -q major_note '$here/.github/scripts/bump-run.sh'"
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
