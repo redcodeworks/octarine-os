@@ -29,16 +29,27 @@ mkdir -p "${ZIG_GLOBAL_CACHE_DIR}"
 (cd "${srcdir}" && ./nix/build-support/fetch-zig-cache.sh)
 dest="${srcdir}/.dest"
 rm -rf "${dest}"
-(cd "${srcdir}" && DESTDIR="${dest}" zig build \
-    --prefix /usr \
-    --system "${ZIG_GLOBAL_CACHE_DIR}/p" \
-    -Doptimize=ReleaseFast \
-    -Dcpu=baseline \
-    -Dstrip=true \
-    -Dversion-string="${version}" \
-    -Dinstalled-exe-path=/usr/bin/ghostty \
-    -fno-sys=glslang \
-    -fno-sys=spirv-cross)
+zig_build() { # extra zig arguments
+    (cd "${srcdir}" && DESTDIR="${dest}" zig build \
+        --prefix /usr \
+        --system "${ZIG_GLOBAL_CACHE_DIR}/p" \
+        -Doptimize=ReleaseFast \
+        -Dcpu=baseline \
+        -Dstrip=true \
+        -Dversion-string="${version}" \
+        -Dinstalled-exe-path=/usr/bin/ghostty \
+        -fno-sys=glslang \
+        -fno-sys=spirv-cross "$@")
+}
+# The first CI build of this recipe died in the zig build step with "thread N panic: reached unreachable code" and no stack trace. When
+# the build fails, say what the environment looks like and try once more with one job, the build runner's own verbose output and
+# reference traces, so the next log shows where it stops; the failure itself still fails the component (it is optional).
+if ! zig_build; then
+    echo "::warning::zig build failed; collecting diagnostics and retrying once with -j1 --verbose -freference-trace"
+    { zig env; echo "nproc: $(nproc)"; ulimit -a; free -m 2>/dev/null; df -h /tmp /src 2>/dev/null; } >&2 || true
+    rm -rf "${dest}"
+    zig_build -j1 --verbose -freference-trace=20 || { echo "build.sh: zig build failed twice" >&2; exit 1; }
+fi
 
 "${stage}" --out "${out}" --env "${envfile}" --src "${srcdir}" \
     --bin .dest/usr/bin/ghostty:root/usr/bin/ghostty \

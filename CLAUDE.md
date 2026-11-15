@@ -1228,17 +1228,27 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
+- **EXPERIMENTAL second launcher `ojust` (maintainer note only; deliberately undocumented elsewhere, Kevin 2026-11-15; a test checks that no README, doc or user-facing text mentions it).** `/usr/bin/ojust` runs
+  `just` with `JUST_JUSTFILE=/usr/share/octarine-os/justfile` (the mechanism `ujust` uses) and sets `OCTARINE_UJUST=/usr/bin/ojust` so `hardware-setup`'s self-calls stay in ojust. Its root justfile imports
+  ONLY our files, never one of Universal Blue's `ublue-os-just` package, so it works on a base without that package: `15-luks`, `40-nvidia`, `50-akmods`, `60-custom` and the dx files (same files as ujust), plus
+  `/usr/share/octarine-os/just/{motd,update,base-pieces}.just`. To make that possible the image's own `toggle-motd`/`toggle-user-motd` and `update`/`toggle-updates` moved out of the wrapper files
+  `00-default.just` and `10-update.just` into `motd.just` and `update.just`; the wrappers now import those FIRST and the renamed base file second (first import wins), so ujust resolves exactly the same
+  recipes (verified by comparing `just --dump --dump-format json` of the assembled root before and after: identical). `base-pieces.just` is ojust-only: copies of the package's `bios`, `bios-info`,
+  `logs-this-boot`, `logs-last-boot`, `enroll-secure-boot-key`, `check-local-overrides`, `device-info`, `changelogs`, `update-firmware`, `clean-system` and the aliases (Apache-2.0, attribution in its header);
+  NOT copied: `check-idle-power-draw`, `distrobox-assemble`, `distrobox-new`, `install-resolve`, `setup-distrobox-app` (they need `/usr/lib/ujust` helpers). The three helper libraries are NOT copied: no file
+  ojust imports sources them, and `ugum` is only an optional menu helper (`menu.sh` falls back without it). Keep new recipes free of `/usr/lib/ujust` sourcing and of imports of base files.
+  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`, `build-beta.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
+- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
 ## `ujust toggle-updates` and `ujust update`
 
-- Both live in `10-update.just` and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
+- Both live in `system_files/usr/share/octarine-os/just/update.just` (imported by the wrapper `10-update.just` and by ojust's root) and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
   sources: `image` (`rpm-ostreed-automatic.timer`, stages the image), `flatpak` (system `flatpak-system-update.timer` plus
   user `flatpak-user-update.timer`), `distrobox` (user `octarine-distrobox-upgrade.timer`, shipped here, off by default),
   `brew-update` (`brew-update.timer`), `brew-upgrade` (`brew-upgrade.timer`, off by default by `00-octarine-brew.preset`).
@@ -1760,7 +1770,20 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
   when nothing changes). `--yes` takes defaults; `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
+  non-zero. **`editor` step (2026-11-15, Kevin: "define a default editor"; a step of its own right after `shell`, no sudo):** options vi (always), nano, vim, nvim, hx, only when found (PATH, then
+  `/home/linuxbrew/.linuxbrew/bin`, then `~/.local/bin`; hooks `USER_SETUP_EDITOR_DIRS` and `USER_SETUP_EDITOR_SYSDIRS`); the default answer is "keep the current settings" (`--yes` alone keeps too);
+  `--editor NAME` (unknown or not installed: exit 2 listing the detected ones) implies `--only editor`. It writes ONE managed file, `~/.config/environment.d/50-editor.conf`
+  (`EDITOR`, `VISUAL`, `SUDO_EDITOR`, KEY=value, a header with the undo): SUDO_EDITOR is always the absolute path (sudoedit runs with sudo's restricted PATH), EDITOR and VISUAL the plain name only when the
+  binary is in `/usr/bin`, `/bin` or `/usr/local/bin`, else the absolute path (Homebrew and `~/.local/bin` are on PATH only in login shells, not for everything the session starts). Lines in the
+  user's own rc files (`.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`, `.bashrc.d/*`, fish `config.fish` and `conf.d`, other `environment.d` files) that set these
+  variables are listed with file and line, never edited, and the question to write anyway defaults to NO (an explicit `--editor` writes with a note). Verified in environment.d(5): the files are read by
+  the systemd user manager and passed to the services it starts (GNOME's terminal server is the example in the man page), SSH logins and plain TTY logins do not read them. FOUND on nox (not tested end to end):
+  the image's base ships `nano-default-editor` (`/etc/profile.d/nano-default-editor.sh` sets `EDITOR=/usr/bin/nano` only when unset, its fish twin in `vendor_conf.d` uses `set -q`), and
+  `systemctl --user show-environment` on nox shows `EDITOR=/usr/bin/nano`: a session's `systemctl --user import-environment` (niri-session does it, GNOME imports the login environment) copies the LOGIN
+  SHELL's environment, which lacks environment.d, over the manager's, so environment.d alone would probably lose for EDITOR. Hence two small image files read the SAME managed file for login shells:
+  `system_files/etc/profile.d/octarine-os-editor.sh` (bash, zsh; sorts after the nano one; accepts only the three keys and plain path characters, parsed never executed) and
+  `system_files/usr/share/fish/vendor_conf.d/octarine-os-40-editor.fish`; a user's own rc files still win. UNVERIFIED: the import ordering in a real niri and GNOME login. Test hooks:
+  `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
   flatpak, sudo, id, getent, usermod, gsettings, brew, fc-list). The dot-files steps (`dotfiles`, `brew`, `gnome` with its
   GNOME extension installer) were removed from `user-setup` on 2026-11-09 by Kevin's decision; the dot-files repo itself and its
   `just` recipes still exist, independent of this image.

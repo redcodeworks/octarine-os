@@ -84,6 +84,9 @@ check "the hook ships as /etc/profile.d/user-motd.sh (same name as the base file
 # ---- the recipes: ours import the base file and win; one flag, state printed
 jd="$root/just"; mkdir -p "$jd"
 cp "$justdir/00-default.just" "$jd/00-default.just"
+# the motd recipes live in octarine-os/just/motd.just, which the wrapper imports first (absolute path rewritten to the temp tree)
+mkdir -p "$root/own"; cp "$here/system_files/usr/share/octarine-os/just/motd.just" "$root/own/"
+sed -i "s|/usr/share/octarine-os/just|$root/own|" "$jd/00-default.just"
 cat >"$jd/00-default-base.just" <<'EOF2'
 # stub of the base file build.sh renames
 toggle-user-motd:
@@ -105,6 +108,6 @@ J toggle-user-motd >"$root/out" 2>&1
 check "toggle-user-motd runs OUR recipe (the base stub does not run) and flips the same flag" bash -c "[ -e '$root/home/.config/no-show-user-motd' ] && ! grep -q 'BASE RAN' '$root/out' && grep -q 'motd is now off' '$root/out'"
 rm -f "$root/home/.config/no-show-user-motd"
 check "build.sh keeps the base 00-default.just as 00-default-base.just (the rename list)" bash -c "grep -q 'for f in 00-default 10-update 30-distrobox' '$here/build_files/build.sh'"
-check "the image's justfiles define toggle-user-motd once, in our file only (the base copy is the renamed one)" bash -c "[ \$(grep -rlE '^toggle-user-motd' '$justdir' | wc -l) = 1 ]"
+check "the image's justfiles define toggle-user-motd once, in our own motd.just only (the base copy is the renamed one)" bash -c "[ \$(grep -rlE '^toggle-user-motd' '$justdir' '$here/system_files/usr/share/octarine-os/just' | wc -l) = 1 ] && grep -q '^toggle-user-motd' '$here/system_files/usr/share/octarine-os/just/motd.just'"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
