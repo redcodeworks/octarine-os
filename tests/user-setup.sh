@@ -441,7 +441,7 @@ gumq 1 'Account: Login shell zsh (sudo)\n'
 run ''
 check "gum checklist: chosen step runs" logged "usermod -s"
 check "gum checklist: unchosen steps do not run" notlogged "usermod -aG"
-check "gum checklist: defaults are preselected" logged "--selected Account: Add tester to gamemode; input and libvirt (sudo),Account: Login shell zsh (sudo),Apps: Flatpak access overrides"
+check "gum checklist: defaults are preselected" logged "--selected Account: Add tester to gamemode; input and libvirt (sudo),Account: Login shell zsh (sudo),Account: Default editor for terminals and sudoedit (no sudo),Apps: Flatpak access overrides"
 check "gum checklist: no divider rows, groups are prefixes" bash -c "! grep -q '──' '$LOG' && grep -q 'Account: Login shell' '$LOG'"
 check "gum checklist: summary confirmed" logged "gum confirm Run these steps?"
 reset
@@ -488,6 +488,79 @@ ugumq 1 'Pick from all Nerd Font casks\n'
 gumq 2 'font-aaa-nerd-font\n'
 run ''
 check "gum fonts: pick-from-all is a checklist" logged "brew install --cask font-aaa-nerd-font"
+
+# ---- editor step: fake editors in temp directories (PATH and the extra search directories), temp HOME
+edir="$root/edbin"; extra="$root/edextra"; mkdir -p "$edir" "$extra"
+export USER_SETUP_EDITOR_DIRS="$extra" USER_SETUP_EDITOR_SYSDIRS="$edir"
+mked() { local d=$1; shift; for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$d/$t"; chmod +x "$d/$t"; done; }
+edrun() { local input=$1; shift; printf '%b' "$input" | PATH="$bin:$sysbin:$edir" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1; rc=$?; }
+edf() { echo "$HOME/.config/environment.d/50-editor.conf"; }
+edreset() { reset; rm -f "$edir"/* "$extra"/*; unset EDITOR VISUAL SUDO_EDITOR; }
+edreset; mked "$edir" nano vim; mked "$extra" hx
+edrun '' --only editor --no
+check "editor --no: prints the plan, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan: would ask which editor' '$root/out' && [ ! -e '$(edf)' ]"
+edrun '' --only editor --yes
+check "editor --yes alone: keeps the current settings, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Kept: --yes alone does not change the editor' '$root/out' && [ ! -e '$(edf)' ] && grep -q 'editor .*skipped (kept current)' '$root/out'"
+edrun '\n' --only editor
+check "editor picker: Enter keeps the current settings (the default): nothing changes" bash -c "[ $rc = 0 ] && grep -q 'Kept: nothing changed' '$root/out' && [ ! -e '$(edf)' ]"
+check "editor picker: offers keep first, then vi (always) and ONLY the installed ones (nano, vim, hx), names the missing (nvim)" bash -c "grep -q '1) Keep the current settings (default)' '$root/out' && grep -q '2) vi' '$root/out' && grep -q '3) GNU nano (nano)' '$root/out' && grep -q '4) Vim (vim)' '$root/out' && grep -q '5) Helix (hx)' '$root/out' && ! grep -q 'Neovim' '$root/out' && grep -q 'Found here: vi, nano, vim, hx (not found: nvim)' '$root/out'"
+edrun '5\n' --only editor
+check "editor picker: choosing Helix (a binary found outside PATH): EDITOR and VISUAL get the ABSOLUTE path, SUDO_EDITOR the absolute path (sudoedit has a restricted PATH)" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=$extra/hx' '$(edf)' && grep -qx 'VISUAL=$extra/hx' '$(edf)' && grep -qx 'SUDO_EDITOR=$extra/hx' '$(edf)'"
+edreset; mked "$edir" nano vim nvim; mked "$extra" hx
+edrun '' --only editor --editor nvim
+check "editor --editor nvim (on PATH): EDITOR and VISUAL are the plain name, SUDO_EDITOR is absolute; no sudo, an undo line with the exact command, the file has only the managed keys" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=nvim' '$(edf)' && grep -qx 'VISUAL=nvim' '$(edf)' && grep -qx 'SUDO_EDITOR=$edir/nvim' '$(edf)' && [ \$(grep -vcE '^#' '$(edf)') = 3 ] && grep -q \"rm $(edf)\" '$root/out' && ! grep -q '^sudo' '$LOG'"
+edrun '' --only editor --editor nvim
+check "editor: the same choice again is already done and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Already set to Neovim' '$root/out' && grep -qE '^editor +already done' '$root/out'"
+edrun '' --editor vim
+check "editor: --editor alone implies --only editor (no groups, no shell, no flatpak) and re-running with another editor REWRITES the file" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=vim' '$(edf)' && [ \$(grep -c '^EDITOR=' '$(edf)') = 1 ] && ! grep -q 'usermod' '$LOG' && ! grep -q '== groups' '$root/out'"
+edrun '' --editor vi
+check "editor: vi is always available (SUDO_EDITOR=/usr/bin/vi even when no vi is installed in the fake PATH)" bash -c "[ $rc = 0 ] && grep -qx 'SUDO_EDITOR=/usr/bin/vi' '$(edf)'"
+edrun '' --editor emacs
+check "editor: an unknown name exits 2 with the list" bash -c "[ $rc = 2 ] && grep -q 'Unknown editor: emacs (use vi, nano, vim, nvim or hx)' '$root/out'"
+edreset; mked "$edir" nano
+edrun '' --editor hx
+check "editor: a known but not installed editor exits 2 and names the detected ones; nothing is written" bash -c "[ $rc = 2 ] && grep -q 'hx is not installed here' '$root/out' && grep -q 'Found: vi, nano' '$root/out' && [ ! -e '$(edf)' ]"
+edrun '' --editor
+check "editor: --editor without a name exits 2" test "$rc" = 2
+# the current values are shown
+EDITOR=/usr/bin/nano VISUAL= SUDO_EDITOR= edrun '\n' --only editor
+check "editor: the current EDITOR, VISUAL and SUDO_EDITOR from the environment are shown first" bash -c "grep -q 'Current: EDITOR=/usr/bin/nano VISUAL=<unset> SUDO_EDITOR=<unset>' '$root/out'"
+# a value the user set in their own files: reported, never edited, never overwritten silently
+edreset; mked "$edir" nano
+mkdir -p "$HOME/.config/fish"; echo 'set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' >"$HOME/.config/fish/config.fish"; echo 'export VISUAL=nano' >"$HOME/.bashrc"
+cp "$HOME/.bashrc" "$root/bashrc.orig"; cp "$HOME/.config/fish/config.fish" "$root/fish.orig"
+edrun 'n\n' --only editor --yes
+edrun '3\nn\n' --only editor
+check "editor: your own EDITOR and VISUAL lines in rc files are found and listed with file and line; the question to write anyway defaults to NO and nothing is written" bash -c "[ $rc = 0 ] && grep -q '.config/fish/config.fish:1:set -gx EDITOR' '$root/out' && grep -q '.bashrc:1:export VISUAL=nano' '$root/out' && grep -q 'Write the managed file anyway' '$root/out' && [ ! -e '$(edf)' ] && grep -q 'skipped (your own setting kept)' '$root/out'"
+edrun '3\ny\n' --only editor
+check "editor: confirmed with y the managed file is written, YOUR files are byte for byte unchanged" bash -c "[ -f '$(edf)' ] && cmp '$HOME/.bashrc' '$root/bashrc.orig' && cmp '$HOME/.config/fish/config.fish' '$root/fish.orig'"
+rm -f "$(edf)"
+edrun '' --editor nano
+check "editor: an explicit --editor writes it, with the note that your own files win where they are read later" bash -c "[ $rc = 0 ] && [ -f '$(edf)' ] && grep -q 'your own files listed above are read after it' '$root/out' && cmp '$HOME/.bashrc' '$root/bashrc.orig'"
+edreset; mked "$edir" nano
+mkdir -p "$HOME/.config/environment.d"; echo 'EDITOR=ed' >"$HOME/.config/environment.d/60-mine.conf"
+edrun '' --editor nano
+check "editor: another environment.d file of yours that sets EDITOR is reported too" bash -c "grep -q '60-mine.conf:1:EDITOR=ed' '$root/out'"
+# the generated file and the shipped login-shell snippets read it back
+edreset; mked "$edir" nvim
+edrun '' --editor nvim
+snip="$here/../system_files/etc/profile.d/octarine-os-editor.sh"
+check "editor: the shipped profile.d snippet exports exactly the three keys from the managed file (a login shell, before the user's own rc files)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \$EDITOR:\$VISUAL:\$SUDO_EDITOR'); [ \"\$out\" = 'nvim:nvim:$edir/nvim' ]"
+printf 'FOO=bar\nEDITOR=$(touch %s/pwned)\nVISUAL=ok one\nSUDO_EDITOR=/a/b\n' "$root" >"$(edf)"
+check "editor: the snippet ignores other keys and anything but plain path characters (the file is parsed, never executed)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \${FOO:-none}:\${EDITOR:-unset}:\${VISUAL:-unset}:\$SUDO_EDITOR'); [ \"\$out\" = 'none:unset:unset:/a/b' ] && [ ! -e '$root/pwned' ]"
+check "editor: it is a listed step, in --help, and the checklist offers it preselected" bash -c "grep -q 'editor (default editor' '$justfile' && grep -q 'editor^Default editor for terminals and sudoedit (no sudo)^1' '$justfile'"
+check "editor: nothing in the image sets EDITOR by itself except the Fedora nano default (only when unset) and the user-file snippets" bash -c "! grep -rlE '(^|[^_A-Z])(EDITOR|VISUAL)=' '$here/../system_files' '$here/../build_files' | grep -v 'octarine-os-editor.sh\\|octarine-os-40-editor.fish\\|60-custom.just'"
+# rc-file detection compared with the pick: a fixture HOME with `set -gx EDITOR` in config.fish and `export EDITOR=` in .bashrc
+edreset; mked "$edir" nano nvim
+mkdir -p "$HOME/.config/fish" "$HOME/.config/environment.d"
+echo 'set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' >"$HOME/.config/fish/config.fish"; echo 'export EDITOR=hx' >"$HOME/.bashrc"; echo 'EDITOR=ed' >"$HOME/.config/environment.d/60-mine.conf"
+cp "$HOME/.bashrc" "$root/b.orig"; cp "$HOME/.config/fish/config.fish" "$root/f.orig"
+edrun '' --editor nvim
+check "editor: each of your lines that assigns something else than the pick is reported with file, line, variable, its value, the pick's value and the exact line to remove or change; the environment.d file is named as another environment.d file; nothing is edited" bash -c "[ $rc = 0 ] && grep -q 'config.fish:1: your startup file sets EDITOR to /home/linuxbrew/.linuxbrew/bin/hx, your pick writes nvim' '$root/out' && grep -q '    set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' '$root/out' && grep -q '.bashrc:1: your startup file sets EDITOR to hx, your pick writes nvim' '$root/out' && grep -q '    export EDITOR=hx' '$root/out' && grep -q '60-mine.conf:1: another environment.d file sets EDITOR to ed' '$root/out' && grep -q 'they win there' '$root/out' && cmp '$HOME/.bashrc' '$root/b.orig' && cmp '$HOME/.config/fish/config.fish' '$root/f.orig'"
+echo 'set -gx EDITOR nvim' >"$HOME/.config/fish/config.fish"; : >"$HOME/.bashrc"; rm -f "$HOME/.config/environment.d/60-mine.conf"
+edrun '' --editor nvim
+check "editor: a line of yours that already assigns the pick is not reported as a difference" bash -c "! grep -q 'your pick writes' '$root/out'"
+unset USER_SETUP_EDITOR_DIRS USER_SETUP_EDITOR_SYSDIRS
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

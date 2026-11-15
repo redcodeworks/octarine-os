@@ -87,7 +87,7 @@ signed `FROM scratch` image, `ghcr.io/redcodeworks/octarine-os-binaries`, which 
 variants inherit them from the default image. (History: #61 first consumed two images built by the fedora-toolbox repository,
 pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries are built for this environment.)
 
-- **Sources.** `binaries/Containerfile` (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
+- **Sources.** `binaries/components.tsv`, `binaries/builder.env`, a `Containerfile` per component (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
   `stage.sh`, `assemble.sh`), and per component `binaries/scx/` and `binaries/extest/`: `upstream.env` (`UPSTREAM_REPO`, optional
   `UPSTREAM_WATCH`, `UPSTREAM_TAG`, `UPSTREAM_COMMIT`; parsed, never sourced), `build.sh`, and for scx `schedulers.tsv`.
   `binaries/scx/schedulers.tsv` (name, minimum kernel (empty for all seven), description up to 120 characters, curated from the scheduler
@@ -97,7 +97,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   commit, the tag is a label, fork sync does not always bring tags), upstream watched is `Supreeeme/extest`.
 - **Build.** Builder: `registry.fedoraproject.org/fedora:45@sha256:e15959f3...` (a manifest-list digest, the release of the image the binaries
   go into; re-resolve with `skopeo inspect --raw docker://registry.fedoraproject.org/fedora:45 | sha256sum` to move it; it is part of `binaries/`, so
-  a new builder digest changes the tree hash and rebuilds). Toolchain from Fedora's repositories (at the first build: rustc and cargo 1.99.1,
+  a new builder digest changes every component key and rebuilds all). Toolchain from Fedora's repositories (at the first build: rustc and cargo 1.99.1,
   clang 23.1.5, glibc 2.44; recorded in each build's `BUILDINFO`). scx dependencies: `git-core rust cargo clang llvm lld libbpf-devel
   elfutils-libelf-devel zlib-devel libzstd-devel pkgconf-pkg-config bpftool make gcc binutils`; one `cargo build --release --locked -p <each
   scheduler of the tsv>` (about 5.5 minutes). extest: `git-core rust cargo gcc binutils rust-std-static-i686-unknown-linux-gnu
@@ -111,24 +111,89 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
-- **Fallback to the last good binaries image (daily build only; Kevin, 2026-11-14).** A failed binaries BUILD must not block the daily image; everything else still fails closed.
-  - *When.* ONLY the scheduled run on main (`build.yml` passes `allow_fallback: ${{ github.event_name == 'schedule' }}`; `binaries.yml` checks `schedule` and `refs/heads/main` again in the `fallback` job's `if`) and ONLY when the `build` job
-    failed (compile, fetch or verify of the upstream sources). Not for: a push to testing, a pull request, a promotion, `build-beta.yml`, a dispatch; a failed lookup; a failed SIGNING of the new image (build succeeded, `sign` failed: the result job stops);
-    a last-good image whose signature does not verify; one that fails the layout contract.
-  - *Which image.* The moving tag `last-good` of `octarine-os-binaries`, moved by the `track` job (`continue-on-error`, so it never blocks a build) with `skopeo copy --all --preserve-digests` to the digest of a signed build or reuse on main
-    (only `reused` and `built`, never a fallback). The tag is a pointer: `binaries-fallback.sh` resolves it to a manifest digest, verifies the cosign signature of THAT digest with `cosign.pub`, and the image build still copies from the digest
-    (`binaries-use.sh` verifies it again), never from the tag. `last-good` lags the newest tree by design: it moves only on main runs where the binaries job ran.
-  - *Contract.* Before use the candidate is exported and must pass `binaries-layout.sh` against THIS tree's `schedulers.tsv` (every scheduler of the tree, both extest libraries, SOURCE, BUILDINFO, LICENSES per component) and THIS tree's
-    `install-binaries.sh` run on it (`BINARIES_ROOT` and a scratch `DESTDIR`); otherwise the fallback is refused, the build fails and nothing ships without a component. A Fedora library change that breaks a binary at link time is NOT covered: an old image would hit the same failure; only a rebuild fixes it.
-  - *Visible.* The binaries job summary and a warning annotation say `FALLBACK: using binaries image <digest> (last-good, tree <hash>, built <date>) because the binaries build failed` (`build.yml` repeats it); the image carries the labels
-    `org.octarineos.binaries-fallback=true` and `org.octarineos.binaries-tree=<hash>` (`Justfile`, from `BINARIES_FALLBACK_TREE` which the workflow exports) and the installed `SOURCE` and `BUILDINFO` of both components and
-    `/usr/share/licenses/octarine-os-binaries/FALLBACK` say the binaries are NOT from this commit's `binaries/` tree and which tree they are from (`install-binaries.sh`); the `track` job opens ONE issue with the label `ci-failure-binaries`
-    (a comment per later fallback, closed with a comment when a main run builds or reuses the binaries without fallback; same mechanics as `ci-failure-dx`: `.github/scripts/ci-issue.sh` with `LABEL=ci-failure-binaries`).
-  - *Never kept.* `plan-skip.sh` reads the label of `latest` (`LATEST_FALLBACK`): an image built with fallback binaries is never skipped, so the next daily run builds again (and tries the real binaries); the label `io.github.redcodeworks.octarine-os.binaries` records the digest actually used.
-  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=true -f fallback_dry_run=true`: skips the reuse, fails the build step on purpose, runs the fallback checks on the real `last-good` image (signature, layout, installer)
-    and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
-  - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
-  - The binaries image has two components (scx, extest).
+- **Per-component pipeline (2026-11-15, Kevin: "option 2": one image, one build job per component, each with its own fallback).** Components are
+  listed in `binaries/components.tsv` (name, `required` or `optional`: scx and extest are required). Each has its own content key,
+  `.github/scripts/binaries-key.sh <component>` = sha1 of "tree of `binaries/<c>`, tree of `binaries/lib`, blob of `binaries/builder.env`": a change to
+  one component rebuilds only it; a change to `lib/` or to the builder pin (`binaries/builder.env`, the one place of the Fedora 45 digest) rebuilds all
+  (coarse on purpose: lib/ is small and a wrong skip is worse than a spare build). The Containerfiles are per component
+  (`binaries/<c>/Containerfile`, a build stage plus a `FROM scratch` image that holds only `/<c>`; CI passes `--build-arg BUILDER` from `builder.env`).
+  All images live in the SAME package `ghcr.io/redcodeworks/octarine-os-binaries` (no second package): component images `c-<component>-<key>`
+  (cosign signed, label `org.octarineos.binaries-component-key`), the moving pointers `last-good-<component>` (moved by `track` on main after a
+  signed build or reuse, never for a fallback), and the ASSEMBLED image tagged with the assembled key (`binaries-key.sh --assembled`: sha1 of the
+  sorted "name key" lines of the components actually included; a fallback component contributes its last good key). Old tree-hash tags and the old
+  `last-good` tag are left alone (never pruned, small). `binaries-key.sh` with no argument is the assembled key of the whole tree, which `just build`
+  uses locally.
+  - *Workflows.* `binaries.yml` (reusable and dispatchable; own push, weekly and `validate_only` runs as described below): `plan` (matrix from
+    `components.tsv`), `component` (a matrix, `fail-fast: false`, calling `binaries-component.yml` once per component), `assemble`, `sign` (environment
+    `signing`), `result` (the outputs build.yml reads: digest, image, action reused|built|validated, hash, fallback, fallback_hash, fallback_created,
+    degraded), `track`. `binaries-component.yml` per component: `check` (key, `binaries-lookup.sh`: a signed image of the key exists, nothing to
+    build), `build` (podman build, layout check, `push-tags.sh`; the build step is `continue-on-error` and an `ok` record says whether it worked, so a handled
+    failure never turns the called workflow red: a failed job inside a called workflow would fail the caller job and skip the image build, which has no
+    `always()`), `sign`, `fallback`, `result` (`binaries-decide.sh` writes the line `name status digest key created reason`, uploaded as the artifact
+    `binres-<component>`). Statuses: reused, built, validated (a ref that cannot publish, or a rehearsal), fallback, absent (optional, left out), failed.
+    `assemble` downloads the artifacts, `binaries-assemble.sh` decides (writes `COMPONENTS`, prints action, key, degraded, components, moves), looks the
+    assembled key up (reuse), else exports the component images by digest (each verified again), `binaries/lib/assemble.sh` + `lib/assemble.Containerfile`
+    build the image (layout check `--assembled`), `push-tags.sh`, `sign`.
+  - *Rules.* A REQUIRED component that is neither built, reused nor validly fallen back fails the run, and its fallback stays daily-build-only on main
+    (`allow_fallback` on the schedule event, enforced again in the leg's `if`). An OPTIONAL component degrades on every PUBLISHING run (testing and main,
+    not an own validation run): its `last-good-<c>` image if one verifies, else it is left out (status absent); it never blocks an image build. On a run type WITHOUT a fallback job (the own push and weekly validation runs, a pull request, a rehearsal) a failed optional build is also `absent`, never `failed` (loud warning and summary, no issue): an optional component can never keep `Assemble`, the image build or the promotion PR red (2026-11-15: a failing Ghostty did exactly that on the own push run of testing). A failure
+    of an optional component IS remembered per content key (an Actions cache entry `known-fail-<component>-<key>`, only its existence matters, saved after a failed build on non-PR runs): a later push with the SAME key does not build it again (status absent, loud warning); the daily scheduled run, a validation run, a rehearsal and any change of the component try again; a required component is never skipped. The assembled image carries `/COMPONENTS` (name, required|optional, key, origin built|reused|fallback,
+    created, digest) and the labels `org.octarineos.binaries-components` and `-degraded`; `fallback=true` in the outputs means "something is degraded"
+    (build.yml then sets the OS image labels `org.octarineos.binaries-fallback=true` and `-tree=<assembled key>`; plan-skip never keeps such an image).
+  - *Installer.* `install-binaries.sh` reads `COMPONENTS`; its `required` and `optional` lists must match `components.tsv` (a test checks). A missing required component fails;
+    a missing optional one prints `WARNING: optional component <c> is not in the binaries image: it is NOT installed`, a `::warning::` annotation and writes
+    `/usr/share/licenses/octarine-os-binaries/MISSING`; a fallback component gets a FALLBACK note in its own SOURCE and BUILDINFO and in `FALLBACK`.
+    `BINARIES_ONLY=<c>` installs one component from a single-component directory (the fallback check uses it).
+  - *Runtime libraries.* Build dependencies never travel (FROM scratch, builder stages discarded), so after installing, in a real image build (empty `DESTDIR`; `BINARIES_CHECK_NEEDED=1`
+    forces it in tests, `BINARIES_LDD` replaces ldd), every ELF file must find its libraries in THIS image: a 64-bit file must resolve with `ldd`, a 32-bit file (libextest
+    in 32-bit Steam) may need only libc, libgcc_s, libm, libdl, libpthread, librt, ld-linux. A required component that fails FAILS the build (add the package to
+    `build.sh`); an optional one is REMOVED again with a WARNING and `/usr/share/licenses/octarine-os-binaries/REMOVED`. Before this the schedulers' `ldd` ran only in
+    the smoke test and in the builder (wrong environment), and libextest was never checked.
+  - *Fallback per component (daily build for required ones; Kevin, 2026-11-14, extended 2026-11-15).* `binaries-fallback.sh <image> last-good-<c> <c> schedulers.tsv install-binaries.sh`:
+    resolves the tag to a digest, verifies the cosign signature of THAT digest, exports it, `binaries-layout.sh` for the component and THIS tree's installer
+    (`BINARIES_ONLY`) must accept it, and the content-key label must be readable; otherwise it is refused (an optional component without one logs a warning, a required one fails).
+    Not for: a failed lookup, a failed SIGNING (build succeeded, `sign` failed), a refused candidate. A Fedora library change that breaks a binary at link time
+    is NOT covered (an old image would hit the same failure at the runtime check). Visible: summary and warning annotations from `binaries-decide.sh` (`FALLBACK:` and `OMITTED:`), the
+    labels above, the records above, and ONE issue labeled `ci-failure-binaries` from the `track` job on main only (named degraded components, a comment per
+    later run, closed with a comment when a main run has none degraded; `.github/scripts/ci-issue.sh`). The assembled `last-good` pointer is gone: components are the unit.
+  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=scx,ghostty -f fallback_dry_run=true` (a comma list or `all`;
+    `true` still means all) skips the reuse of those components, fails their build on purpose, runs the fallback checks on their real `last-good-<c>` images and reports `FALLBACK (dry run)`;
+    nothing is pushed, signed, used or retagged.
+  - Tests: `tests/binaries-fallback.sh` (candidate checks, `binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, issue mechanics), `tests/binary-images.sh`
+    (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until they run: the first matrix run, artifact hand-over,
+    the first real fallback or omission, `last-good-<c>` first move (a component's first main run creates it), issue creation with the default token.
+  - The binaries image has three components: scx and extest (required), ghostty (optional, 2026-11-15).
+- **Ghostty (optional component `binaries/ghostty/`; Kevin 2026-11-15: it replaces the third-party AppImage and must never block an image build).**
+  Source: the git tag `v1.4.0` pinned with its peeled commit `83fb9562...` in `upstream.env` (`fetch-source.sh` fails if the tag moved). There are no official Linux
+  binaries and no GitHub release objects (only `tip`); official source tarballs exist at `release.files.ghostty.org` with a minisign signature but no published sha256,
+  so the git tag is used (a git checkout needs `blueprint-compiler` 0.16+, Fedora 45 has 0.22.2, plus gettext, pandoc, ncurses `tic` and libxml2 `xmllint`).
+  Zig: Fedora 45 packages only 0.16.0; Ghostty 1.4.0 needs 0.17 (`build.zig.zon` `.minimum_zig_version = "0.17.0"`; `src/build/zig.zig` `requireZig` accepts the same
+  major.minor with any patch >= the minimum). `zig.env` pins the official tarball by URL and sha256 (0.17.0, the minimum of Ghostty v1.4.0's build.zig.zon; 0.17.1 also works in a local build; the size is optional and, when not pinned, must equal the one `index.json` lists); `fetch-zig.sh` fails the build unless size and sha256
+  match, the sha256 equals what `ziglang.org/download/index.json` lists for that version, URL and size, and the minisign signature verifies with the pinned key (`minisign`
+  is installed in the builder; if it were missing the record in BUILDINFO says "minisign NOT installed" plainly). Dependencies: the offline distro-style build of PACKAGING.md
+  at the tag: `nix/build-support/fetch-zig-cache.sh` fetches the 37 packages of `build.zig.zon.txt` into an empty `ZIG_GLOBAL_CACHE_DIR` (the one network step, Zig checks every
+  package against its content hash), then `zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true
+  -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=glslang -fno-sys=spirv-cross` (`--system` links Fedora's freetype, harfbuzz, fontconfig, libpng, zlib, oniguruma, simdutf and
+  gtk4-layer-shell dynamically; Fedora 45 has no spirv-cross devel package and glslang's pkg-config files are unverified, so those two are built from the vendored packages).
+  The builder packages are the Fedora 45 names found in the repository metadata (see `binaries/ghostty/Containerfile`); the FIRST BUILD decides whether the list is complete.
+  Staged: `root/usr/...` (the whole installed tree: `bin/ghostty`, `share/applications/com.mitchellh.ghostty.desktop`, the D-Bus service, `lib/systemd/user/app-com.mitchellh.ghostty.service`
+  in system-package mode, metainfo, icons `com.mitchellh.ghostty`, `share/ghostty/{shell-integration,themes}`, terminfo, completions, vim/nvim/bat files, the Nautilus and KDE
+  integrations, locale files: inferred from `src/build/GhosttyResources.zig`; `FILES` lists the real ones), the MIT license, SOURCE and BUILDINFO (zig version and fetch
+  record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING; the exception: the terminfo entries `usr/share/terminfo/*`, which ncurses-term already ships for ghostty, are kept as the image has them and skipped) and the OS
+  image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
+  (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
+  owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
+  **Update path (weekly `upstream-check.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
+  (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one opens ONE pull request on `bump/ghostty` (`bump-ghostty.sh ghostty`)
+  that moves `upstream.env` (tag AND peeled commit) and `zig.env` (version, URL, sha256, size, signature URL) together: the Zig minor is read from `.minimum_zig_version` in that
+  tag's `build.zig.zon` and the newest published patch of that minor (x86_64-linux tarball) comes from `index.json`; when no tarball of that minor is published yet (or the newest is
+  below the minimum) NOTHING is opened and the job summary says `wait ...`. A newer patch of the PINNED Zig minor (checked against the minimum at the pinned tag) is a separate
+  low-priority pull request on `bump/zig` that changes only `zig.env`; a newer Zig minor alone never causes anything. Bump pull requests change pins only (nothing is published or signed); the
+  build after the merge into `testing` proves the bump, and a failing Ghostty bump degrades the optional component (last good, else left out) instead of touching the image.
+  Tests: `tests/ghostty-component.sh` (pins, recipe, `fetch-zig.sh` with a stub curl/minisign and a fake tarball, the installer cases, the version selection with stubbed `gh` and index.json
+  data: new tag same minor, new minor without a tarball, new minor with one, patch bump, pre-release ignored, same tag no-op, version sort, unreadable inputs, the bump pull requests).
+  ROOT CAUSE of the first CI failures (2026-11-15, found by a local build in the builder image): Zig 0.17's `zig fetch` no longer leaves unpacked package directories in `<cache>/p` but `<hash>.tar.gz` files, so Ghostty's PACKAGING.md recipe and `nix/build-support/fetch-zig-cache.sh` are stale: `zig build --system <cache>/p` panicked ('reached unreachable code') and a plain build in the same polluted cache reported a hash mismatch for every package (with Zig 0.17.0 and 0.17.1 alike). `build.sh` now fetches every URL of `build.zig.zon.txt` into a FRESH empty cache, unpacks each saved tarball into a separate package directory (flattening the packages whose tarball keeps the upstream top-level directory; it fails with a message if a directory is still a lone subdirectory) and runs `zig build --system <that directory>` (no `-fno-sys`, no extra -devel packages). libghostty-vt (`usr/lib/libghostty-vt*`, `usr/include/ghostty`) is pruned: not wanted in the image. The builder package list of the Containerfile was enough (295 packages). Runtime libraries: freetype, harfbuzz, fontconfig, oniguruma, libglvnd-egl, libadwaita, gtk4, glib2, libX11 are in the base; `gtk4-layer-shell` is added by build.sh. UNVERIFIED until a build works: the builder package list, `ghostty +version` as the smoke run, `-fno-sys` spelling, the real file list,
+  that gtk4-layer-shell is the only extra runtime library, and the Zig minisign check (the tarball was verified here only through the sha256 the hub read from the official page).
 - **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
   WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
@@ -137,25 +202,18 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
   `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
   are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
-- **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
-  `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
-  (small).
-- **Workflow** `.github/workflows/binaries.yml` (reusable, also `workflow_dispatch`), called by the `binaries` job of `build.yml` (only when the
-  plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the build job `needs` it. Jobs:
-  `check` (tree hash; `binaries-lookup.sh`: the tag exists and `cosign verify --key cosign.pub` accepts its digest: green "binaries
-  unchanged, nothing to build"; a missing tag, or an existing one whose signature fails, is built again), `build` (`podman build` in the pinned
-  builder, `binaries-layout.sh` checks the exported file list, then `push-tags.sh` pushes ONE manifest digest), `sign` (environment `signing`,
-  the same `SIGNING_SECRET` (a repository secret: the calling jobs pass it on by name (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}`, declared in `binaries.yml`'s `workflow_call`; no `secrets: inherit`), without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
-  `main` publish; on any other ref (a validation dispatch) the binaries are built and checked but never pushed or signed, no digest is
-  handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully exercised by the
-  merge into `testing` (validate the binaries build alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no
-  required check name; `Build and push image`, `Sign and verify images` and `Build dx and push image` are unchanged, and a failed binaries
-  job fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
-  (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the
-  hash tag of the checked-out tree, and labels the image `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for
-  `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public (the GPL source records ship in
-  the image either way).
-- **Which path ran.** The run shows it: a green job "Reuse the binaries image" (the lookup found a signed image for the hash, the build and sign jobs are skipped) or "Build the binaries image" plus "Sign the binaries image"; `binaries.yml` outputs `action` (`reused`, `built` or `validated` for a branch that cannot publish), `hash` and `digest`, each deciding job writes one line to the run summary, and `build.yml` and `build-beta.yml` repeat it; a tag whose signature fails to verify is not reused, the build path rebuilds and signs it again.
+- **Tag = assembled key** (see the per-component pipeline above; it replaced the tree hash `git rev-parse HEAD:binaries`): content-addressed, so the same content is built once and
+  reused by `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free).
+- **Workflow notes.** Called by the `binaries` job of `build.yml` (only when the plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the
+  build job `needs` it. The signing secret is passed by name down the chain (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}` in build.yml, build-beta.yml and the `component` job; no `secrets: inherit`;
+  without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag. Only `testing` and `main` publish; on any other ref (a validation dispatch) the
+  components are built and checked but never pushed or signed, no digest is handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully
+  exercised by the merge into `testing` (validate alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no required check name; `Build and push image`, `Sign and verify images`
+  and `Build dx and push image` are unchanged, and a failed binaries run fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
+  (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the assembled-key tag of the checked-out tree, and labels the image
+  `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public.
+- **Which path ran.** The run summary says it per component (Component scx: reused, built and signed, validation only, FALLBACK, OMITTED) and for the assembled image (reused, assembled and signed, validation only); the outputs are
+  in the per-component pipeline bullet; `build.yml` and `build-beta.yml` repeat the path in their own summary.
 - **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
   `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
   the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
@@ -559,6 +617,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `kernel-signer` (bkernel01, Fedora Secure Boot CA 20200709), Universal Blue's `ublue kernel` and `ublue akmods`; the downloaded key is byte-identical to `/etc/pki/akmods/certs/akmods-ublue.der` of the image. The
   runner has no sbverify: the step installs `sbsigntool` (apt); no alpine fallback (Bluefin needs one for its own runners). The first CI run was the old branch's discovery run, which failed on purpose for want of a pin.
   The NVIDIA smoke test (`nvidia-smoke.sh`) also requires every NVIDIA module's `sig_key` to equal the subject key identifier of `/etc/pki/akmods/certs/akmods-ublue.der` of the image (the key
+  2026-11-15 (the first scheduled NVIDIA failure after ublue-os/akmods #632 retired the legacy 2023 key): the modules' `sig_key` became `7D:F8:7A:F5:...`, which is the SERIAL NUMBER of the published 2024 certificate (`certs/public_key.der`, subject key identifier `2C:25:06:15:...`, same subject CN `ublue kernel`), not a new key: the signer now encodes the same certificate by serial instead of by subject key identifier. The smoke test accepts the subject key identifier OR the serial number (the latter only together with the certificate's common name as the module's signer); any other id still fails. Evidence: `openssl x509 -inform DER -noout -text` of `certs/public_key.der` on ublue-os/akmods main shows both values.
   `ujust hardware-setup` enrolls), `vermagic` to start with the installed kernel release, and, when `keys/secureboot.env` pins `NVIDIA_MODULE_SIGNER`, the signer name. dx and nvidia-dx inherit the kernel unchanged (their smoke tests check it did not change). NOT verifiable in CI: a real boot (Kevin boots testing on nox, Secure Boot on).
   Tests: `tests/secureboot-check.sh`, `tests/nvidia-variant.sh`.
 - **zizmor (`zizmor.yml`, 2026-11-14).** Audits `.github/` on pull requests that touch it, pushes to `testing`, weekly (Wednesday 06:00 UTC) and by dispatch; job and check name `zizmor`, NOT a required
@@ -823,8 +882,8 @@ signed and the dx image was built on exactly that default digest.
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
   variable, so set it only when the next scheduled build should use it.
-  (5) In the SAME change move the binaries builder: `ARG BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/Containerfile` (re-resolve the digest as
-  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/` tree also gives a new tree hash, so the next build
+  (5) In the SAME change move the binaries builder: `BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/builder.env` (re-resolve the digest as
+  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/builder.env` also gives new component keys, so the next build
   rebuilds them for the new release. The fallback to the last good binaries image does not help here: an old image built for release N-1 may not link on N, and only a rebuild fixes that.
 
 ## Logo files
@@ -999,6 +1058,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   window switcher and volume/brightness binds through `noctalia msg ...`, replacing the plain ones of the binds part), `60-window-rules.kdl`
   (niri's two default rules). No second polkit agent is started anywhere. The parts derive from niri's default config
   (GPL-3.0-or-later; credited in the README). Deleting an include line drops a part; the files are listed in the order they must stay.
+- **Promoted defaults (2026-11-15, Kevin's list from his own niri files).** `20-input.kdl`: niri's tap and natural scroll plus `drag-lock`, `click-method "clickfinger"`, `scroll-factor 0.3`.
+  `30-layout.kdl`: centered focus on overflow, `always-center-single-column`, presets 0.25/0.33333/0.5/0.66667/0.75, third-width default column, shadow on with `draw-behind-window`, 32 pixel struts,
+  the left tab indicator (hidden with one tab), `hotkey-overlay { skip-at-startup }`, an empty `animations {}`; the COLORS stay niri's own (focus ring `#7fc8ff`, default insert-hint color, no Gruvbox gradient:
+  the image is theme neutral; the owner can ask for his gradient). New `35-gestures.kdl` (edge scroll, edge workspace switch, hot corners off) and `45-workspaces.kdl` (named workspaces General, Web, Media, Games).
+  `50-noctalia.kdl` keeps the shipped binds and adds the Noctalia look (rounded corners with clipping, blur without xray, the settings window rule, the wallpaper on the backdrop, transparent workspace
+  background, no overview workspace shadow, the layer rules, the global blur fine-tuning, and `debug { honor-xdg-activation-with-invalid-serial }`, which weakens niri's focus-steal protection and is commented as such);
+  everything is documented in niri 26.04's wiki (`/usr/share/doc/niri/wiki`) and accepted by `niri validate`; Noctalia's own docs were not read. `60-window-rules.kdl`: niri's two defaults, the dialog-title float rule, block-out-from
+  screen-capture for KeePassXC and GNOME Secrets, and a routing rule per app of the Flatpak preinstall lists (Web: Firefox; Media: Thunderbird, Calendar, Contacts, Music, Decibels, Podcasts, Showtime, Loupe, Snapshot,
+  Weather, Maps; General: Boxes, Builder, Connections, Deja Dup, File Roller, Firmware, Logs, Papers, Simple Scan, Text Editor, Disk Usage, Clocks, Flatseal, Extension Manager, Bazaar; floating utilities: Calculator, Characters,
+  Font Viewer, the Nautilus previewer), the Games launchers of `gaming-setup` (Steam, Lutris, Bottles, ProtonUp-Qt) and floating pavucontrol, blueman and nm-connection-editor. UNVERIFIED app ids: no id was checked under niri
+  except Firefox, Steam and WezTerm (the owner's earlier checks); the GNOME apps follow "a GTK app reports its application id"; Vorta (Qt) is deliberately unrouted (`// unrouted: com.borgbase.Vorta`). Not promoted: outputs,
+  `debug.kdl`, keybinds, the HHKB layer, Gruvbox colors, the owner's Mod+Comma and Mod+D, his personal apps, the terminal opacity rule, the gamescope and `steam_app` rules. `tests/niri-setup.sh` checks every
+  preinstall app has an entry in the rules part, so a new preinstall app cannot be forgotten.
 - **Selection rule applied to dot-files `config/niri`** (same rule as "System defaults"): excluded the MEH/HYPR binds
   (`41-binds-meh-hyper`), the app-folder binds (`42-binds-apps`: ghostty, yazi, helix, personal folders), workspace names and routing
   (`20-workspaces`, `51-workspace-routing`), the window rules (`50-window-rules`: opacity and blur for ghostty, Steam, personal apps),
@@ -1067,7 +1139,21 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
     With no `~/.config/niri/config.kdl` yet the step is skipped (run the `niri` step first). After writing it runs `niri validate -c
     ~/.config/niri/config.kdl` when niri is on PATH; on failure it restores every touched file from a snapshot, removes this run's backups,
     reports FAILED (exit 1, re-run hint); without niri it says validation was skipped.
-  - **"NO" is verifiable.** `40-binds.kdl` equals the `binds` block of `/usr/share/doc/niri/default-config.kdl` except Mod+D (fuzzel) and Super+Alt+L
+  - **Terminal for Mod+T (step `terminal`, 2026-11-15, Kevin: Alacritty stays the default).** The shipped `/etc/niri/40-binds.kdl` and the templates keep Alacritty (the
+  guard in `tests/niri-setup.sh`: no ghostty, ptyxis, kitty or foot in any shipped niri file; `60-window-rules.kdl` has niri's own default rule for the WezTerm app-id, the one exception). The step
+  (`--terminal alacritty|ptyxis|ghostty|kitty|wezterm|foot`, `--force`, or a picker in the checklist; `--yes` alone and `--no` change nothing) edits ONLY the user's copies: the one uncommented
+  `<modifier>+T ... spawn` line of `~/.config/niri/40-binds.kdl` and of `40-binds-standard.kdl` (the wizard's file), and records `terminal=<name>` in `~/.config/octarine-os/niri-terminal`
+  (a state file, because the wizard has to know the choice before any bind line exists; without it the choice is read back from the bind line). Detection: the binary on PATH, else
+  `/home/linuxbrew/.linuxbrew/bin`, else `~/.local/bin`; the picker lists only found terminals (Alacritty always, first) and names the missing ones; a terminal found outside PATH is spawned by
+  absolute path (the niri session may not have those directories on PATH). A not-installed terminal asks (default no) or needs `--force`; unknown names exit 2. The line is rewritten only when it is
+  exactly one the recipe writes (title `Open a Terminal: <name>`, `spawn "<name>"`, plus `"--new-window"` for Ptyxis); any other `+T` line is the user's: left alone, the exact line is printed,
+  the step is "skipped (your Mod+T line is customized)", not a failure. Templates use `@TERMINAL_NAME@` and `@TERMINAL_SPAWN@` (only `standard.kdl.in` has the terminal bind).
+  Spawn commands: `alacritty`, `ptyxis --new-window` (verified in `ptyxis --help`: "New terminal window"; the behavior with a running instance is not verified, `--new-window` makes
+  a window explicit), `ghostty` (the wrapper in `~/.local/bin` or the image's future `/usr/bin/ghostty`; not verified: single-instance behavior), `kitty` (not verified here: not installed),
+  `wezterm` (verified in wezterm's `main.rs`: no subcommand means `start`; Wayland on by default in its config), `foot` (not verified: the project is on Codeberg). Tests: `tests/niri-setup.sh`
+  (all six, detection, unknown and missing names, `--force`, `--no`, `--yes`, idempotence, switching, the protection of a user's line, no copy yet, `niri validate` when niri exists) and
+  `tests/niri-keybinds.sh` (the wizard uses the recorded choice, the step also edits the generated file).
+- **"NO" is verifiable.** `40-binds.kdl` equals the `binds` block of `/usr/share/doc/niri/default-config.kdl` except Mod+D (fuzzel) and Super+Alt+L
     (swaylock) removed (the image ships neither) and the playerctl and brightness keys guarded with `command -v`; Alacritty is niri's own default
     terminal. `tests/niri-keybinds.sh` fails on any other difference.
   - **Tests** `tests/niri-keybinds.sh`: the matrix (3 layouts x 12 ordered switch/move pairs x 5 other modifiers = 180 runs of the real recipe against
@@ -1157,17 +1243,27 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
+- **EXPERIMENTAL second launcher `ojust` (maintainer note only; deliberately undocumented elsewhere, Kevin 2026-11-15; a test checks that no README, doc or user-facing text mentions it).** `/usr/bin/ojust` runs
+  `just` with `JUST_JUSTFILE=/usr/share/octarine-os/justfile` (the mechanism `ujust` uses) and sets `OCTARINE_UJUST=/usr/bin/ojust` so `hardware-setup`'s self-calls stay in ojust. Its root justfile imports
+  ONLY our files, never one of Universal Blue's `ublue-os-just` package, so it works on a base without that package: `15-luks`, `40-nvidia`, `50-akmods`, `60-custom` and the dx files (same files as ujust), plus
+  `/usr/share/octarine-os/just/{motd,update,base-pieces}.just`. To make that possible the image's own `toggle-motd`/`toggle-user-motd` and `update`/`toggle-updates` moved out of the wrapper files
+  `00-default.just` and `10-update.just` into `motd.just` and `update.just`; the wrappers now import those FIRST and the renamed base file second (first import wins), so ujust resolves exactly the same
+  recipes (verified by comparing `just --dump --dump-format json` of the assembled root before and after: identical). `base-pieces.just` is ojust-only: copies of the package's `bios`, `bios-info`,
+  `logs-this-boot`, `logs-last-boot`, `enroll-secure-boot-key`, `check-local-overrides`, `device-info`, `changelogs`, `update-firmware`, `clean-system` and the aliases (Apache-2.0, attribution in its header);
+  NOT copied: `check-idle-power-draw`, `distrobox-assemble`, `distrobox-new`, `install-resolve`, `setup-distrobox-app` (they need `/usr/lib/ujust` helpers). The three helper libraries are NOT copied: no file
+  ojust imports sources them, and `ugum` is only an optional menu helper (`menu.sh` falls back without it). Keep new recipes free of `/usr/lib/ujust` sourcing and of imports of base files.
+  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`, `build-beta.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
+- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
 ## `ujust toggle-updates` and `ujust update`
 
-- Both live in `10-update.just` and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
+- Both live in `system_files/usr/share/octarine-os/just/update.just` (imported by the wrapper `10-update.just` and by ojust's root) and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
   sources: `image` (`rpm-ostreed-automatic.timer`, stages the image), `flatpak` (system `flatpak-system-update.timer` plus
   user `flatpak-user-update.timer`), `distrobox` (user `octarine-distrobox-upgrade.timer`, shipped here, off by default),
   `brew-update` (`brew-update.timer`), `brew-upgrade` (`brew-upgrade.timer`, off by default by `00-octarine-brew.preset`).
@@ -1689,7 +1785,20 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
   when nothing changes). `--yes` takes defaults; `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
+  non-zero. **`editor` step (2026-11-15, Kevin: "define a default editor"; a step of its own right after `shell`, no sudo):** options vi (always), nano, vim, nvim, hx, only when found (PATH, then
+  `/home/linuxbrew/.linuxbrew/bin`, then `~/.local/bin`; hooks `USER_SETUP_EDITOR_DIRS` and `USER_SETUP_EDITOR_SYSDIRS`); the default answer is "keep the current settings" (`--yes` alone keeps too);
+  `--editor NAME` (unknown or not installed: exit 2 listing the detected ones) implies `--only editor`. It writes ONE managed file, `~/.config/environment.d/50-editor.conf`
+  (`EDITOR`, `VISUAL`, `SUDO_EDITOR`, KEY=value, a header with the undo): SUDO_EDITOR is always the absolute path (sudoedit runs with sudo's restricted PATH), EDITOR and VISUAL the plain name only when the
+  binary is in `/usr/bin`, `/bin` or `/usr/local/bin`, else the absolute path (Homebrew and `~/.local/bin` are on PATH only in login shells, not for everything the session starts). Lines in the
+  user's own rc files (`.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`, `.bashrc.d/*`, fish `config.fish` and `conf.d`, other `environment.d` files) that set these
+  variables are listed with file and line, never edited, and the question to write anyway defaults to NO (an explicit `--editor` writes with a note). Each such line whose value differs from the pick is reported with file, line, variable, its value, the value the pick writes and the exact line to remove or change (another `environment.d` file is named as such); tested with a fixture HOME (`set -gx EDITOR` in `config.fish`, `export EDITOR=` in `.bashrc`). Verified in environment.d(5): the files are read by
+  the systemd user manager and passed to the services it starts (GNOME's terminal server is the example in the man page), SSH logins and plain TTY logins do not read them. FOUND on nox (not tested end to end):
+  the image's base ships `nano-default-editor` (`/etc/profile.d/nano-default-editor.sh` sets `EDITOR=/usr/bin/nano` only when unset, its fish twin in `vendor_conf.d` uses `set -q`), and
+  `systemctl --user show-environment` on nox shows `EDITOR=/usr/bin/nano`: a session's `systemctl --user import-environment` (niri-session does it, GNOME imports the login environment) copies the LOGIN
+  SHELL's environment, which lacks environment.d, over the manager's, so environment.d alone would probably lose for EDITOR. Hence two small image files read the SAME managed file for login shells:
+  `system_files/etc/profile.d/octarine-os-editor.sh` (bash, zsh; sorts after the nano one; accepts only the three keys and plain path characters, parsed never executed) and
+  `system_files/usr/share/fish/vendor_conf.d/octarine-os-40-editor.fish`; a user's own rc files still win. UNVERIFIED: the import ordering in a real niri and GNOME login. Test hooks:
+  `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
   flatpak, sudo, id, getent, usermod, gsettings, brew, fc-list). The dot-files steps (`dotfiles`, `brew`, `gnome` with its
   GNOME extension installer) were removed from `user-setup` on 2026-11-09 by Kevin's decision; the dot-files repo itself and its
   `just` recipes still exist, independent of this image.

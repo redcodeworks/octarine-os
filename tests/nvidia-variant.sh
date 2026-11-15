@@ -131,6 +131,11 @@ K=$k
 mk_image "$K"
 check "smoke present: a complete variant passes" smoke present
 STUB_SIG_KEY=AA:BB:CC smoke present >"$root/sm.out" 2>&1; check "smoke present: a module signed with another key than the image's akmods certificate FAILS (an enrolled machine would refuse it)" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module is signed with the key of' '$root/sm.out'"
+SERIAL=$(openssl x509 -inform DER -in "$root/akmods.der" -noout -serial | sed 's/^serial=//')
+STUB_SIG_KEY="$SERIAL" smoke present >"$root/sm.out" 2>&1; check "smoke present: sig_key equal to the certificate's SERIAL number (how Universal Blue's akmods build identifies the same 2024 key since 2026-11-11), with the certificate's common name as signer, passes" test $? -eq 0
+STUB_SIG_KEY="$SERIAL" STUB_SIGNER="somebody else" smoke present >"$root/sm.out" 2>&1; check "smoke present: the serial form with another signer name FAILS" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module is signed' '$root/sm.out'"
+STUB_SIG_KEY="00:11:22:33" smoke present >"$root/sm.out" 2>&1; check "smoke present: an id that is neither the subject key identifier nor the serial FAILS" bash -c "[ $? -ne 0 ]"
+STUB_SIG_KEY="" smoke present >"$root/sm.out" 2>&1; check "smoke present: a module without a sig_key FAILS" bash -c "[ $? -ne 0 ]"
 STUB_VERMAGIC=1.2.3-other smoke present >"$root/sm.out" 2>&1; check "smoke present: a module built for another kernel FAILS" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module was built for the installed kernel' '$root/sm.out'"
 EXPECT_MODULE_SIGNER="stub akmods" smoke present >"$root/sm.out" 2>&1; check "smoke present: an optional pinned signer name that matches passes" test $? -eq 0
 EXPECT_MODULE_SIGNER="somebody else" smoke present >"$root/sm.out" 2>&1; check "smoke present: a pinned signer name that differs FAILS" bash -c "[ $? -ne 0 ] && grep -q 'FAIL every NVIDIA kernel module names the pinned signer' '$root/sm.out'"

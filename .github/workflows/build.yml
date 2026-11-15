@@ -224,8 +224,9 @@ jobs:
     if: needs.plan.outputs.build == 'true'
     uses: ./.github/workflows/binaries.yml
     with:
-      # only the scheduled daily build may fall back to the last good binaries image when the binaries BUILD failed (binaries.yml
-      # enforces schedule and main again); everything else fails closed
+      # only the scheduled daily build may let a REQUIRED component fall back to its last good image when its BUILD failed
+      # (binaries-component.yml enforces schedule and main again); everything else fails closed. An OPTIONAL component degrades on
+      # every publishing run (its last good image, else it is left out) and never blocks the build
       allow_fallback: ${{ github.event_name == 'schedule' }}
     permissions:
       contents: read
@@ -373,11 +374,12 @@ jobs:
           FALLBACK: ${{ needs.binaries.outputs.fallback }}
           FB_HASH: ${{ needs.binaries.outputs.fallback_hash }}
           FB_CREATED: ${{ needs.binaries.outputs.fallback_created }}
+          DEGRADED: ${{ needs.binaries.outputs.degraded }}
         run: |
           echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${FALLBACK}" == true ]]; then
-            echo "::warning::FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, tree ${FB_HASH}, built ${FB_CREATED}) because the binaries build failed"
-            echo "## FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, built ${FB_CREATED}) because the binaries build failed" >> "${GITHUB_STEP_SUMMARY}"
+            echo "::warning::FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (assembled ${FB_HASH}, ${FB_CREATED}) with degraded components: ${DEGRADED}"
+            echo "## FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (assembled ${FB_HASH}, ${FB_CREATED}) with degraded components: ${DEGRADED} (a component's last good build, or an optional one left out)" >> "${GITHUB_STEP_SUMMARY}"
             # the image build records it (Justfile: label, Containerfile: SOURCE and BUILDINFO of the installed binaries)
             { echo "BINARIES_FALLBACK_TREE=${FB_HASH}"; echo "BINARIES_FALLBACK_CREATED=${FB_CREATED}"; } >> "${GITHUB_ENV}"
           fi
@@ -457,6 +459,7 @@ jobs:
             check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
             check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
             check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
+            check "optional ghostty: installed with its desktop file, a working --version and its libraries resolved, or recorded as left out (MISSING or REMOVED)" "if test -x /usr/bin/ghostty; then test -f /usr/share/applications/com.mitchellh.ghostty.desktop && /usr/bin/ghostty --version >/dev/null && out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\"; else test -s /usr/share/licenses/octarine-os-binaries/MISSING || test -s /usr/share/licenses/octarine-os-binaries/REMOVED; fi"
             check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
             check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
             # pcp is an optional package: its units are enabled only when it is installed
@@ -557,7 +560,7 @@ jobs:
               check "fish accepts $f" "fish --no-execute $f"
             done
             check "gamemode defaults file shipped" "grep -qx renice=10 /etc/gamemode.ini"
-            check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl"
+            check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl && test -s /etc/niri/35-gestures.kdl && test -s /etc/niri/45-workspaces.kdl && test -s /etc/niri/60-window-rules.kdl"
             check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml && test -s /usr/share/octarine-os/niri-setup/keybinds/standard.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/compact.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/hhkb.kdl.in"
             check "niri accepts the shipped config when niri is installed" "! command -v niri || niri validate -c /etc/niri/config.kdl"
             check "niri-setup recipe exists" "grep -q ^niri-setup /usr/share/ublue-os/just/60-custom.just"
@@ -580,6 +583,7 @@ jobs:
             check "automatic update service waits for the network (base drop-in) and NetworkManager-wait-online is enabled" "grep -q After=network-online.target /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/override.conf && systemctl is-enabled NetworkManager-wait-online.service"
             summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
             check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
+            check "the experimental second launcher runs and lists the image own recipes without a base file import" "test -x /usr/bin/ojust && /usr/bin/ojust --list | grep -q toggle-motd && /usr/bin/ojust --list | grep -q niri-setup && ! grep -E ^import /usr/share/octarine-os/justfile | grep -q -- -base.just"
             has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
             for r in switch-image toggle-updates update luks-tpm-unlock toggle-motd toggle-user-motd; do
               check "assembled justfile lists $r" "has_recipe $r"

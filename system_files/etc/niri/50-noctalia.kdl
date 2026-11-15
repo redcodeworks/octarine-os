@@ -17,3 +17,77 @@ binds {
     XF86MonBrightnessUp allow-when-locked=true { spawn-sh "noctalia msg brightness-up"; }
     XF86MonBrightnessDown allow-when-locked=true { spawn-sh "noctalia msg brightness-down"; }
 }
+
+// ---- Noctalia's look (from Noctalia's own niri setup notes): rounded windows, blur without xray, the wallpaper on the backdrop. Delete
+// everything below this line for niri's plain look; the binds above stay.
+
+// Rounded corners for all windows, with the window contents clipped to them.
+window-rule {
+    geometry-corner-radius 20
+    clip-to-geometry true
+}
+
+// Blur behind every window, without xray (windows blur what is really behind them, which looks more realistic).
+window-rule {
+    background-effect {
+        blur true
+        xray false
+    }
+}
+
+// Noctalia's settings window floats at a fixed size.
+window-rule {
+    match app-id="dev.noctalia.Noctalia"
+    open-floating true
+    default-column-width { fixed 1080; }
+    default-window-height { fixed 920; }
+}
+
+// Allows notification actions and window activation from Noctalia (it activates windows with a serial niri cannot match). This relaxes
+// niri's protection against windows grabbing focus: remove the block if you do not use Noctalia's notifications.
+debug {
+    honor-xdg-activation-with-invalid-serial
+}
+
+// The regular wallpaper goes on the backdrop, and the workspace background is transparent so the backdrop is always visible.
+layer-rule {
+    match namespace="^noctalia-wallpaper"
+    place-within-backdrop true
+}
+
+layout {
+    background-color "transparent"
+}
+
+// No workspace shadows in the overview.
+overview {
+    workspace-shadow {
+        off
+    }
+}
+
+// Noctalia's own surfaces (bar, notifications, dock, panels, OSD): no xray either. Noctalia publishes blur regions by itself when the
+// compositor supports ext-background-effect.
+layer-rule {
+    match namespace="^noctalia-(bar-[^\"]+|notification|dock|panel|attached-panel|osd)$"
+    background-effect {
+        xray false
+    }
+}
+
+// Blur, without xray, on Noctalia's window switcher.
+layer-rule {
+    match namespace="noctalia-window-switcher"
+    background-effect {
+        blur true
+        xray false
+    }
+}
+
+// A lighter blur than niri's default (fewer passes, less saturation boost): Noctalia's suggested fine-tuning.
+blur {
+    passes 2
+    offset 3.0
+    noise 0.03
+    saturation 1.0
+}

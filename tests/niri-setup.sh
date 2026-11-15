@@ -250,11 +250,106 @@ check "recipe has the Setup group and a one-line comment above it" bash -c "grep
 check "recipe never runs sudo" bash -c "! grep -v '^ *#' '$root/body.sh' | grep -v 'printf' | grep -v 'No sudo' | grep -qE '(^|[^a-z-])sudo '"
 check "recipe sets no color" bash -c "! grep -qE '\\\\033|tput' '$root/body.sh'"
 
+# ---- the promoted defaults (layout, gestures, workspaces, Noctalia look, touchpad, window rules)
+preinstall_dir="$repo/system_files/usr/share/flatpak/preinstall.d"
+rules="$etc_niri/60-window-rules.kdl"
+check "the new parts exist and are included in order (gestures after layout, workspaces before Noctalia)" bash -c "cd '$etc_niri' && [ -s 35-gestures.kdl ] && [ -s 45-workspaces.kdl ] && l=\$(grep -n '^include' config.kdl | cut -d: -f2 | tr -d '\"' | sed 's/include //' | tr '\n' ' ') && [ \"\$l\" = '10-environment.kdl 20-input.kdl 30-layout.kdl 35-gestures.kdl 40-binds.kdl 45-workspaces.kdl 50-noctalia.kdl 60-window-rules.kdl ' ]"
+check "layout: centered focus on overflow, a centered single column, five presets, third-width default, shadow on behind windows, 32 pixel struts, tab indicator, hotkey overlay skipped, niri's colors" bash -c "f='$etc_niri/30-layout.kdl'; grep -q 'center-focused-column \"on-overflow\"' \$f && grep -q 'always-center-single-column true' \$f && [ \$(grep -c '^        proportion' \$f) = 5 ] && grep -q 'default-column-width { proportion 0.33333; }' \$f && grep -q 'draw-behind-window true' \$f && [ \$(grep -cE '^        (left|right|top|bottom) 32' \$f) = 4 ] && grep -q 'hide-when-single-tab' \$f && grep -q 'skip-at-startup' \$f && grep -q 'active-color \"#7fc8ff\"' \$f && grep -q 'screenshot-path' \$f && ! grep -qE 'a9b665|7daea3|gradient' \$f"
+check "gestures: edge scroll, edge workspace switch, hot corners off" bash -c "f='$etc_niri/35-gestures.kdl'; grep -q 'trigger-width 30' \$f && grep -q 'trigger-height 50' \$f && [ \$(grep -c 'max-speed 1500' \$f) = 2 ] && grep -qE '^ +off\$' \$f"
+check "touchpad: the shipped tap and natural-scroll stay, plus drag-lock, clickfinger and scroll-factor 0.3, each once; no mouse, trackpoint or empty extra blocks" bash -c "f='$etc_niri/20-input.kdl'; for k in '^ +tap\$' '^ +natural-scroll\$' '^ +drag-lock\$' 'click-method \"clickfinger\"' '^ +scroll-factor 0.3\$'; do [ \$(grep -cE \"\$k\" \$f) = 1 ] || exit 1; done; ! grep -qE '^ +(mouse|trackpoint)' \$f"
+check "Noctalia part: its binds are unchanged (Mod+D, Mod+Space, Mod+S, Mod+Shift+S) and the look is added (corner radius, blur without xray, wallpaper on the backdrop, transparent background, layer rules, debug flag)" bash -c "f='$etc_niri/50-noctalia.kdl'; for k in 'Mod[+]D [{]' 'Mod[+]Space ' 'Mod[+]S ' 'Mod[+]Shift[+]S [{]' 'geometry-corner-radius 20' 'clip-to-geometry true' 'dev.noctalia.Noctalia' 'place-within-backdrop true' 'background-color \"transparent\"' 'workspace-shadow' 'honor-xdg-activation-with-invalid-serial' 'noctalia-window-switcher' 'passes 2'; do grep -qE \"\$k\" \$f || { echo missing \$k; exit 1; }; done; ! grep -q 'Mod+Comma' \$f"
+check "the four named workspaces exist and every open-on-workspace of the window rules names one of them" bash -c "cd '$etc_niri' && for w in General Web Media Games; do grep -qx \"workspace \\\"\$w\\\"\" 45-workspaces.kdl || exit 1; done; for w in \$(grep -ho 'open-on-workspace \"[A-Za-z]*\"' 60-window-rules.kdl | sed 's/.*\"\\(.*\\)\"/\\1/' | sort -u); do grep -qx \"workspace \\\"\$w\\\"\" 45-workspaces.kdl || { echo unknown \$w; exit 1; }; done"
+check "every app of the Flatpak preinstall lists has a deliberate entry in the window rules: a rule with its id, or an '// unrouted: <id>' line with the reason" bash -c "
+  ids=\$(cat '$preinstall_dir'/*.preinstall | sed -n 's/^\\[Flatpak Preinstall \\(.*\\)\\]\$/\\1/p'); [ \$(wc -w <<<\"\$ids\") -ge 30 ] || exit 1
+  for id in \$ids; do esc=\${id//./\\\\.}; grep -qF \"\$esc\" '$rules' || grep -qF \"// unrouted: \$id\" '$rules' || { echo \"no entry for \$id\"; exit 1; }; done"
+check "password managers are hidden from screen capture (KeePassXC, GNOME Secrets), the dialog titles float, and no personal-only app is routed" bash -c "grep -q 'block-out-from \"screen-capture\"' '$rules' && grep -qF 'org\\.keepassxc\\.KeePassXC' '$rules' && grep -qF 'org\\.gnome\\.World\\.Secrets' '$rules' && grep -qF '(Open|Save|Save As' '$rules' && ! grep -qiE 'plex|cider|jetbrains|sunshine|fuzzel|zellij|vesktop|slack|discord|telegram' '$rules'"
+# ---- terminal for Mod+T (step `terminal`): fake terminals on a temp PATH, a temp HOME, the real shipped files as the source tree
+tbin="$root/tbin"; mkdir -p "$tbin"
+realsrc="$root/realsrc"
+rm -rf "$realsrc"; mkdir -p "$realsrc"; cp -r "$etc_niri" "$realsrc/niri"; cp -r "$share"/. "$realsrc/"
+mkterm() { for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$tbin/$t"; chmod +x "$tbin/$t"; done; }
+rmterm() { rm -f "$tbin"/*; }
+treset() { reset; rmterm; export PATH_BIN="$bin:$tbin"; SRC_OVERRIDE="$realsrc"; run '' --yes --only niri; }
+bindline() { grep -E '^[[:space:]]*Mod\+T ' "$HOME/.config/niri/40-binds.kdl"; }
+shipped_same() { cmp -s "$etc_niri/40-binds.kdl" "$realsrc/niri/40-binds.kdl" && grep -q 'spawn "alacritty"' "$etc_niri/40-binds.kdl"; }
+treset
+check "terminal: a fresh copy has the shipped alacritty line" bash -c "grep -q 'Open a Terminal: alacritty\" { spawn \"alacritty\"; }' '$HOME/.config/niri/40-binds.kdl'"
+mkterm alacritty ptyxis ghostty kitty wezterm foot
+for t in alacritty ptyxis ghostty kitty wezterm foot; do
+    case $t in ptyxis) want="spawn \"ptyxis\" \"--new-window\";" ;; *) want="spawn \"$t\";" ;; esac
+    run '' --only terminal --terminal "$t"
+    check "terminal --terminal $t: exit 0, the user's Mod+T line is 'Open a Terminal: $t' with $want" bash -c "[ $rc = 0 ] && l=\$(grep -E '^[[:space:]]*Mod\\+T ' '$HOME/.config/niri/40-binds.kdl') && [[ \"\$l\" == *'hotkey-overlay-title=\"Open a Terminal: $t\"'* && \"\$l\" == *'$want'* ]]"
+    check "terminal --terminal $t: only that one line of the user's file differs from the shipped one, the choice is recorded, the shipped files are untouched" bash -c "[ \$(diff '$etc_niri/40-binds.kdl' '$HOME/.config/niri/40-binds.kdl' | grep -c '^[<>]') -le 2 ] && grep -qx 'terminal=$t' '$HOME/.config/octarine-os/niri-terminal' && cmp '$etc_niri/40-binds.kdl' '$realsrc/niri/40-binds.kdl'"
+    if command -v niri >/dev/null 2>&1; then check "terminal $t: niri validate accepts the user's copy" bash -c "niri validate -c '$HOME/.config/niri/config.kdl' >/dev/null 2>&1"; fi
+done
+check "terminal: nothing in the SHIPPED niri files or templates names ghostty, ptyxis, kitty, wezterm or foot (only the user copy may); the one exception is niri's own default window rule for WezTerm in 60-window-rules.kdl" bash -c "! grep -rniwE 'ghostty|ptyxis|kitty|wezterm|foot' '$etc_niri' '$share/keybinds' | grep -v '60-window-rules.kdl'"
+run '' --only terminal --terminal foot
+check "terminal: re-running with the same choice is already done and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'already set to Foot' '$root/out' && grep -qE '^terminal +already done' '$root/out'"
+run '' --only terminal --terminal kitty
+check "terminal: re-running with another choice changes it (idempotent switch), shows the old and the new line" bash -c "[ $rc = 0 ] && grep -q '^    - Mod+T.*foot' '$root/out' && grep -q '^    + Mod+T.*kitty' '$root/out'"
+check "terminal: the run shows the current choice and the undo command" bash -c "grep -q 'Current terminal for Mod+T: Foot' '$root/out' && grep -q 'terminal: run ujust niri-setup --only terminal --terminal alacritty' '$root/out'"
+# detection: only installed terminals are offered, Alacritty always and first
+treset; mkterm ptyxis kitty
+run '2\n' --only terminal
+check "terminal picker: Alacritty first and always, then only the installed ones (Ptyxis, Kitty); the missing ones are named in one line" bash -c "grep -q '1) Alacritty (shipped default)' '$root/out' && grep -q '2) Ptyxis' '$root/out' && grep -q '3) Kitty' '$root/out' && ! grep -qE '[0-9]\\) (Ghostty|WezTerm|Foot)' '$root/out' && grep -q 'Not found on this system (so not offered): Ghostty, WezTerm, Foot' '$root/out'"
+check "terminal picker: choosing 2 sets Ptyxis" bash -c "grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q 'Open a Terminal: ptyxis\" { spawn \"ptyxis\" \"--new-window\"; }'"
+run '' --only terminal
+check "terminal picker: Enter keeps the CURRENT choice (Ptyxis here): already done, nothing changes" bash -c "[ $rc = 0 ] && grep -q 'already set to Ptyxis' '$root/out' && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q ptyxis"
+treset; mkterm
+run '' --only terminal
+check "terminal picker: with no terminal installed Alacritty is still offered" bash -c "grep -q '1) Alacritty (shipped default)' '$root/out' && ! grep -qE '[0-9]\\) (Ptyxis|Ghostty|Kitty|WezTerm|Foot)' '$root/out'"
+# detection outside PATH: ~/.local/bin and the absolute path in the bind
+treset; mkdir -p "$HOME/.local/bin"; printf '#!/bin/sh\nexit 0\n' >"$HOME/.local/bin/ghostty"; chmod +x "$HOME/.local/bin/ghostty"
+run '' --only terminal --terminal ghostty
+check "terminal: a Ghostty found only in ~/.local/bin is detected and spawned by absolute path (the niri session may not have it on PATH)" bash -c "[ $rc = 0 ] && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q 'Open a Terminal: ghostty\" { spawn \"$HOME/.local/bin/ghostty\"; }' && ! grep -q 'not installed' '$root/out'"
+run '' --only terminal --terminal ghostty
+check "terminal: that absolute-path line is recognized as the recipe's own on the next run (already done)" bash -c "grep -q 'already set to Ghostty' '$root/out'"
+# not installed / unknown
+treset; mkterm alacritty
+run '' --only terminal --terminal nosuch
+check "terminal: an unknown name exits 2 with the list" bash -c "[ $rc = 2 ] && grep -q 'Unknown terminal: nosuch (use alacritty, ptyxis, ghostty, kitty, wezterm or foot)' '$root/out'"
+run '' --only terminal --terminal
+check "terminal: --terminal without a value exits 2" test "$rc" = 2
+run 'n\n' --only terminal --terminal wezterm
+check "terminal: a terminal that is not installed warns and asks (default no): answered n, nothing changes" bash -c "[ $rc = 0 ] && grep -q 'WezTerm is not installed here' '$root/out' && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q alacritty && grep -q 'skipped (not installed)' '$root/out'"
+run '' --only terminal --terminal wezterm --yes
+check "terminal: --yes takes the default (no) for a missing terminal: nothing changes and it says --force" bash -c "grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q alacritty && grep -q -- '--force' '$root/out'"
+run 'y\n' --only terminal --terminal wezterm
+check "terminal: a missing terminal confirmed with y is set" bash -c "grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q 'Open a Terminal: wezterm\" { spawn \"wezterm\"; }'"
+treset; mkterm alacritty
+run '' --only terminal --terminal foot --force
+check "terminal: --force sets a missing terminal without asking, with the warning" bash -c "[ $rc = 0 ] && grep -q 'Continuing because of --force' '$root/out' && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q 'Open a Terminal: foot'"
+# modes
+treset; mkterm kitty
+run '' --only terminal --terminal kitty --no
+check "terminal: --no only prints the plan, nothing is written" bash -c "[ $rc = 0 ] && grep -q 'Plan: would set Mod+T to Kitty' '$root/out' && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q alacritty && [ ! -e '$HOME/.config/octarine-os/niri-terminal' ]"
+run '' --only terminal --yes
+check "terminal: --yes alone does not change the terminal" bash -c "[ $rc = 0 ] && grep -q 'Skipped: --yes alone does not change the terminal' '$root/out' && grep -E '^[[:space:]]*Mod[+]T ' '$HOME/.config/niri/40-binds.kdl' | grep -q alacritty"
+# a line the user changed is never touched
+treset; mkterm kitty
+f="$HOME/.config/niri/40-binds.kdl"
+sed -i 's|^\( *\)Mod+T .*|\1Mod+T hotkey-overlay-title="My terminal" { spawn "my-term" "--special"; }|' "$f"; cp "$f" "$root/mine.kdl"
+run '' --only terminal --terminal kitty
+check "terminal: a Mod+T line the user changed is NOT clobbered; the exact line to use is printed; the run is not a failure" bash -c "[ $rc = 0 ] && cmp '$f' '$root/mine.kdl' && grep -q 'was changed by you, so it was left alone' '$root/out' && grep -q '    Mod+T hotkey-overlay-title=\"Open a Terminal: kitty\" { spawn \"kitty\"; }' '$root/out' && grep -q 'skipped (your Mod+T line is customized' '$root/out'"
+sed -i 's|^\( *\)Mod+T .*|\1Mod+T { spawn "alacritty" "--class" "x"; }|' "$f"; cp "$f" "$root/mine.kdl"
+run '' --only terminal --terminal kitty
+check "terminal: a line without our title is customized too (left alone)" bash -c "cmp '$f' '$root/mine.kdl' && grep -q 'left alone' '$root/out'"
+treset; mkterm kitty
+sed -i 's|^\( *\)Mod+T hotkey-overlay-title="Open a Terminal: alacritty" { spawn "alacritty"; }|\1Mod+T hotkey-overlay-title="Open a Terminal: alacritty" { spawn "alacritty" "-e" "zsh"; }|' "$f"; cp "$f" "$root/mine.kdl"
+run '' --only terminal --terminal kitty
+check "terminal: our title with extra spawn arguments counts as the user's own line (left alone)" bash -c "cmp '$f' '$root/mine.kdl'"
+# no copy yet
+treset; rm -rf "$HOME/.config/niri"; mkterm kitty
+run '' --only terminal --terminal kitty
+check "terminal: with no copied niri config the choice is recorded for the keybind wizard and the run says to run the niri step" bash -c "[ $rc = 0 ] && grep -qx 'terminal=kitty' '$HOME/.config/octarine-os/niri-terminal' && grep -q 'run ujust niri-setup --only niri first' '$root/out'"
+check "terminal: it is a listed step and part of --help" bash -c "cd '$root' && PATH='$bin:$sysbin' '$REAL_JUST' --justfile '$justfile' --working-directory '$root' niri-setup --help 2>&1 | grep -q 'Terminal for Mod+T (step terminal)'"
+PATH_BIN="$bin"; SRC_OVERRIDE=""
+
 # ---- shipped files
 check "config.kdl only holds include lines (and comments), all relative, one per part" bash -c "cd '$etc_niri' && ! grep -vE '^(//.*|include \"[0-9][0-9]-[a-z-]+\.kdl\"|)\$' config.kdl && [ \$(grep -c '^include' config.kdl) = \$(ls [0-9][0-9]-*.kdl | wc -l) ] && ! grep -E 'include.*(/|~)' config.kdl"
 check "every part is included" bash -c "cd '$etc_niri' && for f in [0-9][0-9]-*.kdl; do grep -qx \"include \\\"\$f\\\"\" config.kdl || exit 1; done"
 check "no personal key model, theme or machine data" bash -c "! grep -nEi 'gruvbox|meh|hypr|helix|ghostty|/home/|/var/home|nox|asgard|kevin|riley|output \"(DP|HDMI|eDP)-' '$etc_niri'/*.kdl | grep -vE '^[^:]*:[0-9]+:\\s*//\\s+output|DP-1'"
-check "no ghostty or ptyxis anywhere in the shipped niri files; the terminal is alacritty" bash -c "! grep -niE 'ghostty|ptyxis' '$etc_niri'/*.kdl && grep -q 'spawn \"alacritty\"' '$etc_niri/40-binds.kdl'"
+check "no ghostty, ptyxis, kitty or foot anywhere in the shipped niri files (WezTerm only in niri's own default window rule); the terminal is alacritty" bash -c "! grep -niwE 'ghostty|ptyxis|kitty|foot' '$etc_niri'/*.kdl && ! grep -hvE '^[[:space:]]*//' '$etc_niri'/*.kdl | grep -iw wezterm | grep -vE 'org.{1,2}wezfurlong.{1,2}wezterm' && grep -q 'spawn \"alacritty\"' '$etc_niri/40-binds.kdl'"
 check "no Ctrl+Shift+Alt binds (the MEH layer)" bash -c "! grep -q 'Ctrl+Shift+Alt' '$etc_niri'/*.kdl"
 check "startup: exactly one spawn-at-startup, the documented noctalia one" bash -c "[ \$(cat '$etc_niri'/*.kdl | grep -cE '^[[:space:]]*spawn(-sh)?-at-startup') = 1 ] && grep -qx 'spawn-at-startup \"noctalia\"' '$etc_niri/50-noctalia.kdl'"
 check "no second polkit agent is started" bash -c "! grep -iE 'spawn.*polkit' '$etc_niri'/*.kdl"

@@ -12,7 +12,7 @@ binds {
     F1 { show-hotkey-overlay; }
 
     // Programs: the terminal (the app launcher is in 50-noctalia.kdl).
-    @OTHER@+T hotkey-overlay-title="Open a Terminal: alacritty" { spawn "alacritty"; }
+    @OTHER@+T hotkey-overlay-title="Open a Terminal: @TERMINAL_NAME@" { spawn @TERMINAL_SPAWN@; }
     Super+Alt+S allow-when-locked=true hotkey-overlay-title=null { spawn-sh "pkill orca || exec orca"; }
 
     // Volume, media and brightness keys, as in 40-binds.kdl.

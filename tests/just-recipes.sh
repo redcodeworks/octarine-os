@@ -16,8 +16,11 @@ ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 
-mkdir -p "$root/just"
+mkdir -p "$root/just" "$root/own"
 cp -- "$justdir"/*.just "$root/just/"
+# the wrappers import the own recipe files (motd.just, update.just) by their image path: rewritten to the temp copy
+cp -- "$here"/system_files/usr/share/octarine-os/just/*.just "$root/own/"
+sed -i "s|/usr/share/octarine-os/just|$root/own|" "$root/just/00-default.just" "$root/just/10-update.just"
 cat >"$root/just/00-default-base.just" <<'EOF2'
 # stub of the base file build.sh renames
 # stub

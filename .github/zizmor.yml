@@ -6,6 +6,7 @@ rules:
   # this repository or tested; changing 31 call sites to an unverified syntax would risk every build for a style finding (severity: help).
   self-repository:
     ignore:
+      - binaries-component.yml
       - binaries.yml
       - build-beta.yml
       - build-dx.yml
