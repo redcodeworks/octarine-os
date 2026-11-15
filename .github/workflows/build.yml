@@ -911,3 +911,41 @@ jobs:
           # merge or an unchanged scheduled run); dx builds on exactly that digest, and `latest` is moved only after dx passed
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
         run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+
+  # A failed daily or promotion build of the default image: ONE issue (label ci-failure-default, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed daily or promotion build of the default image
+    needs: [plan, build_push, promote, build_result]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-default
+          LABEL_DESC: the default image build on main failed (one open issue at a time)
+          ISSUE_TITLE: "The default image build on main failed"
+          ISSUE_BODY: "The scheduled or promotion build of octarine-os on main failed, so latest may be stale (the daily rebuild refreshes it). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, CI and signing flow."
+          FAIL_COMMENT: "daily or promotion build of the default image failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.build_result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-default
+          RECOVER_COMMENT: "the next daily or promotion build of the default image succeeded"
+        run: .github/scripts/ci-issue.sh recover

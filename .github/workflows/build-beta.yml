@@ -499,3 +499,41 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: .github/scripts/dispatch-dx.sh beta "${GITHUB_SHA}"
+
+  # A failed weekly beta image build: ONE issue (label ci-failure-beta, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly beta image build
+    needs: [binaries, build, sign]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-beta
+          LABEL_DESC: the weekly beta image build failed (one open issue at a time)
+          ISSUE_TITLE: "The beta image build failed"
+          ISSUE_BODY: "The weekly build of octarine-os:beta failed: a coming Fedora release or a new Universal Blue beta base may break the image. See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, Beta channel."
+          FAIL_COMMENT: "weekly beta image build failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.sign.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-beta
+          RECOVER_COMMENT: "the next weekly beta image build succeeded"
+        run: .github/scripts/ci-issue.sh recover

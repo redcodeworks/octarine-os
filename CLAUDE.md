@@ -1248,6 +1248,10 @@ An experiment, never a product: the same Containerfile built FROM Fedora's offic
 - Tests: `tests/fedora-base-gap.sh` (workflow guarantees, report with fixture facts, the issue script with a `gh` stub); `tests/build-triggers.sh` knows the schedule.
   Not verifiable without a run: the real build, `podman run` of the collector in the official image.
 
+## Failure alerts (issues) for the scheduled workflows (2026-11-15)
+
+`ci-issue.sh` (one issue per streak of failures, deduplicated on the LABEL, a comment per further failure, closed by the next green run) now also covers the workflows that fail without anybody being told: the `alert` job at the end of `build.yml` (label `ci-failure-default`: the daily and promotion builds on main; the job needs plan, build_push, promote, build_result), `build-beta.yml` (`ci-failure-beta`), `build-nvidia.yml` (`ci-failure-nvidia`) and `prune-testing.yml` (`ci-failure-prune`; since the repository variable PRUNE_ENABLED is true the scheduled prune deletes, so a refusal above its limit or a failed pass raises the issue too). Each runs only on main (`github.ref`), has `issues: write` only, a `fail` step on any `failure` among its needs and a `recover` step (comment plus close) when the run's main job succeeded and nothing failed or was cancelled: a cancelled run raises nothing and closes nothing. The existing alerts stay (`ci-failure-dx`, `ci-failure-binaries`, publish-latest, rollback-latest); `build-fedora-base.yml` (an expected failure, always green) has none. Labels are created by the script on first use. Test: `tests/alert-jobs.sh`. The hub's `scripts/scheduled-runs.sh` should also report open issues with these labels.
+
 ## Beta channel (`octarine-os:beta`)
 
 - User-facing note (formerly in the README): try it with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta`
