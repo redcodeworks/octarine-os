@@ -94,57 +94,8 @@ bump nothing
 check "an unknown image name: exit 3" test "$rc" = 3
 
 
-# ---- the weekly workflow
+# ---- the weekly workflow (the consolidated bump-pins.yml is tested in tests/bump-run.sh)
 wf="$here/.github/workflows/bump-pins.yml"
-check "bump-pins.yml: Tuesday 07:00 UTC schedule plus workflow_dispatch, nothing else" python3 -I - "$wf" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1]))
-on = w.get(True) or w.get("on")
-assert set(on) == {"schedule", "workflow_dispatch"}, set(on)
-assert on["schedule"] == [{"cron": "0 7 * * 2"}], on["schedule"]
-PY
-# ---- bump-pin.sh chunkah: config/chunkah.env, keyless verification
-cb="$root/chunkbump"; rm -rf "$cb"; mkdir -p "$cb/config"
-cdg() { printf 'manifest of docker://quay.io/coreos/chunkah:latest' | sha256sum | sed 's/ .*//'; }
-chunk_env() { printf 'CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_TAG=latest\nCHUNKAH_DIGEST=%s\n' "$1" >"$cb/config/chunkah.env"; : >"$LOG"; : >"$root/gho"; }
-cbump() { (cd "$cb" && env "$@" PATH="$bin:$PATH" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/bump-pin.sh" chunkah) >"$root/run" 2>&1; rc=$?; }
-chunk_env "sha256:$(printf '0%.0s' {1..64})"; cbump X=1
-check "chunkah: a different latest is verified KEYLESS (OIDC issuer and the coreos/chunkah identity), then the pin in config/chunkah.env moves (exit 10)" bash -c "[ $rc = 10 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/config/chunkah.env' && grep -q 'cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github.com/coreos/chunkah/ quay.io/coreos/chunkah@sha256:$(cdg)' '$LOG' && ! grep -q -- '--key' '$LOG'"
-chunk_env "sha256:$(cdg)"; cbump X=1
-check "chunkah: equal digest: nothing to bump, exit 0, file untouched" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && grep -qx 'CHUNKAH_DIGEST=sha256:$(cdg)' '$cb/config/chunkah.env'"
-chunk_env "sha256:$(printf '0%.0s' {1..64})"; cbump COSIGN_RC=1
-check "chunkah: a signature that does not verify: exit 2, file untouched" bash -c "[ $rc = 2 ] && grep -qx 'CHUNKAH_DIGEST=sha256:$(printf '0%.0s' {1..64})' '$cb/config/chunkah.env'"
-check "bump-pins.yml: dev-packages, chunkah plus the four datastore images, no fail-fast, checks out testing, permissions contents, pull-requests and actions write, packages read" python3 -I - "$wf" <<'PY'
-import re, sys, yaml
-w = yaml.safe_load(open(sys.argv[1]))
-j = w["jobs"]["bump"]
-assert j["strategy"]["matrix"]["image"] == ["dev-packages", "chunkah", "postgresql", "valkey", "seaweedfs", "kafka"], j["strategy"]
-assert j["strategy"]["fail-fast"] is False
-assert w["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write", "packages": "read"}, w["permissions"]
-co = [s for s in j["steps"] if s.get("uses", "").startswith("actions/checkout@")][0]
-assert co["with"]["ref"] == "testing" and co["with"]["fetch-depth"] == 0 and "token" not in co["with"]
-assert re.search(r"@[0-9a-f]{40}$", co["uses"]), co["uses"]
-PY
-check "bump-pins.yml: the default token only (no BUMP_TOKEN, no secret), no step prints a token, no close-and-reopen workaround" python3 -I - "$wf" <<'PY'
-import re, sys
-s = open(sys.argv[1]).read()
-assert "BUMP_TOKEN" not in s and "secrets." not in s, "a personal token or secret is referenced"
-assert "reopen" not in s
-assert s.count("GH_TOKEN: ${{ github.token }}") == 1
-for line in s.splitlines():
-    code = line.strip()
-    if code.startswith("#"):
-        continue
-    assert not re.search(r"\b(echo|printf)\b.*(\$\{?GH_TOKEN|github\.token)", code), line
-    assert "set -x" not in code, line
-PY
-check "bump-pins.yml: one branch bump/<image>-digest into testing, updated by merge not force-push, PR created or edited" bash -c "
-  grep -q 'branch=\"bump/\${IMAGE}-digest\"' '$wf' && grep -q -- '--base testing' '$wf' && grep -q 'gh pr create' '$wf' && grep -q 'gh pr edit' '$wf' &&
-  grep -q 'git merge --no-edit -X theirs origin/testing' '$wf' && ! grep -qE 'git push.*(--force|-f |--force-with-lease)' '$wf' && ! grep -qi 'co-authored-by' '$wf'"
-check "bump-pins.yml: after a push it dispatches Test on the branch, looks for the run on the tip, and fails soft with a by-hand hint; says it is unverified" bash -c "
-  grep -q 'gh workflow run test.yml --ref \"\${branch}\"' '$wf' && grep -q -- '--event workflow_dispatch --commit \"\${tip}\"' '$wf' &&
-  grep -q 'may not have started' '$wf' && grep -q 'Not verified on GitHub' '$wf' && grep -q 'gh workflow run test.yml --ref ' '$wf'"
-check "bump-pins.yml: the job runs bump-pin.sh and fails on every exit code but 0 and 10" bash -c "grep -q 'bump-pin.sh \"\${IMAGE}\"' '$wf' && grep -q '0 | 10) ;;' '$wf'"
 check "test.yml has a workflow_dispatch trigger and its jobs have no skipping conditions (test: always(), runs even when scope fails), so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))

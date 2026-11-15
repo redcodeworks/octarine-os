@@ -42,29 +42,6 @@ zig_env_set() { # rewrite the four value lines and the signature URL, keep every
         -e "s|^ZIG_SIZE=.*|ZIG_SIZE=${zsize}|" -e "s|^ZIG_SIGNATURE_URL=.*|ZIG_SIGNATURE_URL=${zurl}.minisig|" "${dir}/zig.env"
 }
 
-open=$(gh pr list --head "${branch}" --base "${base}" --state open --json number,title --jq '.[0] // empty')
-if [[ -n "${open}" && "$(jq -r .title <<<"${open}")" == "${title}" ]]; then
-    echo "A bump PR \"${title}\" is already open (#$(jq -r .number <<<"${open}")): nothing to do"
-    exit 0
-fi
-
-git fetch -q origin
-if git rev-parse -q --verify "origin/${branch}" > /dev/null; then
-    git checkout -q -B "${branch}" "origin/${branch}"
-    git merge -q --no-edit -X theirs "origin/${base}" || { echo "::error::cannot merge ${base} into ${branch}"; exit 1; }
-else
-    git checkout -q -B "${branch}" "origin/${base}"
-fi
-[[ "${mode}" != ghostty ]] || upstream_env_set "${dir}/upstream.env" "${new_tag}" "${new_commit}"
-zig_env_set
-git add -- "${dir}/zig.env"
-[[ "${mode}" != ghostty ]] || git add -- "${dir}/upstream.env"
-if git diff --cached --quiet; then echo "${branch} already carries this pin"; else
-    if [[ "${mode}" == ghostty ]]; then why="upstream released it and the Zig minor follows from its tag"; else why="a newer patch of the pinned Zig minor is published"; fi
-    git commit -q -m "${title}: ${why}"
-fi
-git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
-
 if [[ "${mode}" == ghostty ]]; then
     body="Upstream ${repo} has a newer STABLE tag than the pin of \`ghostty\`.
 
@@ -75,20 +52,10 @@ Only \`${dir}/upstream.env\` and \`${dir}/zig.env\` change. The ghostty componen
 else
     body="A newer patch of the pinned Zig minor is published (\`${old_zig}\` to \`${zv}\`; ${zurl}, sha256 \`${zsha}\`). Ghostty's build accepts the same major.minor with any patch at or above its minimum (src/build/zig.zig requireZig), so only \`${dir}/zig.env\` changes. LOW PRIORITY: nothing here is needed unless you want the patch. The ghostty component is optional; its build after the merge into \`${base}\` proves the bump. Not verified: nothing is built or run by this PR."
 fi
-body+="
-
-Checks: the upstream-check workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, so \`test\` and \`secrets\` run on this PR's head commit. If they do not appear, start them by hand: \`gh workflow run test.yml --ref ${branch}\`."
-
-if [[ -n "${open}" ]]; then
-    gh pr edit "$(jq -r .number <<<"${open}")" --title "${title}" --body "${body}"
-    echo "Updated the open bump PR #$(jq -r .number <<<"${open}")"
-else
-    gh pr create --base "${base}" --head "${branch}" --title "${title}" --body "${body}"
-fi
-if gh workflow run test.yml --ref "${branch}"; then
-    echo "Dispatched the Test workflow on ${branch}"
-else
-    msg="Could not dispatch the Test workflow on ${branch}: start it by hand with: gh workflow run test.yml --ref ${branch}"
-    echo "::warning::${msg}"
-    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ${msg}" >> "${GITHUB_STEP_SUMMARY}" || true
-fi
+bodyfile=$(mktemp); trap 'rm -f "${bodyfile}"' EXIT
+printf '%s\n' "${body}" > "${bodyfile}"
+if [[ "${mode}" == ghostty ]]; then why="upstream released it and the Zig minor follows from its tag"; else why="a newer patch of the pinned Zig minor is published"; fi
+files=(--file "${dir}/zig.env"); [[ "${mode}" != ghostty ]] || files+=(--file "${dir}/upstream.env")
+writer() { [[ "${mode}" != ghostty ]] || upstream_env_set "${dir}/upstream.env" "${new_tag}" "${new_commit}"; zig_env_set; }
+export mode dir zv zurl zsha zsize; export new_tag="${new_tag:-}" new_commit="${new_commit:-}"; export -f zig_env_set writer upstream_env_set
+BUMP_BASE="${base}" REPO_ROOT="${root}" "${here}/bump-pr.sh" --branch "${branch}" --title "${title}" --body-file "${bodyfile}" --message "${title}: ${why}" "${files[@]}" -- bash -c writer

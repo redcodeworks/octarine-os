@@ -111,14 +111,14 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     if isinstance(on, dict) and "workflow_run" in on:
         assert f.endswith("build-nvidia-dx.yml"), f
 PY
-check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Tuesday 07:00 dev-packages bump, Monday 07:00 upstream check, Wednesday 06:00 zizmor, Friday 08:00 binaries validation" python3 - "$here" <<'PY'
+check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Monday 07:00 the consolidated pin bumps, Wednesday 06:00 zizmor, Friday 08:00 binaries validation" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     for s in (on.get("schedule") or []):
         crons[f.rsplit("/", 1)[1]] = s["cron"]
-assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0", "bump-pins.yml": "0 7 * * 2", "zizmor.yml": "0 6 * * 3", "binaries.yml": "0 8 * * 5", "upstream-check.yml": "0 7 * * 1"}, crons
+assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0", "bump-pins.yml": "0 7 * * 1", "zizmor.yml": "0 6 * * 3", "binaries.yml": "0 8 * * 5"}, crons
 assert len(set(crons.values())) == len(crons)
 PY
 

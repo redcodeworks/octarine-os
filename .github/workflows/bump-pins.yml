@@ -1,28 +1,24 @@
-name: Bump prebuilt image pins
-# Weekly check of the images pinned by digest from outside: chunkah (config/chunkah.env, the layer splitter of `just rechunk`; keyless signature), dev-packages (variants/dx/Containerfile), the shared developer package list
-# built and signed by the fedora-toolbox repository, and the four datastore images of the dx Quadlets (postgresql, valkey, seaweedfs,
-# kafka; variants/dx/datastore/datastore.env): for those the newest tag inside the pinned MAJOR with its digest
-# (.github/scripts/datastore-pin-bump.sh); a newer major is only named in the pull request body, never applied. (The sched_ext schedulers and extest are built in this
-# repository from binaries/ and followed by upstream-check.yml instead.) The job resolves the digest of `:latest`, verifies its cosign
-# signature (keys/redcodeworks-toolbox-cosign.pub) and compares it with the pin (.github/scripts/bump-pin.sh holds the decision,
-# tests/bump-pins.sh tests it). Equal: the job ends green, "nothing to bump". Different: ONE pull request from
-# `bump/dev-packages-digest` into `testing` that changes only the pin (digest line, and the tag line that labels it), created or
-# updated in place. A registry that cannot be reached, a missing `latest` tag or a signature that does not verify fails the job and
-# changes nothing. Bump pull requests are merged by the owner.
+name: Bump pins
+# ONE weekly workflow for every external pin that is bumped automatically, one pull request per pin (branch bump/<name>, into `testing`, created or updated in
+# place, only the pin lines changed; nothing is built or published here; bump pull requests are merged by the owner). Monday 07:00 UTC (it replaces the
+# separate upstream-check.yml of Monday and the Tuesday bump-pins.yml); scheduled workflows run only from the default branch, so the schedule starts after
+# the first promotion of this file into `main`; workflow_dispatch works from any branch that has the file (`gh workflow run bump-pins.yml --ref testing`).
 #
-# Tuesday 07:00 UTC. Scheduled workflows run only from the default branch, so the schedule starts after the first promotion of this
-# file into `main`; workflow_dispatch works from any branch that has the file.
+# Jobs, independent of each other (a failing pin does not stop the others; the final job fails the run when any pin failed, which scripts/scheduled-runs.sh reports):
+#   sources  scx, extest, ghostty (and the Zig pin of binaries/ghostty/zig.env, moved by the Ghostty PR; a newer Zig patch of the pinned minor is its own low-priority PR)
+#   digests  chunkah, dev-packages (the four datastore images of variants/dx/datastore/datastore.env are NOT bumped any more, Kevin 2026-11-15: they stay manual until they move into the fedora-toolbox list)
+#   external brew (ghcr.io/ublue-os/brew, Containerfile; the `just brew-bump` recipe is the pin writer) and builder (the Fedora builder digest of
+#            binaries/builder.env; the same major, only once the digest has been the tag's value for 7 days; a builder bump rebuilds every binaries component)
+# Every pin goes through .github/scripts/bump-run.sh (the decision scripts per kind, then .github/scripts/bump-pr.sh for the branch, the commit, the PR and the dispatch
+# of the Test workflow); .github/scripts/bump-summary.sh writes the table. A registry that cannot be reached or a signature that does not verify fails that pin and changes
+# nothing. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), bootc-image-builder, the runner label, the repository variables and the signing key.
 #
-# Token: only the default GITHUB_TOKEN, no personal token. Its pushes and pull requests start no push or pull_request workflow,
-# except workflow_dispatch, so right after each push the job dispatches the Test workflow on the branch
-# (`gh workflow run test.yml --ref bump/dev-packages-digest`, hence `actions: write`): a run on the branch tip whose jobs are named
-# `test` and `secrets`, the checks the ruleset requires into `testing`. If the dispatch fails or no run shows up the job stays
-# green and the pull request body and the job summary say how to start the checks by hand. UNVERIFIED on GitHub: whether a
-# dispatched run satisfies the required checks of the pull request. The repository setting "Allow GitHub Actions to create and
-# approve pull requests" must be on (it is).
+# Token: only the default GITHUB_TOKEN. Its pushes and pull requests start no workflow except workflow_dispatch, so bump-pr.sh dispatches the Test workflow on each bump
+# branch (`actions: write`), whose jobs `test` and `secrets` are the required checks into `testing`. The repository setting "Allow GitHub Actions to create and approve
+# pull requests" must be on (it is). Not verified on GitHub: whether a dispatched run satisfies the required checks of the pull request.
 on:
   schedule:
-    - cron: '0 7 * * 2'  # Tuesday 07:00 UTC
+    - cron: '0 7 * * 1'  # Monday 07:00 UTC
   workflow_dispatch:
 
 concurrency:
@@ -30,25 +26,66 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
-  actions: write
-  packages: read
+  contents: read
 
 jobs:
-  bump:
-    name: Bump ${{ matrix.image }}
+  sources:
+    name: Bump ${{ matrix.pin }}
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     strategy:
       fail-fast: false
       matrix:
-        image: [dev-packages, chunkah, postgresql, valkey, seaweedfs, kafka]
+        pin: [scx, extest, ghostty]
     env:
-      IMAGE: ${{ matrix.image }}
+      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      # The pins on `testing` are what gets bumped, whatever branch the schedule or a dispatch runs from
+      - name: Check out testing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: testing
+          fetch-depth: 0
+
+      - name: Check the pin and open or update its pull request
+        env:
+          PIN: ${{ matrix.pin }}
+          BUMP_ROW_DIR: ${{ runner.temp }}/rows
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          .github/scripts/bump-run.sh "${PIN}"
+
+      - name: Hand the row to the summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bump-row-${{ matrix.pin }}
+          path: ${{ runner.temp }}/rows/${{ matrix.pin }}.tsv
+          if-no-files-found: ignore
+          retention-days: 3
+
+  digests:
+    name: Bump ${{ matrix.pin }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pin: [chunkah, dev-packages]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
       - name: Check out testing
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -60,115 +97,95 @@ jobs:
         with:
           tool: cosign
 
-      - name: Compare the pin with latest
-        id: decide
-        run: |
-          set +e
-          # dev-packages: digest of :latest verified with the toolbox key; the four datastore images: newest tag inside the pinned major
-          case "${IMAGE}" in
-            dev-packages | chunkah) .github/scripts/bump-pin.sh "${IMAGE}" ;;
-            *) .github/scripts/datastore-pin-bump.sh "${IMAGE}" ;;
-          esac
-          rc=$?
-          set -e
-          case "${rc}" in
-            0 | 10) ;;
-            *) echo "### ${IMAGE}: failed (exit ${rc}, see the log)" >> "${GITHUB_STEP_SUMMARY}"; exit "${rc}" ;;
-          esac
-
-      - name: Nothing to bump
-        if: steps.decide.outputs.result == 'equal'
+      - name: Check the pin and open or update its pull request
         env:
-          DIGEST: ${{ steps.decide.outputs.digest }}
-          PINTAG: ${{ steps.decide.outputs.tag }}
+          PIN: ${{ matrix.pin }}
+          BUMP_ROW_DIR: ${{ runner.temp }}/rows
         run: |
-          echo "nothing to bump: ${IMAGE} is pinned to ${DIGEST} (${PINTAG})"
-          echo "### ${IMAGE}: nothing to bump (pin equals latest, ${DIGEST})" >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Create or update the bump pull request
-        if: steps.decide.outputs.result == 'different'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OLD: ${{ steps.decide.outputs.previous }}
-          NEW: ${{ steps.decide.outputs.digest }}
-          TAG: ${{ steps.decide.outputs.tag }}
-          MAJOR_NOTE: ${{ steps.decide.outputs.major_note }}
-        run: |
-          set -euo pipefail
-          branch="bump/${IMAGE}-digest"
-          mapfile -t changed < <(git diff --name-only)
-          [[ "${#changed[@]}" -eq 1 ]] || { echo "::error::expected exactly one changed file, got: ${changed[*]}"; exit 1; }
-          file=${changed[0]}
-          cp "${file}" "${RUNNER_TEMP}/pin.new"
-          git checkout -- "${file}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # an existing bump branch is kept current by merging testing into it (no force-push), then the pin is written again
-          if git ls-remote --exit-code --heads origin "${branch}" > /dev/null; then
-            git fetch origin "${branch}"
-            git checkout -B "${branch}" "origin/${branch}"
-            git merge --no-edit -X theirs origin/testing
-          else
-            git checkout -b "${branch}"
-          fi
-          cp "${RUNNER_TEMP}/pin.new" "${file}"
-          if git diff --quiet; then
-            echo "The branch ${branch} already carries this pin."
-          else
-            git add -- "${file}"
-            git commit -m "Bump the ${IMAGE} pin to its latest digest ${NEW}: ${IMAGE} is built and signed by the fedora-toolbox repository, and its pin moves only through this reviewed change."
-            git push origin "${branch}"
-            pushed=true
-          fi
-          # Pushes by GITHUB_TOKEN start no workflow, workflow_dispatch is the exception: run Test on the branch tip so that
-          # `test` and `secrets` report on the pull request's head commit. Fail soft: a note tells how to start them by hand.
-          note=""
-          if [[ "${pushed:-false}" == true ]]; then
-            tip=$(git rev-parse HEAD)
-            started=false
-            if gh workflow run test.yml --ref "${branch}"; then
-              for _ in 1 2 3 4 5 6; do
-                sleep 5
-                if [[ -n "$(gh run list --workflow test.yml --branch "${branch}" --event workflow_dispatch --commit "${tip}" --json databaseId --jq '.[0].databaseId // empty')" ]]; then started=true; break; fi
-              done
-            fi
-            if [[ "${started}" != true ]]; then
-              note=$'\n\n**The required checks `test` and `secrets` may not have started:** the Test workflow could not be dispatched or its run did not show up. Start them with `gh workflow run test.yml --ref '"${branch}"'` (or Actions, Test, Run workflow, branch `'"${branch}"'`).'
-              echo "::warning::could not confirm the Test run on ${branch}"
-            fi
-          fi
-          {
-            if [[ "${IMAGE}" == chunkah ]]; then
-              echo "Moves the chunkah pin (\`config/chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${OLD}\` to \`${NEW}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions OIDC, identity under github.com/coreos/chunkah) verified. A chunkah change alters how every image is split into layers: the build after the merge into \`testing\` is the first with it."
-            elif [[ "${IMAGE}" == dev-packages ]]; then
-              echo "Moves the ${IMAGE} pin from \`${OLD}\` to \`${NEW}\` (tag \`${TAG}\`): the digest of \`ghcr.io/redcodeworks/${IMAGE}:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`."
-            else
-              echo "Moves the ${IMAGE} datastore image pin from \`${OLD}\` to \`${TAG}\` (\`${NEW}\`): the newest tag inside the pinned major, with its manifest digest from the registry (a public image: no signature of ours). Only the variants/dx/datastore/datastore.env lines change; the shipped Quadlets are rendered from that file at image build. Back up the volumes before updating a running datastore: ujust datastore-setup --backup DIR."
-              if [[ -n "${MAJOR_NOTE}" ]]; then echo; echo "**${MAJOR_NOTE}.** Majors are never bumped automatically (a database or broker major needs a dump and restore)."; fi
-            fi
-            echo
-            echo "Only ${file} changes: the digest line and the tag line. Not verified: nothing was built or booted here; the image build after the merge into \`testing\` is the first build with this pin."
-            echo "The checks \`test\` and \`secrets\` run through a dispatched Test workflow on the branch (the default token starts no workflow by itself). Not verified on GitHub: whether a dispatched run satisfies the required checks of this pull request."
-            printf '%s\n' "${note}"
-          } > "${RUNNER_TEMP}/body.md"
-          number=$(gh pr list --head "${branch}" --base testing --state open --json number --jq '.[0].number // empty')
-          if [[ -n "${number}" ]]; then
-            gh pr edit "${number}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"
-            url=$(gh pr view "${number}" --json url --jq .url)
-            echo "Updated ${url}"
-          else
-            if ! url=$(gh pr create --base testing --head "${branch}" --title "Bump the ${IMAGE} pin to latest (${TAG})" --body-file "${RUNNER_TEMP}/body.md"); then
-              echo "::error::Could not open the pull request. Is Settings, Actions, General, Allow GitHub Actions to create and approve pull requests, on?"
-              exit 1
-            fi
-            echo "Opened ${url}"
-          fi
-          {
-            echo "### ${IMAGE}: ${url}"
-            echo
-            echo "Pin \`${OLD}\` to \`${NEW}\` (\`${TAG}\`), signature valid."
-            if [[ -n "${note}" ]]; then
-              echo
-              echo "The Test run could not be confirmed: start it with \`gh workflow run test.yml --ref ${branch}\`."
-            fi
-          } >> "${GITHUB_STEP_SUMMARY}"
+          .github/scripts/bump-run.sh "${PIN}"
+
+      - name: Hand the row to the summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bump-row-${{ matrix.pin }}
+          path: ${{ runner.temp }}/rows/${{ matrix.pin }}.tsv
+          if-no-files-found: ignore
+          retention-days: 3
+
+  external:
+    name: Bump ${{ matrix.pin }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pin: [brew, builder]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Check out testing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: testing
+          fetch-depth: 0
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Check the pin and open or update its pull request
+        env:
+          PIN: ${{ matrix.pin }}
+          BUMP_ROW_DIR: ${{ runner.temp }}/rows
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          .github/scripts/bump-run.sh "${PIN}"
+
+      - name: Hand the row to the summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bump-row-${{ matrix.pin }}
+          path: ${{ runner.temp }}/rows/${{ matrix.pin }}.tsv
+          if-no-files-found: ignore
+          retention-days: 3
+
+  summary:
+    name: Summary of the pin bumps
+    needs: [sources, digests, external]
+    if: always()
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Fetch the rows
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bump-row-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/rows
+
+      - name: Table (red when any pin failed)
+        run: .github/scripts/bump-summary.sh "${RUNNER_TEMP}/rows" scx extest ghostty chunkah dev-packages brew builder

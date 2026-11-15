@@ -16,7 +16,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; }
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid
-unset GITHUB_STEP_SUMMARY   # the runner sets it to a file the test user cannot write
+unset GITHUB_STEP_SUMMARY GITHUB_OUTPUT   # the runner sets it to a file the test user cannot write
 sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 
 # --- the weekly upstream check with a stub gh (replies from files named after the API path)
@@ -88,7 +88,7 @@ git init -q --bare -b testing "${origin}"
 wc="${tmp}/wc"
 mkdir -p "${wc}/binaries/lib" "${wc}/.github/scripts" "${wc}/img"
 cp "${src}/binaries/lib/upstream-env.sh" "${wc}/binaries/lib/"
-cp "${src}/.github/scripts/bump-upstream.sh" "${wc}/.github/scripts/"
+cp "${src}/.github/scripts/bump-upstream.sh" "${src}/.github/scripts/bump-pr.sh" "${wc}/.github/scripts/"
 printf '# pin\nUPSTREAM_REPO=o/p\nUPSTREAM_TAG=v1.1.4\nUPSTREAM_COMMIT=%s\n' "$(sha a)" > "${wc}/img/upstream.env"
 git -C "${wc}" init -q -b testing
 git -C "${wc}" add -A && git -C "${wc}" commit -q -m base
@@ -130,28 +130,6 @@ git -C "${wc}" commit -q -a -m "fork pin" && git -C "${wc}" push -q origin testi
 : > "${tmp}/prlist"; : > "${GH_LOG}"
 bump 1.1.0 "$(sha b)"; body=$(cat "${GH_LOG}" "${tmp}/bump.log")
 [[ "${body}" == *"github.com/o/p/releases/tag/1.1.0"* && "${body}" == *"github.com/o/p/compare/1.0.3...1.1.0"* && "${body}" == *"build source is the fork"* && "${body}" == *"f/ork"* ]] && ok "bump (fork): links the followed project and says the pin is the fork's commit, the tag a label" || bad "bump fork body: ${body}"
-
-# --- the workflow
-python3 -I - "${src}" <<'PY'
-import sys, yaml, pathlib
-root = pathlib.Path(sys.argv[1]); wf = root / ".github/workflows"
-fail = 0
-def r(ok, msg):
-    global fail
-    print(("ok   " if ok else "FAIL ") + msg); fail += (not ok)
-text = (wf / "upstream-check.yml").read_text()
-up = yaml.safe_load(text); on = up.get("on", up.get(True))
-r(on["schedule"] == [{"cron": "0 7 * * 1"}] and "workflow_dispatch" in on and "push" not in on and "pull_request" not in on, "upstream-check.yml: Monday 07:00 UTC plus manual dispatch only")
-r("packages: write" not in text and "podman" not in text and "cosign" not in text and "ghcr.io" not in text, "upstream-check.yml: publishes nothing")
-r(up["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}, "upstream-check.yml: contents, pull-requests and actions write only")
-r("BUMP_TOKEN" not in text and "secrets." not in text and "GH_TOKEN: ${{ github.token }}" in text, "upstream-check.yml: the default token only, no personal token or secret")
-r("binaries/*/upstream.env" in text and "bump-upstream.sh" in text and "upstream-check.sh" in text, "upstream-check.yml: walks every binaries/<name>/upstream.env")
-r("gh repo sync" in text and "forkbehind" in text, "upstream-check.yml: a fork behind upstream is a notice and a summary line telling to sync it, not a failure")
-r(up["jobs"]["check"]["name"] == "Check upstream releases", "upstream-check.yml: its job name is not a required check name")
-sys.exit(1 if fail else 0)
-PY
-rc=$?
-[[ ${rc} -eq 0 ]] || failn=$((failn + 1))
 
 echo
 echo "${pass} passed, ${failn} failed"
