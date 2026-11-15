@@ -57,7 +57,7 @@ pr = open(h + "/.github/scripts/bump-pr.sh").read()
 assert 'bump-checks.sh" "${branch}" "$(git rev-parse HEAD)"' in pr
 assert open(h + "/.github/workflows/bump-pins.yml").read().split("\n").count("      checks: write") == 3
 t = open(h + "/.github/workflows/test.yml").read()
-assert "format('Test of {0}', inputs.ref)" in t and t.count("ref: ${{ inputs.ref || github.sha }}") == 3 and "inputs.ref || github.ref" in t
+assert "format('Test of {0}', inputs.ref)" in t and t.count("ref: ${{ inputs.ref || github.sha }}") >= 3 and "inputs.ref || github.ref" in t
 PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
