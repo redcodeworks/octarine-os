@@ -30,7 +30,7 @@ check "Containerfile: builder from builder.env, the Zig and the source are fetch
   grep -q 'gtk4-layer-shell-devel' \$cf && grep -q 'blueprint-compiler' \$cf && grep -qw 'minisign' \$cf && grep -q 'libadwaita-devel' \$cf && grep -qx 'COPY --from=build /out /ghostty' \$cf &&
   [ \"\$(grep -E '^FROM ' \$cf | tail -n1)\" = 'FROM scratch' ] && [ \"\$(grep -c '^FROM \${BUILDER}' \$cf)\" = 1 ]"
 check "build.sh: the offline distro-style build of PACKAGING.md (fetch-zig-cache.sh, --system, ReleaseFast, baseline CPU, the absolute exe path /usr/bin/ghostty, bundled glslang and spirv-cross) and the staged tree with FILES" bash -c "
-  b='$g/build.sh'; grep -q 'fetch-zig-cache.sh' \$b && grep -q -- '--system \"\${ZIG_GLOBAL_CACHE_DIR}/p\"' \$b && grep -q -- '-Doptimize=ReleaseFast' \$b && grep -q -- '-Dcpu=baseline' \$b &&
+  b='$g/build.sh'; grep -q 'fetch-zig-cache.sh' \$b && grep -q -- '--system \${ZIG_GLOBAL_CACHE_DIR}/p' \$b && grep -q -- '-Doptimize=ReleaseFast' \$b && grep -q -- '-Dcpu=baseline' \$b &&
   grep -q -- '-Dinstalled-exe-path=/usr/bin/ghostty' \$b && grep -q -- '--prefix /usr' \$b && grep -q -- '-fno-sys=glslang' \$b && grep -q -- '-fno-sys=spirv-cross' \$b &&
   grep -q -- '--elf-x86-64 root/usr/bin/ghostty' \$b && grep -q 'FILES' \$b && grep -q 'com.mitchellh.ghostty.desktop' \$b"
 check "the OS image build installs gtk4-layer-shell (the runtime library Ghostty links); a missing one is recorded as an optional package, and the runtime check then removes Ghostty with a warning" bash -c "grep -q '\"misc:.* gtk4-layer-shell\"' '$here/build_files/build.sh'"
