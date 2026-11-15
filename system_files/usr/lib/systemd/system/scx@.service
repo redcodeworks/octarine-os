@@ -2,8 +2,8 @@
 Description=sched_ext scheduler scx_%i (octarineOS)
 Documentation=https://github.com/sched-ext/scx/tree/main/services
 # The instance name is the scheduler name without the scx_ prefix (rusty, lavd, ...); the registry in
-# /usr/share/octarine-os/schedulers.d lists the valid ones. Per-instance drop-ins generated at image build add Conflicts= on every
-# other instance (only one scheduler can be loaded) and, where the registry has a minimum kernel, ConditionKernelVersion=.
+# /usr/share/octarine-os/schedulers.d lists the valid ones. Per-instance drop-ins generated at image build add Conflicts= and After= on every
+# other instance (only one scheduler can be loaded; After= makes systemd finish the old one's stop before the new one starts) and, where the registry has a minimum kernel, ConditionKernelVersion=.
 # Disabled by default: nothing enables or starts it; `ujust scheduler` does, on request.
 ConditionPathExists=/sys/kernel/sched_ext
 # Start/stop cycles triggered by the user (GameMode hooks) must never trip systemd's start limit; crash-loop protection is
@@ -16,6 +16,8 @@ Type=simple
 # privileges, and a sandbox directive that blocks bpf() would stop it from loading. Whether stricter settings work is unverified.
 # Refuse (quietly) without BTF or after repeated failures on this kernel; run the registry's binary; then check that it took over.
 ExecCondition=/usr/libexec/octarine-os/scx-preflight %i
+# ExecStartPre waits (bounded) until sched_ext is disabled: a scheduler still unregistering makes the new one fail to load.
+ExecStartPre=/usr/libexec/octarine-os/scx-wait-idle %i
 ExecStart=/usr/libexec/octarine-os/scx-run %i
 ExecStartPost=/usr/libexec/octarine-os/scx-verify %i
 # Restart only a scheduler that was active and then crashed. scx-run (the main process) exits 75 for a start that never became active
