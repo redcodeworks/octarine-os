@@ -1,3 +1,4 @@
 # component	required|optional   (one build job each in binaries.yml; an optional component may be left out of the image, see CLAUDE.md "Prebuilt binaries")
 scx	required
 extest	required
+ghostty	optional
