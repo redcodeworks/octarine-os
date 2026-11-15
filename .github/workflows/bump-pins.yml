@@ -6,7 +6,7 @@ name: Bump pins
 #
 # Jobs, independent of each other (a failing pin does not stop the others; the final job fails the run when any pin failed, which scripts/scheduled-runs.sh reports):
 #   sources  scx, extest, ghostty (and the Zig pin of binaries/ghostty/zig.env, moved by the Ghostty PR; a newer Zig patch of the pinned minor is its own low-priority PR)
-#   digests  chunkah, dev-packages (the four datastore images of variants/dx/datastore/datastore.env are NOT bumped any more, Kevin 2026-11-15: they stay manual until they move into the fedora-toolbox list)
+#   digests  chunkah, dev-packages, datastore-images (the pointer to the list image of the four datastore container images; the images INSIDE the list are edited by hand in the fedora-toolbox repository and never bumped here)
 #   external brew (ghcr.io/ublue-os/brew, Containerfile; the `just brew-bump` recipe is the pin writer) and builder (the Fedora builder digest of
 #            binaries/builder.env; the same major, only once the digest has been the tag's value for 7 days; a builder bump rebuilds every binaries component)
 # Every pin goes through .github/scripts/bump-run.sh (the decision scripts per kind, then .github/scripts/bump-pr.sh for the branch, the commit, the PR and the dispatch
@@ -81,7 +81,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pin: [chunkah, dev-packages]
+        pin: [chunkah, dev-packages, datastore-images]
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -188,4 +188,4 @@ jobs:
           path: ${{ runner.temp }}/rows
 
       - name: Table (red when any pin failed)
-        run: .github/scripts/bump-summary.sh "${RUNNER_TEMP}/rows" scx extest ghostty chunkah dev-packages brew builder
+        run: .github/scripts/bump-summary.sh "${RUNNER_TEMP}/rows" scx extest ghostty chunkah dev-packages datastore-images brew builder

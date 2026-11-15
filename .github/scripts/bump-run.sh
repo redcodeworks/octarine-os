@@ -4,9 +4,9 @@
 # tab separated) whatever happens and exits non-zero when the pin's check FAILED (a registry that cannot be reached, a signature that does not verify,
 # a bad pin): nothing is changed then. Run from the repository root on a checkout of testing, with GH_TOKEN set for the PR step.
 #
-#   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|brew|builder
+#   bump-run.sh scx|extest|ghostty|dev-packages|datastore-images|chunkah|brew|builder
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh, written by bump-upstream.sh and bump-ghostty.sh), image digest pins (bump-pin.sh; the datastore pin script is dormant: the datastore pins are manual since 2026-11-15),
+# Kinds: source pins (upstream-check.sh and ghostty-check.sh, written by bump-upstream.sh and bump-ghostty.sh), image digest pins (bump-pin.sh: the dev-packages and datastore-images list images of the fedora-toolbox repository, chunkah; the images INSIDE the datastore list are edited by hand in fedora-toolbox),
 # the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs on every write) and the Fedora builder
 # digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for MIN_AGE_DAYS, default 7: the creation date of the
 # image is the stand-in for "has not been replaced since", a registry has no tag history).
@@ -62,7 +62,7 @@ case "${pin}" in
             unreachable) fail "${decision#unreachable }" ;;
             *) proposed="nothing to bump"; note="${decision}" ;;
         esac ;;
-    dev-packages | chunkah)
+    dev-packages | datastore-images | chunkah)
         go=$(mktemp)
         script="${here}/bump-pin.sh"; branch="bump/${pin}-digest"
         GITHUB_OUTPUT="${go}" "${script}" "${pin}"; rc=$?
@@ -78,6 +78,7 @@ case "${pin}" in
             {
                 case "${pin}" in
                     chunkah) echo "Moves the chunkah pin (\`config/chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${old}\` to \`${new}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions identity of the coreos/chunkah repository) verified." ;;
+                    datastore-images) echo "Moves the datastore-images pin (the list of the four datastore container images, \`/images.txt\`, edited by hand in the fedora-toolbox repository) from \`${old}\` to \`${new}\` (tag \`${tag}\`): the digest of \`ghcr.io/redcodeworks/datastore-images:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`. Check the list in that repository before merging: it decides which database and broker versions the dx image ships." ;;
                     dev-packages) echo "Moves the dev-packages pin from \`${old}\` to \`${new}\` (tag \`${tag}\`): the digest of \`ghcr.io/redcodeworks/dev-packages:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`." ;;
                 esac
                 echo; echo "Only ${file} changes. ${body_tail}"

@@ -6,7 +6,7 @@ After=network-online.target
 [Container]
 Pod=datastore.pod
 ContainerName=valkey
-# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+# Exact tag and digest from images.txt of the datastore-images image (fedora-toolbox repository); no AutoUpdate= (see postgresql.container).
 Image=@VALKEY_IMAGE@
 
 Volume=valkey-data.volume:/data
