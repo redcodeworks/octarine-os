@@ -4,7 +4,7 @@
 #   fetch-zig.sh <zig.env> <dest dir>
 #
 # zig.env is parsed strictly (KEY=VALUE, known keys only, formats checked, the URLs must be the official ziglang.org ones for this
-# version). Checks, each of which FAILS the script: the tarball size and sha256 equal the pin; the sha256 equals the value
+# version; ZIG_SIZE is optional). Checks, each of which FAILS the script: the tarball size (when pinned) and sha256 equal the pin; the sha256 equals the value
 # https://ziglang.org/download/index.json lists for exactly this version, URL and size (so a pin that was hand-edited or that upstream
 # changed cannot go unnoticed); the minisign signature of the tarball verifies with ZIG_MINISIGN_KEY when `minisign` is installed (when it is not,
 # the record says so plainly: sha256 and index.json only); `<dest>/zig version` prints ZIG_VERSION. Writes <dest>/FETCH-RECORD (one line per fact,
@@ -28,26 +28,27 @@ while IFS= read -r line || [[ -n "${line}" ]]; do
     [[ -z "${v[${key}]:-}" ]] || die "${envfile}:${n}: duplicate key ${key}"
     v[${key}]=${BASH_REMATCH[2]}
 done < "${envfile}"
-for k in ZIG_VERSION ZIG_URL ZIG_SHA256 ZIG_SIZE ZIG_SIGNATURE_URL ZIG_MINISIGN_KEY; do [[ -n "${v[${k}]:-}" ]] || die "${envfile}: ${k} is missing"; done
+for k in ZIG_VERSION ZIG_URL ZIG_SHA256 ZIG_SIGNATURE_URL ZIG_MINISIGN_KEY; do [[ -n "${v[${k}]:-}" ]] || die "${envfile}: ${k} is missing"; done
 ver=${v[ZIG_VERSION]}
 [[ "${ver}" =~ ^0\.[0-9]+\.[0-9]+$ ]] || die "ZIG_VERSION '${ver}' is not a released version (0.X.Y)"
 official="https://ziglang.org/download/${ver}/zig-x86_64-linux-${ver}.tar.xz"
 [[ "${v[ZIG_URL]}" == "${official}" ]] || die "ZIG_URL must be ${official}"
 [[ "${v[ZIG_SIGNATURE_URL]}" == "${official}.minisig" ]] || die "ZIG_SIGNATURE_URL must be ${official}.minisig"
 [[ "${v[ZIG_SHA256]}" =~ ^[0-9a-f]{64}$ ]] || die "ZIG_SHA256 is not 64 lowercase hex characters"
-[[ "${v[ZIG_SIZE]}" =~ ^[0-9]+$ ]] || die "ZIG_SIZE is not a number"
+[[ -z "${v[ZIG_SIZE]:-}" || "${v[ZIG_SIZE]}" =~ ^[0-9]+$ ]] || die "ZIG_SIZE is not a number"
 [[ "${v[ZIG_MINISIGN_KEY]}" =~ ^RW[A-Za-z0-9+/]{52,54}$ ]] || die "ZIG_MINISIGN_KEY is not a minisign public key"
 
 work=$(mktemp -d)
 trap 'rm -rf "${work}"' EXIT
 "${curl_cmd}" -fsSL --retry 3 -o "${work}/zig.tar.xz" "${v[ZIG_URL]}" || die "cannot download ${v[ZIG_URL]}"
 size=$(stat -c %s "${work}/zig.tar.xz")
-[[ "${size}" == "${v[ZIG_SIZE]}" ]] || die "the tarball is ${size} bytes, the pin says ${v[ZIG_SIZE]}"
+[[ -z "${v[ZIG_SIZE]:-}" || "${size}" == "${v[ZIG_SIZE]}" ]] || die "the tarball is ${size} bytes, the pin says ${v[ZIG_SIZE]}"
 got=$(sha256sum "${work}/zig.tar.xz" | cut -d' ' -f1)
 [[ "${got}" == "${v[ZIG_SHA256]}" ]] || die "the tarball sha256 is ${got}, the pin says ${v[ZIG_SHA256]}"
 
 "${curl_cmd}" -fsSL --retry 3 -o "${work}/index.json" "${index_url}" || die "cannot download ${index_url}"
-jq -e --arg ver "${ver}" --arg url "${v[ZIG_URL]}" --arg sha "${v[ZIG_SHA256]}" --arg size "${v[ZIG_SIZE]}" \
+# the size is the one index.json lists for this version (also when zig.env pins none): the pinned sha256 and the index must agree on the real file
+jq -e --arg ver "${ver}" --arg url "${v[ZIG_URL]}" --arg sha "${v[ZIG_SHA256]}" --arg size "${size}" \
     '.[$ver]["x86_64-linux"] | .tarball == $url and .shasum == $sha and (.size | tostring) == $size' "${work}/index.json" > /dev/null \
     || die "index.json does not list ${ver} x86_64-linux with this URL, sha256 and size: the pin and upstream disagree (check before changing the pin)"
 
