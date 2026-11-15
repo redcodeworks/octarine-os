@@ -190,6 +190,20 @@ if [[ -z "${dest}" && " ${want[*]:-} " == *" ghostty "* && -e /usr/bin/ghostty ]
         if command -v "${tool}" > /dev/null 2>&1; then "${tool}" -f -t /usr/share/icons/hicolor && echo "${tool}: refreshed /usr/share/icons/hicolor" && break; fi
     done
     if command -v update-desktop-database > /dev/null 2>&1; then update-desktop-database -q /usr/share/applications && echo "update-desktop-database: refreshed /usr/share/applications"; fi
+    # a lookup by name at 48 px through GTK's own icon theme code, with the Adwaita theme (what a window of the app asks for): reported, never fatal
+    if command -v python3 > /dev/null 2>&1; then
+        python3 - << 'PYEOF' || echo "icon lookup: could not run (no gi/GTK 4 here?)"
+import gi
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gtk
+t = Gtk.IconTheme()
+t.set_theme_name("Adwaita")
+for size in (16, 32, 48, 128):
+    i = t.lookup_icon("com.mitchellh.ghostty", None, size, 1, Gtk.TextDirection.NONE, 0)
+    f = i.get_file()
+    print("icon lookup com.mitchellh.ghostty at %d px: %s" % (size, f.get_path() if f else "NOT FOUND"))
+PYEOF
+    fi
     grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache 2> /dev/null || warn "the hicolor icon cache does not list com.mitchellh.ghostty (no cache tool found?): Ghostty may show a generic icon"
 fi
 echo "Installed the prebuilt binaries: $(for c in ${want[@]+"${want[@]}"}; do echo -n "${c} (${installed_note[${c}]:-}) "; done)"
