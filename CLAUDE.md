@@ -952,6 +952,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Body: `#!/usr/bin/env bash`, `set -uo pipefail` (`-e` only where a failing step should stop). Positional arguments only
   (`[positional-arguments]` with `*args`). Unknown option or step: usage on stderr, exit 1 (2 for option errors in the
   checklist recipes). Fail soft inside checklists: report a failed step, go on, exit non-zero at the end.
+- Emoji: `lib/emoji.sh` (sourced by `menu.sh`, and by hand in recipes that do not source it, such as `base-pieces.just` and `motd.just`) redefines `echo` so a
+  line that starts with a message word (ERROR, WARNING, Needs:, Done, Removed, Updated, "... is now ..." and so on, see the mapping in the file) gets one
+  emoji first. Only on a terminal (stdout `-t 1`); off for a non-empty `NO_EMOJI` (an empty one does nothing, like NO_COLOR), non-empty `OCTARINE_PLAIN` other than 0,
+  and TERM empty or dumb. Never touches menus, pickers, data lines, indented lines, `--help` (printf) or captured output. `OCTARINE_FORCE_EMOJI=1` skips only
+  the terminal test (tests/emoji.sh). It is launcher-neutral: any launcher that runs the recipes gets it.
 - Menus come from the shared helper `system_files/usr/share/octarine-os/lib/menu.sh`, sourced at the top of a recipe
   with `menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"` plus inline no-op fallbacks if the file is
   missing. Items are `id^text^selected` strings; an empty id is a section heading, never returned; commas in text show
