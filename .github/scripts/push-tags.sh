@@ -21,7 +21,7 @@ first="$1"
 shift
 digestfile=$(mktemp)
 trap 'rm -f "${digestfile}"' EXIT
-podman push --digestfile="${digestfile}" "${local_image}" "${registry_image}:${first}"
+"$(dirname "${BASH_SOURCE[0]}")/retry.sh" podman push --digestfile="${digestfile}" "${local_image}" "${registry_image}:${first}"
 digest=$(tr -d '[:space:]' < "${digestfile}")
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::podman push gave no digest for ${first} ('${digest}')" >&2; exit 1; }
 
@@ -46,7 +46,7 @@ settled() { # tag expected
 settled "${first}" "${digest}" || exit 1
 
 for tag in "$@"; do
-    skopeo copy --all --preserve-digests "docker://${registry_image}@${digest}" "docker://${registry_image}:${tag}"
+    "$(dirname "${BASH_SOURCE[0]}")/retry.sh" skopeo copy --all --preserve-digests "docker://${registry_image}@${digest}" "docker://${registry_image}:${tag}"
     settled "${tag}" "${digest}" || exit 1
 done
 echo "pushed ${first} $* -> ${digest}"

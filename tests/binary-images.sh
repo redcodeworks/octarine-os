@@ -6,6 +6,7 @@
 # All with fake skopeo and cosign; nothing is pulled, built or booted. The build side is tests/binaries-build.sh.
 # Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
 set -uo pipefail
+export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d)

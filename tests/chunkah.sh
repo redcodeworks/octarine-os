@@ -2,6 +2,7 @@
 # Tests for the chunkah rechunk: the verified pin (.github/scripts/chunkah-ref.sh with a fake cosign), the Justfile recipe and its use in
 # every image workflow. Nothing is pulled or run. Run: tests/chunkah.sh. Needs: bash, python3 with PyYAML.
 set -uo pipefail
+export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
@@ -10,6 +11,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/   
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 bin="$root/bin"; mkdir -p "$bin"
 printf '#!/usr/bin/env bash\necho "cosign $*" >>"$LOG"\nexit "${COSIGN_RC:-0}"\n' >"$bin/cosign"; chmod +x "$bin/cosign"
+printf '#!/usr/bin/env bash\necho "podman $*" >>"$LOG"\nexit "${PODMAN_RC:-0}"\n' >"$bin/podman"; chmod +x "$bin/podman"
 export LOG="$root/log"
 ref() { : >"$LOG"; env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/chunkah-ref.sh" "${ENVF:-$here/config/chunkah.env}" >"$root/run" 2>&1; rc=$?; }
 d=$(sed -n 's/^CHUNKAH_DIGEST=//p' "$here/config/chunkah.env")
