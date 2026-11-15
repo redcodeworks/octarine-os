@@ -16,20 +16,35 @@ ver=${FEDORA_VERSION:?FEDORA_VERSION}
 key=${KEY:-keys/ublue-os-main-cosign.pub}
 [[ "${ver}" =~ ^[0-9]+$ ]] || { echo "::error::FEDORA_VERSION '${ver}' is not a number" >&2; exit 1; }
 base="${image}:${ver}"
-manifest=$(skopeo inspect --raw "docker://${base}" 2> /dev/null) || manifest=""
-[[ -n "${manifest}" ]] || { echo "::error::cannot resolve ${base} (does the tag exist? skopeo list-tags docker://${image})" >&2; exit 1; }
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+rc=0
+manifest=$("${here}/registry-read.sh" raw "${base}") || rc=$?
+if [[ "${rc}" == 4 ]]; then echo "::error::cannot read ${base} (a registry read error after the retries, not a missing tag): re-run; nothing was built" >&2; exit 1; fi
+[[ "${rc}" == 0 && -n "${manifest}" ]] || { echo "::error::cannot resolve ${base} (does the tag exist? skopeo list-tags docker://${image})" >&2; exit 1; }
 pin="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
 verified=""
-if cosign verify --key "${key}" "${image}@${pin}" > /dev/null 2>&1; then
+errf=$(mktemp); trap 'rm -f "${errf}"' EXIT
+vrc=0
+"${here}/cosign-check.sh" --key "${key}" "${image}@${pin}" 2> "${errf}" || vrc=$?
+if [[ "${vrc}" == 0 ]]; then
     verified="the signature of ${pin}"
 else
     child=$(jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest][0] // empty' <<<"${manifest}" 2> /dev/null || true)
-    if [[ "${child}" =~ ^sha256:[0-9a-f]{64}$ ]] && cosign verify --key "${key}" "${image}@${child}" > /dev/null 2>&1; then
-        verified="the signature of its linux/amd64 manifest ${child}"
+    if [[ "${child}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+        crc=0
+        "${here}/cosign-check.sh" --key "${key}" "${image}@${child}" 2>> "${errf}" || crc=$?
+        if [[ "${crc}" == 0 ]]; then verified="the signature of its linux/amd64 manifest ${child}"; elif [[ "${crc}" == 4 ]]; then vrc=4; fi
     fi
 fi
 if [[ -z "${verified}" ]]; then
-    echo "::error::${base} (${pin}) is not signed by ${key}: the build stops. Possible causes: Universal Blue rotated its signing key (compare ${key} with https://github.com/ublue-os/main/blob/main/cosign.pub and replace it only after reading why), the image is unsigned, or it was replaced." >&2
+    if [[ "${vrc}" == 4 ]]; then
+        # the check could not be completed (network, registry): a TRANSIENT failure, not a verdict on the key
+        echo "::error::the signature of ${base} (${pin}) could not be checked after the retries (a read error, not a wrong key): re-run; nothing was built. $(tail -c 300 "${errf}" | tr '\n' ' ')" >&2
+    elif grep -qi 'no signatures found' "${errf}" && ! grep -qi 'no matching signatures' "${errf}"; then
+        echo "::error::no signature is visible for ${base} (${pin}) yet: Universal Blue may still be publishing it (a re-run in a while usually passes); the build stops. $(tail -c 300 "${errf}" | tr '\n' ' ')" >&2
+    else
+        echo "::error::${base} (${pin}) is not signed by ${key}: the build stops. Possible causes: Universal Blue rotated its signing key (compare ${key} with https://github.com/ublue-os/main/blob/main/cosign.pub and replace it only after reading why), the image is unsigned, or it was replaced. $(tail -c 300 "${errf}" | tr '\n' ' ')" >&2
+    fi
     exit 1
 fi
 echo "BASE_PIN=${pin}"

@@ -12,7 +12,8 @@ git config user.name t
 cat > "${tmp}/fake/lookup" <<'EOS'
 #!/usr/bin/env bash
 # fake registry: ${FAKE_TAGS} lists the published tags; the digest is derived from the tag
-grep -qx "$1" "${FAKE_TAGS}" && echo "sha256:fake-$1"
+[[ -z "${FAKE_READ_ERROR:-}" ]] || exit 4  # the registry cannot be read (contract: 3 = absent, other = read error)
+grep -qx "$1" "${FAKE_TAGS}" && echo "sha256:fake-$1" || exit 3
 EOS
 chmod +x "${tmp}/fake/lookup"
 export REGISTRY_LOOKUP="${tmp}/fake/lookup" FAKE_TAGS="${tmp}/fake/tags"
@@ -53,6 +54,14 @@ expect "dispatch" false "" workflow_dispatch refs/heads/main "${m1}"
 expect "testing branch push" false "" push refs/heads/testing "${m1}"
 (unset PROMOTE_ENABLED; expect "PROMOTE_ENABLED unset" false "" push refs/heads/main "${m1}")
 (PROMOTE_ENABLED=false; expect "PROMOTE_ENABLED false" false "" push refs/heads/main "${m1}")
+
+# a registry that cannot be read is NOT "no tested image": the plan fails (exit 1, an error, no promote=false line), it never falls back to an untested rebuild
+echo "testing-$(sha "${code}")" > "${FAKE_TAGS}"
+rc=0; out=$(FAKE_READ_ERROR=1 "${script}" push refs/heads/main "${m1}" 2>"${tmp}/err") || rc=$?
+if [[ "${rc}" != 0 && -z "${out}" ]] && grep -q 'cannot decide whether a tested testing image exists' "${tmp}/err"; then echo "PASS registry read error fails the plan (no fallback to a rebuild)"; else echo "FAIL registry read error (rc ${rc}, out '${out}')"; fail=1; fi
+: > "${FAKE_TAGS}"
+rc=0; out=$("${script}" push refs/heads/main "${m1}" 2>/dev/null) || rc=$?
+if [[ "${rc}" == 0 && "${out}" == *promote=false* ]]; then echo "PASS an explicitly absent image still means build"; else echo "FAIL absent (rc ${rc}, out '${out}')"; fail=1; fi
 
 # non-merge push to main
 git checkout -q main; echo c >> README.md; commit docs-on-main

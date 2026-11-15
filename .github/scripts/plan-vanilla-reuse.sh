@@ -26,7 +26,10 @@ inputs=$(vanilla_inputs "${after}")
 echo "inputs=${inputs}"
 err=$(mktemp)
 trap 'rm -f "${err}"' EXIT
-found=$(nearest_image_for_inputs "${after}" 2> "${err}") || no "$(cat "${err}")"
+rc=0
+found=$(nearest_image_for_inputs "${after}" 2> "${err}") || rc=$?
+[[ "${rc}" != 2 ]] || echo "::warning::registry read error while looking for a reusable testing image (building instead): $(cat "${err}")" >&2
+[[ "${rc}" == 0 ]] || no "$(cat "${err}")"
 read -r tag digest <<< "${found}"
 echo "reuse: ${tag} (${digest}) was built from the same default-image inputs as ${after}" >&2
 printf 'reuse=true\nsource_tag=%s\nsource_digest=%s\n' "${tag}" "${digest}"

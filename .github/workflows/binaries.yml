@@ -174,14 +174,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # a missing artifact is a component that did not finish: binaries-assemble.sh counts it (optional: absent, required: failed)
+      # a missing artifact is a component that did not finish: binaries-assemble.sh counts it (optional: absent, required: failed). A FAILED DOWNLOAD is
+      # different: it is retried twice, and when all three tries fail the job fails with "could not read the results" (a workflow problem), never as "a required component failed"
       - name: Fetch the results of the components
+        id: fetch1
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: binres-*
           merge-multiple: true
           path: ${{ runner.temp }}/binres
+
+      - name: Fetch the results of the components (retry 1)
+        id: fetch2
+        if: steps.fetch1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binres-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/binres
+
+      - name: Fetch the results of the components (retry 2)
+        id: fetch3
+        if: steps.fetch1.outcome == 'failure' && steps.fetch2.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binres-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/binres
+
+      - name: The results could not be read
+        if: steps.fetch1.outcome == 'failure' && steps.fetch2.outcome == 'failure' && steps.fetch3.outcome == 'failure'
+        run: |
+          echo "::error::could not read the results of the components: the artifact download failed three times. This is a problem of the workflow run (GitHub's artifact service), NOT a failed component build: re-run the failed jobs."
+          exit 1
 
       - name: What goes into the image
         id: decide

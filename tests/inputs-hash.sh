@@ -78,7 +78,8 @@ done
 # ---- plan-vanilla-reuse.sh: a push to testing; the registry holds testing-<sha> for the commits in FAKE_TAGS
 cat > "${tmp}/fake/lookup" <<'EOS'
 #!/usr/bin/env bash
-grep -qx "$1" "${FAKE_TAGS}" && echo "sha256:fake-$1"
+[[ -z "${FAKE_READ_ERROR:-}" ]] || exit 4  # the registry cannot be read (contract: 3 = absent, other = read error)
+grep -qx "$1" "${FAKE_TAGS}" && echo "sha256:fake-$1" || exit 3
 EOS
 chmod +x "${tmp}/fake/lookup"
 export REGISTRY_LOOKUP="${tmp}/fake/lookup" FAKE_TAGS="${tmp}/fake/tags"

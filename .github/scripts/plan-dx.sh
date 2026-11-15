@@ -51,25 +51,40 @@ l_inputs="io.github.redcodeworks.octarine-os.dx-inputs"
 tmp=$(mktemp)
 trap 'rm -f "${tmp}"' EXIT
 
-# The digest of the raw manifest of octarine-os:<tag>; fails when the tag cannot be read
-base_digest_of() {
-    skopeo inspect --raw "docker://${base}:$1" > "${tmp}" 2> /dev/null || return 1
-    [[ -s "${tmp}" ]] || return 1
+# Registry reads follow ONE contract (registry-read.sh): exit 3 = the tag does not exist, exit 4 = the registry could not be read (retried). An unreadable registry is an
+# ERROR here wherever a "missing" answer would send the plan down another path (a different base, a rebuild instead of a promotion); it never means "absent".
+rr="${here}/registry-read.sh"
+# The digest of the raw manifest of <image ref>; exit 3 absent, 4 unreadable
+raw_digest_of() {
+    local rc=0
+    "${rr}" raw "$1" > "${tmp}" || rc=$?
+    [[ "${rc}" == 0 ]] || return "${rc}"
     echo "sha256:$(sha256sum "${tmp}" | sed 's/ .*//')"
 }
+base_digest_of() { raw_digest_of "${base}:$1"; }
+# cosign verify with the verdict told apart: 0 verified, 5 not verified, 4 could not be completed (retried)
+verify() { "${here}/cosign-check.sh" --key cosign.pub "$1"; }
 
 if [[ "${channel}" == testing ]]; then
     # nearest_image_for_inputs (inputs-hash.sh) asks REGISTRY_LOOKUP for the digest of testing-<sha>
     REGISTRY_LOOKUP=base_digest_of
     mine="testing-$(git rev-parse --short=7 HEAD)"
-    if base_digest_of "${mine}" > /dev/null; then
+    rc=0; base_digest_of "${mine}" > /dev/null || rc=$?
+    if [[ "${rc}" == 0 ]]; then
         base_tag="${mine}"
-    elif found=$(nearest_image_for_inputs HEAD 2> /dev/null); then
-        read -r base_tag _ <<< "${found}"
-        echo "No ${base}:${mine} (the default build was reused): using the nearest earlier ${base_tag}, built from the same default-image inputs"
+    elif [[ "${rc}" != 3 ]]; then
+        echo "::error::Could not read ${base}:${mine} (a registry read error, not a missing tag): not falling back to another base"; exit 1
     else
-        base_tag="testing"
-        echo "::warning::No ${base}:${mine} and no earlier testing image with the same default-image inputs: falling back to the floating ${base}:testing"
+        rc=0; found=$(nearest_image_for_inputs HEAD 2> /dev/null) || rc=$?
+        if [[ "${rc}" == 0 ]]; then
+            read -r base_tag _ <<< "${found}"
+            echo "No ${base}:${mine} (the default build was reused): using the nearest earlier ${base_tag}, built from the same default-image inputs"
+        elif [[ "${rc}" == 2 ]]; then
+            echo "::error::Could not read the registry while looking for an earlier testing image (a read error, not a missing image): not falling back to the floating tag"; exit 1
+        else
+            base_tag="testing"
+            echo "::warning::No ${base}:${mine} and no earlier testing image with the same default-image inputs: falling back to the floating ${base}:testing"
+        fi
     fi
 fi
 pin="${BASE_DIGEST_PIN:-}"
@@ -79,7 +94,7 @@ if [[ -n "${pin}" ]]; then
     # of the default repository and hash to itself. The signature is verified below like any other base.
     [[ "${channel}" == latest ]] || { echo "::error::BASE_DIGEST_PIN is only for the channel latest (got ${channel})"; exit 1; }
     [[ "${pin}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BASE_DIGEST_PIN '${pin}' is not sha256:<64 hex>"; exit 1; }
-    skopeo inspect --raw "docker://${base}@${pin}" > "${tmp}" 2> /dev/null && [[ -s "${tmp}" ]] || { echo "::error::Cannot read ${base}@${pin}"; exit 1; }
+    "${rr}" raw "${base}@${pin}" > "${tmp}" || { echo "::error::Cannot read ${base}@${pin}"; exit 1; }
     [[ "sha256:$(sha256sum "${tmp}" | sed 's/ .*//')" == "${pin}" ]] || { echo "::error::${base}@${pin} does not hash to its digest"; exit 1; }
     digest="${pin}"
     base_tag="latest"
@@ -87,7 +102,7 @@ if [[ -n "${pin}" ]]; then
 else
     digest=$(base_digest_of "${base_tag}") || { echo "::error::Cannot read ${base}:${base_tag}"; exit 1; }
 fi
-cosign verify --key cosign.pub "${base}@${digest}" > /dev/null
+verify "${base}@${digest}" || { echo "::error::The base ${base}@${digest} did not verify (or could not be checked: see the message above): nothing is built on it"; exit 1; }
 echo "Base image ${base}:${base_tag} = ${digest} (signature valid)"
 
 inputs=$(dx_inputs HEAD)
@@ -95,8 +110,9 @@ echo "dx inputs of this commit: ${inputs}"
 
 # labels of a published tag: prints "<base digest> <dx inputs>" (either may be empty) or fails
 labels_of() {
-    local cfg
-    cfg=$(skopeo inspect --config "docker://${dx}:$1" 2> /dev/null) || return 1
+    local cfg rc=0
+    cfg=$("${rr}" config "${dx}:$1") || rc=$?
+    [[ "${rc}" == 0 ]] || return "${rc}"
     jq -r --arg a "${l_base}" --arg b "${l_inputs}" '[.config.Labels[$a] // "-", .config.Labels[$b] // "-"] | join(" ")' <<< "${cfg}"
 }
 
@@ -104,12 +120,14 @@ build=true
 promote=false
 source_tag=""
 source_digest=""
-if cur=$(labels_of "${channel}"); then
+rc=0; cur=$(labels_of "${channel}") || rc=$?
+if [[ "${rc}" == 0 ]]; then
     read -r cur_base cur_inputs <<< "${cur}"
 else
+    # absent (3) or unreadable (4): both mean "build, never skip" for the PUBLISHED image of this channel (a skip needs a positive read)
     cur_base=""
     cur_inputs=""
-    echo "No published ${dx}:${channel} yet (or it cannot be read)"
+    if [[ "${rc}" == 3 ]]; then echo "No published ${dx}:${channel} yet"; else echo "::warning::${dx}:${channel} could not be read (a read error): building, never skipping on a failed read"; fi
 fi
 decision=""
 if [[ "${force}" == "true" ]]; then
@@ -117,8 +135,8 @@ if [[ "${force}" == "true" ]]; then
 elif [[ -n "${cur_base}" && "${cur_base}" == "${digest}" && "${cur_inputs}" == "${inputs}" ]]; then
     # The published image must also be SIGNED: a run that was cancelled between the push and the signing (build.yml cancels an
     # older run on `testing`) leaves a published, unsigned image with equal labels, which would otherwise be skipped for ever
-    cur_d=$(skopeo inspect --raw "docker://${dx}:${channel}" 2> /dev/null | sha256sum | sed 's/ .*//') || cur_d=""
-    if [[ -n "${cur_d}" ]] && cosign verify --key cosign.pub "${dx}@sha256:${cur_d}" > /dev/null 2>&1; then
+    cur_d=$(raw_digest_of "${dx}:${channel}") || cur_d=""
+    if [[ -n "${cur_d}" ]] && verify "${dx}@${cur_d}" 2> /dev/null; then
         build=false
         decision="skipped: base and dx inputs unchanged (${channel}: ${digest}), published image signed"
     else
@@ -136,16 +154,20 @@ else
         tags="testing"
         for c in $(git rev-list --max-count="${max}" HEAD); do tags+=" testing-$(git rev-parse --short=7 "${c}")"; done
         for t in ${tags}; do
-            lab=$(labels_of "${t}") || continue
+            rc=0; lab=$(labels_of "${t}") || rc=$?
+            if [[ "${rc}" == 3 ]]; then continue; fi   # no such candidate tag
+            [[ "${rc}" == 0 ]] || { echo "::error::Could not read the labels of ${dx}:${t} (a registry read error, not a missing tag): not building instead of promoting"; exit 1; }
             read -r t_base t_inputs <<< "${lab}"
             [[ "${t_base}" == "${digest}" && "${t_inputs}" == "${inputs}" ]] || continue
-            d=$(skopeo inspect --raw "docker://${dx}:${t}" | sha256sum | sed 's/ .*//')
-            [[ -n "${d}" ]] || continue
-            if cosign verify --key cosign.pub "${dx}@sha256:${d}" > /dev/null 2>&1; then
-                build=false; promote=true; source_tag="${t}"; source_digest="sha256:${d}"
+            rc=0; d=$(raw_digest_of "${dx}:${t}") || rc=$?
+            [[ "${rc}" == 0 ]] || { echo "::error::Could not read the manifest of ${dx}:${t} (exit ${rc}): not building instead of promoting"; exit 1; }
+            rc=0; verify "${dx}@${d}" 2> /dev/null || rc=$?
+            if [[ "${rc}" == 0 ]]; then
+                build=false; promote=true; source_tag="${t}"; source_digest="${d}"
                 decision="promoting ${t} (${source_digest}): same base digest and dx inputs, signed"
                 break
             fi
+            [[ "${rc}" == 5 ]] || { echo "::error::Could not complete the signature check of ${dx}:${t} (a read error, not a bad signature): not building instead of promoting"; exit 1; }
             echo "::warning::${t} matches but its signature does not verify; not promoting it"
         done
         [[ "${promote}" == true ]] || decision="building (no tested testing image with this base digest and these dx inputs)"
