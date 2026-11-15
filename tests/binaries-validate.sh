@@ -24,7 +24,7 @@ open(f"{out}/channel2.sh", "w").write(chan2["run"])
 fin2 = [s for s in w2["jobs"]["assemble"]["steps"] if s.get("id") == "final"][0]
 open(f"{out}/final2.sh", "w").write(fin2["run"])
 PY
-final() { : >"$root/gho"; env COMPONENT=scx LOOKUP=true SIMULATE_LIST= OWN=false EVENT=push VALIDATE_ONLY=false "$@" GITHUB_OUTPUT="$root/gho" bash "$root/final.sh" >"$root/out" 2>&1; }
+final() { : >"$root/gho"; env OPTIONAL=false KNOWN_FAIL_HIT=false COMPONENT=scx LOOKUP=true SIMULATE_LIST= OWN=false EVENT=push VALIDATE_ONLY=false "$@" GITHUB_OUTPUT="$root/gho" bash "$root/final.sh" >"$root/out" 2>&1; }
 val() { grep -qx "$1" "$root/gho"; }
 final OWN=true EVENT=push
 check "own push run: no publishing, but an already signed image of the tree is reused (usable stays true): the caller's run is the one that publishes" bash -c "grep -qx 'nopublish=true' '$root/gho' && grep -qx 'usable=true' '$root/gho'"
@@ -48,6 +48,30 @@ final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=all
 check "a rehearsal of all components skips the reuse of every one" bash -c "grep -qx 'usable=false' '$root/gho'"
 final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=true
 check "the old boolean spelling (true) still means all components" bash -c "grep -qx 'usable=false' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=true LOOKUP=false OWN=false EVENT=push
+check "known failure: an optional component whose exact key failed before is not built again on a push (knownfail=true)" bash -c "grep -qx 'knownfail=true' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=true LOOKUP=false OWN=false EVENT=schedule
+check "known failure: the daily scheduled run tries again (knownfail=false)" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=true LOOKUP=false OWN=true EVENT=workflow_dispatch VALIDATE_ONLY=true
+check "known failure: a validation run builds again" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=true LOOKUP=false OWN=true EVENT=workflow_dispatch SIMULATE_LIST=scx
+check "known failure: a rehearsal builds again" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=true LOOKUP=true OWN=false EVENT=push
+check "known failure: an image that exists is reused, nothing to skip" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+final OPTIONAL=false KNOWN_FAIL_HIT=true LOOKUP=false OWN=false EVENT=push
+check "known failure: a REQUIRED component is never skipped, whatever the cache says" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+final OPTIONAL=true KNOWN_FAIL_HIT=false LOOKUP=false OWN=false EVENT=push
+check "known failure: no marker, no skip" bash -c "grep -qx 'knownfail=false' '$root/gho'"
+check "known failure: the marker is saved only after a failed optional build and never on a pull request; the build job is skipped on a known failure; the cache action is the pinned one" python3 -I - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); j = w["jobs"]
+assert "needs.check.outputs.knownfail != 'true'" in j["build"]["if"]
+save = [s for s in j["build"]["steps"] if "cache/save" in s.get("uses", "")][0]
+assert "inputs.optional" in save["if"] and "github.event_name != 'pull_request'" in save["if"] and "steps.record.outputs.ok == 'false'" in save["if"]
+assert save["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+rest = [s for s in j["check"]["steps"] if "cache/restore" in s.get("uses", "")][0]
+assert rest["with"]["lookup-only"] is True and rest["uses"].startswith("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+PY
 chan() { : >"$root/gho"; env REF="$1" NOPUBLISH="$2" GITHUB_OUTPUT="$root/gho" bash "$root/channel.sh" >"$root/out" 2>&1; }
 chan refs/heads/main false;  check "channel: main publishes" grep -qx 'publish=true' "$root/gho"
 chan refs/heads/main true;   check "channel: an own push or weekly run on main does NOT publish" grep -qx 'publish=false' "$root/gho"

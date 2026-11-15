@@ -65,6 +65,7 @@ jobs:
       image: ${{ steps.key.outputs.image }}
       usable: ${{ steps.final.outputs.usable }}
       nopublish: ${{ steps.final.outputs.nopublish }}
+      knownfail: ${{ steps.final.outputs.knownfail }}
       digest: ${{ steps.lookup.outputs.digest }}
     steps:
       - name: Checkout
@@ -100,6 +101,18 @@ jobs:
           TAG: ${{ steps.key.outputs.tag }}
         run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${TAG}"
 
+      # A failed build of an OPTIONAL component is remembered per content key (an Actions cache entry that only has to exist, nothing in it is
+      # used): a later push with the SAME key does not build it again (about 3.5 minutes of the critical path of every run while the component is
+      # broken); the daily scheduled run and any change of the component (a new key) try again.
+      - name: Did this exact key fail before?
+        id: knownfail
+        if: inputs.optional
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/known-fail
+          key: known-fail-${{ inputs.component }}-${{ steps.key.outputs.key }}
+          lookup-only: true
+
       # a rehearsal of a failed build must not be short-circuited by an existing signed image of this key
       - name: Usable (not for a rehearsal)
         id: final
@@ -110,6 +123,8 @@ jobs:
           OWN: ${{ github.workflow == 'Prebuilt binaries' }}
           EVENT: ${{ github.event_name }}
           VALIDATE_ONLY: ${{ inputs.validate_only == true }}
+          OPTIONAL: ${{ inputs.optional }}
+          KNOWN_FAIL_HIT: ${{ steps.knownfail.outputs.cache-hit }}
         run: |
           usable=${LOOKUP}
           simulate=false
@@ -123,12 +138,16 @@ jobs:
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
           echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
           echo "simulate=${simulate}" >> "${GITHUB_OUTPUT}"
-          echo "usable=${usable} nopublish=${nopublish} force=${force} simulate=${simulate}"
+          # skip a build that failed before with this same key: optional components only, never the daily schedule, a rehearsal or a validation
+          knownfail=false
+          if [[ "${OPTIONAL}" == true && "${KNOWN_FAIL_HIT}" == true && "${usable}" != true && "${EVENT}" != schedule && "${simulate}" != true && "${VALIDATE_ONLY}" != true ]]; then knownfail=true; fi
+          echo "knownfail=${knownfail}" >> "${GITHUB_OUTPUT}"
+          echo "usable=${usable} nopublish=${nopublish} force=${force} simulate=${simulate} knownfail=${knownfail}"
 
   build:
     name: Build the ${{ inputs.component }} image
     needs: check
-    if: needs.check.outputs.usable != 'true'
+    if: needs.check.outputs.usable != 'true' && needs.check.outputs.knownfail != 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 90
     permissions:
@@ -222,6 +241,18 @@ jobs:
           if [[ "${BUILD_OUTCOME}" == success && ( "${PUBLISH}" != true || "${PUSH_OUTCOME}" == success ) ]]; then ok=true; fi
           echo "ok=${ok}" >> "${GITHUB_OUTPUT}"
           [[ "${ok}" == true ]] || echo "::warning::the ${COMPONENT} build did not succeed (build ${BUILD_OUTCOME}, push ${PUSH_OUTCOME}): binaries-decide.sh decides what that means"
+
+      - name: Remember the failure of this key (optional components, not on pull requests)
+        if: always() && steps.record.outputs.ok == 'false' && inputs.optional && github.event_name != 'pull_request'
+        run: mkdir -p "${RUNNER_TEMP}/known-fail" && date -u +%Y-%m-%dT%H:%M:%SZ > "${RUNNER_TEMP}/known-fail/failed"
+
+      - name: Save the failure marker
+        if: always() && steps.record.outputs.ok == 'false' && inputs.optional && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/known-fail
+          key: known-fail-${{ inputs.component }}-${{ needs.check.outputs.key }}
 
   sign:
     name: Sign the ${{ inputs.component }} image
@@ -351,6 +382,7 @@ jobs:
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
           FALLBACK: ${{ needs.fallback.result }}
           FB_OK: ${{ needs.fallback.outputs.ok }}
+          KNOWN_FAIL: ${{ needs.check.outputs.knownfail }}
           FB_DIGEST: ${{ needs.fallback.outputs.digest }}
           FB_KEY: ${{ needs.fallback.outputs.key }}
           FB_CREATED: ${{ needs.fallback.outputs.created }}
