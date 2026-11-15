@@ -401,10 +401,10 @@ jobs:
           now=$("${lookup}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
-            after=$("${lookup}" "${tag}")
-            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
-            echo "promoted ${tag} -> ${after}"
+            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
+            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 
   sign:

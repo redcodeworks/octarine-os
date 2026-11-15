@@ -184,11 +184,17 @@ jobs:
           REUSE: ${{ steps.reuse.outputs.reuse }}
         run: |
           set -euo pipefail
-          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          # exit 5 of cosign-check.sh = cosign said the signature is missing or wrong (building instead is the intended path); exit 4 = the registry could not be
+          # read after the retries: that must NOT turn into a rebuild of untested content, so the Final decision fails the plan (unreadable=true)
+          rc=0
+          .github/scripts/cosign-check.sh --key cosign.pub "${IMAGE}@${DIGEST}" || rc=$?
+          if [[ "${rc}" == 4 ]]; then echo "unreadable=true" >> "${GITHUB_OUTPUT}"; fi
+          [[ "${rc}" == 0 ]] || exit 1
           echo "signature of ${DIGEST} is valid"
           # a reused image must not carry a different inputs label (an image from before the label has none: the commit decides)
           if [[ "${REUSE}" == true ]]; then
-            have=$(skopeo inspect --config "docker://${IMAGE}@${DIGEST}" | jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty')
+            cfg=$(.github/scripts/registry-read.sh config "${IMAGE}@${DIGEST}") || { echo "unreadable=true" >> "${GITHUB_OUTPUT}"; exit 1; }
+            have=$(jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty' <<<"${cfg}")
             [[ -z "${have}" || "${have}" == "${REUSE_INPUTS}" ]] || { echo "::error::${DIGEST} carries vanilla-inputs ${have}, this commit has ${REUSE_INPUTS}"; exit 1; }
           fi
 
@@ -200,7 +206,12 @@ jobs:
           CANDIDATE: ${{ steps.promote.outputs.promote }}
           REUSE: ${{ steps.reuse.outputs.reuse }}
           VERIFY: ${{ steps.verify.outcome }}
+          UNREADABLE: ${{ steps.verify.outputs.unreadable }}
         run: |
+          if [[ "${UNREADABLE}" == true ]]; then
+            echo "::error::The registry could not be read while verifying the image to promote or reuse (a read error, not a bad signature): failing the plan instead of building something untested. Re-run the workflow."
+            exit 1
+          fi
           if [[ "${CANDIDATE}" == true && "${VERIFY}" == success ]]; then
             build=false; promote=true
           elif [[ "${REUSE}" == true && "${VERIFY}" == success ]]; then
@@ -763,10 +774,10 @@ jobs:
           now=$("${lookup}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
-            after=$("${lookup}" "${tag}")
-            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
-            echo "promoted ${tag} -> ${after}"
+            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
+            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 
       # Arms the daily's fallback: last-good-<component> of the binaries image -> the signed c-<component>-<key> images of this tree (the `track` job of

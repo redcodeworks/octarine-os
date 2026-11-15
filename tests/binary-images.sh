@@ -25,6 +25,7 @@ cat >"$bin/skopeo" <<'F'
 echo "skopeo $*" >>"$LOG"
 case "$1" in
     inspect)
+        [ "${SKOPEO_READ:-0}" = 1 ] && { echo "dial tcp: i/o timeout" >&2; exit 1; }
         [ "${SKOPEO_FAIL:-0}" = 1 ] && { echo "manifest unknown" >&2; exit 1; }
         [ "${SKOPEO_EMPTY:-0}" = 1 ] && exit 0
         printf 'manifest of %s' "${@: -1}" ;;
@@ -33,6 +34,8 @@ F
 cat >"$bin/cosign" <<'F'
 #!/usr/bin/env bash
 echo "cosign $*" >>"$LOG"
+[ "${COSIGN_READ:-0}" = 1 ] && { echo "Error: GET https://ghcr.io: TLS handshake timeout" >&2; exit 1; }
+[ "${COSIGN_RC:-0}" != 0 ] && echo "Error: no signatures found" >&2
 exit "${COSIGN_RC:-0}"
 F
 chmod +x "$bin"/*
@@ -50,6 +53,10 @@ look SKOPEO_FAIL=1
 check "lookup: tag missing: usable=false (reason missing), exit 0, no cosign call" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=missing' '$root/gho' && ! grep -q cosign '$LOG'"
 look SKOPEO_EMPTY=1
 check "lookup: an empty answer counts as missing" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho'"
+look SKOPEO_READ=1
+check "lookup: a registry that cannot be read is reason=unreadable (a warning that says so), never 'missing'; exit 0, no cosign call, the leg builds" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=unreadable' '$root/gho' && ! grep -qx 'reason=missing' '$root/gho' && ! grep -q cosign '$LOG' && grep -q 'registry read error' '$root/run'"
+look COSIGN_READ=1
+check "lookup: a cosign check that cannot complete is reason=unreadable, never 'badsignature'" bash -c "[ $rc = 0 ] && grep -qx 'reason=unreadable' '$root/gho' && ! grep -qx 'reason=badsignature' '$root/gho'"
 look COSIGN_RC=1
 check "lookup: the tag exists but the signature does not verify: usable=false (reason badsignature), a warning, rebuild" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=badsignature' '$root/gho' && grep -q '::warning::' '$root/run'"
 PATH="$bin:$PATH" bash "$here/.github/scripts/binaries-lookup.sh" "$IMG" 'Bad Tag!' >"$root/run" 2>&1

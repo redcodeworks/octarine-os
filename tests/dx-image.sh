@@ -108,7 +108,8 @@ import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 text = lambda j: "\n".join(s.get("run", "") for s in w["jobs"][j]["steps"])
 assert w["jobs"]["plan"]["steps"][-1]["run"].strip() == ".github/scripts/plan-dx.sh"
-assert 'cosign verify --key cosign.pub "${base}@${digest}"' in open(sys.argv[1].rsplit("/workflows/", 1)[0] + "/scripts/plan-dx.sh").read()
+pd = open(sys.argv[1].rsplit("/workflows/", 1)[0] + "/scripts/plan-dx.sh").read()
+assert 'cosign-check.sh" --key cosign.pub "$1"' in pd and 'verify "${base}@${digest}"' in pd  # the base is verified, with a read error told apart from a bad signature
 assert 'cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}"' in text("build")
 assert 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}"' in text("build")
 names = [s.get("name") for s in w["jobs"]["build"]["steps"]]
@@ -172,8 +173,8 @@ assert d["needs"] == "sign" and d["if"].startswith("always() && needs.sign.resul
 assert d["permissions"] == {"contents": "read", "actions": "write"}
 assert any('dispatch-dx.sh beta "${GITHUB_SHA}"' in s.get("run", "") for s in d["steps"])
 PY
-check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and after" bash -c "
-  grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'after=\$(\"\${lookup}\" \"\${tag}\")' '$wf'"
+check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and, polling, after" bash -c "
+  grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'registry-settled.sh \"\${IMAGE}\" \"\${tag}\" \"\${SOURCE_DIGEST}\"' '$wf'"
 
 # ---- Containerfile, scripts and package lists
 cf="$here/variants/dx/Containerfile"
