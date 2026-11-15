@@ -90,3 +90,41 @@ jobs:
           else
             echo "No ${image}-dx package yet; nothing to prune there"
           fi
+
+  # A failed weekly prune of old images: ONE issue (label ci-failure-prune, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly prune of old images
+    needs: [prune]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-prune
+          LABEL_DESC: the weekly prune of old images failed (one open issue at a time)
+          ISSUE_TITLE: "The weekly image prune failed"
+          ISSUE_BODY: "The prune of old testing, beta and dx images failed or refused to delete more than its limit (the repository variable PRUNE_ENABLED makes scheduled runs delete). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, the prune workflow."
+          FAIL_COMMENT: "weekly prune of old images failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.prune.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-prune
+          RECOVER_COMMENT: "the next weekly prune of old images succeeded"
+        run: .github/scripts/ci-issue.sh recover
