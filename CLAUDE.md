@@ -1215,17 +1215,27 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `50-akmods.just` is comment-only too (the base's `configure-broadcom-wl` and its `broadcom-wl` alias are gone: the image ships no `wl` module). The base package builds `/usr/share/ublue-os/justfile`
   with one `import` per file name it ships, so the same names keep being imported. Do not tell people to edit the base's
   versions of these five files; verify with `just --justfile /usr/share/ublue-os/justfile --summary` (the smoke test does).
+- **EXPERIMENTAL second launcher `ojust` (maintainer note only; deliberately undocumented elsewhere, Kevin 2026-11-15; a test checks that no README, doc or user-facing text mentions it).** `/usr/bin/ojust` runs
+  `just` with `JUST_JUSTFILE=/usr/share/octarine-os/justfile` (the mechanism `ujust` uses) and sets `OCTARINE_UJUST=/usr/bin/ojust` so `hardware-setup`'s self-calls stay in ojust. Its root justfile imports
+  ONLY our files, never one of Universal Blue's `ublue-os-just` package, so it works on a base without that package: `15-luks`, `40-nvidia`, `50-akmods`, `60-custom` and the dx files (same files as ujust), plus
+  `/usr/share/octarine-os/just/{motd,update,base-pieces}.just`. To make that possible the image's own `toggle-motd`/`toggle-user-motd` and `update`/`toggle-updates` moved out of the wrapper files
+  `00-default.just` and `10-update.just` into `motd.just` and `update.just`; the wrappers now import those FIRST and the renamed base file second (first import wins), so ujust resolves exactly the same
+  recipes (verified by comparing `just --dump --dump-format json` of the assembled root before and after: identical). `base-pieces.just` is ojust-only: copies of the package's `bios`, `bios-info`,
+  `logs-this-boot`, `logs-last-boot`, `enroll-secure-boot-key`, `check-local-overrides`, `device-info`, `changelogs`, `update-firmware`, `clean-system` and the aliases (Apache-2.0, attribution in its header);
+  NOT copied: `check-idle-power-draw`, `distrobox-assemble`, `distrobox-new`, `install-resolve`, `setup-distrobox-app` (they need `/usr/lib/ujust` helpers). The three helper libraries are NOT copied: no file
+  ojust imports sources them, and `ugum` is only an optional menu helper (`menu.sh` falls back without it). Keep new recipes free of `/usr/lib/ujust` sourcing and of imports of base files.
+  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`, `build-beta.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `10-update.just` for public recipes (each must be in the README).
+- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
 ## `ujust toggle-updates` and `ujust update`
 
-- Both live in `10-update.just` and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
+- Both live in `system_files/usr/share/octarine-os/just/update.just` (imported by the wrapper `10-update.just` and by ojust's root) and share `system_files/usr/share/octarine-os/lib/update-services.sh`, the one table of
   sources: `image` (`rpm-ostreed-automatic.timer`, stages the image), `flatpak` (system `flatpak-system-update.timer` plus
   user `flatpak-user-update.timer`), `distrobox` (user `octarine-distrobox-upgrade.timer`, shipped here, off by default),
   `brew-update` (`brew-update.timer`), `brew-upgrade` (`brew-upgrade.timer`, off by default by `00-octarine-brew.preset`).

@@ -1,0 +1,23 @@
+# EXPERIMENTAL root justfile of `ojust` (/usr/bin/ojust), the launcher that runs the image's own recipes WITHOUT Universal Blue's `ublue-os-just`
+# package (ujust and its root justfile /usr/share/ublue-os/justfile are not touched). It imports the same recipe files ujust uses, never a
+# file of that package: the image's own files (60-custom.just, 15-luks.just, 40-nvidia.just, 50-akmods.just, the dx files) and the small own
+# files in /usr/share/octarine-os/just/ (motd.just and update.just, which ujust's wrapper files import too, and base-pieces.just, copies of the
+# package's recipes that only ojust imports).
+set allow-duplicate-recipes := true
+set ignore-comments := true
+
+_default:
+    #!/usr/bin/bash
+    exec "${OCTARINE_UJUST:-/usr/bin/ojust}" --list --list-heading $'Available commands:\n' --list-prefix $' - '
+
+# Imports (the first import wins between two files, so the image's own files come before the copies)
+import "/usr/share/octarine-os/just/motd.just"
+import "/usr/share/octarine-os/just/update.just"
+import "/usr/share/ublue-os/just/15-luks.just"
+import "/usr/share/ublue-os/just/40-nvidia.just"
+import "/usr/share/ublue-os/just/50-akmods.just"
+import "/usr/share/ublue-os/just/60-custom.just"
+import? "/usr/share/ublue-os/just/70-octarine-dev.just"
+import? "/usr/share/ublue-os/just/72-octarine-datastore.just"
+import? "/usr/share/ublue-os/just/75-octarine-virthost.just"
+import "/usr/share/octarine-os/just/base-pieces.just"

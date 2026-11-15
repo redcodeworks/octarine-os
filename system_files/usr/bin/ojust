@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+# EXPERIMENTAL: like `ujust`, but its root justfile (/usr/share/octarine-os/justfile) imports only the image's own recipe files and never a file
+# of Universal Blue's ublue-os-just package. Hooks for the tests: OJUST_JUSTFILE, OJUST_JUST. OCTARINE_UJUST makes the recipes that call
+# `ujust` themselves (hardware-setup) call ojust instead.
+export OCTARINE_UJUST=/usr/bin/ojust
+JUST_JUSTFILE="${OJUST_JUSTFILE:-/usr/share/octarine-os/justfile}" exec "${OJUST_JUST:-/usr/bin/just}" "${@}"
