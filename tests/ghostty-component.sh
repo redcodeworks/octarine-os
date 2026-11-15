@@ -29,10 +29,11 @@ check "Containerfile: builder from builder.env, the Zig and the source are fetch
   cf='$g/Containerfile'; grep -qx 'FROM \${BUILDER} AS build' \$cf && grep -q 'fetch-zig.sh /binaries/ghostty/zig.env /opt/zig' \$cf && grep -q 'fetch-source.sh /binaries/ghostty/upstream.env /src' \$cf &&
   grep -q 'gtk4-layer-shell-devel' \$cf && grep -q 'blueprint-compiler' \$cf && grep -qw 'minisign' \$cf && grep -q 'libadwaita-devel' \$cf && grep -qx 'COPY --from=build /out /ghostty' \$cf &&
   [ \"\$(grep -E '^FROM ' \$cf | tail -n1)\" = 'FROM scratch' ] && [ \"\$(grep -c '^FROM \${BUILDER}' \$cf)\" = 1 ]"
-check "build.sh: the offline distro-style build of PACKAGING.md (fetch-zig-cache.sh, --system, ReleaseFast, baseline CPU, the absolute exe path /usr/bin/ghostty, bundled glslang and spirv-cross) and the staged tree with FILES" bash -c "
-  b='$g/build.sh'; grep -q 'fetch-zig-cache.sh' \$b && grep -q -- '--system \${ZIG_GLOBAL_CACHE_DIR}/p' \$b && grep -q -- '-Doptimize=ReleaseFast' \$b && grep -q -- '-Dcpu=baseline' \$b &&
-  grep -q -- '-Dinstalled-exe-path=/usr/bin/ghostty' \$b && grep -q -- '--prefix /usr' \$b && grep -q -- '-fno-sys=glslang' \$b && grep -q -- '-fno-sys=spirv-cross' \$b &&
-  grep -q -- '--elf-x86-64 root/usr/bin/ghostty' \$b && grep -q 'FILES' \$b && grep -q 'com.mitchellh.ghostty.desktop' \$b"
+check "build.sh: Zig 0.17 recipe: a FRESH empty Zig cache, zig fetch of every build.zig.zon.txt URL, each saved tarball unpacked into a separate package directory and flattened, a clear failure for a package still nested, zig build --system <that directory>, no -fno-sys, libghostty-vt pruned, the absolute exe path, ReleaseFast and the baseline CPU, a --version smoke run, the staged tree with FILES" bash -c "
+  b='$g/build.sh'; grep -q 'mktemp -d /tmp/zig-global-cache' \$b && grep -q 'zig fetch \"\${url}\"' \$b && grep -q 'build.zig.zon.txt' \$b && grep -q 'tar -xzf \"\${pkg}\" -C \"\${sys}\"' \$b && grep -q 'still holds a single subdirectory' \$b &&
+  grep -q -- '--system \"\${sys}\"' \$b && ! grep -q -- '-fno-sys' \$b && ! grep -q 'fetch-zig-cache.sh\$' \$b && grep -q -- '-Doptimize=ReleaseFast' \$b && grep -q -- '-Dcpu=baseline' \$b &&
+  grep -q -- '-Dinstalled-exe-path=/usr/bin/ghostty' \$b && grep -q -- '--prefix /usr' \$b && grep -q 'libghostty-vt' \$b && grep -q 'include/ghostty' \$b &&
+  grep -q -- '--smoke root/usr/bin/ghostty:--version' \$b && grep -q -- '--elf-x86-64 root/usr/bin/ghostty' \$b && grep -q 'FILES' \$b && grep -q 'com.mitchellh.ghostty.desktop' \$b"
 check "the OS image build installs gtk4-layer-shell (the runtime library Ghostty links); a missing one is recorded as an optional package, and the runtime check then removes Ghostty with a warning" bash -c "grep -q '\"misc:.* gtk4-layer-shell\"' '$here/build_files/build.sh'"
 check "components.tsv lists ghostty as optional and the installer's lists agree; the layout contract knows ghostty" bash -c "grep -qP '^ghostty\toptional\$' '$here/binaries/components.tsv' && grep -q '^optional=\"ghostty\"' '$here/build_files/install-binaries.sh' && grep -q 'ghostty) need ghostty/root/usr/bin/ghostty' '$here/.github/scripts/binaries-layout.sh'"
 check "both smoke tests check ghostty (installed with its desktop file and resolved libraries, or recorded as left out)" bash -c "for f in build.yml build-beta.yml; do grep -q 'optional ghostty: installed with its desktop file' '$here/.github/workflows/'\$f || exit 1; done"
@@ -144,6 +145,49 @@ inst BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ghostty"
 check "installer: ghostty needs a library the image lacks (gtk4-layer-shell): ghostty is REMOVED again with a WARNING, a REMOVED record and the missing library named; scx and extest stay, the build succeeds" bash -c "[ $rc = 0 ] && grep -q 'libgtk4-layer-shell.so.0 => not found' '$root/run' && grep -q 'WARNING: optional component ghostty needs shared libraries' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ] && [ ! -e '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ] && grep -q '^ghostty: removed' '$lic/REMOVED' && [ -x '$dest/usr/bin/scx_rusty' ]"
 inst BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ok"
 check "installer: with every library present ghostty stays installed" bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && grep -q 'runtime libraries of ghostty: all found' '$root/run' && [ ! -e '$lic/REMOVED' ]"
+
+# ---- build.sh itself with a stub zig (the Zig 0.17 fetch layout) and a stub stage.sh: fetch, unpack, flatten, build arguments, pruning
+zb="$root/zbin"; mkdir -p "$zb"
+cat >"$zb/zig" <<'F'
+#!/usr/bin/env bash
+case "$1" in
+    version) echo 0.17.0 ;;
+    fetch)
+        [ "$2" = "--help" ] && exit 0
+        h="pkg-$(printf '%s' "$2" | cksum | cut -d' ' -f1)"; mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p" "$ZSTUB_TMP/t/$h"
+        rm -rf "$ZSTUB_TMP/t/$h"/*
+        case "$2" in
+            *nested2*) mkdir -p "$ZSTUB_TMP/t/$h/up/deeper"; echo x >"$ZSTUB_TMP/t/$h/up/deeper/f" ;;
+            *nested*) mkdir -p "$ZSTUB_TMP/t/$h/upstream-1.0"; echo x >"$ZSTUB_TMP/t/$h/upstream-1.0/build.zig" ;;
+            *) echo x >"$ZSTUB_TMP/t/$h/build.zig" ;;
+        esac
+        tar -C "$ZSTUB_TMP/t" -czf "$ZIG_GLOBAL_CACHE_DIR/p/$h.tar.gz" "$h"; echo "$h" ;;
+    build)
+        echo "$*" >"$ZSTUB_TMP/build.args"; ls "${@:4:1}" >/dev/null 2>&1; for a in "$@"; do case "$prev" in --system) cp -r "$a" "$ZSTUB_TMP/sysdir"; esac; prev=$a; done
+        mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/share/applications" "$DESTDIR/usr/lib" "$DESTDIR/usr/include/ghostty/vt"
+        echo bin >"$DESTDIR/usr/bin/ghostty"; chmod +x "$DESTDIR/usr/bin/ghostty"; echo d >"$DESTDIR/usr/share/applications/com.mitchellh.ghostty.desktop"
+        echo so >"$DESTDIR/usr/lib/libghostty-vt.so"; echo so >"$DESTDIR/usr/lib/libghostty-vt.so.0"; echo h >"$DESTDIR/usr/include/ghostty/vt/a.h" ;;
+esac
+F
+cat >"$root/stage-stub.sh" <<'F'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do case "$1" in --out) out=$2; shift 2 ;; --src) src=$2; shift 2 ;; --bin) b=$2; shift 2 ;; *) shift ;; esac; done
+mkdir -p "$out/root/usr/bin"; cp "$src/${b%%:*}" "$out/${b#*:}"; echo ok >"$out/SOURCE"; echo ok >"$out/BUILDINFO"
+F
+chmod +x "$zb/zig" "$root/stage-stub.sh"
+mksrc() { rm -rf "$root/zsrc" "$root/zout" "$root/ztmp"; mkdir -p "$root/zsrc" "$root/ztmp"; printf '%s\n' "$@" >"$root/zsrc/build.zig.zon.txt"; echo mit >"$root/zsrc/LICENSE"; }
+zrun() { env PATH="$zb:$PATH" ZSTUB_TMP="$root/ztmp" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?; }
+mksrc https://d.example/a.tar.gz https://d.example/nested-b.tar.gz https://d.example/c.tar.gz
+zrun
+check "build.sh with the Zig 0.17 fetch layout: every URL is fetched into a fresh cache and unpacked, a package that keeps the upstream top-level directory is flattened, zig build gets that directory with --system, the build succeeds" bash -c "[ $rc = 0 ] && [ \$(ls '$root/ztmp/sysdir' | wc -l) = 3 ] && [ \$(ls '$root/ztmp'/sysdir/*/build.zig | wc -l) = 3 ] && grep -q -- '--system' '$root/ztmp/build.args' && grep -q -- '-Doptimize=ReleaseFast' '$root/ztmp/build.args' && ! grep -q 'fno-sys' '$root/ztmp/build.args' && grep -q 'fetched and unpacked 3 packages' '$root/run'"
+check "build.sh: libghostty-vt (library and headers) is pruned from the staged tree, the desktop file and the binary are kept, FILES lists them" bash -c "f='$root/zout/FILES'; grep -qx usr/bin/ghostty \$f && grep -qx usr/share/applications/com.mitchellh.ghostty.desktop \$f && ! grep -q 'libghostty-vt' \$f && ! grep -q 'include/ghostty' \$f && [ ! -e '$root/zout/root/usr/include' ]"
+mksrc https://d.example/a.tar.gz https://d.example/nested2-b.tar.gz
+zrun
+check "build.sh: a package still nested after one flattening fails with a clear message (not a confusing Zig error later)" bash -c "[ $rc != 0 ] && grep -q 'still holds a single subdirectory' '$root/run'"
+mksrc https://d.example/a.tar.gz
+printf '#!/usr/bin/env bash\n[ "$1" = fetch ] && [ "$2" != --help ] && exit 1; exec "$REAL_ZIG" "$@"\n' >"$root/zbin2.sh"; mkdir -p "$root/zb2"; cp "$zb/zig" "$root/zb2/zig.real"; printf '#!/usr/bin/env bash\n[ "$1" = fetch ] && [ "$2" != --help ] && { echo "boom" >&2; exit 1; }\nexec "%s/zig.real" "$@"\n' "$root/zb2" >"$root/zb2/zig"; chmod +x "$root/zb2/zig"
+env PATH="$root/zb2:$PATH" ZSTUB_TMP="$root/ztmp" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?
+check "build.sh: a failed zig fetch (a package that does not verify against its hash) fails the build and names the URL" bash -c "[ $rc != 0 ] && grep -q 'zig fetch failed for https://d.example/a.tar.gz' '$root/run'"
 
 # ---- ghostty-check.sh: the version selection, with a stub gh and index.json data
 cr="$root/crepo"; mkdir -p "$cr/binaries/lib" "$cr/binaries/ghostty" "$cr/.github/scripts"
