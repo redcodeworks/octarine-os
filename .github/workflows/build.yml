@@ -583,6 +583,7 @@ jobs:
             check "automatic update service waits for the network (base drop-in) and NetworkManager-wait-online is enabled" "grep -q After=network-online.target /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/override.conf && systemctl is-enabled NetworkManager-wait-online.service"
             summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
             check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
+            check "the experimental second launcher runs and lists the image own recipes without a base file import" "test -x /usr/bin/ojust && /usr/bin/ojust --list | grep -q toggle-motd && /usr/bin/ojust --list | grep -q niri-setup && ! grep -E ^import /usr/share/octarine-os/justfile | grep -q -- -base.just"
             has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
             for r in switch-image toggle-updates update luks-tpm-unlock toggle-motd toggle-user-motd; do
               check "assembled justfile lists $r" "has_recipe $r"

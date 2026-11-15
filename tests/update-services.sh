@@ -23,6 +23,9 @@ export LOG="$root/log"
 mkdir -p "$root/fakebin" "$root/just"
 # the image layout: our 10-update.just next to the base file that build.sh renames to 10-update-base.just (a stub here)
 cp -- "$justfile" "$root/just/10-update.just"
+# the own recipes live in octarine-os/just/update.just, which the wrapper imports first (absolute path rewritten to the temp tree)
+mkdir -p "$root/own"; cp -- "$here/system_files/usr/share/octarine-os/just/update.just" "$root/own/"
+sed -i "s|/usr/share/octarine-os/just|$root/own|" "$root/just/10-update.just"
 cat >"$root/just/10-update-base.just" <<'EOF2'
 alias upgrade := update
 alias changelog := changelogs
