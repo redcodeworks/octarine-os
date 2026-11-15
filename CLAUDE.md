@@ -168,7 +168,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   binaries and no GitHub release objects (only `tip`); official source tarballs exist at `release.files.ghostty.org` with a minisign signature but no published sha256,
   so the git tag is used (a git checkout needs `blueprint-compiler` 0.16+, Fedora 45 has 0.22.2, plus gettext, pandoc, ncurses `tic` and libxml2 `xmllint`).
   Zig: Fedora 45 packages only 0.16.0; Ghostty 1.4.0 needs 0.17 (`build.zig.zon` `.minimum_zig_version = "0.17.0"`; `src/build/zig.zig` `requireZig` accepts the same
-  major.minor with any patch >= the minimum). `zig.env` pins the official tarball by URL, sha256 and size (0.17.1); `fetch-zig.sh` fails the build unless size and sha256
+  major.minor with any patch >= the minimum). `zig.env` pins the official tarball by URL and sha256 (0.17.0 since 2026-11-15: Ghostty 1.4.0 was built against 0.17.0 and every zig build attempt failed with 0.17.1; the size is optional and, when not pinned, must equal the one `index.json` lists; the weekly check will offer a `zigbump` to 0.17.1, do not merge it while that fails); `fetch-zig.sh` fails the build unless size and sha256
   match, the sha256 equals what `ziglang.org/download/index.json` lists for that version, URL and size, and the minisign signature verifies with the pinned key (`minisign`
   is installed in the builder; if it were missing the record in BUILDINFO says "minisign NOT installed" plainly). Dependencies: the offline distro-style build of PACKAGING.md
   at the tag: `nix/build-support/fetch-zig-cache.sh` fetches the 37 packages of `build.zig.zon.txt` into an empty `ZIG_GLOBAL_CACHE_DIR` (the one network step, Zig checks every
