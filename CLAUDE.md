@@ -1227,6 +1227,28 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The switch: `ujust toggle-motd` ("Toggle the motd (fastfetch summary or tips) in every shell"; prints "motd is now on/off") and `ujust toggle-user-motd` (the base recipe's name, a dependency on `toggle-motd`). `build.sh` keeps the base `00-default.just` as `00-default-base.just` (the way `10-update` and `30-distrobox` are kept); our `00-default.just` imports it and defines both names (a recipe of the importing file beats the imported one); the smoke tests check that each name is listed once. Tests: `tests/motd.sh`, `tests/just-recipes.sh`.
 - Only a real login shell can verify: an SSH login, a bash and a zsh login on a terminal, the fish greeting, and that the recipe wins over the base file in a real `ujust --list`.
 
+## Fedora base gap analysis (`build-fedora-base.yml`, monthly, 2026-11-15)
+
+An experiment, never a product: the same Containerfile built FROM Fedora's official Silverblue base (`quay.io/fedora-ostree-desktops/silverblue:45`; inputs
+`fedora_version` and `base_image` on dispatch) to learn what a move off the Universal Blue base would cost. Day 1 of the month, 15:00 UTC, plus
+`workflow_dispatch` (a scheduled run happens only from main; a dispatch works from `testing`).
+- **Nothing is published.** No push, no tag, no signing; `latest`, `testing`, `beta` and every dated tag are untouched. The `gap` job has
+  `contents: read`, `packages: read`, `issues: write`; the `binaries` job (the shared pipeline, same as `build-beta.yml`) keeps its own permissions. The
+  official tag is resolved to a digest once (`skopeo inspect --raw`) and the build runs FROM that digest; the official images carry no signature this repository
+  pins a key for, so the digest is the record (the Universal Blue base goes through `base-pin.sh` with its key, the published default image through `cosign.pub`).
+- **A failed build is a result.** The build step (`just build`, output to `gap/build.log`) sets `+e`, records `outcome=built|failed` and always exits 0; the run
+  fails only when the report could not be produced (a base that cannot be resolved or pulled, the binaries pipeline, the report script). So
+  `scripts/scheduled-runs.sh` in the hub does not report an expected gap as a failed build.
+- **Report** (`gap-report.sh`, compact, safe for an issue body; complete diffs and `build.log` are the artifact `gap-report`, kept 90 days; also in the job summary):
+  the first error line and the Containerfile `STEP` it happened in plus the log tail when the build failed; always the Universal Blue base against the official base
+  (packages, repositories, enabled system and global user units, files under `/usr/share/ublue-os`, `/etc/ublue-os`, `/usr/lib/ujust`, dconf files and keys, Flatpak
+  defaults: `gap-collect.sh` runs inside each image with `--network none`); when it built, also the published `octarine-os:latest` (the reference, the Universal Blue based
+  result) against the result. Each diff shows the first 50 lines (`GAP_LINES`).
+- **One issue per run** (`gap-issue.sh`), label `gap-fedora-base` (created by the script), title `Official Fedora base gap analysis <date>: build <outcome> on <tag>`;
+  it closes the older open ones with a comment that points to the new one, so the label lists the history.
+- Tests: `tests/fedora-base-gap.sh` (workflow guarantees, report with fixture facts, the issue script with a `gh` stub); `tests/build-triggers.sh` knows the schedule.
+  Not verifiable without a run: the real build, `podman run` of the collector in the official image.
+
 ## Beta channel (`octarine-os:beta`)
 
 - User-facing note (formerly in the README): try it with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta`
