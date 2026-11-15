@@ -13,7 +13,7 @@
 # itself ran (a refused or missing last good image means `absent`). A fallback job that was skipped means no fallback applies on this
 # run (the workflow decides that): a failed build is then `failed`, optional or not.
 # Environment: COMPONENT OPTIONAL CHECK USABLE CHECK_DIGEST KEY BUILD BUILD_OK PUBLISHED SIGN SIGN_DIGEST FALLBACK FB_OK FB_DIGEST FB_KEY
-# FB_CREATED DRY_RUN EVENT RESULT_DIR; GITHUB_OUTPUT and GITHUB_STEP_SUMMARY when set.
+# FB_CREATED KNOWN_FAIL DRY_RUN EVENT RESULT_DIR; GITHUB_OUTPUT and GITHUB_STEP_SUMMARY when set.
 set -euo pipefail
 comp=${COMPONENT:?component}
 dir=${RESULT_DIR:-.}
@@ -30,6 +30,13 @@ fail() { echo "::error::component ${comp}: $*"; finish failed "" "${KEY:-}" "" "
 if [[ "${USABLE:-}" == true ]]; then
     sum "Component ${comp}: reused \`${KEY}\` (digest \`${CHECK_DIGEST}\`, signature verified, no build)"
     finish reused "${CHECK_DIGEST}" "${KEY}" "" "signed image of this key exists"
+    exit 0
+fi
+if [[ "${KNOWN_FAIL:-}" == true ]]; then
+    msg="OMITTED: optional component ${comp} is left out: this exact content key (${KEY}) failed to build before, so it was not built again (the daily run on main and any change of the component try again)"
+    echo "::warning::${msg}"
+    sum "## ${msg}"
+    finish absent "" "${KEY}" "" "known failure of this key"
     exit 0
 fi
 [[ "${BUILD:-}" == success ]] || fail "the build job did not run to its end (${BUILD:-unset})"

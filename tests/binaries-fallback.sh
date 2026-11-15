@@ -129,6 +129,8 @@ dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=true EVENT=workflow_dispa
 check "decision: a dispatch rehearsal reports the fallback but uses nothing (status validated, no digest, FALLBACK (dry run) in the summary)" bash -c "[ $rc = 0 ] && grep -qx 'status=validated' '$root/gho' && grep -qx 'digest=' '$root/gho' && grep -q 'FALLBACK (dry run) scx' '$root/sum'"
 dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false EVENT=workflow_dispatch DRY_RUN=true OPTIONAL=true
 check "decision: a rehearsal for an optional component with no last good image says it would be left out, and exits 0" bash -c "[ $rc = 0 ] && grep -q 'LEFT OUT' '$root/sum'"
+dec BUILD=skipped BUILD_OK= OPTIONAL=true KNOWN_FAIL=true EVENT=push
+check "decision: a known failure of this key (optional): absent, exit 0, a loud warning that names the key and says when it is tried again" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q 'failed to build before' '$root/run' && grep -q 'daily run on main' '$root/run'"
 dec CHECK=failure BUILD=skipped
 check "decision: a failed lookup fails closed" bash -c "[ $rc = 1 ] && grep -q 'lookup of the scx image failed' '$root/run'"
 dec BUILD=failure BUILD_OK=
