@@ -12,12 +12,13 @@ ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/     /' "$root/out"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 
-check "test.yml: push on every dev branch (not main, not testing), dispatch, no pull_request" python3 - "$here" <<'PY'
+check "test.yml: push on every branch but main (testing included: a non-required result on the tip), dispatch, no pull_request, no cancelling of runs on testing" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 on = w.get(True) or w.get("on")
 assert set(on) == {"push", "workflow_dispatch"}, set(on)
-assert on["push"] == {"branches-ignore": ["main", "testing"]}, on["push"]
+assert on["push"] == {"branches-ignore": ["main"]}, on["push"]
+assert "refs/heads/testing" in w["concurrency"]["cancel-in-progress"], w["concurrency"]
 PY
 check "test.yml: jobs are scope, test and secrets, named so; test and secrets keep their required names, secrets needs nothing, test always runs" python3 - "$here" <<'PY'
 import sys, yaml
@@ -30,13 +31,13 @@ for k in ("scope", "test", "secrets"):
     assert w["jobs"][k]["runs-on"] == "ubuntu-26.04", k
 assert w["jobs"]["test"]["container"] == "fedora:45"
 PY
-check "test.yml: read-only permissions, one concurrency group per ref, cancel in progress" python3 - "$here" <<'PY'
+check "test.yml: read-only permissions, one concurrency group per ref, cancel in progress (except for pushes to testing)" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 assert w["permissions"] == {"contents": "read"}, w["permissions"]
 c = w["concurrency"]
 assert "github.ref" in c["group"] and "github.workflow" in c["group"], c
-assert c["cancel-in-progress"] is True, c
+assert c["cancel-in-progress"] == "${{ github.event_name != 'push' || github.ref != 'refs/heads/testing' }}", c  # a newer run replaces an older one everywhere except on the testing tip
 PY
 check "test.yml: every external action is pinned by SHA with a version comment" python3 - "$here" <<'PY'
 import re, sys
