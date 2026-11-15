@@ -1415,7 +1415,10 @@ niri-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     only_list=""
-    valid_steps=" niri portals polkit keybinds "
+    valid_steps=" niri portals polkit keybinds terminal "
+    terminal=""
+    term_force=0
+    term_flags=0
     kb_layout=""
     kb_switch=""
     kb_move=""
@@ -1440,12 +1443,20 @@ niri-setup *args:
         esac
         kb_flags=1
     }
+    # term_set <name>: validate --terminal (exit 2 on an unknown name)
+    term_set() {
+        case " alacritty ptyxis ghostty kitty wezterm foot " in
+            *" $1 "*) terminal=$1; term_flags=1 ;;
+            *) echo "Unknown terminal: $1 (use alacritty, ptyxis, ghostty, kitty, wezterm or foot)" >&2; exit 2 ;;
+        esac
+    }
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
             help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step. `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed), keybinds (EXPERIMENTAL keybind wizard, never part of the default run: you keep niri'\''s default key bindings unless you start it). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept, the keybind wizard is not started), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'
+            printf '%s\n' 'Terminal for Mod+T (step terminal): `ujust niri-setup --only terminal --terminal alacritty|ptyxis|ghostty|kitty|wezterm|foot [--force]`, or tick the step in the checklist and pick one from the terminals found on this machine (Alacritty, the default, is always offered; the others only when their program is installed). It rewrites only the Mod+T line of YOUR ~/.config/niri/40-binds.kdl (and of 40-binds-standard.kdl when the keybind wizard made one) and records the choice in ~/.config/octarine-os/niri-terminal, which the keybind wizard reads. A Mod+T line you changed yourself is never touched: the exact line to use is printed instead. A terminal that is not installed asks first (default no) or needs --force, because the key would open nothing. Re-running changes the choice; the shipped /etc/niri files and templates stay as they are. Undo: run it again with --terminal alacritty.'
             printf '%s\n' 'Keybind wizard (experimental): the layouts and generated files may change between image versions. It validates the result with `niri validate` and restores the previous files on failure, and you can always return to niri'\''s defaults by putting include "40-binds.kdl" back in ~/.config/niri/config.kdl. Questions: the keyboard layout (Standard keys always, plus Compact = vim-style hjkl, or HHKB; the two extras exclude each other), the modifier for switching (focus) columns and workspaces, the modifier for moving them (must differ from the switching one) and the modifier for other actions. Modifiers: ctrl-alt (default for switching), ctrl-super (default for moving), meh (Ctrl+Alt+Shift), hypr (Ctrl+Alt+Shift+Super) and, for other actions only, super (default). MEH and HYPR need keys mapped in your keyboard firmware (a custom QMK mapping); most keyboards do not have them, so they are never preselected. It writes 40-binds-standard.kdl and 41-binds-compact.kdl or 41-binds-hhkb.kdl into ~/.config/niri/ and replaces the include "40-binds.kdl" line of config.kdl. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M] [--move-mod M] [--other-mod M]`; --no-wizard keeps the defaults; unknown names and the same modifier for switching and moving exit 2.'
             exit 0 ;;
             --keybinds | --switch-mod | --move-mod | --other-mod)
@@ -1454,6 +1465,13 @@ niri-setup *args:
                 kb_set "$a" "${args[$i]}"
                 ;;
             --keybinds=* | --switch-mod=* | --move-mod=* | --other-mod=*) kb_set "${a%%=*}" "${a#*=}" ;;
+            --terminal)
+                i=$((i + 1))
+                [ -n "${args[$i]:-}" ] || { echo "--terminal needs a name (alacritty, ptyxis, ghostty, kitty, wezterm or foot)" >&2; exit 2; }
+                term_set "${args[$i]}"
+                ;;
+            --terminal=*) term_set "${a#--terminal=}" ;;
+            --force) term_force=1 ;;
             --no-wizard) no_wizard=1 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
@@ -1463,7 +1481,7 @@ niri-setup *args:
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...], or the keybind wizard options --keybinds, --switch-mod, --move-mod, --other-mod, --no-wizard)" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --only STEP[,STEP...], the keybind wizard options --keybinds, --switch-mod, --move-mod, --other-mod, --no-wizard, or --terminal NAME [--force])" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
@@ -1601,6 +1619,134 @@ niri-setup *args:
         record "$step" "already done"
     }
 
+    # ---- terminal for Mod+T (step `terminal`): only the user's copies in ~/.config/niri are ever edited, never /etc/niri or the shipped templates
+    term_names="alacritty ptyxis ghostty kitty wezterm foot"
+    term_label() {
+        case "$1" in alacritty) echo Alacritty ;; ptyxis) echo Ptyxis ;; ghostty) echo Ghostty ;; kitty) echo Kitty ;; wezterm) echo WezTerm ;; foot) echo Foot ;; esac
+    }
+    # term_find <name>: prints the binary (on PATH, else in the Homebrew prefix or ~/.local/bin) or returns 1
+    term_find() {
+        local n=$1 p d
+        p=$(command -v "$n" 2>/dev/null) || p=""
+        case "$p" in /*) [ -x "$p" ] && [ ! -d "$p" ] && { echo "$p"; return 0; } ;; esac
+        for d in /home/linuxbrew/.linuxbrew/bin "$HOME/.local/bin"; do
+            [ -x "$d/$n" ] && [ ! -d "$d/$n" ] && { echo "$d/$n"; return 0; }
+        done
+        return 1
+    }
+    # term_spawn <name>: the arguments of niri's spawn: the plain name when it is on PATH (niri resolves it), the absolute path when the
+    # binary was only found in the Homebrew prefix or ~/.local/bin (the niri session may not have them on PATH); Ptyxis gets --new-window
+    # (its --help: "New terminal window"), so a running instance still opens a window; the other five open a window by themselves
+    term_spawn() {
+        local n=$1 first=$1 found onpath
+        found=$(term_find "$n") || found=""
+        onpath=$(command -v "$n" 2>/dev/null) || onpath=""
+        if [ -n "$found" ] && [ "$found" != "$onpath" ]; then first=$found; fi
+        if [ "$n" = ptyxis ]; then printf '"%s" "--new-window"' "$first"; else printf '"%s"' "$first"; fi
+    }
+    # term_line_name <line>: prints the terminal name when the line is exactly a Mod+T line this recipe writes (or the shipped one)
+    term_line_name() {
+        local re='^[[:space:]]*[^[:space:]]+\+T[[:space:]]+hotkey-overlay-title="Open a Terminal: (alacritty|ptyxis|ghostty|kitty|wezterm|foot)"[[:space:]]*\{[[:space:]]*spawn[[:space:]]+"([^" ]*)"([[:space:]]+"--new-window")?;[[:space:]]*\}[[:space:]]*$'
+        [[ "$1" =~ $re ]] || return 1
+        [ "$(basename "${BASH_REMATCH[2]}")" = "${BASH_REMATCH[1]}" ] || return 1
+        { [ "${BASH_REMATCH[1]}" = ptyxis ] && [ -n "${BASH_REMATCH[3]}" ]; } || { [ "${BASH_REMATCH[1]}" != ptyxis ] && [ -z "${BASH_REMATCH[3]}" ]; } || return 1
+        echo "${BASH_REMATCH[1]}"
+    }
+    term_state="${cfg:-$HOME/.config}/octarine-os/niri-terminal"
+    # term_current: the recorded choice, else the one read from the bind line of the user's 40-binds.kdl, else the shipped default
+    term_current() {
+        local v l
+        v=$(sed -n 's/^terminal=//p' "$term_state" 2>/dev/null | head -n1)
+        case " $term_names " in *" $v "*) echo "$v"; return ;; esac
+        if [ -f "$cfg/niri/40-binds.kdl" ]; then
+            l=$(grep 'hotkey-overlay-title="Open a Terminal:' "$cfg/niri/40-binds.kdl" | head -n1)
+            v=$(term_line_name "$l") && { echo "$v"; return; }
+        fi
+        echo alacritty
+    }
+    # term_pick: single choice among the DETECTED terminals (Alacritty always, first); sets $term_picked; returns 1 when cancelled
+    term_pick() {
+        local n items=() missing="" cur
+        cur=$(term_current)
+        for n in $term_names; do
+            if [ "$n" = alacritty ] || term_find "$n" >/dev/null; then
+                local txt; txt=$(term_label "$n")
+                [ "$n" = alacritty ] && txt="$txt (shipped default)"
+                [ "$n" = "$cur" ] && txt="$txt (current)"
+                items+=("$n^$txt^")
+            else
+                missing+="${missing:+, }$(term_label "$n")"
+            fi
+        done
+        [ -z "$missing" ] || echo "Not found on this system (so not offered): $missing. Install one, or use --terminal NAME --force."
+        kb_pick "Terminal that Mod+T opens (Enter keeps the current one)" "$cur" "${items[@]}" || return 1
+        term_picked=$kb_picked
+    }
+    # term_apply <name>: record the choice and rewrite the ONE Mod+T line of the user's 40-binds.kdl and 40-binds-standard.kdl; a line the user
+    # changed is never touched (the exact line to use is printed); validates with niri and restores on failure. Fills file_results.
+    term_apply() {
+        local name=$1 label spawn f line new key indent n snap tmp changed=0 prev conf="$cfg/niri/config.kdl" found=0 l1 re pat='^[[:space:]]*[^[:space:]/][^[:space:]]*\+T[[:space:]].*spawn'
+        label=$(term_label "$name")
+        spawn=$(term_spawn "$name")
+        tmp=$(mktemp -d) || { file_results+=(failed); return; }
+        snap=$tmp/snap; mkdir -p "$snap"
+        prev=""; [ -f "$term_state" ] && cp -p -- "$term_state" "$snap/state" && prev=$(cat "$term_state")
+        for f in "$cfg/niri/40-binds.kdl" "$cfg/niri/40-binds-standard.kdl"; do
+            [ -f "$f" ] || continue
+            found=1
+            # every uncommented "<modifier>+T ... spawn" line counts as the terminal bind
+            n=$(grep -cE "$pat" "$f")
+            if [ "$n" = 0 ]; then echo "  $(basename "$f"): no <modifier>+T bind that spawns something; nothing to change."; file_results+=(already); continue; fi
+            line=$(grep -E "$pat" "$f" | head -n1)
+            key=Mod+T; re='^[[:space:]]*([^[:space:]]+\+T)[[:space:]]'
+            [[ "$line" =~ $re ]] && key=${BASH_REMATCH[1]}
+            new="    $key hotkey-overlay-title=\"Open a Terminal: $name\" { spawn $spawn; }"
+            if [ "$n" != 1 ] || ! term_line_name "$line" >/dev/null; then
+                echo "  $(basename "$f"): your terminal bind was changed by you, so it was left alone. To use $label put this line in the binds block:"
+                echo "    $new"
+                file_results+=(custom)
+                continue
+            fi
+            indent=${line%%[![:space:]]*}
+            new="$indent${new#    }"
+            if [ "$line" = "$new" ]; then echo "  $(basename "$f"): already set to $label (already done)."; file_results+=(already); continue; fi
+            cp -p -- "$f" "$snap/$(basename "$f")"
+            while IFS= read -r l1 || [ -n "$l1" ]; do
+                if [ "$l1" = "$line" ]; then printf '%s\n' "$new"; else printf '%s\n' "$l1"; fi
+            done <"$f" >"$tmp/new.kdl"
+            if cp -- "$tmp/new.kdl" "$f"; then
+                echo "  $(basename "$f"): Mod+T now opens $label:"
+                echo "    - ${line#"$indent"}"
+                echo "    + ${new#"$indent"}"
+                file_results+=(applied); changed=1
+            else
+                echo "  $(basename "$f"): could not be written" >&2; file_results+=(failed)
+            fi
+        done
+        [ "$found" = 1 ] || echo "  No 40-binds*.kdl in ${cfg}/niri yet (run ujust niri-setup --only niri first); your choice is saved and the keybind wizard uses it."
+        if [ "$prev" != "terminal=$name" ]; then
+            if mkdir -p -- "$(dirname "$term_state")" && printf 'terminal=%s\n' "$name" >"$term_state"; then
+                echo "  Recorded the choice in $term_state."
+                [ "$found" = 1 ] || file_results+=(applied)
+            else
+                echo "  Could not write $term_state" >&2; file_results+=(failed)
+            fi
+        fi
+        if [ "$changed" = 1 ] && [ -f "$conf" ] && command -v niri >/dev/null 2>&1; then
+            if niri validate -c "$conf" >"$tmp/validate.out" 2>&1; then
+                echo "  niri validate: $conf is valid."
+            else
+                echo "  niri validate rejected the result:" >&2
+                sed 's/^/    /' "$tmp/validate.out" >&2
+                for f in "$snap"/*.kdl; do [ -f "$f" ] && cp -p -- "$f" "$cfg/niri/$(basename "$f")"; done
+                if [ -f "$snap/state" ]; then cp -p -- "$snap/state" "$term_state"; else rm -f -- "$term_state"; fi
+                echo "  The previous files were restored; nothing was changed." >&2
+                file_results=(failed)
+            fi
+        fi
+        rm -rf -- "$tmp"
+    }
+
     # ---- keybind wizard (experimental)
     kb_mod_string() {
         case "$1" in
@@ -1711,7 +1857,8 @@ niri-setup *args:
         for f in "${files[@]}"; do
             case "$f" in standard) name=40-binds-standard.kdl ;; *) name=41-binds-$f.kdl ;; esac
             sed -e "s|@SWITCH@|$(kb_mod_string "$kb_switch")|g" -e "s|@MOVE@|$(kb_mod_string "$kb_move")|g" \
-                -e "s|@OTHER@|$(kb_mod_string "$kb_other")|g" "$tdir/$f.kdl.in" >"$tmp/$name"
+                -e "s|@OTHER@|$(kb_mod_string "$kb_other")|g" \
+                -e "s|@TERMINAL_NAME@|$(term_current)|g" -e "s|@TERMINAL_SPAWN@|$(term_spawn "$(term_current)")|g" "$tdir/$f.kdl.in" >"$tmp/$name"
             dests+=("$cfg/niri/$name")
             labels+=("$name")
         done
@@ -1827,7 +1974,8 @@ niri-setup *args:
             "niri^Niri config files in ~/.config/niri^1" \
             "portals^Portal config with the oo7 secret portal^1" \
             "polkit^Noctalia polkit agent drop-in^1" \
-            "keybinds^Keybind wizard (experimental)^$kb_flags"
+            "keybinds^Keybind wizard (experimental)^$kb_flags" \
+            "terminal^Terminal that Mod+T opens (Alacritty, Ptyxis, Ghostty, Kitty, WezTerm, Foot)^$term_flags"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -1897,6 +2045,56 @@ niri-setup *args:
         if [ "$kb_run" = 1 ]; then kb_apply; fi
     fi
 
+    if sel terminal; then
+        echo
+        echo "== terminal"
+        echo "Chooses the terminal that Mod+T opens: rewrites the one Mod+T line of your copies ${cfg}/niri/40-binds.kdl (and 40-binds-standard.kdl when the keybind wizard made it) and records the choice in ${term_state}. The shipped /etc/niri files and templates are never changed."
+        file_results=()
+        echo "Current terminal for Mod+T: $(term_label "$(term_current)")."
+        term_run=0
+        term_chosen=$terminal
+        if [ "$mode" = no ]; then
+            if [ -n "$terminal" ]; then echo "Plan: would set Mod+T to $(term_label "$terminal")."; else echo "Plan: would ask which terminal Mod+T opens (only installed terminals are offered; Alacritty is the default)."; fi
+            record "terminal" "planned (would ask)"
+        elif [ -n "$terminal" ]; then
+            term_run=1
+        elif [ "$mode" = yes ]; then
+            echo "Skipped: --yes alone does not change the terminal. Use --terminal alacritty|ptyxis|ghostty|kitty|wezterm|foot."
+            record "terminal" "skipped (no terminal chosen)"
+        elif term_pick; then
+            term_chosen=$term_picked
+            term_run=1
+        else
+            echo "Cancelled; nothing changed."
+            record "terminal" "skipped (cancelled)"
+        fi
+        if [ "$term_run" = 1 ] && ! term_find "$term_chosen" >/dev/null; then
+            echo "Warning: $(term_label "$term_chosen") is not installed here (not on PATH, in the Homebrew prefix or in ~/.local/bin), so Mod+T would open nothing until it is."
+            if [ "$term_force" = 1 ]; then
+                echo "Continuing because of --force."
+            else
+                ask n "Set Mod+T to $(term_label "$term_chosen") anyway?"
+                if [ "$answer" != y ]; then
+                    echo "Not changed (use --force to set it anyway)."
+                    record "terminal" "skipped (not installed)"
+                    term_run=0
+                fi
+            fi
+        fi
+        if [ "$term_run" = 1 ]; then
+            term_apply "$term_chosen"
+            if [[ " ${file_results[*]} " == *" failed "* ]]; then
+                failed=1; record "terminal" FAILED
+            elif [[ " ${file_results[*]} " == *" applied "* ]]; then
+                record "terminal" applied "run ujust niri-setup --only terminal --terminal alacritty (or edit the Mod+T line of ${cfg}/niri/40-binds.kdl yourself)"
+            elif [[ " ${file_results[*]} " == *" custom "* ]]; then
+                record "terminal" "skipped (your Mod+T line is customized: see the line printed above)"
+            else
+                record "terminal" "already done"
+            fi
+        fi
+    fi
+
     if sel portals; then
         echo
         echo "== portals"
@@ -1950,6 +2148,7 @@ niri-setup *args:
             case "${names[$i]}" in
                 niri) echo "niri: reloads included config files live, no restart needed (a syntax error is shown in a notification)." ;;
                 portals) echo "portals: applies at your next login." ;;
+                terminal) echo "terminal: niri reloads the changed bind live; Mod+T opens the chosen terminal." ;;
                 keybinds) echo "keybinds: niri reloads the generated key bindings live (the wizard is experimental: the layouts may change between image versions)." ;;
                 polkit) echo "polkit: restart Noctalia (or log in again) for the drop-in to take effect." ;;
             esac

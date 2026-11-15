@@ -1,5 +1,7 @@
-// Input devices: niri's defaults. With an empty xkb block niri takes the keyboard layout from systemd-localed
-// (`localectl set-x11-keymap`). Reference: https://niri-wm.github.io/niri/Configuration:-Input
+// Input devices. With an empty xkb block niri takes the keyboard layout from systemd-localed (`localectl set-x11-keymap`).
+// Reference: https://niri-wm.github.io/niri/Configuration:-Input
+// Touchpad: niri's tap and natural scroll, plus drag-lock (a tap-and-drag survives a short lift), a click anywhere with one or two fingers
+// as left or right click (clickfinger) and a slower two-finger scroll (scroll-factor 0.3). Delete those three lines for niri's own behavior.
 input {
     keyboard {
         xkb {
@@ -9,6 +11,9 @@ input {
 
     touchpad {
         tap
+        drag-lock
         natural-scroll
+        click-method "clickfinger"
+        scroll-factor 0.3
     }
 }

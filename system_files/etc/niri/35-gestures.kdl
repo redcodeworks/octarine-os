@@ -1,0 +1,22 @@
+// Gestures: dragging a window to the edge of the screen scrolls the view or switches the workspace, and the hot corners are off.
+// Reference: https://niri-wm.github.io/niri/Configuration:-Gestures
+gestures {
+    // While dragging a window, holding it near a left or right edge scrolls the workspace.
+    dnd-edge-view-scroll {
+        trigger-width 30
+        delay-ms 100
+        max-speed 1500
+    }
+
+    // Holding a dragged window near the top or bottom edge switches the workspace.
+    dnd-edge-workspace-switch {
+        trigger-height 50
+        delay-ms 100
+        max-speed 1500
+    }
+
+    // No hot corners (niri's default is the top-left corner opening the overview).
+    hot-corners {
+        off
+    }
+}

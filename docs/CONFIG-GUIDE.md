@@ -354,6 +354,12 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   portal set to oo7), `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
   Noctalia) and `keybinds` (the EXPERIMENTAL keybind wizard, never part of the default run). A file that exists and
   differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+- **What the niri parts contain:** `10-environment`, `20-input` (tap, natural scroll, drag-lock, clickfinger, slower scrolling),
+  `30-layout` (centered focus, quarter to three-quarter column presets, third-width windows, shadows, 32 pixel outer gaps, left tab
+  bars), `35-gestures` (edge scroll and workspace switch while dragging, no hot corners), `40-binds`, `45-workspaces` (General,
+  Web, Media, Games), `50-noctalia` (the shell, its binds and its rounded, blurred look) and `60-window-rules` (apps routed to
+  those workspaces, small utilities and dialogs floating, password managers hidden from screen capture). Delete a part's
+  include line in `config.kdl` to drop it; the colors are niri's own.
 - **Keybind wizard (experimental):** without it you keep niri's default key bindings. It asks for a layout (Standard keys
   always, plus Compact with vim-style hjkl or HHKB, which exclude each other) and the modifiers for switching, moving and
   other actions (Ctrl+Alt, Ctrl+Super, MEH, HYPR; Super for other actions too). MEH and HYPR need keys mapped in the
@@ -362,6 +368,13 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   [--move-mod M] [--other-mod M]`. It writes `40-binds-standard.kdl` (and `41-binds-compact.kdl` or `41-binds-hhkb.kdl`),
   swaps the `include "40-binds.kdl"` line of `config.kdl` for them, checks the result with `niri validate` and restores the
   previous files on failure. The layouts and generated files may change between image versions.
+- **Terminal for Mod+T (step `terminal`):** the shipped key opens Alacritty. `ujust niri-setup --only terminal --terminal
+  alacritty|ptyxis|ghostty|kitty|wezterm|foot [--force]` (or tick the step in the checklist and pick from the terminals
+  found on your machine; Alacritty is always offered) rewrites only the Mod+T line of your own `~/.config/niri/40-binds.kdl`
+  (and of `40-binds-standard.kdl` when the keybind wizard made one) and remembers the choice in
+  `~/.config/octarine-os/niri-terminal`, which the keybind wizard uses too. A Mod+T line you changed yourself is never
+  touched; the exact line to use is printed. A terminal that is not installed asks first (default no) or needs `--force`.
+  Run it again with `--terminal alacritty` to go back.
 
 Ideas for more, each a candidate for its own recipe:
 

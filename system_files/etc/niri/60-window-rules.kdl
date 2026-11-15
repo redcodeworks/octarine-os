@@ -1,5 +1,8 @@
-// Window rules from niri's default configuration. Find an app's id with `niri msg windows`.
-// Reference: https://niri-wm.github.io/niri/Configuration:-Window-Rules
+// Window rules. Find an app's id with `niri msg windows`. Reference: https://niri-wm.github.io/niri/Configuration:-Window-Rules
+// The first block is niri's default; the rest routes the apps this image installs to the four named workspaces of 45-workspaces.kdl
+// (General, Web, Media, Games), floats small utilities and dialogs, and hides password managers from screen capture. A rule that matches an
+// app that is not installed does nothing. App ids: a Flatpak GTK app reports its application id, which is what the rules use; the ones
+// confirmed under niri are Firefox, Steam and WezTerm (niri's defaults), the rest follow that rule and are not checked one by one.
 
 // WezTerm needs an empty default width because of its initial configure bug.
 window-rule {
@@ -11,4 +14,96 @@ window-rule {
 window-rule {
     match app-id=r#"firefox$"# title="^Picture-in-Picture$"
     open-floating true
+}
+
+// Dialogs: niri floats a window whose minimum and maximum size are equal by itself; this catches the others by their usual titles
+// (Wayland has no dialog window type to match).
+window-rule {
+    match title=r#"^(Open|Save|Save As|Save File|Choose|Select|Preferences|Settings|Properties|About|Confirm|Warning|Error)( .*)?$"#
+    open-floating true
+}
+
+// Password managers and secret prompts never show up in screen captures and screencasts (a black rectangle instead). Use
+// block-out-from "screencast" instead to hide them only from screencasts.
+window-rule {
+    match app-id=r#"^org\.keepassxc\.KeePassXC$"#
+    match app-id=r#"^org\.gnome\.World\.Secrets$"#
+    block-out-from "screen-capture"
+}
+
+// ---- Web: the browser.
+window-rule {
+    match app-id=r#"^org\.mozilla\.firefox$"#
+    open-on-workspace "Web"
+}
+
+// ---- Media: players, camera, photos, mail, calendar, contacts, weather and maps (the apps of the default Flatpak preinstall list).
+window-rule {
+    match app-id=r#"^org\.mozilla\.thunderbird$"#
+    match app-id=r#"^org\.gnome\.Calendar$"#
+    match app-id=r#"^org\.gnome\.Contacts$"#
+    match app-id=r#"^org\.gnome\.Music$"#
+    match app-id=r#"^org\.gnome\.Decibels$"#
+    match app-id=r#"^org\.gnome\.Podcasts$"#
+    match app-id=r#"^org\.gnome\.Showtime$"#
+    match app-id=r#"^org\.gnome\.Loupe$"#
+    match app-id=r#"^org\.gnome\.Snapshot$"#
+    match app-id=r#"^org\.gnome\.Weather$"#
+    match app-id=r#"^org\.gnome\.Maps$"#
+    open-on-workspace "Media"
+}
+
+// ---- General: everything else that ships preinstalled, on the first workspace: virtual machines, the IDE, remote desktop, backups,
+// archives, firmware, logs, documents, scanning, text, disk usage, clocks, and the Flatpak and extension managers.
+window-rule {
+    match app-id=r#"^org\.gnome\.Boxes$"#
+    match app-id=r#"^org\.gnome\.Builder$"#
+    match app-id=r#"^org\.gnome\.Connections$"#
+    match app-id=r#"^org\.gnome\.DejaDup$"#
+    match app-id=r#"^org\.gnome\.FileRoller$"#
+    match app-id=r#"^org\.gnome\.Firmware$"#
+    match app-id=r#"^org\.gnome\.Logs$"#
+    match app-id=r#"^org\.gnome\.Papers$"#
+    match app-id=r#"^org\.gnome\.SimpleScan$"#
+    match app-id=r#"^org\.gnome\.TextEditor$"#
+    match app-id=r#"^org\.gnome\.baobab$"#
+    match app-id=r#"^org\.gnome\.clocks$"#
+    match app-id=r#"^com\.github\.tchx84\.Flatseal$"#
+    match app-id=r#"^com\.mattjakeman\.ExtensionManager$"#
+    match app-id=r#"^io\.github\.kolunmi\.Bazaar$"#
+    open-on-workspace "General"
+}
+
+// Small utilities float, and are not routed anywhere: they open on the workspace you are on. Calculator, the character picker, the font
+// viewer and the file previewer (org.gnome.NautilusPreviewer).
+window-rule {
+    match app-id=r#"^org\.gnome\.Calculator$"#
+    match app-id=r#"^org\.gnome\.Characters$"#
+    match app-id=r#"^org\.gnome\.font-viewer$"#
+    match app-id=r#"^org\.gnome\.NautilusPreviewer$"#
+    open-floating true
+}
+
+// Sound, Bluetooth and network settings tools: small floating windows at the top right.
+window-rule {
+    match app-id=r#"^org\.pulseaudio\.pavucontrol$"#
+    match app-id=r#"^blueman-manager$"#
+    match app-id=r#"^nm-connection-editor$"#
+    default-column-width { proportion 0.16667; }
+    open-floating true
+    default-floating-position x=50 y=25 relative-to="top-right"
+}
+
+// unrouted: com.borgbase.Vorta
+// Vorta (backups) is a Qt app: its Wayland app id is not known to be the application id, so it has no rule; check `niri msg windows`
+// and add it to the General block above.
+
+// ---- Games: the launchers the gaming-setup recipe installs. Not confirmed under niri except Steam (its Flatpak reports "Steam"): the others
+// are their application ids.
+window-rule {
+    match app-id=r#"^[Ss]team$"#
+    match app-id=r#"^net\.lutris\.Lutris$"#
+    match app-id=r#"^com\.usebottles\.bottles$"#
+    match app-id=r#"^net\.davidotek\.pupgui2$"#
+    open-on-workspace "Games"
 }
