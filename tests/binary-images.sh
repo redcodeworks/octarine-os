@@ -101,6 +101,12 @@ check "layout: missing SOURCE or BUILDINFO of a component fails" test "$rc" != 0
 sed 's#^#./#' "$lay/comps" >"$lay/dotted"
 lt "$lay/dotted" "$tsvf" scx extest
 check "layout: tar listings with a leading ./ are accepted" test "$rc" = 0
+{ printf '%s\n' ghostty/root/usr/bin/ghostty ghostty/root/usr/share/applications/com.mitchellh.ghostty.desktop ghostty/FILES ghostty/SOURCE ghostty/BUILDINFO ghostty/LICENSES/ghostty-LICENSE; for i in $(seq 1 6000); do echo "ghostty/root/usr/share/ghostty/themes/theme-$i"; done; } >"$lay/big"
+lt "$lay/big" "$tsvf" ghostty
+check "layout: a long listing (6000 files, the needed ones first) passes: no SIGPIPE of the normalizing sed under pipefail makes a present file look missing" test "$rc" = 0
+grep -v 'ghostty/FILES' "$lay/big" >"$lay/bigmiss"
+lt "$lay/bigmiss" "$tsvf" ghostty
+check "layout: in a long listing a really missing file is still reported" bash -c "[ $rc != 0 ] && grep -q 'lacks ghostty/FILES' '$root/run'"
 lt "$lay/comps" "$tsvf" nosuch
 check "layout: an unknown component name is refused" test "$rc" != 0
 
