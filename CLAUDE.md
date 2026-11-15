@@ -162,7 +162,38 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   - Tests: `tests/binaries-fallback.sh` (candidate checks, `binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, issue mechanics), `tests/binary-images.sh`
     (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until they run: the first matrix run, artifact hand-over,
     the first real fallback or omission, `last-good-<c>` first move (a component's first main run creates it), issue creation with the default token.
-  - The binaries image has two components (scx, extest).
+  - The binaries image has three components: scx and extest (required), ghostty (optional, 2026-11-15).
+- **Ghostty (optional component `binaries/ghostty/`; Kevin 2026-11-15: it replaces the third-party AppImage and must never block an image build).**
+  Source: the git tag `v1.4.0` pinned with its peeled commit `83fb9562...` in `upstream.env` (`fetch-source.sh` fails if the tag moved). There are no official Linux
+  binaries and no GitHub release objects (only `tip`); official source tarballs exist at `release.files.ghostty.org` with a minisign signature but no published sha256,
+  so the git tag is used (a git checkout needs `blueprint-compiler` 0.16+, Fedora 45 has 0.22.2, plus gettext, pandoc, ncurses `tic` and libxml2 `xmllint`).
+  Zig: Fedora 45 packages only 0.16.0; Ghostty 1.4.0 needs 0.17 (`build.zig.zon` `.minimum_zig_version = "0.17.0"`; `src/build/zig.zig` `requireZig` accepts the same
+  major.minor with any patch >= the minimum). `zig.env` pins the official tarball by URL, sha256 and size (0.17.1); `fetch-zig.sh` fails the build unless size and sha256
+  match, the sha256 equals what `ziglang.org/download/index.json` lists for that version, URL and size, and the minisign signature verifies with the pinned key (`minisign`
+  is installed in the builder; if it were missing the record in BUILDINFO says "minisign NOT installed" plainly). Dependencies: the offline distro-style build of PACKAGING.md
+  at the tag: `nix/build-support/fetch-zig-cache.sh` fetches the 37 packages of `build.zig.zon.txt` into an empty `ZIG_GLOBAL_CACHE_DIR` (the one network step, Zig checks every
+  package against its content hash), then `zig build --prefix /usr --system <cache>/p -Doptimize=ReleaseFast -Dcpu=baseline -Dstrip=true
+  -Dinstalled-exe-path=/usr/bin/ghostty -fno-sys=glslang -fno-sys=spirv-cross` (`--system` links Fedora's freetype, harfbuzz, fontconfig, libpng, zlib, oniguruma, simdutf and
+  gtk4-layer-shell dynamically; Fedora 45 has no spirv-cross devel package and glslang's pkg-config files are unverified, so those two are built from the vendored packages).
+  The builder packages are the Fedora 45 names found in the repository metadata (see `binaries/ghostty/Containerfile`); the FIRST BUILD decides whether the list is complete.
+  Staged: `root/usr/...` (the whole installed tree: `bin/ghostty`, `share/applications/com.mitchellh.ghostty.desktop`, the D-Bus service, `lib/systemd/user/app-com.mitchellh.ghostty.service`
+  in system-package mode, metainfo, icons `com.mitchellh.ghostty`, `share/ghostty/{shell-integration,themes}`, terminfo, completions, vim/nvim/bat files, the Nautilus and KDE
+  integrations, locale files: inferred from `src/build/GhosttyResources.zig`; `FILES` lists the real ones), the MIT license, SOURCE and BUILDINFO (zig version and fetch
+  record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING) and the OS
+  image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
+  (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
+  owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
+  **Update path (weekly `upstream-check.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
+  (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one opens ONE pull request on `bump/ghostty` (`bump-ghostty.sh ghostty`)
+  that moves `upstream.env` (tag AND peeled commit) and `zig.env` (version, URL, sha256, size, signature URL) together: the Zig minor is read from `.minimum_zig_version` in that
+  tag's `build.zig.zon` and the newest published patch of that minor (x86_64-linux tarball) comes from `index.json`; when no tarball of that minor is published yet (or the newest is
+  below the minimum) NOTHING is opened and the job summary says `wait ...`. A newer patch of the PINNED Zig minor (checked against the minimum at the pinned tag) is a separate
+  low-priority pull request on `bump/zig` that changes only `zig.env`; a newer Zig minor alone never causes anything. Bump pull requests change pins only (nothing is published or signed); the
+  build after the merge into `testing` proves the bump, and a failing Ghostty bump degrades the optional component (last good, else left out) instead of touching the image.
+  Tests: `tests/ghostty-component.sh` (pins, recipe, `fetch-zig.sh` with a stub curl/minisign and a fake tarball, the installer cases, the version selection with stubbed `gh` and index.json
+  data: new tag same minor, new minor without a tarball, new minor with one, patch bump, pre-release ignored, same tag no-op, version sort, unreadable inputs, the bump pull requests).
+  UNVERIFIED until the first build: the builder package list and whether `zig build` succeeds with these flags, `ghostty +version` as the smoke run, `-fno-sys` spelling, the real file list,
+  that gtk4-layer-shell is the only extra runtime library, and the Zig minisign check (the tarball was verified here only through the sha256 the hub read from the official page).
 - **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
   WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday and Tuesday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called

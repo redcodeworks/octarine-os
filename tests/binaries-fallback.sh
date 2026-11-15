@@ -190,10 +190,23 @@ out2=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha2
 check "plan-skip: unchanged inputs and no fallback label: skipped; the same with the fallback label: build (the next daily run replaces an image with degraded binaries)" bash -c "[[ '$out1' == skipped* && '$out2' == build:*fallback* ]]"
 
 # ---- the installer: COMPONENTS, per-component FALLBACK notes, MISSING for an absent optional component, the runtime library check
+mkghostty() { # dir: a staged ghostty component (root/usr tree, FILES, LICENSES, SOURCE, BUILDINFO)
+    local g=$1/ghostty
+    mkdir -p "$g/root/usr/bin" "$g/root/usr/share/applications" "$g/root/usr/share/ghostty/themes" "$g/LICENSES"
+    printf '#!/bin/sh\n' >"$g/root/usr/bin/ghostty"; chmod +x "$g/root/usr/bin/ghostty"
+    printf '[Desktop Entry]\nExec=/usr/bin/ghostty\n' >"$g/root/usr/share/applications/com.mitchellh.ghostty.desktop"
+    echo theme >"$g/root/usr/share/ghostty/themes/x"
+    printf 'MIT License\n' >"$g/LICENSES/ghostty-LICENSE"; echo src >"$g/SOURCE"; echo build >"$g/BUILDINFO"
+    (cd "$g/root" && find . -type f | sed 's#^\./##' | sort) >"$g/FILES"
+}
 mkimg() { # dir: both required components, COMPONENTS with origins from the arguments
     local d=$1; shift
     mkfix "$d.scx" scx; mkfix "$d.ext" extest; rm -rf "$d"; mkdir -p "$d"; cp -a "$d.scx/scx" "$d/"; cp -a "$d.ext/extest" "$d/"
     printf 'scx\trequired\t%s\t%s\t%s\tsha256:%s\nextest\trequired\t%s\t%s\t%s\tsha256:%s\n' "$H40" "${1:-built}" "${3:-}" "$(printf 'a%.0s' {1..64})" "$H40" "${2:-built}" "${4:-}" "$(printf 'b%.0s' {1..64})" >"$d/COMPONENTS"
+    if [ "${WITH_GHOSTTY:-1}" = 1 ]; then
+        mkghostty "$d"
+        printf 'ghostty\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$d/COMPONENTS"
+    fi
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-os-binaries"
@@ -203,9 +216,9 @@ mkimg "$root/img" built fallback "" 2026-11-10T04:00:00Z; inst X=1
 check "installer: a fallback component says in its OWN SOURCE and BUILDINFO and in FALLBACK that it is NOT from this commit's tree, naming key and date; the other component stays clean" bash -c "[ $rc = 0 ] && grep -q 'NOT built from the binaries/ tree of this image' '$lic/extest/SOURCE' && grep -q 'content key $H40' '$lic/extest/BUILDINFO' && grep -q '2026-11-10T04:00:00Z' '$lic/FALLBACK' && grep -q '^extest:' '$lic/FALLBACK' && ! grep -q FALLBACK '$lic/scx/SOURCE'"
 mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/^extest/d' "$root/img/COMPONENTS"; inst X=1
 check "installer: a missing REQUIRED component fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component extest is not in the binaries image' '$root/run'"
-mkimg "$root/img"; mkdir -p "$root/img/ghostty"; inst X=1
+mkimg "$root/img"; mkdir -p "$root/img/stray"; inst X=1
 check "installer: a component directory that COMPONENTS does not list is refused" bash -c "[ $rc != 0 ] && grep -q 'not in COMPONENTS' '$root/run'"
-mkimg "$root/img"; printf 'ghostty\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$root/img/COMPONENTS"; inst X=1
+mkimg "$root/img"; printf 'nosuch\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$root/img/COMPONENTS"; mkdir -p "$root/img/nosuch"; inst X=1
 check "installer: a component this installer does not know is refused (an image newer than the installer)" bash -c "[ $rc != 0 ] && grep -q 'does not know' '$root/run'"
 mkimg "$root/img"; rm "$root/img/COMPONENTS"; inst X=1
 check "installer: an image without COMPONENTS is not an assembled binaries image: refused" bash -c "[ $rc != 0 ] && grep -q 'COMPONENTS is missing' '$root/run'"
@@ -232,7 +245,8 @@ check "installer: a required component whose library is missing from the image F
 inst X=1 BINARIES_LDD="$bin/ldd-missing"
 check "installer: without BINARIES_CHECK_NEEDED a DESTDIR run does not check (only a real image build does)" bash -c "[ $rc = 0 ] && ! grep -q 'runtime libraries' '$root/run'"
 # the removal path of an OPTIONAL component, with a one-off installer copy whose optional list names extest (the check function is the same code)
-sed 's/^required="scx extest"/required="scx"/; s/^optional=""/optional="extest"/' "$here/build_files/install-binaries.sh" >"$root/inst-opt.sh"
+WITH_GHOSTTY=0 mkimg "$root/img"; for f in "$root"/img/scx/bin/*; do elf64 "$f"; done; elf64 "$root/img/extest/lib64/libextest.so"; elf32 "$root/img/extest/lib/libextest.so"
+sed 's/^required="scx extest"/required="scx"/; s/^optional="ghostty"/optional="extest ghostty"/' "$here/build_files/install-binaries.sh" >"$root/inst-opt.sh"
 printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$root/img/COMPONENTS"
 printf '#!/usr/bin/env bash\ncase "$1" in *extest*) echo "\tlibfoo.so.1 => not found" ;; *) echo "\tlibc.so.6 => ok" ;; esac\n' >"$bin/ldd-ext"; chmod +x "$bin/ldd-ext"
 rm -rf "$dest"; BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ext" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$root/inst-opt.sh" >"$root/run" 2>&1; rc=$?

@@ -5,6 +5,8 @@
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
+#   ghostty (OPTIONAL) root/usr/... (the whole tree Ghostty's `zig build --prefix /usr` installed, listed in FILES), LICENSES/, SOURCE,
+#           BUILDINFO  ->  /usr (never over a file the image already has: a conflict leaves the component out, see below)
 # The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
@@ -29,7 +31,7 @@ root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
 only=${BINARIES_ONLY:-}
 required="scx extest"
-optional=""
+optional="ghostty"
 lic=${dest}/usr/share/licenses/octarine-os-binaries
 err() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*"; echo "::warning::$*"; }
@@ -67,6 +69,19 @@ install_extest() {
     elfs[extest]+=" ${dest}/usr/lib/extest/lib/libextest.so ${dest}/usr/lib/extest/lib64/libextest.so"
     installed_note[extest]="libextest.so (32-bit and 64-bit)"
 }
+install_ghostty() {
+    local g=${root}/ghostty f
+    test -x "${g}/root/usr/bin/ghostty" && test -s "${g}/FILES" || { echo "ghostty lacks root/usr/bin/ghostty or FILES" >&2; return 1; }
+    while IFS= read -r f; do
+        [[ "${f}" == usr/* && "${f}" != *..* ]] || { echo "ghostty FILES holds a path outside usr/: ${f}" >&2; return 1; }
+        test -e "${g}/root/${f}" || test -L "${g}/root/${f}" || { echo "ghostty FILES lists ${f}, which is not in the image" >&2; return 1; }
+        if test -e "${dest}/${f}" || test -L "${dest}/${f}"; then echo "ghostty would overwrite ${f}, which the image already has" >&2; return 1; fi
+    done < "${g}/FILES"
+    cp -a "${g}/root/usr/." "${dest}/usr/"
+    while IFS= read -r f; do track ghostty "${dest}/${f}"; done < "${g}/FILES"
+    elfs[ghostty]+=" ${dest}/usr/bin/ghostty"
+    installed_note[ghostty]="$(wc -l < "${g}/FILES") files under /usr"
+}
 declare -A installed_note
 
 # ---- which components
@@ -98,7 +113,16 @@ for c in ${required} ${optional}; do
         echo "${c}: not in the binaries image (its build failed and no last good image existed)" >> "${lic}/MISSING"
         continue
     fi
-    "install_${c}"
+    if ! "install_${c}"; then
+        if [[ " ${required} " == *" ${c} "* ]]; then err "the required component ${c} could not be installed (see above)"; fi
+        warn "optional component ${c} could not be installed (see above): it is LEFT OUT"
+        rm -rf ${tracked[${c}]:-}
+        install -d "${lic}"
+        echo "${c}: could not be installed, see the build log" >> "${lic}/MISSING"
+        rest=(); for w in ${want[@]+"${want[@]}"}; do [[ "${w}" == "${c}" ]] || rest+=("${w}"); done
+        want=(${rest[@]+"${rest[@]}"})
+        continue
+    fi
     d=${lic}/${c}
     install -d "${d}"
     cp -a "${root}/${c}/LICENSES/." "${d}/"
