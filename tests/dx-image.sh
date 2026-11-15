@@ -193,6 +193,13 @@ check "Containerfile: dev-packages digest is sha256: plus 64 hex characters" tes
 check "Containerfile: the devpkgs stage uses the digest, the bind mount runs install.sh through dx.sh" bash -c "
   grep -qx 'FROM ghcr.io/redcodeworks/dev-packages@\${DEV_PACKAGES_DIGEST} AS devpkgs' '$cf'
   grep -q 'from=devpkgs,source=/,target=/dev-packages' '$cf' && grep -q 'bash /dev-packages/install.sh' '$here/variants/dx/dx.sh'"
+dtag=$(sed -n 's/^ARG DATASTORE_IMAGES_TAG=//p' "$cf")
+ddig=$(sed -n 's/^ARG DATASTORE_IMAGES_DIGEST=//p' "$cf")
+check "Containerfile: datastore-images tag is latest or latest-YYYYMMDD-<sha>, digest is sha256 plus 64 hex" bash -c "printf '%s' '$dtag' | grep -qE '^(latest|latest-[0-9]{8}-[0-9a-f]{7})\$' && printf '%s' '$ddig' | grep -qE '^sha256:[0-9a-f]{64}\$'"
+check "Containerfile: the datastoreimgs stage uses the digest and is bind-mounted into the dx RUN at /datastore-images; dx.sh renders from its images.txt" bash -c "
+  grep -qx 'FROM ghcr.io/redcodeworks/datastore-images@\${DATASTORE_IMAGES_DIGEST} AS datastoreimgs' '$cf'
+  grep -q 'from=datastoreimgs,source=/,target=/datastore-images' '$cf' && grep -q '/datastore-images/images.txt' '$here/variants/dx/dx.sh'"
+check "the old pin file and its bump script are gone (the pins live in the fedora-toolbox repository)" bash -c "! test -e '$here/variants/dx/datastore/datastore.env' && ! test -e '$here/.github/scripts/datastore-pin-bump.sh' && ! test -e '$here/tests/datastore-bump.sh'"
 check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN --network=none bootc container lint --fatal-warnings --no-truncate'"
 check "dx.sh: bash syntax, strict extras install, podman.socket, kernel unchanged" bash -c "
   bash -n '$here/variants/dx/dx.sh' && grep -q 'dnf5 -y install --setopt=strict=1' '$here/variants/dx/dx.sh' &&
@@ -274,7 +281,7 @@ F
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
     printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
-    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" >/dev/null
+    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" "$here/variants/dx/datastore" "$here/tests/fixtures/datastore-images.txt" >/dev/null
     echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/ublue-os/just/75-octarine-virthost.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
@@ -469,6 +476,14 @@ esac
 F
 cp "$cf" "$work/variants/dx/Containerfile"; bump
 check "bump latest: the matching dated tag is written for humans, testing tags are ignored" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_TAG=latest-20261109-0969783' '$work/variants/dx/Containerfile'"
+
+# the same recipe for the datastore-images list: its own two lines change, nothing else
+dbump() { (cd "$work" && PATH="$bin:$PATH" "$REAL_JUST" --justfile Justfile --working-directory . datastore-images-bump "$@") >"$root/out" 2>&1; rc=$?; }
+dexpect() { printf 'manifest of docker://ghcr.io/redcodeworks/datastore-images:%s' "$1" | sha256sum | sed 's/ .*//'; }
+cp "$cf" "$work/variants/dx/Containerfile"; : >"$LOG"; dbump latest-20261105-aaaaaaa
+check "datastore-images-bump with a dated tag: digest and tag written, cosign verified the reference with the toolbox key first, the rest untouched" bash -c "[ $rc = 0 ] && grep -qx 'ARG DATASTORE_IMAGES_DIGEST=sha256:$(dexpect latest-20261105-aaaaaaa)' '$work/variants/dx/Containerfile' && grep -qx 'ARG DATASTORE_IMAGES_TAG=latest-20261105-aaaaaaa' '$work/variants/dx/Containerfile' && grep -qF 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/datastore-images@sha256:$(dexpect latest-20261105-aaaaaaa)' '$LOG' && diff <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$cf') <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$work/variants/dx/Containerfile')"
+cp "$cf" "$work/variants/dx/Containerfile"; COSIGN_RC=1 dbump latest-20261105-aaaaaaa
+check "datastore-images-bump: a verification failure exits 1 and leaves the Containerfile unchanged" bash -c "[ $rc = 1 ] && cmp -s '$cf' '$work/variants/dx/Containerfile'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

@@ -15,8 +15,9 @@ as a warning in the build, never skipped silently).
 `redcodeworks-toolbox-cosign.pub` is the cosign public key of the fedora-toolbox repository (the owner's own project,
 `cosign.pub` at https://github.com/redcodeworks/fedora-toolbox, copied 2026-11-09, identical to the key printed in the
 README of `ghcr.io/redcodeworks/dev-packages`). It signs `ghcr.io/redcodeworks/dev-packages`, the developer package list
-the `octarine-os-dx` image installs; `build-dx.yml` verifies the digest pinned in `variants/dx/Containerfile` against it
-before every build and `just dev-packages-bump` verifies a new digest with it. Not this image's own signing key.
+the `octarine-os-dx` image installs, and `ghcr.io/redcodeworks/datastore-images`, the list of the datastore container images (verified with the
+key, not keyless); `build-dx.yml` verifies the digests pinned in `variants/dx/Containerfile` against it
+before every build and `just dev-packages-bump` and `just datastore-images-bump` verify a new digest with it. Not this image's own signing key.
 
 Secure Boot of the kernel (no file here): `.github/scripts/secureboot-check.sh` is Bluefin's and Aurora's `secureboot` recipe. It copies `vmlinuz` out of the built image and runs
 `sbverify --cert` with Universal Blue's kernel signing key, downloaded on every run from

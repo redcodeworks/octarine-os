@@ -4,7 +4,7 @@ Description=SeaweedFS all-in-one (master, volume, filer, S3 gateway)
 [Container]
 Pod=datastore.pod
 ContainerName=seaweedfs
-# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+# Exact tag and digest from images.txt of the datastore-images image (fedora-toolbox repository); no AutoUpdate= (see postgresql.container).
 Image=@SEAWEEDFS_IMAGE@
 
 Volume=seaweed-data.volume:/data

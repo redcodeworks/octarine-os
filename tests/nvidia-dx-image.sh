@@ -117,6 +117,7 @@ for n in ("Check disk space", "Maximize build space (fallback, only when the dis
     sa, sb = step(a, "build", n), step(b, "build", n)
     assert {k: v for k, v in sa.items() if k != "run"} == {k: v for k, v in sb.items() if k != "run"}, n
 assert step(a, "build", "Check the dev-packages pin")["run"] == step(b, "build", "Check the dev-packages pin")["run"]
+assert step(a, "build", "Check the datastore-images pin")["run"] == step(b, "build", "Check the datastore-images pin")["run"]
 PY
 check "workflow: a doc or comment never says the CUDA toolkit is in the image (licensing: it is installed by the user in a distrobox)" bash -c "! grep -qiE 'cuda-toolkit|nvidia/cuda' '$wf'"
 
