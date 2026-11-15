@@ -6,7 +6,7 @@
 #            all seven today), description (up to 120 characters); no header. Read with awk -F'\t' and cut -f, never with
 #            `IFS=$'\t' read`, which collapses an empty field.
 #   output   /usr/share/octarine-os/schedulers.d/<instance>.conf       one file per scheduler (KEY=value lines)
-#            /usr/lib/systemd/system/scx@<instance>.service.d/10-conflicts.conf   Conflicts= on every other instance
+#            /usr/lib/systemd/system/scx@<instance>.service.d/10-conflicts.conf   Conflicts= and After= on every other instance
 #            /usr/lib/systemd/system/scx@<instance>.service.d/20-kernel.conf      ConditionKernelVersion=>=<min>, only when the
 #                                                                                 registry has a minimum kernel
 #            /usr/share/polkit-1/rules.d/50-octarine-scx.rules   from usr/share/octarine-os/polkit/50-octarine-scx.rules.in with
@@ -64,8 +64,12 @@ for inst in "${instances[@]}"; do
     for o in "${instances[@]}"; do [[ "${o}" == "${inst}" ]] || others+=("scx@${o}.service"); done
     {
         echo "[Unit]"
-        echo "# Generated at image build: only one sched_ext scheduler can be loaded, so starting this one stops the others."
-        [[ ${#others[@]} -eq 0 ]] || echo "Conflicts=${others[*]}"
+        echo "# Generated at image build: only one sched_ext scheduler can be loaded, so starting this one stops the others. After= on the same"
+        echo "# list makes systemd wait for that stop to finish (a start that raced the old scheduler's unregistering failed, 2026-11-14)."
+        if [[ ${#others[@]} -gt 0 ]]; then
+            echo "Conflicts=${others[*]}"
+            echo "After=${others[*]}"
+        fi
     } > "${d}/10-conflicts.conf"
     kernel=$(awk -F= '$1 == "MIN_KERNEL" { print $2 }' "${reg}/${inst}.conf")
     rm -f "${d}/20-kernel.conf"

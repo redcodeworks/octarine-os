@@ -40,13 +40,13 @@ check "gen: every description of the registry is the manifest's, at most 120 cha
 for n in $real_names; do
     dd="$d/usr/lib/systemd/system/scx@$n.service.d"
     others=$(for o in $real_names; do [ "$o" = "$n" ] || printf 'scx@%s.service ' "$o"; done)
-    check "gen: scx@$n conflicts with exactly the six others, no kernel condition (minimum kernel empty)" bash -c "grep -qx 'Conflicts=${others% }' '$dd/10-conflicts.conf' && [ ! -e '$dd/20-kernel.conf' ]"
+    check "gen: scx@$n conflicts with and is ordered After= exactly the six others (the old one's stop finishes first), no kernel condition (minimum kernel empty)" bash -c "grep -qx 'Conflicts=${others% }' '$dd/10-conflicts.conf' && grep -qx 'After=${others% }' '$dd/10-conflicts.conf' && [ ! -e '$dd/20-kernel.conf' ]"
 done
 # a minimum kernel gives a ConditionKernelVersion drop-in
 printf 'scx_a\tbin/scx_a\t6.12\tAlpha\nscx_b\tbin/scx_b\t\tBeta\n' | mk_dest "$root/d2"; gen "$root/d2"
 check "gen: a registry minimum kernel (6.12) writes ConditionKernelVersion=>=6.12 for that instance only" bash -c "[ $rc = 0 ] && grep -qx 'ConditionKernelVersion=>=6.12' '$root/d2/usr/lib/systemd/system/scx@a.service.d/20-kernel.conf' && [ ! -e '$root/d2/usr/lib/systemd/system/scx@b.service.d/20-kernel.conf' ] && grep -qx 'MIN_KERNEL=6.12' '$root/d2/usr/share/octarine-os/schedulers.d/a.conf'"
 printf 'scx_a\tbin/scx_a\t\tAlone\n' | mk_dest "$root/d3"; gen "$root/d3"
-check "gen: a single scheduler gets a conflicts drop-in without a Conflicts= line" bash -c "[ $rc = 0 ] && ! grep -q 'Conflicts=' '$root/d3/usr/lib/systemd/system/scx@a.service.d/10-conflicts.conf'"
+check "gen: a single scheduler gets a conflicts drop-in without a Conflicts= line" bash -c "[ $rc = 0 ] && ! grep -qE '^(Conflicts|After)=' '$root/d3/usr/lib/systemd/system/scx@a.service.d/10-conflicts.conf'"
 printf 'scx_a\tbin/scx_a\tAlpha without kernel field\n' | mk_dest "$root/d4"; gen "$root/d4"
 check "gen: a manifest line with three fields (the empty one collapsed) fails" bash -c "[ $rc != 0 ] && grep -q 'four tab separated' '$root/run'"
 printf 'bad name\tbin/bad name\t\tX\n' | mk_dest "$root/d5"; gen "$root/d5"
@@ -59,11 +59,12 @@ printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/d8"; rm "$root/d8/usr/bin/
 check "gen: a scheduler whose binary is not installed fails" test "$rc" != 0
 printf 'scx_a\tbin/scx_a\tsix\tAlpha\n' | mk_dest "$root/d9"; gen "$root/d9"
 check "gen: a minimum kernel that is not MAJOR.MINOR fails" test "$rc" != 0
-check "build.sh generates the registry after installing the binaries, and checks the helpers and the rule are there" bash -c "grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && grep -q 'scx-preflight scx-run scx-verify gamemode-start gamemode-end' '$here/build_files/build.sh' && grep -q '50-octarine-scx.rules' '$here/build_files/build.sh'"
+check "build.sh generates the registry after installing the binaries, and checks the helpers and the rule are there" bash -c "grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && grep -q 'scx-preflight scx-wait-idle scx-run scx-verify gamemode-start gamemode-end' '$here/build_files/build.sh' && grep -q '50-octarine-scx.rules' '$here/build_files/build.sh'"
 
 # ---- the template unit and the preset
 u="$here/system_files/usr/lib/systemd/system/scx@.service"
 check "unit: Type=simple, ExecCondition preflight, ExecStart run, ExecStartPost verify, all with %i" bash -c "grep -qx 'Type=simple' '$u' && grep -qx 'ExecCondition=/usr/libexec/octarine-os/scx-preflight %i' '$u' && grep -qx 'ExecStart=/usr/libexec/octarine-os/scx-run %i' '$u' && grep -qx 'ExecStartPost=/usr/libexec/octarine-os/scx-verify %i' '$u'"
+check "unit: ExecStartPre scx-wait-idle %i runs before ExecStart (a start must wait for a still-unregistering scheduler)" bash -c "grep -qx 'ExecStartPre=/usr/libexec/octarine-os/scx-wait-idle %i' '$u'"
 check "unit: ConditionPathExists=/sys/kernel/sched_ext, Restart=on-failure, RestartSec=5, StartLimitIntervalSec=0" bash -c "grep -qx 'ConditionPathExists=/sys/kernel/sched_ext' '$u' && grep -qx 'Restart=on-failure' '$u' && grep -qx 'RestartSec=5' '$u' && grep -qx 'StartLimitIntervalSec=0' '$u'"
 check "unit: no sandboxing or capability directives that could block loading a BPF scheduler (as upstream's unit)" bash -c "! grep -E '^(NoNewPrivileges|Protect[A-Za-z]*|Private[A-Za-z]*|Restrict[A-Za-z]*|SystemCallFilter|CapabilityBoundingSet|AmbientCapabilities|MemoryDenyWriteExecute|LockPersonality|User|DynamicUser)=' '$u'"
 check "unit: no ConditionKernelVersion in the template (only generated per instance, when the registry has a minimum)" bash -c "! grep -q '^ConditionKernelVersion' '$u'"
@@ -175,7 +176,7 @@ printf 'NAME=scx_evil\nINSTANCE=evil\nBINARY=/tmp/evil\nDESCRIPTION=x\nMIN_KERNE
 bash "$lib/scx-run" evil >"$root/run" 2>&1; rc=$?
 check "run: a registry entry whose binary is not /usr/bin/scx_* is refused (exit 2)" bash -c "[ $rc = 2 ] && grep -q 'bad or missing binary' '$root/run'"
 rm -f "${root:?}/reg/evil.conf"
-check "no helper reads a user-writable file: no HOME, XDG, ~ or user config path in scx-lib, scx-preflight, scx-run, scx-verify" bash -c "! grep -E '\\\$HOME|XDG_|~/|/home/|scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-run' '$lib/scx-verify'"
+check "no helper reads a user-writable file: no HOME, XDG, ~ or user config path in scx-lib, scx-preflight, scx-run, scx-verify" bash -c "! grep -E '\\\$HOME|XDG_|~/|/home/|scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-wait-idle' '$lib/scx-run' '$lib/scx-verify'"
 check "no sudo, pkexec or run0 in any helper, hook or the unit" bash -c "! grep -E '(sudo|pkexec|run0)' '$lib'/* '$u'"
 
 # run: the kernel config for libbpf (private mount namespace) and which exits may restart
@@ -361,9 +362,26 @@ check "hooks: without tuned-adm the scheduler switch still happens and the hook 
 start_t=$(date +%s); hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; el=$(( $(date +%s) - start_t ))
 check "hooks: a normal start finishes in a couple of seconds, far below the 20 s script_timeout" test "$el" -lt 5
 check "hooks: only the hook library reads scheduler.conf; the root helpers and the unit never mention it" bash -c "grep -q 'scheduler.conf' '$lib/gamemode-lib.sh' && ! grep -rq 'scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-run' '$lib/scx-verify' '$u'"
+# ---- scx-wait-idle: a start of B while A still reports enabled/unregistering (GameMode end, lavd -> rusty, 2026-11-14)
+mkdir -p "$root/sys/root"
+widle() { env OCTARINE_SCX_IDLE_SECONDS="${1:-8}" bash "$lib/scx-wait-idle" "${2:-rusty}" >"$root/run" 2>&1; rc=$?; }
+echo disabled >"$root/sys/state"; widle 3
+check "wait-idle: sched_ext disabled: returns 0 at once, nothing logged" bash -c "[ $rc = 0 ] && ! grep -q 'waiting' '$root/run'"
+rm -f "$root/sys/state"; widle 3
+check "wait-idle: no state file (no sched_ext): returns 0 at once" test "$rc" = 0
+echo enabled >"$root/sys/state"; echo lavd_1.1.4_x86_64_unknown_linux_gnu >"$root/sys/root/ops"
+( sleep 1; echo disabled >"$root/sys/state" ) &
+t0=$SECONDS; widle 8; el=$((SECONDS - t0)); wait
+check "wait-idle: the old scheduler is still enabled (unregistering): waits until it reads disabled, then returns 0 well before the limit" bash -c "[ $rc = 0 ] && [ $el -ge 1 ] && [ $el -lt 6 ] && grep -q 'sched_ext is disabled, starting' '$root/run'"
+echo enabled >"$root/sys/state"; t0=$SECONDS; widle 1; el=$((SECONDS - t0))
+check "wait-idle: sched_ext stays held: gives up after the limit, still exits 0 (the start then fails visibly in scx-run/scx-verify), says so" bash -c "[ $rc = 0 ] && [ $el -ge 1 ] && grep -q 'starting anyway' '$root/run'"
+widle 1 nonsense
+check "wait-idle: an unknown instance name is refused (2)" test "$rc" = 2
+echo disabled >"$root/sys/state"; rm -f "$root/sys/root/ops"
+
 gm="$here/system_files/usr/share/octarine-os/gamemode.ini"
 check "gamemode.ini ships the hooks as start= and end= and a script_timeout above the default" bash -c "grep -qx 'start=/usr/libexec/octarine-os/gamemode-start' '$gm' && grep -qx 'end=/usr/libexec/octarine-os/gamemode-end' '$gm' && grep -qx 'script_timeout=20' '$gm' && ! grep -q '^start=tuned-adm' '$gm'"
-check "every shipped script under libexec parses and is executable" bash -c "for f in '$lib'/scx-preflight '$lib'/scx-run '$lib'/scx-verify '$lib'/gamemode-start '$lib'/gamemode-end; do bash -n \"\$f\" && [ -x \"\$f\" ] || exit 1; done; for f in '$lib'/*-lib.sh '$here'/build_files/gen-schedulers.sh; do bash -n \"\$f\" || exit 1; done"
+check "every shipped script under libexec parses and is executable" bash -c "for f in '$lib'/scx-preflight '$lib'/scx-wait-idle '$lib'/scx-run '$lib'/scx-verify '$lib'/gamemode-start '$lib'/gamemode-end; do bash -n \"\$f\" && [ -x \"\$f\" ] || exit 1; done; for f in '$lib'/*-lib.sh '$here'/build_files/gen-schedulers.sh; do bash -n \"\$f\" || exit 1; done"
 
 echo
 echo "passed: $pass, failed: $failn"

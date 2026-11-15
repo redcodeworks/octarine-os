@@ -16,6 +16,7 @@ SCX_STATE=${OCTARINE_SCX_STATE:-/var/lib/octarine-os}
 SCX_RUN_DIR=${OCTARINE_SCX_RUN:-/run/octarine-os}
 SCX_MAX_FAILURES=${OCTARINE_SCX_MAX_FAILURES:-3}
 SCX_VERIFY_SECONDS=${OCTARINE_SCX_VERIFY_SECONDS:-5}
+SCX_IDLE_SECONDS=${OCTARINE_SCX_IDLE_SECONDS:-8}
 
 scx_log() { logger -t octarine-scx -- "$*" 2>/dev/null || true; echo "octarine-scx: $*" >&2; }
 
