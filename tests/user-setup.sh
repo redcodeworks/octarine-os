@@ -550,6 +550,16 @@ printf 'FOO=bar\nEDITOR=$(touch %s/pwned)\nVISUAL=ok one\nSUDO_EDITOR=/a/b\n' "$
 check "editor: the snippet ignores other keys and anything but plain path characters (the file is parsed, never executed)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \${FOO:-none}:\${EDITOR:-unset}:\${VISUAL:-unset}:\$SUDO_EDITOR'); [ \"\$out\" = 'none:unset:unset:/a/b' ] && [ ! -e '$root/pwned' ]"
 check "editor: it is a listed step, in --help, and the checklist offers it preselected" bash -c "grep -q 'editor (default editor' '$justfile' && grep -q 'editor^Default editor for terminals and sudoedit (no sudo)^1' '$justfile'"
 check "editor: nothing in the image sets EDITOR by itself except the Fedora nano default (only when unset) and the user-file snippets" bash -c "! grep -rlE '(^|[^_A-Z])(EDITOR|VISUAL)=' '$here/../system_files' '$here/../build_files' | grep -v 'octarine-os-editor.sh\\|octarine-os-40-editor.fish\\|60-custom.just'"
+# rc-file detection compared with the pick: a fixture HOME with `set -gx EDITOR` in config.fish and `export EDITOR=` in .bashrc
+edreset; mked "$edir" nano nvim
+mkdir -p "$HOME/.config/fish" "$HOME/.config/environment.d"
+echo 'set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' >"$HOME/.config/fish/config.fish"; echo 'export EDITOR=hx' >"$HOME/.bashrc"; echo 'EDITOR=ed' >"$HOME/.config/environment.d/60-mine.conf"
+cp "$HOME/.bashrc" "$root/b.orig"; cp "$HOME/.config/fish/config.fish" "$root/f.orig"
+edrun '' --editor nvim
+check "editor: each of your lines that assigns something else than the pick is reported with file, line, variable, its value, the pick's value and the exact line to remove or change; the environment.d file is named as another environment.d file; nothing is edited" bash -c "[ $rc = 0 ] && grep -q 'config.fish:1: your startup file sets EDITOR to /home/linuxbrew/.linuxbrew/bin/hx, your pick writes nvim' '$root/out' && grep -q '    set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' '$root/out' && grep -q '.bashrc:1: your startup file sets EDITOR to hx, your pick writes nvim' '$root/out' && grep -q '    export EDITOR=hx' '$root/out' && grep -q '60-mine.conf:1: another environment.d file sets EDITOR to ed' '$root/out' && grep -q 'they win there' '$root/out' && cmp '$HOME/.bashrc' '$root/b.orig' && cmp '$HOME/.config/fish/config.fish' '$root/f.orig'"
+echo 'set -gx EDITOR nvim' >"$HOME/.config/fish/config.fish"; : >"$HOME/.bashrc"; rm -f "$HOME/.config/environment.d/60-mine.conf"
+edrun '' --editor nvim
+check "editor: a line of yours that already assigns the pick is not reported as a difference" bash -c "! grep -q 'your pick writes' '$root/out'"
 unset USER_SETUP_EDITOR_DIRS USER_SETUP_EDITOR_SYSDIRS
 
 echo "passed: $pass, failed: $failn"

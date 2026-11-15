@@ -366,6 +366,22 @@ user-setup *args:
                 "# Managed by 'ujust user-setup --only editor' (octarineOS). Delete this file to undo; run the step again to change it." \
                 "# environment.d(5): KEY=value lines read by the systemd user manager; the image's login-shell snippets read this file too." \
                 "EDITOR=$ed_val" "VISUAL=$ed_val" "SUDO_EDITOR=$ed_path")
+            # which of YOUR lines assign something other than this pick: file, line, the variable, its value and the exact line to remove or
+            # change (never edited here); another environment.d file is named as such
+            ed_diff=0
+            while IFS= read -r cl; do
+                [ -n "$cl" ] || continue
+                cf=${cl%%:*}; rest=${cl#*:}; ln=${rest%%:*}; txt=${rest#*:}
+                cn=$(grep -oE 'SUDO_EDITOR|VISUAL|EDITOR' <<<"$txt" | head -n1)
+                cv=$(sed -E "s/^.*${cn}[=[:space:]]+//; s/[[:space:]]*(;.*|#.*)\$//; s/^[\"']//; s/[\"']\$//; s/^-[A-Za-z]+[[:space:]]+//" <<<"$txt")
+                if [ "$cn" = SUDO_EDITOR ]; then want=$ed_path; else want=$ed_val; fi
+                [ "$cv" != "$want" ] || continue
+                ed_diff=1
+                case "$cf" in */environment.d/*) kind="another environment.d file sets" ;; *) kind="your startup file sets" ;; esac
+                echo "  ${cf}:${ln}: ${kind} ${cn} to ${cv}, your pick writes ${want}. To use the pick there remove or change this line:"
+                echo "    ${txt}"
+            done <<<"$ed_conf"
+            [ "$ed_diff" = 0 ] || echo "  (Those files are read after the managed file in the shells that read them, so they win there until you change them; nothing here edits them.)"
             if [ -f "$ed_file" ] && [ "$(cat "$ed_file")" = "$ed_new" ]; then
                 echo "Already set to $(ed_label "$ed_pick") (already done)."
                 record "editor" "already done"
