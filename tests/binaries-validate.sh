@@ -66,7 +66,7 @@ check "known failure: the marker is saved only after a failed optional build and
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); j = w["jobs"]
 assert "needs.check.outputs.knownfail != 'true'" in j["build"]["if"]
-save = [s for s in j["build"]["steps"] if "cache/save" in s.get("uses", "")][0]
+save = [s for s in j["build"]["steps"] if "cache/save" in s.get("uses", "") and "known-fail" in s["with"]["key"]][0]
 assert "inputs.optional" in save["if"] and "github.event_name != 'pull_request'" in save["if"] and "steps.record.outputs.ok == 'false'" in save["if"]
 assert save["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
 rest = [s for s in j["check"]["steps"] if "cache/restore" in s.get("uses", "")][0]

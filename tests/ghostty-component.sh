@@ -195,6 +195,65 @@ printf '#!/usr/bin/env bash\n[ "$1" = fetch ] && [ "$2" != --help ] && exit 1; e
 env PATH="$root/zb2:$PATH" ZSTUB_TMP="$root/ztmp" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?
 check "build.sh: a failed zig fetch (a package that does not verify against its hash) fails the build and names the URL" bash -c "[ $rc != 0 ] && grep -q 'zig fetch failed for https://d.example/a.tar.gz' '$root/run'"
 
+# ---- the downloaded-package cache of build.sh (DEP_CACHE_DIR): hit verified, miss downloaded and saved, a poisoned entry discarded
+cat >"$zb/zig" <<'F'
+#!/usr/bin/env bash
+case "$1" in
+    version) echo 0.17.0 ;;
+    fetch)
+        [ "$2" = "--help" ] && exit 0
+        mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
+        if [ -f "$2" ]; then
+            # a local tarball: the hash is recomputed from the bytes (here: the first line of the file inside)
+            h=$(tar -xzOf "$2" --wildcards '*/id' 2>/dev/null | head -n1); [ -n "$h" ] || exit 1
+            cp "$2" "$ZIG_GLOBAL_CACHE_DIR/p/$h.tar.gz"; echo "$h"; echo "local $2" >>"$ZSTUB_TMP/calls"; exit 0
+        fi
+        h="hash-$(basename "$2" .tar.gz)"; mkdir -p "$ZSTUB_TMP/t/$h"; echo "$h" >"$ZSTUB_TMP/t/$h/id"; echo x >"$ZSTUB_TMP/t/$h/build.zig"
+        tar -C "$ZSTUB_TMP/t" -czf "$ZIG_GLOBAL_CACHE_DIR/p/$h.tar.gz" "$h"; echo "$h"; echo "url $2" >>"$ZSTUB_TMP/calls" ;;
+    build)
+        mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/share/applications"; echo bin >"$DESTDIR/usr/bin/ghostty"; chmod +x "$DESTDIR/usr/bin/ghostty"; echo d >"$DESTDIR/usr/share/applications/com.mitchellh.ghostty.desktop" ;;
+esac
+F
+mkcachesrc() { mksrc https://d.example/a.tar.gz https://d.example/b.tar.gz; printf '{"hash-a":{"name":"a","url":"https://d.example/a.tar.gz","hash":"x"},"hash-b":{"name":"b","url":"https://d.example/b.tar.gz","hash":"x"}}\n' >"$root/zsrc/build.zig.zon.json"; : >"$root/ztmp/calls"; }
+zcrun() { env PATH="$zb:$PATH" ZSTUB_TMP="$root/ztmp" DEP_CACHE_DIR="$root/dc" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?; }
+rm -rf "$root/dc"; mkdir -p "$root/dc"; mkcachesrc; zcrun
+check "package cache, empty cache: both packages are downloaded and their tarballs saved under their hashes" bash -c "[ $rc = 0 ] && [ \$(grep -c '^url ' '$root/ztmp/calls') = 2 ] && [ -f '$root/dc/ghostty-packages/hash-a.tar.gz' ] && [ -f '$root/dc/ghostty-packages/hash-b.tar.gz' ] && grep -q '0 verified from the cache, 2 downloaded, 0 cached entries discarded' '$root/run'"
+mkcachesrc; zcrun
+check "package cache, warm cache: nothing is downloaded, each cached tarball is re-hashed by zig fetch and matches the hash the pinned source expects, the build succeeds" bash -c "[ $rc = 0 ] && ! grep -q '^url ' '$root/ztmp/calls' && [ \$(grep -c '^local ' '$root/ztmp/calls') = 2 ] && grep -q '2 verified from the cache, 0 downloaded' '$root/run'"
+# poison one entry: a valid tarball of ANOTHER package under the name of hash-a
+mkdir -p "$root/pz/hash-z"; echo hash-z >"$root/pz/hash-z/id"; tar -C "$root/pz" -czf "$root/dc/ghostty-packages/hash-a.tar.gz" hash-z
+mkcachesrc; zcrun
+check "package cache, a poisoned entry (the bytes hash to another package): discarded with a warning, the package is downloaded, the other entry is still used, the result is the correct one" bash -c "[ $rc = 0 ] && grep -q 'did not verify' '$root/run' && grep -q '^url https://d.example/a.tar.gz' '$root/ztmp/calls' && ! grep -q '^url https://d.example/b.tar.gz' '$root/ztmp/calls' && grep -q '1 verified from the cache, 1 downloaded, 1 cached entries discarded' '$root/run' && [ \"\$(tar -xzOf '$root/dc/ghostty-packages/hash-a.tar.gz' --wildcards '*/id')\" = hash-a ]"
+printf 'garbage' >"$root/dc/ghostty-packages/hash-b.tar.gz"
+mkcachesrc; zcrun
+check "package cache, a corrupt entry (not a tarball): discarded and downloaded, never a build failure" bash -c "[ $rc = 0 ] && grep -q '^url https://d.example/b.tar.gz' '$root/ztmp/calls'"
+mkcachesrc; printf '{"hash-WRONG":{"name":"a","url":"https://d.example/a.tar.gz","hash":"x"},"hash-b":{"name":"b","url":"https://d.example/b.tar.gz","hash":"x"}}\n' >"$root/zsrc/build.zig.zon.json"; rm -rf "$root/dc"; mkdir -p "$root/dc"; zcrun
+check "package cache: a downloaded package whose hash is not the one the pinned source expects FAILS the build" bash -c "[ $rc != 0 ] && grep -q 'the pinned source expects hash-WRONG' '$root/run'"
+rm -rf "$root/dc"; mkcachesrc; env PATH="$zb:$PATH" ZSTUB_TMP="$root/ztmp" DEP_CACHE_DIR="$root/none" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?
+check "package cache: with no cache directory (a local build) the build works as before and creates nothing" bash -c "[ $rc = 0 ] && [ ! -e '$root/none' ] && grep -q '0 verified from the cache, 2 downloaded' '$root/run'"
+# the key
+kr2="$root/keyrepo2"; mkdir -p "$kr2/binaries/ghostty" "$kr2/.github/scripts"; cp "$here/.github/scripts/binaries-dep-key.sh" "$kr2/.github/scripts/"; cp "$g/upstream.env" "$g/zig.env" "$g/build.sh" "$kr2/binaries/ghostty/"
+DK() { REPO_ROOT="$kr2" bash "$kr2/.github/scripts/binaries-dep-key.sh" "$@"; }
+k0=$(DK ghostty)
+check "dependency cache key: 40 hex, the same pin files give the same key; scx and extest have no cache (empty)" bash -c "[[ '$k0' =~ ^[0-9a-f]{40}\$ ]] && [ '$(DK ghostty)' = '$k0' ] && [ -z '$(DK scx)' ] && [ -z '$(DK extest)' ]"
+echo "UPSTREAM_COMMIT=changed" >>"$kr2/binaries/ghostty/upstream.env"; k1=$(DK ghostty); cp "$g/upstream.env" "$kr2/binaries/ghostty/"
+echo "# recipe change" >>"$kr2/binaries/ghostty/build.sh"; k2=$(DK ghostty); cp "$g/build.sh" "$kr2/binaries/ghostty/"
+echo "# zig" >>"$kr2/binaries/ghostty/zig.env"; k3=$(DK ghostty)
+check "dependency cache key: a changed tag/commit, a changed fetch recipe (build.sh) and a changed Zig pin each change the key" bash -c "[ '$k1' != '$k0' ] && [ '$k2' != '$k0' ] && [ '$k3' != '$k0' ] && [ '$k1' != '$k2' ]"
+check "workflow: the cache is restored and saved only for components with a key, saved only after a successful PUBLISHING build and never on a pull request, the directory is mounted into podman build, the actions are the pinned ones; no dnf or target directory is cached" python3 -I - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); steps = w["jobs"]["build"]["steps"]
+text = open(sys.argv[1] + "/.github/workflows/binaries-component.yml").read()
+r = [s for s in steps if "cache/restore" in s.get("uses", "") and s.get("id") == "depcache"][0]
+sv = [s for s in steps if "cache/save" in s.get("uses", "") and "dep-" in s["with"]["key"]][0]
+assert r["uses"].startswith("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9") and sv["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+c = sv["if"]
+for n in ("steps.build.outcome == 'success'", "steps.channel.outputs.publish == 'true'", "github.event_name != 'pull_request'", "cache-hit != 'true'", "key != ''"):
+    assert n in c, n
+assert '--volume "${RUNNER_TEMP}/dep-cache:/dep-cache"' in text
+assert "dnf" not in sv["with"]["path"] and "target" not in sv["with"]["path"] and sv["with"]["path"].endswith("dep-cache")
+PY
+
 # ---- ghostty-check.sh: the version selection, with a stub gh and index.json data
 cr="$root/crepo"; mkdir -p "$cr/binaries/lib" "$cr/binaries/ghostty" "$cr/.github/scripts"
 cp "$here/binaries/lib/upstream-env.sh" "$cr/binaries/lib/"; cp "$here/.github/scripts/ghostty-check.sh" "$cr/.github/scripts/"

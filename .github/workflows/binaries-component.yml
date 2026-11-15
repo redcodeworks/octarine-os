@@ -182,6 +182,23 @@ jobs:
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
 
+      # Downloaded dependencies only (never dnf packages, never compiled output): the verified-on-use package cache of the Ghostty build (its fetch phase is
+      # about 22 percent of the job). The cache is an optimisation: build.sh trusts nothing in it (every package is re-hashed and compared with the hash the
+      # pinned source expects, a mismatch is discarded and downloaded), and an empty cache builds as before. Saved only by runs that publish (push to testing or main).
+      - name: Key of the dependency cache
+        id: depkey
+        run: |
+          mkdir -p "${RUNNER_TEMP}/dep-cache"
+          echo "key=$(.github/scripts/binaries-dep-key.sh "${COMPONENT}")" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore the dependency cache
+        id: depcache
+        if: steps.depkey.outputs.key != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dep-cache
+          key: dep-${{ inputs.component }}-${{ steps.depkey.outputs.key }}
+
       # The build and the layout check. A failure here must not fail the job (a handled degradation keeps the whole run green):
       # the step is continue-on-error and the record step says whether it worked; binaries-decide.sh decides what a failure means.
       - name: Build
@@ -200,6 +217,7 @@ jobs:
           builder=$(sed -n 's/^BUILDER=//p' binaries/builder.env)
           [[ "${builder}" =~ ^registry\.fedoraproject\.org/fedora:[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "::error::binaries/builder.env has no digest-pinned BUILDER"; exit 1; }
           podman build \
+            --volume "${RUNNER_TEMP}/dep-cache:/dep-cache" \
             --build-arg "BUILDER=${builder}" \
             --build-arg "IMAGE_VERSION=${KEY}" \
             --build-arg "IMAGE_REVISION=${GITHUB_SHA}" \
@@ -228,6 +246,14 @@ jobs:
           TAG: ${{ needs.check.outputs.tag }}
           IMAGE: ${{ needs.check.outputs.image }}
         run: .github/scripts/push-tags.sh "${IMAGE_NAME}:${TAG}" "${IMAGE}" "${TAG}"
+
+      - name: Save the dependency cache
+        if: steps.build.outcome == 'success' && steps.channel.outputs.publish == 'true' && steps.depkey.outputs.key != '' && steps.depcache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        continue-on-error: true
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/dep-cache
+          key: dep-${{ inputs.component }}-${{ steps.depkey.outputs.key }}
 
       - name: Record whether the build worked
         id: record
