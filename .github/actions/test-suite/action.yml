@@ -47,7 +47,8 @@ runs:
 
     - name: Make the pinned just usable by that user
       shell: bash
-      run: install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
+      # on the ostree base /usr/local is a symlink to ../var/usrlocal, which does not exist in a container until it is created (found by the first run on the base)
+      run: mkdir -p /usr/local/bin && install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
 
     - name: just check
       if: env.DOCS_ONLY != 'true'
