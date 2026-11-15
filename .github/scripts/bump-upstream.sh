@@ -64,7 +64,7 @@ body="Upstream ${repo} has a newer release than the pin of \`${name}\`.
 - Release notes: https://github.com/${repo}/releases/tag/${new_tag}
 - Changes: https://github.com/${repo}/compare/${from}...${new_tag}
 
-Only \`${file}\` changes.${fork_note} The merge into \`${base}\` changes the tree hash of \`binaries/\`, so the build after it builds, signs and publishes the new binaries image; the build fails if the source does not resolve to the pinned commit. Check the scheduler READMEs when the scx pin moves (\`binaries/scx/schedulers.tsv\`). Not verified: nothing is built or run by this PR; a BPF scheduler can only be loaded on a real machine."
+Only \`${file}\` changes.${fork_note} The merge into \`${base}\` changes the content key of this component, so the build after it builds, signs and publishes the new component image and the binaries image assembled from it; the build fails if the source does not resolve to the pinned commit. Check the scheduler READMEs when the scx pin moves (\`binaries/scx/schedulers.tsv\`). Not verified: nothing is built or run by this PR; a BPF scheduler can only be loaded on a real machine."
 body+="
 
 Checks: the upstream-check workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, so \`test\` and \`secrets\` run on this PR's head commit. If they do not appear, start them by hand: \`gh workflow run test.yml --ref ${branch}\`. (Unverified until the first real bump: whether a dispatched run satisfies the required checks.)"

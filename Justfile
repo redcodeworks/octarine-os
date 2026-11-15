@@ -105,12 +105,9 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
     # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
-    # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the tree hash of binaries/
-    # (published by the binaries workflow when that content reached testing or main)
-    BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:$(git rev-parse HEAD:binaries)}")
-    # A daily build that fell back to the last good binaries image (the workflow exports BINARIES_FALLBACK_TREE): the Containerfile writes
-    # the notice into the installed SOURCE and BUILDINFO records
-    if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BINARIES_FALLBACK_TREE=${BINARIES_FALLBACK_TREE}" "--build-arg" "BINARIES_FALLBACK_CREATED=${BINARIES_FALLBACK_CREATED:-unknown}"); fi
+    # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the assembled key of binaries/
+    # (binaries-key.sh; published by the binaries workflow when that content reached testing or main, with no component degraded)
+    BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:$(.github/scripts/binaries-key.sh)}")
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
@@ -141,10 +138,10 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(.github/scripts/inputs-hash.sh vanilla)")
     fi
 
-    # The prebuilt binaries image this build installed from (digest reference in CI, tree-hash tag locally)
-    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-tree-$(git rev-parse HEAD:binaries)}")
+    # The prebuilt binaries image this build installed from (digest reference in CI, assembled-key tag locally)
+    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-key-$(.github/scripts/binaries-key.sh)}")
 
-    # Machine-readable: a build that used the last good binaries image instead of binaries/ of its own commit
+    # Machine-readable: a build that used degraded binaries (a component's last good image, or an optional component left out) instead of binaries/ of its own commit
     if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then
         LABELS+=("--label" "org.octarineos.binaries-fallback=true" "--label" "org.octarineos.binaries-tree=${BINARIES_FALLBACK_TREE}")
     fi

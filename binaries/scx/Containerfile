@@ -1,0 +1,45 @@
+# Component scx of the prebuilt binaries (the sched_ext schedulers): published as ghcr.io/redcodeworks/octarine-os-binaries:c-scx-<key>, a
+# FROM scratch image that holds only /scx (bin/<name>, schedulers.tsv, LICENSES/, SOURCE, BUILDINFO). Build context: binaries/. The key is
+# made by .github/scripts/binaries-key.sh (this directory, lib/ and builder.env). Built in the Fedora 45 builder pinned by digest in
+# builder.env (CI passes it as --build-arg BUILDER); the source is fetched at the pinned commit and the build fails unless the checkout
+# is exactly that commit; cargo runs with --locked.
+ARG BUILDER
+
+FROM ${BUILDER} AS build
+
+RUN dnf5 -y install --setopt=install_weak_deps=False --setopt=strict=1 \
+        git-core rust cargo clang llvm lld libbpf-devel elfutils-libelf-devel zlib-devel libzstd-devel \
+        pkgconf-pkg-config bpftool make gcc binutils \
+    && dnf5 clean all
+
+COPY lib /binaries/lib
+COPY scx /binaries/scx
+
+RUN /binaries/lib/fetch-source.sh /binaries/scx/upstream.env /src
+
+# Every scheduler in scx/schedulers.tsv from the one tag in a single cargo invocation (cargo build --release --locked -p <each>);
+# the BPF side is compiled by scx's build scripts with clang. build.sh then stages the binaries, licenses, SOURCE, BUILDINFO and
+# the manifest and runs each binary's --version.
+RUN STAGE_SH=/binaries/lib/stage.sh /binaries/scx/build.sh /binaries/scx/schedulers.tsv /binaries/scx/upstream.env /src /out
+
+FROM scratch
+
+# Build values passed by CI (podman build --build-arg ...); no secrets
+ARG IMAGE_VERSION=dev
+ARG IMAGE_REVISION=unknown
+ARG IMAGE_CREATED=unknown
+
+COPY --from=build /out /scx
+
+LABEL maintainer="redcodeworks/octarine-os" \
+      org.opencontainers.image.authors="redcodeworks" \
+      org.opencontainers.image.vendor="redcodeworks" \
+      org.opencontainers.image.title="octarine-os-binaries (component scx)" \
+      org.opencontainers.image.description="sched_ext schedulers (scx) built from a pinned upstream tag" \
+      org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
+      org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \
+      org.opencontainers.image.licenses="GPL-2.0-only" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${IMAGE_REVISION}" \
+      org.opencontainers.image.created="${IMAGE_CREATED}" \
+      org.octarineos.binaries-component="scx"

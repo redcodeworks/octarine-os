@@ -87,7 +87,7 @@ signed `FROM scratch` image, `ghcr.io/redcodeworks/octarine-os-binaries`, which 
 variants inherit them from the default image. (History: #61 first consumed two images built by the fedora-toolbox repository,
 pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries are built for this environment.)
 
-- **Sources.** `binaries/Containerfile` (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
+- **Sources.** `binaries/components.tsv`, `binaries/builder.env`, a `Containerfile` per component (build context: `binaries/`), `binaries/lib/` (`upstream-env.sh` parser, `fetch-source.sh`,
   `stage.sh`, `assemble.sh`), and per component `binaries/scx/` and `binaries/extest/`: `upstream.env` (`UPSTREAM_REPO`, optional
   `UPSTREAM_WATCH`, `UPSTREAM_TAG`, `UPSTREAM_COMMIT`; parsed, never sourced), `build.sh`, and for scx `schedulers.tsv`.
   `binaries/scx/schedulers.tsv` (name, minimum kernel (empty for all seven), description up to 120 characters, curated from the scheduler
@@ -97,7 +97,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   commit, the tag is a label, fork sync does not always bring tags), upstream watched is `Supreeeme/extest`.
 - **Build.** Builder: `registry.fedoraproject.org/fedora:45@sha256:e15959f3...` (a manifest-list digest, the release of the image the binaries
   go into; re-resolve with `skopeo inspect --raw docker://registry.fedoraproject.org/fedora:45 | sha256sum` to move it; it is part of `binaries/`, so
-  a new builder digest changes the tree hash and rebuilds). Toolchain from Fedora's repositories (at the first build: rustc and cargo 1.99.1,
+  a new builder digest changes every component key and rebuilds all). Toolchain from Fedora's repositories (at the first build: rustc and cargo 1.99.1,
   clang 23.1.5, glibc 2.44; recorded in each build's `BUILDINFO`). scx dependencies: `git-core rust cargo clang llvm lld libbpf-devel
   elfutils-libelf-devel zlib-devel libzstd-devel pkgconf-pkg-config bpftool make gcc binutils`; one `cargo build --release --locked -p <each
   scheduler of the tsv>` (about 5.5 minutes). extest: `git-core rust cargo gcc binutils rust-std-static-i686-unknown-linux-gnu
@@ -111,23 +111,57 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
-- **Fallback to the last good binaries image (daily build only; Kevin, 2026-11-14).** A failed binaries BUILD must not block the daily image; everything else still fails closed.
-  - *When.* ONLY the scheduled run on main (`build.yml` passes `allow_fallback: ${{ github.event_name == 'schedule' }}`; `binaries.yml` checks `schedule` and `refs/heads/main` again in the `fallback` job's `if`) and ONLY when the `build` job
-    failed (compile, fetch or verify of the upstream sources). Not for: a push to testing, a pull request, a promotion, `build-beta.yml`, a dispatch; a failed lookup; a failed SIGNING of the new image (build succeeded, `sign` failed: the result job stops);
-    a last-good image whose signature does not verify; one that fails the layout contract.
-  - *Which image.* The moving tag `last-good` of `octarine-os-binaries`, moved by the `track` job (`continue-on-error`, so it never blocks a build) with `skopeo copy --all --preserve-digests` to the digest of a signed build or reuse on main
-    (only `reused` and `built`, never a fallback). The tag is a pointer: `binaries-fallback.sh` resolves it to a manifest digest, verifies the cosign signature of THAT digest with `cosign.pub`, and the image build still copies from the digest
-    (`binaries-use.sh` verifies it again), never from the tag. `last-good` lags the newest tree by design: it moves only on main runs where the binaries job ran.
-  - *Contract.* Before use the candidate is exported and must pass `binaries-layout.sh` against THIS tree's `schedulers.tsv` (every scheduler of the tree, both extest libraries, SOURCE, BUILDINFO, LICENSES per component) and THIS tree's
-    `install-binaries.sh` run on it (`BINARIES_ROOT` and a scratch `DESTDIR`); otherwise the fallback is refused, the build fails and nothing ships without a component. A Fedora library change that breaks a binary at link time is NOT covered: an old image would hit the same failure; only a rebuild fixes it.
-  - *Visible.* The binaries job summary and a warning annotation say `FALLBACK: using binaries image <digest> (last-good, tree <hash>, built <date>) because the binaries build failed` (`build.yml` repeats it); the image carries the labels
-    `org.octarineos.binaries-fallback=true` and `org.octarineos.binaries-tree=<hash>` (`Justfile`, from `BINARIES_FALLBACK_TREE` which the workflow exports) and the installed `SOURCE` and `BUILDINFO` of both components and
-    `/usr/share/licenses/octarine-os-binaries/FALLBACK` say the binaries are NOT from this commit's `binaries/` tree and which tree they are from (`install-binaries.sh`); the `track` job opens ONE issue with the label `ci-failure-binaries`
-    (a comment per later fallback, closed with a comment when a main run builds or reuses the binaries without fallback; same mechanics as `ci-failure-dx`: `.github/scripts/ci-issue.sh` with `LABEL=ci-failure-binaries`).
-  - *Never kept.* `plan-skip.sh` reads the label of `latest` (`LATEST_FALLBACK`): an image built with fallback binaries is never skipped, so the next daily run builds again (and tries the real binaries); the label `io.github.redcodeworks.octarine-os.binaries` records the digest actually used.
-  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=true -f fallback_dry_run=true`: skips the reuse, fails the build step on purpose, runs the fallback checks on the real `last-good` image (signature, layout, installer)
-    and reports `FALLBACK (dry run) ...` in the summary; nothing is pushed, signed, used or retagged (a dispatch never falls back for real). Needs a `last-good` tag, which exists after the first successful main run with this change.
-  - Tests: `tests/binaries-fallback.sh` (candidate checks, every decision combination run from the workflow's own `pick` script, wiring, plan-skip, installer records, issue mechanics), `tests/binary-images.sh`. Unverified: the first real fallback, the first `last-good` move, and issue creation with the default token.
+- **Per-component pipeline (2026-11-15, Kevin: "option 2": one image, one build job per component, each with its own fallback).** Components are
+  listed in `binaries/components.tsv` (name, `required` or `optional`: scx and extest are required). Each has its own content key,
+  `.github/scripts/binaries-key.sh <component>` = sha1 of "tree of `binaries/<c>`, tree of `binaries/lib`, blob of `binaries/builder.env`": a change to
+  one component rebuilds only it; a change to `lib/` or to the builder pin (`binaries/builder.env`, the one place of the Fedora 45 digest) rebuilds all
+  (coarse on purpose: lib/ is small and a wrong skip is worse than a spare build). The Containerfiles are per component
+  (`binaries/<c>/Containerfile`, a build stage plus a `FROM scratch` image that holds only `/<c>`; CI passes `--build-arg BUILDER` from `builder.env`).
+  All images live in the SAME package `ghcr.io/redcodeworks/octarine-os-binaries` (no second package): component images `c-<component>-<key>`
+  (cosign signed, label `org.octarineos.binaries-component-key`), the moving pointers `last-good-<component>` (moved by `track` on main after a
+  signed build or reuse, never for a fallback), and the ASSEMBLED image tagged with the assembled key (`binaries-key.sh --assembled`: sha1 of the
+  sorted "name key" lines of the components actually included; a fallback component contributes its last good key). Old tree-hash tags and the old
+  `last-good` tag are left alone (never pruned, small). `binaries-key.sh` with no argument is the assembled key of the whole tree, which `just build`
+  uses locally.
+  - *Workflows.* `binaries.yml` (reusable and dispatchable; own push, weekly and `validate_only` runs as described below): `plan` (matrix from
+    `components.tsv`), `component` (a matrix, `fail-fast: false`, calling `binaries-component.yml` once per component), `assemble`, `sign` (environment
+    `signing`), `result` (the outputs build.yml reads: digest, image, action reused|built|validated, hash, fallback, fallback_hash, fallback_created,
+    degraded), `track`. `binaries-component.yml` per component: `check` (key, `binaries-lookup.sh`: a signed image of the key exists, nothing to
+    build), `build` (podman build, layout check, `push-tags.sh`; the build step is `continue-on-error` and an `ok` record says whether it worked, so a handled
+    failure never turns the called workflow red: a failed job inside a called workflow would fail the caller job and skip the image build, which has no
+    `always()`), `sign`, `fallback`, `result` (`binaries-decide.sh` writes the line `name status digest key created reason`, uploaded as the artifact
+    `binres-<component>`). Statuses: reused, built, validated (a ref that cannot publish, or a rehearsal), fallback, absent (optional, left out), failed.
+    `assemble` downloads the artifacts, `binaries-assemble.sh` decides (writes `COMPONENTS`, prints action, key, degraded, components, moves), looks the
+    assembled key up (reuse), else exports the component images by digest (each verified again), `binaries/lib/assemble.sh` + `lib/assemble.Containerfile`
+    build the image (layout check `--assembled`), `push-tags.sh`, `sign`.
+  - *Rules.* A REQUIRED component that is neither built, reused nor validly fallen back fails the run, and its fallback stays daily-build-only on main
+    (`allow_fallback` on the schedule event, enforced again in the leg's `if`). An OPTIONAL component degrades on every PUBLISHING run (testing and main,
+    not an own validation run): its `last-good-<c>` image if one verifies, else it is left out (status absent); it never blocks an image build. A failure
+    is never cached: the next run builds it again. The assembled image carries `/COMPONENTS` (name, required|optional, key, origin built|reused|fallback,
+    created, digest) and the labels `org.octarineos.binaries-components` and `-degraded`; `fallback=true` in the outputs means "something is degraded"
+    (build.yml then sets the OS image labels `org.octarineos.binaries-fallback=true` and `-tree=<assembled key>`; plan-skip never keeps such an image).
+  - *Installer.* `install-binaries.sh` reads `COMPONENTS`; its `required` and `optional` lists must match `components.tsv` (a test checks). A missing required component fails;
+    a missing optional one prints `WARNING: optional component <c> is not in the binaries image: it is NOT installed`, a `::warning::` annotation and writes
+    `/usr/share/licenses/octarine-os-binaries/MISSING`; a fallback component gets a FALLBACK note in its own SOURCE and BUILDINFO and in `FALLBACK`.
+    `BINARIES_ONLY=<c>` installs one component from a single-component directory (the fallback check uses it).
+  - *Runtime libraries.* Build dependencies never travel (FROM scratch, builder stages discarded), so after installing, in a real image build (empty `DESTDIR`; `BINARIES_CHECK_NEEDED=1`
+    forces it in tests, `BINARIES_LDD` replaces ldd), every ELF file must find its libraries in THIS image: a 64-bit file must resolve with `ldd`, a 32-bit file (libextest
+    in 32-bit Steam) may need only libc, libgcc_s, libm, libdl, libpthread, librt, ld-linux. A required component that fails FAILS the build (add the package to
+    `build.sh`); an optional one is REMOVED again with a WARNING and `/usr/share/licenses/octarine-os-binaries/REMOVED`. Before this the schedulers' `ldd` ran only in
+    the smoke test and in the builder (wrong environment), and libextest was never checked.
+  - *Fallback per component (daily build for required ones; Kevin, 2026-11-14, extended 2026-11-15).* `binaries-fallback.sh <image> last-good-<c> <c> schedulers.tsv install-binaries.sh`:
+    resolves the tag to a digest, verifies the cosign signature of THAT digest, exports it, `binaries-layout.sh` for the component and THIS tree's installer
+    (`BINARIES_ONLY`) must accept it, and the content-key label must be readable; otherwise it is refused (an optional component without one logs a warning, a required one fails).
+    Not for: a failed lookup, a failed SIGNING (build succeeded, `sign` failed), a refused candidate. A Fedora library change that breaks a binary at link time
+    is NOT covered (an old image would hit the same failure at the runtime check). Visible: summary and warning annotations from `binaries-decide.sh` (`FALLBACK:` and `OMITTED:`), the
+    labels above, the records above, and ONE issue labeled `ci-failure-binaries` from the `track` job on main only (named degraded components, a comment per
+    later run, closed with a comment when a main run has none degraded; `.github/scripts/ci-issue.sh`). The assembled `last-good` pointer is gone: components are the unit.
+  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=scx,ghostty -f fallback_dry_run=true` (a comma list or `all`;
+    `true` still means all) skips the reuse of those components, fails their build on purpose, runs the fallback checks on their real `last-good-<c>` images and reports `FALLBACK (dry run)`;
+    nothing is pushed, signed, used or retagged.
+  - Tests: `tests/binaries-fallback.sh` (candidate checks, `binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, issue mechanics), `tests/binary-images.sh`
+    (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until they run: the first matrix run, artifact hand-over,
+    the first real fallback or omission, `last-good-<c>` first move (a component's first main run creates it), issue creation with the default token.
   - The binaries image has two components (scx, extest).
 - **Own runs of `binaries.yml` and the weekly validation (2026-11-14; the README badge row `binaries`).** A reusable workflow's called runs belong to the caller, so the file's own badge would read "no status".
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
@@ -137,25 +171,18 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
   `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
   are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
-- **Tag = tree hash.** The image tag is `git rev-parse HEAD:binaries`: content-addressed, so the same content is built once and reused by
-  `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free). Old hash tags are never pruned
-  (small).
-- **Workflow** `.github/workflows/binaries.yml` (reusable, also `workflow_dispatch`), called by the `binaries` job of `build.yml` (only when the
-  plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the build job `needs` it. Jobs:
-  `check` (tree hash; `binaries-lookup.sh`: the tag exists and `cosign verify --key cosign.pub` accepts its digest: green "binaries
-  unchanged, nothing to build"; a missing tag, or an existing one whose signature fails, is built again), `build` (`podman build` in the pinned
-  builder, `binaries-layout.sh` checks the exported file list, then `push-tags.sh` pushes ONE manifest digest), `sign` (environment `signing`,
-  the same `SIGNING_SECRET` (a repository secret: the calling jobs pass it on by name (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}`, declared in `binaries.yml`'s `workflow_call`; no `secrets: inherit`), without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag), `result` (hands over the digest). Only `testing` and
-  `main` publish; on any other ref (a validation dispatch) the binaries are built and checked but never pushed or signed, no digest is
-  handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully exercised by the
-  merge into `testing` (validate the binaries build alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no
-  required check name; `Build and push image`, `Sign and verify images` and `Build dx and push image` are unchanged, and a failed binaries
-  job fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
-  (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the
-  hash tag of the checked-out tree, and labels the image `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for
-  `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public (the GPL source records ship in
-  the image either way).
-- **Which path ran.** The run shows it: a green job "Reuse the binaries image" (the lookup found a signed image for the hash, the build and sign jobs are skipped) or "Build the binaries image" plus "Sign the binaries image"; `binaries.yml` outputs `action` (`reused`, `built` or `validated` for a branch that cannot publish), `hash` and `digest`, each deciding job writes one line to the run summary, and `build.yml` and `build-beta.yml` repeat it; a tag whose signature fails to verify is not reused, the build path rebuilds and signs it again.
+- **Tag = assembled key** (see the per-component pipeline above; it replaced the tree hash `git rev-parse HEAD:binaries`): content-addressed, so the same content is built once and
+  reused by `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free).
+- **Workflow notes.** Called by the `binaries` job of `build.yml` (only when the plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the
+  build job `needs` it. The signing secret is passed by name down the chain (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}` in build.yml, build-beta.yml and the `component` job; no `secrets: inherit`;
+  without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag. Only `testing` and `main` publish; on any other ref (a validation dispatch) the
+  components are built and checked but never pushed or signed, no digest is handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully
+  exercised by the merge into `testing` (validate alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no required check name; `Build and push image`, `Sign and verify images`
+  and `Build dx and push image` are unchanged, and a failed binaries run fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
+  (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the assembled-key tag of the checked-out tree, and labels the image
+  `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public.
+- **Which path ran.** The run summary says it per component (Component scx: reused, built and signed, validation only, FALLBACK, OMITTED) and for the assembled image (reused, assembled and signed, validation only); the outputs are
+  in the per-component pipeline bullet; `build.yml` and `build-beta.yml` repeat the path in their own summary.
 - **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
   `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
   the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
@@ -823,8 +850,8 @@ signed and the dx image was built on exactly that default digest.
   then merge the pull request. Promotion only retags an already tested `testing` digest, so a variable changed
   without a tested `testing` build never reaches `latest` by promotion; the daily scheduled `main` build does read the
   variable, so set it only when the next scheduled build should use it.
-  (5) In the SAME change move the binaries builder: `ARG BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/Containerfile` (re-resolve the digest as
-  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/` tree also gives a new tree hash, so the next build
+  (5) In the SAME change move the binaries builder: `BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/builder.env` (re-resolve the digest as
+  "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/builder.env` also gives new component keys, so the next build
   rebuilds them for the new release. The fallback to the last good binaries image does not help here: an old image built for release N-1 may not link on N, and only a rebuild fixes that.
 
 ## Logo files
