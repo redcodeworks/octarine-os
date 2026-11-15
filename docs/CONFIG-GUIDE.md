@@ -368,6 +368,13 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   [--move-mod M] [--other-mod M]`. It writes `40-binds-standard.kdl` (and `41-binds-compact.kdl` or `41-binds-hhkb.kdl`),
   swaps the `include "40-binds.kdl"` line of `config.kdl` for them, checks the result with `niri validate` and restores the
   previous files on failure. The layouts and generated files may change between image versions.
+- **Terminal for Mod+T (step `terminal`):** the shipped key opens Alacritty. `ujust niri-setup --only terminal --terminal
+  alacritty|ptyxis|ghostty|kitty|wezterm|foot [--force]` (or tick the step in the checklist and pick from the terminals
+  found on your machine; Alacritty is always offered) rewrites only the Mod+T line of your own `~/.config/niri/40-binds.kdl`
+  (and of `40-binds-standard.kdl` when the keybind wizard made one) and remembers the choice in
+  `~/.config/octarine-os/niri-terminal`, which the keybind wizard uses too. A Mod+T line you changed yourself is never
+  touched; the exact line to use is printed. A terminal that is not installed asks first (default no) or needs `--force`.
+  Run it again with `--terminal alacritty` to go back.
 
 Ideas for more, each a candidate for its own recipe:
 
