@@ -946,11 +946,7 @@ gaming-setup *args:
         echo "$v"
     }
 
-    # GameMode's desiredgov=powersave is the workaround for upstream gamemode#419 and only right on amd-pstate in active
-    # mode (amd-pstate-epp). On other CPUs or drivers the step is not pre-ticked and the line is left out of the file.
-    pstate_active=0
-    [ "$(cat "${GAMING_SETUP_PSTATE_STATUS:-/sys/devices/system/cpu/amd_pstate/status}" 2>/dev/null)" = active ] && pstate_active=1
-    gm_default=$pstate_active
+    gm_default=1
     # Terminal with gum and no step named: a checklist of the steps (the chosen ones run as if named, so they count
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
@@ -1143,16 +1139,6 @@ gaming-setup *args:
         echo "Skipped: $src_ini is missing."
         record "gamemode" "skipped (no source file)"
     else
-        if [ "$pstate_active" = 0 ]; then
-            # not amd-pstate-epp: drop the desiredgov workaround (its comment block and the line); the rest stays
-            gm_tmp=$(mktemp)
-            trap 'rm -f -- "$gm_tmp"' EXIT
-            trap 'exit 130' INT
-            trap 'exit 143' TERM
-            sed '/^; Keep the CPU governor/,/^desiredgov=/d' "$src_ini" >"$gm_tmp"
-            src_ini=$gm_tmp
-            echo "Note: amd-pstate is not in active mode on this machine, so desiredgov=powersave (the workaround for gamemode#419) is left out."
-        fi
         command -v tuned-adm >/dev/null 2>&1 || echo "Note: tuned-adm is not installed, so the tuned part of the GameMode start and end hooks does nothing."
         id -nG | tr ' ' '\n' | grep -qx gamemode || echo "Note: you are not in the gamemode group, so renice does nothing; run ujust user-setup (groups step) and log in again."
         if [ -f "$dest_ini" ] && cmp -s "$src_ini" "$dest_ini"; then
@@ -1166,7 +1152,7 @@ gaming-setup *args:
                 # a step named on the command line means "run it", NOT "replace my edited file": this question is always asked (default no)
                 ask_noexplicit=1 ask n "Replace it?"
             else
-                echo "Installs the GameMode tuning (renice=10,$([ "$pstate_active" = 1 ] && echo " desiredgov=powersave,") tuned latency-performance while a game runs) as $dest_ini."
+                echo "Installs the GameMode tuning (renice=10, desiredgov=performance, tuned latency-performance while a game runs) as $dest_ini."
                 ask y "Apply?"
             fi
             if [ "$answer" != y ]; then
