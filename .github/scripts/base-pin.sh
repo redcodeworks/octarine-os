@@ -14,7 +14,8 @@ set -euo pipefail
 image=${BASE_IMAGE:?BASE_IMAGE}
 ver=${FEDORA_VERSION:?FEDORA_VERSION}
 key=${KEY:-keys/ublue-os-main-cosign.pub}
-[[ "${ver}" =~ ^[0-9]+$ ]] || { echo "::error::FEDORA_VERSION '${ver}' is not a number" >&2; exit 1; }
+# a Fedora release number, or the beta channel's tag (build-beta.yml builds on silverblue-main:beta; this check used to accept numbers only, which would have failed the weekly beta build)
+[[ "${ver}" =~ ^([0-9]+|beta)$ ]] || { echo "::error::FEDORA_VERSION '${ver}' is not a number or beta" >&2; exit 1; }
 base="${image}:${ver}"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 rc=0

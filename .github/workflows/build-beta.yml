@@ -44,9 +44,53 @@ jobs:
     secrets:
       SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
 
+  # The repository's own tests, run INSIDE the beta base the image is built on (the same test-suite action as the required `test` check, which runs on the stable base): a
+  # change that only a coming Fedora or a new Universal Blue beta breaks fails here, in that Fedora, BEFORE the expensive build, and blocks the beta publish (the build job
+  # needs this job). The base is resolved by the same base-pin.sh as the build step below (one beta base per run except in the rare race of a base published between the two).
+  base:
+    name: Beta base for the tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the beta base to a digest and verify it
+        id: pin
+        run: |
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          echo "image=${BASE_IMAGE}@${BASE_PIN}" >> "${GITHUB_OUTPUT}"
+          echo "Tests run on ${BASE_IMAGE}:${FEDORA_VERSION} = ${BASE_PIN}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  tests:
+    name: Tests on the beta base
+    needs: base
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    container: ${{ needs.base.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run the tests
+        uses: ./.github/actions/test-suite
+
   build:
     name: Build beta image
-    needs: binaries
+    needs: [binaries, tests]
     runs-on: ubuntu-26.04
 
     outputs:
@@ -506,7 +550,7 @@ jobs:
   # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
   alert:
     name: Report a failed weekly beta image build
-    needs: [binaries, build, sign]
+    needs: [binaries, tests, build, sign]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
