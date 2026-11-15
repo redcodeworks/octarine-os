@@ -224,8 +224,9 @@ jobs:
     if: needs.plan.outputs.build == 'true'
     uses: ./.github/workflows/binaries.yml
     with:
-      # only the scheduled daily build may fall back to the last good binaries image when the binaries BUILD failed (binaries.yml
-      # enforces schedule and main again); everything else fails closed
+      # only the scheduled daily build may let a REQUIRED component fall back to its last good image when its BUILD failed
+      # (binaries-component.yml enforces schedule and main again); everything else fails closed. An OPTIONAL component degrades on
+      # every publishing run (its last good image, else it is left out) and never blocks the build
       allow_fallback: ${{ github.event_name == 'schedule' }}
     permissions:
       contents: read
@@ -373,11 +374,12 @@ jobs:
           FALLBACK: ${{ needs.binaries.outputs.fallback }}
           FB_HASH: ${{ needs.binaries.outputs.fallback_hash }}
           FB_CREATED: ${{ needs.binaries.outputs.fallback_created }}
+          DEGRADED: ${{ needs.binaries.outputs.degraded }}
         run: |
           echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${FALLBACK}" == true ]]; then
-            echo "::warning::FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, tree ${FB_HASH}, built ${FB_CREATED}) because the binaries build failed"
-            echo "## FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (last-good, built ${FB_CREATED}) because the binaries build failed" >> "${GITHUB_STEP_SUMMARY}"
+            echo "::warning::FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (assembled ${FB_HASH}, ${FB_CREATED}) with degraded components: ${DEGRADED}"
+            echo "## FALLBACK: using binaries image ${BINARIES_IMAGE##*@} (assembled ${FB_HASH}, ${FB_CREATED}) with degraded components: ${DEGRADED} (a component's last good build, or an optional one left out)" >> "${GITHUB_STEP_SUMMARY}"
             # the image build records it (Justfile: label, Containerfile: SOURCE and BUILDINFO of the installed binaries)
             { echo "BINARIES_FALLBACK_TREE=${FB_HASH}"; echo "BINARIES_FALLBACK_CREATED=${FB_CREATED}"; } >> "${GITHUB_ENV}"
           fi

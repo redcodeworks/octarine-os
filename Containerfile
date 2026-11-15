@@ -8,9 +8,9 @@ ARG BREW_DIGEST=sha256:2993b28cf9a54efebdc418ef42228618f5c68e8b931430f2d60eddc19
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-os-binaries is a FROM scratch image built from the binaries/
 # directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, and libextest.so for Steam Input on Wayland, 32-bit and
-# 64-bit, MIT) and signed with this image's key. Its tag is the git tree hash of binaries/, so a change to binaries/ builds a new
-# one and everything else reuses it. The reference has no default: CI passes BINARIES_IMAGE as <image>@<digest> (the binaries
-# workflow resolves and verifies it before the image build), and `just build` defaults to the hash tag of the checked-out
+# 64-bit, MIT) and signed with this image's key. Its tag is the assembled key of its components (.github/scripts/binaries-key.sh), so a change to one
+# component builds only that component and everything else reuses the rest. The reference has no default: CI passes BINARIES_IMAGE as <image>@<digest> (the binaries
+# workflow resolves and verifies it before the image build), and `just build` defaults to the assembled-key tag of the checked-out
 # tree (see "Prebuilt binaries" in CLAUDE.md). build.sh installs the files under /usr.
 ARG BINARIES_IMAGE
 # Base image selection (see the base image comment below); declared here, before the first FROM
@@ -69,9 +69,8 @@ COPY --from=brew /system_files /
 
 # The prebuilt binaries image is bind-mounted, not copied, so build.sh installs exactly what it checks (scx/bin,
 # scx/schedulers.tsv, extest/lib, extest/lib64, and LICENSES/, SOURCE, BUILDINFO of each component)
-# Set by a daily build that fell back to the last good binaries image (empty otherwise): install-binaries.sh records it
-ARG BINARIES_FALLBACK_TREE=""
-ARG BINARIES_FALLBACK_CREATED=""
+# Which components the image holds and where each came from is in /binaries/COMPONENTS: install-binaries.sh records fallbacks and
+# omissions from it and checks that the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \
     --mount=type=cache,dst=/var/cache \
