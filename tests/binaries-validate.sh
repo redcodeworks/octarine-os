@@ -13,13 +13,18 @@ unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY
 python3 -I - "$here" "$root" <<'PY'
 import sys, yaml
 root, out = sys.argv[1:3]
-w = yaml.safe_load(open(f"{root}/.github/workflows/binaries.yml"))
+w = yaml.safe_load(open(f"{root}/.github/workflows/binaries-component.yml"))
 final = [s for s in w["jobs"]["check"]["steps"] if s.get("id") == "final"][0]
 open(f"{out}/final.sh", "w").write(final["run"])
 chan = [s for s in w["jobs"]["build"]["steps"] if s.get("id") == "channel"][0]
 open(f"{out}/channel.sh", "w").write(chan["run"])
+w2 = yaml.safe_load(open(f"{root}/.github/workflows/binaries.yml"))
+chan2 = [s for s in w2["jobs"]["assemble"]["steps"] if s.get("id") == "channel"][0]
+open(f"{out}/channel2.sh", "w").write(chan2["run"])
+fin2 = [s for s in w2["jobs"]["assemble"]["steps"] if s.get("id") == "final"][0]
+open(f"{out}/final2.sh", "w").write(fin2["run"])
 PY
-final() { : >"$root/gho"; env LOOKUP=true SIMULATE=false OWN=false EVENT=push VALIDATE_ONLY=false "$@" GITHUB_OUTPUT="$root/gho" bash "$root/final.sh" >"$root/out" 2>&1; }
+final() { : >"$root/gho"; env COMPONENT=scx LOOKUP=true SIMULATE_LIST= OWN=false EVENT=push VALIDATE_ONLY=false "$@" GITHUB_OUTPUT="$root/gho" bash "$root/final.sh" >"$root/out" 2>&1; }
 val() { grep -qx "$1" "$root/gho"; }
 final OWN=true EVENT=push
 check "own push run: no publishing, but an already signed image of the tree is reused (usable stays true): the caller's run is the one that publishes" bash -c "grep -qx 'nopublish=true' '$root/gho' && grep -qx 'usable=true' '$root/gho'"
@@ -35,36 +40,58 @@ final OWN=false EVENT=schedule
 check "the caller's scheduled daily run: unchanged (a schedule of ANOTHER workflow is not the validation)" bash -c "grep -qx 'nopublish=false' '$root/gho' && grep -qx 'usable=true' '$root/gho'"
 final OWN=true EVENT=workflow_dispatch
 check "a plain dispatch of the workflow: unchanged (publishes on main and testing, reuses)" bash -c "grep -qx 'nopublish=false' '$root/gho' && grep -qx 'usable=true' '$root/gho'"
-final OWN=true EVENT=workflow_dispatch SIMULATE=true
-check "a simulated build failure still skips the reuse and publishes as before" bash -c "grep -qx 'usable=false' '$root/gho' && grep -qx 'nopublish=false' '$root/gho'"
+final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=scx
+check "a simulated build failure of THIS component skips its reuse and publishes as before" bash -c "grep -qx 'usable=false' '$root/gho' && grep -qx 'nopublish=false' '$root/gho'"
+final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=extest,ghostty
+check "a rehearsal that names OTHER components leaves this one alone (reuse stays)" bash -c "grep -qx 'usable=true' '$root/gho'"
+final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=all
+check "a rehearsal of all components skips the reuse of every one" bash -c "grep -qx 'usable=false' '$root/gho'"
+final OWN=true EVENT=workflow_dispatch SIMULATE_LIST=true
+check "the old boolean spelling (true) still means all components" bash -c "grep -qx 'usable=false' '$root/gho'"
 chan() { : >"$root/gho"; env REF="$1" NOPUBLISH="$2" GITHUB_OUTPUT="$root/gho" bash "$root/channel.sh" >"$root/out" 2>&1; }
 chan refs/heads/main false;  check "channel: main publishes" grep -qx 'publish=true' "$root/gho"
 chan refs/heads/main true;   check "channel: an own push or weekly run on main does NOT publish" grep -qx 'publish=false' "$root/gho"
 chan refs/heads/testing true; check "channel: an own push run on testing does NOT publish" grep -qx 'publish=false' "$root/gho"
 chan refs/heads/feat/x false; check "channel: another ref never publishes" grep -qx 'publish=false' "$root/gho"
+chan2() { : >"$root/gho"; env REF="$1" OWN="$2" EVENT="$3" VALIDATE_ONLY="$4" GITHUB_OUTPUT="$root/gho" bash "$root/channel2.sh" >"$root/out" 2>&1; }
+chan2 refs/heads/main false schedule false; check "assemble: the caller's daily run on main publishes" bash -c "grep -qx 'publish=true' '$root/gho' && grep -qx 'nopublish=false' '$root/gho'"
+chan2 refs/heads/main true push false;      check "assemble: an own push run does not publish" bash -c "grep -qx 'publish=false' '$root/gho' && grep -qx 'nopublish=true' '$root/gho'"
+chan2 refs/heads/main true schedule false;  check "assemble: the own weekly run does not publish" grep -qx 'publish=false' "$root/gho"
+chan2 refs/heads/testing true workflow_dispatch true; check "assemble: validate_only does not publish" grep -qx 'publish=false' "$root/gho"
+chan2 refs/heads/feat/x false workflow_dispatch false; check "assemble: another ref never publishes" grep -qx 'publish=false' "$root/gho"
+final2() { : >"$root/gho"; env LOOKUP=true LOOKUP_DIGEST=sha256:x OWN=false EVENT=push VALIDATE_ONLY=false SIMULATE=false NOPUBLISH=false "$@" GITHUB_OUTPUT="$root/gho" bash "$root/final2.sh" >"$root/out" 2>&1; }
+final2 OWN=true EVENT=schedule NOPUBLISH=true;  check "assemble: the own weekly run ignores an existing assembled image (usable false)" grep -qx 'usable=false' "$root/gho"
+final2 OWN=true EVENT=push NOPUBLISH=true;      check "assemble: an own push run reuses an assembled image the caller published" grep -qx 'usable=true' "$root/gho"
+final2 SIMULATE=true;                          check "assemble: a rehearsal never reuses" grep -qx 'usable=false' "$root/gho"
+final2 LOOKUP=;                                check "assemble: no lookup result means not usable" grep -qx 'usable=false' "$root/gho"
 check "binaries.yml triggers: push to main and testing for binaries/ and the workflow's own files only, a weekly schedule on Friday 08:00 UTC, and the validate_only input; nothing else is new" python3 -I - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries.yml")); on = w.get(True) or w.get("on")
 assert on["push"]["branches"] == ["main", "testing"]
-assert set(on["push"]["paths"]) == {"binaries/**", ".github/workflows/binaries.yml", ".github/scripts/binaries-*.sh", ".github/scripts/push-tags.sh"}
+assert set(on["push"]["paths"]) == {"binaries/**", ".github/workflows/binaries.yml", ".github/workflows/binaries-component.yml", ".github/scripts/binaries-*.sh", ".github/scripts/push-tags.sh"}
 assert on["schedule"] == [{"cron": "0 8 * * 5"}]
 assert on["workflow_dispatch"]["inputs"]["validate_only"]["default"] is False
 assert "pull_request" not in on
 PY
-check "the paths cover every input of the binaries image: its content is the tree of binaries/ (the tag), so binaries/** is the whole input; the scripts that build, check and publish it are the rest" bash -c "cd '$here' && grep -q 'git rev-parse HEAD:binaries' .github/workflows/binaries.yml && ls .github/scripts/binaries-*.sh | grep -q . && grep -q 'push-tags.sh' .github/workflows/binaries.yml"
-check "nothing of an own run reaches the signing secret or last-good: the sign job runs only for a published build, the track job only when nopublish is not true, the signing environment is only on the sign job" python3 -I - "$here" <<'PY'
+check "the paths cover every input of the binaries: the content keys are made from binaries/ (its components, lib/ and builder.env), so binaries/** is the whole input; the workflows and scripts that build, check and publish it are the rest" bash -c "cd '$here' && grep -q 'binaries-key.sh' .github/workflows/binaries-component.yml && ls .github/scripts/binaries-*.sh | grep -q . && grep -q 'push-tags.sh' .github/workflows/binaries-component.yml && grep -q 'push-tags.sh' .github/workflows/binaries.yml"
+check "nothing of an own run reaches the signing secret or last-good: the sign jobs run only for a published build, the track job only when nopublish is not true, the signing environment is only on the sign jobs" python3 -I - "$here" <<'PY'
 import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries.yml"))
+r = sys.argv[1] + "/.github/workflows/"
+w = yaml.safe_load(open(r + "binaries.yml")); c = yaml.safe_load(open(r + "binaries-component.yml"))
 j = w["jobs"]
-assert "needs.build.outputs.published == 'true'" in j["sign"]["if"] and j["sign"]["environment"] == "signing"
-assert "needs.result.outputs.nopublish != 'true'" in j["track"]["if"]
-assert [n for n, x in j.items() if "environment" in x] == ["sign"]
-assert "SIGNING_SECRET" not in str({n: x for n, x in j.items() if n != "sign"})
+assert "needs.assemble.outputs.published == 'true'" in j["sign"]["if"] and j["sign"]["environment"] == "signing"
+assert "needs.build.outputs.published == 'true'" in c["jobs"]["sign"]["if"] and c["jobs"]["sign"]["environment"] == "signing"
+assert "needs.assemble.outputs.nopublish != 'true'" in j["track"]["if"]
+assert "SIGNING_SECRET" not in str({n: x for n, x in j.items() if n not in ("sign", "component")})
+assert "SIGNING_SECRET" not in str({n: x for n, x in c["jobs"].items() if n != "sign"})
 PY
-check "a failed weekly validation is visible: the result job fails when the build failed and no fallback applies (allow_fallback is the caller's input, absent for an own run)" python3 -I - "$here" <<'PY'
+check "a failed weekly validation is visible: the component's result job and the assemble's result job fail when something that must exist does not (allow_fallback is the caller's input, absent for an own run, so an own run falls back for no required component)" python3 -I - "$here" <<'PY'
 import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries.yml"))
-assert "The binaries build failed" in str(w["jobs"]["result"]["steps"])
-assert "inputs.allow_fallback == true && github.event_name == 'schedule'" in " ".join(w["jobs"]["fallback"]["if"].split()), "a fallback needs the caller's allow_fallback, which an own schedule run does not pass"
+r = sys.argv[1] + "/.github/workflows/"
+w = yaml.safe_load(open(r + "binaries.yml")); c = yaml.safe_load(open(r + "binaries-component.yml"))
+assert "could not be put together" in str(w["jobs"]["result"]["steps"])
+f = " ".join(c["jobs"]["fallback"]["if"].split())
+assert "inputs.allow_fallback && github.event_name == 'schedule' && github.ref == 'refs/heads/main'" in f
+assert "allow_fallback: ${{ inputs.allow_fallback == true }}" in open(r + "binaries.yml").read()
 PY
 echo; echo "passed: $pass, failed: $failn"; [ "$failn" = 0 ]

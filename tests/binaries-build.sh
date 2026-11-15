@@ -32,13 +32,18 @@ grep -q '^(cd "${srcdir}" && cargo build --release --locked "${pkgs\[@\]}")$' "$
 eb="${src}/binaries/extest/build.sh"
 grep -q 'cargo build --release --locked --target x86_64-unknown-linux-gnu' "${eb}" && grep -q 'cargo build --release --locked --target i686-unknown-linux-gnu' "${eb}" && ok "extest builds both targets with --locked" || bad "extest cargo commands"
 grep -q 'x86_64-unknown-linux-gnu/release/libextest.so:lib64/libextest.so' "${eb}" && grep -q 'i686-unknown-linux-gnu/release/libextest.so:lib/libextest.so' "${eb}" && grep -q -- '--elf-x86-64 lib64/libextest.so --elf-i386 lib/libextest.so' "${eb}" && ok "extest: x86_64 build is lib64, i686 build is lib, ELF class of each is checked" || bad "extest install paths"
-cf="${src}/binaries/Containerfile"
-[[ "$(grep -E '^ARG BUILDER=' "${cf}")" =~ ^ARG\ BUILDER=registry.fedoraproject.org/fedora:45@sha256:[0-9a-f]{64}$ ]] && ok "the builder is Fedora 45 pinned by digest" || bad "builder pin"
-grep -qx 'FROM ${BUILDER} AS scx' "${cf}" && grep -qx 'FROM ${BUILDER} AS extest' "${cf}" && grep -qx 'FROM ${BUILDER} AS assemble' "${cf}" && [[ "$(grep -E '^FROM ' "${cf}" | tail -n1)" == "FROM scratch" ]] && ok "stages scx, extest, assemble, and a FROM scratch final stage" || bad "stages"
-grep -c 'fetch-source.sh /binaries/.*/upstream.env /src' "${cf}" | grep -qx 2 && ok "both sources come through the commit-verifying fetch" || bad "fetch-source in the Containerfile"
-grep -q 'git-core rust cargo clang llvm lld libbpf-devel elfutils-libelf-devel zlib-devel libzstd-devel' "${cf}" && grep -q 'rust-std-static-i686-unknown-linux-gnu glibc-devel.i686 libgcc.i686' "${cf}" && ok "build dependencies of both components" || bad "build dependencies"
-[[ ! -e "${src}/binaries/Containerfile.dockerignore" ]] && ok "no stray ignore file: the context is binaries/ and its tree hash is the tag" || bad "ignore file"
-[[ -z "$(find "${src}/binaries" -type f ! -path '*/lib/*' ! -name Containerfile ! -name 'upstream.env' ! -name schedulers.tsv ! -name build.sh)" ]] && ok "binaries/ holds only the Containerfile, lib/, and per-component upstream.env, build.sh, schedulers.tsv" || bad "unexpected file in binaries/: $(find "${src}/binaries" -type f | tr '\n' ' ')"
+bf="${src}/binaries/builder.env"
+[[ "$(grep -E '^BUILDER=' "${bf}")" =~ ^BUILDER=registry.fedoraproject.org/fedora:45@sha256:[0-9a-f]{64}$ ]] && ok "the builder is Fedora 45 pinned by digest (binaries/builder.env, shared by every component)" || bad "builder pin"
+[[ "$(grep -vE '^[[:space:]]*(#|$)' "${src}/binaries/components.tsv" | tr '\t' ':' | tr '\n' ' ')" == "scx:required extest:required " ]] && ok "components.tsv: scx and extest, both required" || bad "components.tsv"
+for c in scx extest; do
+    cf="${src}/binaries/${c}/Containerfile"
+    [[ "$(head -n 30 "${cf}" | grep -E '^ARG BUILDER$')" == "ARG BUILDER" ]] && grep -qx 'FROM ${BUILDER} AS build' "${cf}" && [[ "$(grep -E '^FROM ' "${cf}" | tail -n1)" == "FROM scratch" ]] && grep -qx "COPY --from=build /out /${c}" "${cf}" && ok "${c}/Containerfile: builder from builder.env (no digest of its own), a build stage, a FROM scratch image holding only /${c}" || bad "${c} Containerfile stages"
+    grep -q "^COPY ${c} /binaries/${c}\$" "${cf}" && grep -q "fetch-source.sh /binaries/${c}/upstream.env /src" "${cf}" && ok "${c}: the source comes through the commit-verifying fetch" || bad "${c} fetch-source"
+    grep -q "org.octarineos.binaries-component=\"${c}\"" "${cf}" && ok "${c}: the image carries its component label" || bad "${c} label"
+done
+grep -q 'git-core rust cargo clang llvm lld libbpf-devel elfutils-libelf-devel zlib-devel libzstd-devel' "${src}/binaries/scx/Containerfile" && grep -q 'rust-std-static-i686-unknown-linux-gnu glibc-devel.i686 libgcc.i686' "${src}/binaries/extest/Containerfile" && ok "build dependencies of both components" || bad "build dependencies"
+[[ ! -e "${src}/binaries/Containerfile" && ! -e "${src}/binaries/Containerfile.dockerignore" ]] && ok "no stray ignore file and no shared Containerfile: the context is binaries/" || bad "ignore file"
+[[ -z "$(find "${src}/binaries" -type f ! -path '*/lib/*' ! -name Containerfile ! -name 'upstream.env' ! -name schedulers.tsv ! -name build.sh ! -name components.tsv ! -name builder.env)" ]] && ok "binaries/ holds only components.tsv, builder.env, lib/, and per-component Containerfile, upstream.env, build.sh, schedulers.tsv" || bad "unexpected file in binaries/"
 for f in "${src}"/binaries/lib/*.sh "${src}"/binaries/*/build.sh; do bash -n "${f}" && [[ -x "${f}" ]] || bad "script ${f} not parsing or not executable"; done; ok "every script under binaries/ parses and is executable"
 
 # --- the parser
@@ -175,11 +180,16 @@ asm="${tmp}/asm"
 mkdir -p "${asm}/scx/LICENSES" "${asm}/extest/LICENSES"
 echo gpl > "${asm}/scx/LICENSES/scx-LICENSE"; echo mit > "${asm}/extest/LICENSES/extest-LICENSE"
 for c in scx extest; do echo "src ${c}" > "${asm}/${c}/SOURCE"; echo "build ${c}" > "${asm}/${c}/BUILDINFO"; done
+printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\trequired\t%s\treused\t\tsha256:%s\n' "$(sha a)" "$(printf 'a%.0s' {1..64})" "$(sha b)" "$(printf 'b%.0s' {1..64})" > "${asm}/COMPONENTS"
 "${src}/binaries/lib/assemble.sh" "${asm}" > "${tmp}/asm.log" 2>&1 && ok "assemble: runs" || bad "assemble: $(cat "${tmp}/asm.log")"
-[[ -s "${asm}/LICENSES/scx-LICENSE" && -s "${asm}/LICENSES/extest-LICENSE" ]] && ok "assemble: /LICENSES is the union of both license directories" || bad "assemble licenses"
-[[ "$(cat "${asm}/SOURCE")" == "$(printf '[scx]\nsrc scx\n\n[extest]\nsrc extest\n')" && -s "${asm}/BUILDINFO" ]] && ok "assemble: /SOURCE and /BUILDINFO are both components' files under [name] headings" || bad "assemble SOURCE: $(cat "${asm}/SOURCE")"
-[[ -s "${asm}/scx/SOURCE" && -s "${asm}/extest/BUILDINFO" ]] && ok "assemble: the component directories stay as they are" || bad "assemble components"
+[[ -s "${asm}/LICENSES/scx-LICENSE" && -s "${asm}/LICENSES/extest-LICENSE" ]] && ok "assemble: /LICENSES is the union of the license directories" || bad "assemble licenses"
+[[ "$(cat "${asm}/SOURCE")" == "$(printf '[scx]\nsrc scx\n\n[extest]\nsrc extest\n')" && -s "${asm}/BUILDINFO" ]] && ok "assemble: /SOURCE and /BUILDINFO are the components' files under [name] headings" || bad "assemble SOURCE: $(cat "${asm}/SOURCE")"
+[[ -s "${asm}/scx/SOURCE" && -s "${asm}/extest/BUILDINFO" && -s "${asm}/COMPONENTS" ]] && ok "assemble: the component directories and COMPONENTS stay as they are" || bad "assemble components"
+# an optional component that is not in COMPONENTS is simply not there; one with a directory but no entry is refused
+mkdir -p "${asm}/extra"; "${src}/binaries/lib/assemble.sh" "${asm}" > /dev/null 2>&1 && bad "assemble: a directory not listed in COMPONENTS must fail" || ok "assemble: a directory that is not listed in COMPONENTS fails"
+rmdir "${asm}/extra"
 rm "${asm}/extest/SOURCE"; "${src}/binaries/lib/assemble.sh" "${asm}" > /dev/null 2>&1 && bad "assemble: a missing component file must fail" || ok "assemble: a missing component file fails"
+rm "${asm}/COMPONENTS"; "${src}/binaries/lib/assemble.sh" "${asm}" > /dev/null 2>&1 && bad "assemble: no COMPONENTS must fail" || ok "assemble: no COMPONENTS file fails"
 
 # --- extest/build.sh: both targets, then the staging (stub cargo and stage.sh)
 mkdir -p "${tmp}/esrc" "${tmp}/eo"

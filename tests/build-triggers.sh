@@ -100,7 +100,7 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
         if re.search(r"needs\.[\w-]+\.result", cond) and not status.search(cond):
             bad.append((f.split("/")[-1], n))
 # these two sign jobs are meant to be skipped together with a skipped build
-bad = [b for b in bad if b not in (('binaries.yml', 'sign'), ('build-nvidia-dx.yml', 'sign'))]
+bad = [b for b in bad if b not in (('binaries.yml', 'sign'), ('binaries-component.yml', 'sign'), ('build-nvidia-dx.yml', 'sign'))]
 assert not bad, bad
 PY
 check "workflow_run is used only by the NVIDIA dx chain; build-dx.yml is dispatched by the pipelines (dispatch_dx), never triggered by a finished run" python3 - "$here" <<'PY'
