@@ -186,6 +186,14 @@ rechunk $target_image=image_name $tag=default_tag:
     trap 'rm -f "${CHUNKAH_CONFIG_FILE}"; rm -rf "${CHUNKAH_OUTPUT_DIR}"' EXIT
     podman inspect "${target_image}:${tag}" > "${CHUNKAH_CONFIG_FILE}"
 
+    # The optional packages that did not install (build.sh writes the list into the image) become a LABEL, so the daily's skip check can see a degraded latest and
+    # rebuild it instead of keeping it for up to a week (plan-skip.sh): "none" or a comma separated list; no label when the image has no such file
+    MISSING_LABEL=()
+    if missing="$(podman run --rm --network none "${target_image}:${tag}" cat /usr/share/octarine-os/optional-packages-missing 2> /dev/null)"; then
+      csv="$(printf '%s\n' "${missing}" | grep -v '^$' | paste -sd, - || true)"
+      MISSING_LABEL=(--label "org.octarineos.optional-packages-missing=${csv:-none}")
+    fi
+
     podman run --rm \
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
@@ -197,6 +205,7 @@ rechunk $target_image=image_name $tag=default_tag:
       --max-layers 256 \
       --prune /sysroot/ \
       --label ostree.commit- --label ostree.final-diffid- \
+      "${MISSING_LABEL[@]}" \
       --config /chunkah-config.json \
       --output oci:/run/out/chunked
 
