@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The plumbing every bump job shares: ONE pull request per pin, on the branch bump/<name>, into testing, created or updated in place, with only the
 # pin lines changed, and the Test workflow dispatched on the branch (events made with GITHUB_TOKEN start no workflow, workflow_dispatch is the exception:
-# `test` and `secrets` then run on the branch tip; bump-checks.sh then reports them to the pull request, because a dispatched run alone does not count). The DECISION (what is newer, signatures, tag rules) stays in the
+# the run tests that commit from the testing ref and bump-checks.sh reports `test` and `secrets` on it, because a run dispatched on the branch does not count for the pull request). The DECISION (what is newer, signatures, tag rules) stays in the
 # decision scripts, which differ per kind of pin.
 #
 #   bump-pr.sh --branch bump/<name> --title <title> --body-file <file> --message <commit message> --file <pin file> [--file ...] -- <writer command...>
@@ -39,8 +39,16 @@ open=$(gh pr list --head "${branch}" --base "${base}" --state open --json number
 if [[ -n "${open}" && "$(jq -r .title <<<"${open}")" == "${title}" ]]; then
     n=$(jq -r .number <<<"${open}")
     echo "A bump PR \"${title}\" is already open (#${n}): nothing to do"
-    # repair path: a PR whose checks were never reported (an earlier run was cancelled or the dispatch failed) gets them now
-    "${here}/bump-checks.sh" "${branch}" --dispatch-if-missing || true
+    # repair path: a PR whose required checks are missing (an earlier run was cancelled, or its commit already had a check suite of its own) gets an empty
+    # commit and the checks again: only a commit WITHOUT a GitHub Actions suite can take reported checks that count
+    cnt=$(gh pr view "${n}" --json statusCheckRollup --jq '[.statusCheckRollup[]?|select(.name=="test")]|length' 2> /dev/null || true)
+    if [[ "${cnt}" == 0 ]]; then
+        git fetch -q origin
+        git checkout -q -B "${branch}" "origin/${branch}"
+        git commit -q --allow-empty -m "Re-run the checks of this bump (the earlier ones did not count for the pull request)"
+        git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
+        "${here}/bump-checks.sh" "${branch}" "$(git rev-parse HEAD)" || true
+    fi
     emit action noop; emit pr_number "${n}"; emit pr_url ""
     exit 0
 fi
@@ -72,7 +80,7 @@ git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
 body=$(cat "${bodyfile}")
 body+="
 
-Checks: the bump workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, waits for it and reports its \`test\` and \`secrets\` results to this PR as check runs (a dispatched run alone is not part of the PR rollup and would leave the required checks missing). If they do not appear, run the bump workflow again (\`gh workflow run bump-pins.yml --ref testing\`: an open bump PR without reported checks gets them then); the tests alone can be started with: \`gh workflow run test.yml --ref ${branch}\`."
+Checks: the bump workflow tests this commit (the \`Test\` workflow, dispatched on \`testing\` for it), waits for the run and reports its \`test\` and \`secrets\` results to this PR as check runs (a run dispatched on the branch itself would not count for the required checks). If they do not appear, run the bump workflow again (\`gh workflow run bump-pins.yml --ref testing\`: an open bump PR without its checks gets a new commit and the checks then); the tests alone can be started with: \`gh workflow run test.yml --ref testing -f ref=<the head commit sha>\`."
 if [[ -n "${open}" ]]; then
     n=$(jq -r .number <<<"${open}")
     gh pr edit "${n}" --title "${title}" --body "${body}"
@@ -87,14 +95,5 @@ else
     echo "${url}"
     emit action opened; emit pr_number "${url##*/}"; emit pr_url "${url}"
 fi
-if true; then
-    if gh workflow run test.yml --ref "${branch}"; then
-        echo "Dispatched the Test workflow on ${branch}"
-        # a dispatched run is not part of the PR's rollup: wait for it and post `test` and `secrets` from this run (bump-checks.sh)
-        "${here}/bump-checks.sh" "${branch}" || true
-    else
-        msg="Could not dispatch the Test workflow on ${branch}: start it by hand with: gh workflow run test.yml --ref ${branch}"
-        echo "::warning::${msg}"
-        [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ${msg}" >> "${GITHUB_STEP_SUMMARY}" || true
-    fi
-fi
+# the Test run of this commit and its reported checks (a dispatched run on the branch alone is not counted by the PR; bump-checks.sh explains)
+"${here}/bump-checks.sh" "${branch}" "$(git rev-parse HEAD)" || true

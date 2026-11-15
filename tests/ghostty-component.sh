@@ -282,6 +282,7 @@ f="$GH_DIR/$(printf '%s' "$path" | tr '/?=&' '____')"
 F
 chmod +x "$bin/gh"
 export GH_LOG="$root/gh.log" GH_DIR="$root/gh"
+export GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0
 reply() { rm -rf "$GH_DIR"; mkdir -p "$GH_DIR"; : >"$GH_LOG"; }
 put() { printf '%s\n' "$2" >"$GH_DIR/$1"; }
 zon() { printf '.{ .name = .ghostty, .version = "x", .minimum_zig_version = "%s", }\n' "$1" | base64 -w0; echo; }
@@ -334,7 +335,7 @@ check "check: an unreadable index.json is unreachable" bash -c "[[ \"$out\" == u
 # ---- bump-ghostty.sh: a local origin and a stub gh
 origin="$root/origin.git"; git init -q --bare -b testing "$origin"
 wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty" "$wc/.github/scripts"
-cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$wc/.github/scripts/"
+cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$here/.github/scripts/bump-checks.sh" "$wc/.github/scripts/"
 cp "$g/upstream.env" "$g/zig.env" "$wc/binaries/ghostty/"
 git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$origin"; git -C "$wc" push -q origin testing
 cat >"$bin/gh" <<'F'
@@ -351,7 +352,7 @@ Z2=https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz; Z3=https:
 bump() { PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash "$wc/.github/scripts/bump-ghostty.sh" "$@" >"$root/run" 2>&1; rc=$?; }
 : >"$root/prlist"; : >"$GH_LOG"
 bump ghostty v1.5.0 "$(sha d)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qx 'gh workflow run test.yml --ref bump/ghostty' '$GH_LOG'"
+check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}$' '$GH_LOG'"
 check "bump ghostty: upstream.env AND zig.env change in the same branch (tag, peeled commit, Zig version, URL, sha256, size, signature URL; the minisign key and the comments stay), nothing else" bash -c "
   [ \"\$(git -C '$origin' diff --name-only testing bump/ghostty | sort | tr '\n' ' ')\" = 'binaries/ghostty/upstream.env binaries/ghostty/zig.env ' ] &&
   z=\$(git -C '$origin' show bump/ghostty:binaries/ghostty/zig.env) && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
