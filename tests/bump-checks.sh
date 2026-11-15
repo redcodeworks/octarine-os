@@ -16,10 +16,9 @@ cat > "$bin/gh" <<'F'
 #!/usr/bin/env bash
 echo "gh $*" >> "$GH_LOG"
 case "$1 $2" in
-    "api repos/o/r/branches/bump/x") [[ -n "${NO_TIP:-}" ]] || echo "$SHA" ;;
     "api repos/o/r/commits/"*) echo "${MARKED:-0}" ;;
-    "run list") [[ -n "${NO_RUN:-}" ]] || [[ -n "${RUN_AFTER_DISPATCH:-}" && ! -f "$DISPATCHED" ]] || echo 4242 ;;
-    "workflow run") touch "$DISPATCHED" ;;
+    "run list") if [[ -n "${NO_RUN:-}" ]]; then :; elif [[ -n "${RUN_AFTER_DISPATCH:-}" && ! -f "$DISPATCHED" ]]; then :; else echo 4242; fi ;;
+    "workflow run") [[ -z "${DISPATCH_FAIL:-}" ]] || exit 1; touch "$DISPATCHED" ;;
     "run watch") ;;
     "run view") if [[ -n "${UNFINISHED:-}" ]]; then echo '{"status":"in_progress","url":"https://x/runs/4242","jobs":[]}'; else echo "{\"status\":\"completed\",\"url\":\"https://x/runs/4242\",\"jobs\":[{\"name\":\"scope\",\"conclusion\":\"success\"},{\"name\":\"test\",\"conclusion\":\"${TEST_C:-success}\"},{\"name\":\"secrets\",\"conclusion\":\"success\"}]}"; fi ;;
     "api -X") [[ -z "${POST_FAIL:-}" ]] || exit 1 ;;
@@ -28,10 +27,11 @@ exit 0
 F
 chmod +x "$bin/gh"
 export GH_LOG="$root/log" DISPATCHED="$root/dispatched" SHA="$sha" GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0 BUMP_CHECKS_POLL=1
-run() { : > "$GH_LOG"; rm -f "$DISPATCHED"; (env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/bump-checks.sh" bump/x ${ARGS:-}) > "$root/run" 2>&1; rc=$?; }
+run() { : > "$GH_LOG"; rm -f "$DISPATCHED"; (env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/bump-checks.sh" bump/x "${SHAARG:-$sha}") > "$root/run" 2>&1; rc=$?; }
 posts() { grep -c '^gh api -X POST repos/o/r/check-runs' "$GH_LOG"; }
 run X=1
-check "success: two check runs, test and secrets, success, on the branch tip, with the marker title and the run URL" bash -c "[ $rc = 0 ] && [ \$(grep -c '^gh api -X POST repos/o/r/check-runs' '$GH_LOG') = 2 ] && grep -q 'name=test .*head_sha=$sha .*conclusion=success' '$GH_LOG' && grep -q 'name=secrets .*conclusion=success' '$GH_LOG' && grep -q 'output\[title\]=Reported by bump-checks.sh' '$GH_LOG' && grep -q 'details_url=https://x/runs/4242' '$GH_LOG'"
+check "success: two check runs, test and secrets, success, on the bump commit, with the marker title and the run URL" bash -c "[ $rc = 0 ] && [ \$(grep -c '^gh api -X POST repos/o/r/check-runs' '$GH_LOG') = 2 ] && grep -q 'name=test .*head_sha=$sha .*conclusion=success' '$GH_LOG' && grep -q 'name=secrets .*conclusion=success' '$GH_LOG' && grep -q 'output\[title\]=Reported by bump-checks.sh' '$GH_LOG' && grep -q 'details_url=https://x/runs/4242' '$GH_LOG'"
+check "the run is looked up by its title 'Test of <sha>' and an existing run is not dispatched again" bash -c "grep -qF 'Test of $sha' '$GH_LOG' && ! grep -q 'workflow run' '$GH_LOG'"
 run TEST_C=failure
 check "a failed test job is reported as failure (never as success), secrets stays success" bash -c "grep -q 'name=test .*conclusion=failure' '$GH_LOG' && grep -q 'name=secrets .*conclusion=success' '$GH_LOG'"
 run TEST_C=cancelled
@@ -39,21 +39,25 @@ check "a cancelled test job is failure too" bash -c "grep -q 'name=test .*conclu
 run MARKED=1
 check "the commit already has its reported checks: nothing is posted, nothing is run" bash -c "[ $rc = 0 ] && [ \$(grep -c 'check-runs' '$GH_LOG') = 1 ] && ! grep -q 'run list' '$GH_LOG'"
 run NO_RUN=1
-check "no Test run of the tip: a warning, nothing posted, exit 0, no dispatch without the flag" bash -c "[ $rc = 0 ] && grep -q '::warning::bump checks for bump/x: no Test run' '$root/run' && ! grep -q '^gh api -X POST' '$GH_LOG' && ! grep -q 'workflow run' '$GH_LOG'"
-ARGS=--dispatch-if-missing run RUN_AFTER_DISPATCH=1 BUMP_CHECKS_WAIT=2
-check "--dispatch-if-missing: the Test workflow is dispatched on the branch, then the run is found and reported" bash -c "grep -q '^gh workflow run test.yml --ref bump/x' '$GH_LOG' && [ \$(grep -c '^gh api -X POST repos/o/r/check-runs' '$GH_LOG') = 2 ]"
-ARGS="" run UNFINISHED=1
+check "no run yet: Test is dispatched on the TESTING ref with ref=<sha> (not on the bump branch, whose commit must stay without a suite), then, finding no run in time, a warning and nothing posted, exit 0" bash -c "[ $rc = 0 ] && grep -qx 'gh workflow run test.yml --ref testing -f ref=$sha' '$GH_LOG' && grep -q 'no Test run for' '$root/run' && ! grep -q '^gh api -X POST' '$GH_LOG'"
+run RUN_AFTER_DISPATCH=1 BUMP_CHECKS_WAIT=3
+check "the dispatched run appears later: it is found, watched and reported" bash -c "[ \$(grep -c '^gh api -X POST repos/o/r/check-runs' '$GH_LOG') = 2 ]"
+run UNFINISHED=1
 check "a run that did not finish posts nothing (the PR stays blocked: fail closed)" bash -c "[ $rc = 0 ] && ! grep -q '^gh api -X POST' '$GH_LOG' && grep -q 'did not finish' '$root/run'"
-run NO_TIP=1
-check "an unreadable branch tip: warning, nothing posted, exit 0" bash -c "[ $rc = 0 ] && ! grep -q '^gh api -X POST' '$GH_LOG' && grep -q 'cannot read the tip' '$root/run'"
+SHAARG=notasha run X=1
+check "a value that is not a commit sha: warning, nothing posted, nothing dispatched, exit 0" bash -c "[ $rc = 0 ] && ! grep -q '^gh api -X POST' '$GH_LOG' && ! grep -q 'workflow run' '$GH_LOG' && grep -q 'not a commit sha' '$root/run'"
+unset SHAARG
 run POST_FAIL=1
 check "a failed post is a warning, not a failure of the bump job" bash -c "[ $rc = 0 ] && grep -q 'could not post the check run test' '$root/run'"
-check "bump-pr.sh calls it after the dispatch and on the already-open path; bump-pins.yml gives the three bump jobs checks: write" python3 -I - "$here" <<'PY'
+run NO_RUN=1 DISPATCH_FAIL=1
+check "bump-pr.sh calls it with the pushed commit; bump-pins.yml gives the three bump jobs checks: write; test.yml accepts the ref input, names its run after it and checks it out" python3 -I - "$here" <<'PY'
 import sys
 h = sys.argv[1]
 pr = open(h + "/.github/scripts/bump-pr.sh").read()
-assert 'bump-checks.sh" "${branch}" || true' in pr and 'bump-checks.sh" "${branch}" --dispatch-if-missing' in pr
+assert 'bump-checks.sh" "${branch}" "$(git rev-parse HEAD)"' in pr
 assert open(h + "/.github/workflows/bump-pins.yml").read().split("\n").count("      checks: write") == 3
+t = open(h + "/.github/workflows/test.yml").read()
+assert "format('Test of {0}', inputs.ref)" in t and t.count("ref: ${{ inputs.ref || github.sha }}") == 3 and "inputs.ref || github.ref" in t
 PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

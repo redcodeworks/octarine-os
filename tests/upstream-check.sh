@@ -30,6 +30,7 @@ if [[ -f "${GH_DIR}/${path}" ]]; then cat "${GH_DIR}/${path}"; [[ ! -f "${GH_DIR
 STUB
 chmod +x "${tmp}/bin/gh"
 export GH_LOG="${tmp}/gh.log" GH_DIR="${tmp}/gh"
+export GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0
 crepo="${tmp}/crepo"
 mkdir -p "${crepo}/binaries/lib" "${crepo}/.github/scripts" "${crepo}/img"
 cp "${src}/binaries/lib/upstream-env.sh" "${crepo}/binaries/lib/"
@@ -88,7 +89,7 @@ git init -q --bare -b testing "${origin}"
 wc="${tmp}/wc"
 mkdir -p "${wc}/binaries/lib" "${wc}/.github/scripts" "${wc}/img"
 cp "${src}/binaries/lib/upstream-env.sh" "${wc}/binaries/lib/"
-cp "${src}/.github/scripts/bump-upstream.sh" "${src}/.github/scripts/bump-pr.sh" "${wc}/.github/scripts/"
+cp "${src}/.github/scripts/bump-upstream.sh" "${src}/.github/scripts/bump-pr.sh" "${src}/.github/scripts/bump-checks.sh" "${wc}/.github/scripts/"
 printf '# pin\nUPSTREAM_REPO=o/p\nUPSTREAM_TAG=v1.1.4\nUPSTREAM_COMMIT=%s\n' "$(sha a)" > "${wc}/img/upstream.env"
 git -C "${wc}" init -q -b testing
 git -C "${wc}" add -A && git -C "${wc}" commit -q -m base
@@ -110,8 +111,8 @@ bump v1.1.5 "$(sha b)" && ok "bump: a new PR is opened" || bad "bump new: $(cat 
 grep -q '^gh pr create --base testing --head bump/img --title Bump img to v1.1.5' "${GH_LOG}" && ok "bump: PR from bump/<name> into testing, titled with the version" || bad "bump create call: $(cat "${GH_LOG}")"
 body=$(cat "${GH_LOG}")
 [[ "${body}" == *"releases/tag/v1.1.5"* && "${body}" == *"compare/v1.1.4...v1.1.5"* ]] && ok "bump: body links the release notes and the compare URL" || bad "bump body"
-[[ "${body}" == *"gh workflow run test.yml --ref bump/img"* ]] && ok "bump: the body says how to start the checks by hand" || bad "bump body note"
-grep -qx 'gh workflow run test.yml --ref bump/img' "${GH_LOG}" && ok "bump: the Test workflow is dispatched on the bump branch after the PR is created" || bad "bump dispatch: $(cat "${GH_LOG}")"
+[[ "${body}" == *"gh workflow run bump-pins.yml --ref testing"* ]] && ok "bump: the body says how to start the checks by hand" || bad "bump body note"
+grep -qE "^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$" "${GH_LOG}" && ok "bump: the Test workflow is dispatched on the bump branch after the PR is created" || bad "bump dispatch: $(cat "${GH_LOG}")"
 : > "${GH_LOG}"; : > "${tmp}/prlist"; GH_WF_FAIL=1 bump v1.1.5 "$(sha b)"; rc=$?
 [[ ${rc} -eq 0 && "$(cat "${tmp}/bump.log")" == *"Could not dispatch the Test workflow on bump/img"* ]] && ok "bump: a failed dispatch is a warning, not a failure" || bad "bump dispatch failure (rc ${rc}): $(cat "${tmp}/bump.log")"
 [[ "$(git -C "${origin}" show bump/img:img/upstream.env | grep -c "$(sha b)")" == 1 ]] && ok "bump: the branch carries the new pin" || bad "bump branch content"
@@ -119,7 +120,7 @@ grep -qx 'gh workflow run test.yml --ref bump/img' "${GH_LOG}" && ok "bump: the 
 printf '{"number":7,"title":"Bump img to v1.1.5"}\n' > "${tmp}/prlist"; : > "${GH_LOG}"
 bump v1.1.5 "$(sha b)" && ! grep -qE '^gh (pr (create|edit)|workflow run)' "${GH_LOG}" && ok "bump: a PR for that version is already open: nothing happens, no dispatch" || bad "bump already open"
 printf '{"number":7,"title":"Bump img to v1.1.5"}\n' > "${tmp}/prlist"; : > "${GH_LOG}"
-bump v1.1.6 "$(sha c)" && grep -q '^gh pr edit 7 --title Bump img to v1.1.6' "${GH_LOG}" && grep -qx 'gh workflow run test.yml --ref bump/img' "${GH_LOG}" && ok "bump: a PR for an older version is updated, not duplicated, and the checks are dispatched again" || bad "bump update: $(cat "${tmp}/bump.log")"
+bump v1.1.6 "$(sha c)" && grep -q '^gh pr edit 7 --title Bump img to v1.1.6' "${GH_LOG}" && grep -qE "^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$" "${GH_LOG}" && ok "bump: a PR for an older version is updated, not duplicated, and the checks are dispatched again" || bad "bump update: $(cat "${tmp}/bump.log")"
 [[ "$(git -C "${origin}" log --format=%s testing..bump/img | wc -l)" -ge 2 && "$(git -C "${origin}" show bump/img:img/upstream.env | grep -c "$(sha c)")" == 1 ]] && ok "bump: the update is a new commit on the same branch (no force-push)" || bad "bump update commit"
 ! git -C "${origin}" log --format=%B bump/img | grep -qi 'co-authored-by' && ok "bump: no commit trailers" || bad "bump trailer"
 
