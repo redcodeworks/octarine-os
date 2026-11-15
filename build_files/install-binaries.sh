@@ -84,7 +84,7 @@ install_ghostty() {
         list+=("${f}")
     done < "${g}/FILES"
     [[ ${#skipped[@]} -eq 0 ]] || echo "ghostty: kept the image's own terminfo: ${skipped[*]}"
-    printf '%s\n' "${list[@]}" | tar -C "${g}/root" -cf - -T - | tar -C "${dest}" -xf -
+    printf '%s\n' "${list[@]}" | tar -C "${g}/root" -cf - -T - | tar -C "${dest:-/}" -xf -
     for f in "${list[@]}"; do track ghostty "${dest}/${f}"; done
     elfs[ghostty]+=" ${dest}/usr/bin/ghostty"
     installed_note[ghostty]="${#list[@]} files under /usr (${#skipped[@]} terminfo files of the image kept)"
