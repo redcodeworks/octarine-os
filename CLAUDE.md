@@ -1057,6 +1057,19 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   window switcher and volume/brightness binds through `noctalia msg ...`, replacing the plain ones of the binds part), `60-window-rules.kdl`
   (niri's two default rules). No second polkit agent is started anywhere. The parts derive from niri's default config
   (GPL-3.0-or-later; credited in the README). Deleting an include line drops a part; the files are listed in the order they must stay.
+- **Promoted defaults (2026-11-15, Kevin's list from his own niri files).** `20-input.kdl`: niri's tap and natural scroll plus `drag-lock`, `click-method "clickfinger"`, `scroll-factor 0.3`.
+  `30-layout.kdl`: centered focus on overflow, `always-center-single-column`, presets 0.25/0.33333/0.5/0.66667/0.75, third-width default column, shadow on with `draw-behind-window`, 32 pixel struts,
+  the left tab indicator (hidden with one tab), `hotkey-overlay { skip-at-startup }`, an empty `animations {}`; the COLORS stay niri's own (focus ring `#7fc8ff`, default insert-hint color, no Gruvbox gradient:
+  the image is theme neutral; the owner can ask for his gradient). New `35-gestures.kdl` (edge scroll, edge workspace switch, hot corners off) and `45-workspaces.kdl` (named workspaces General, Web, Media, Games).
+  `50-noctalia.kdl` keeps the shipped binds and adds the Noctalia look (rounded corners with clipping, blur without xray, the settings window rule, the wallpaper on the backdrop, transparent workspace
+  background, no overview workspace shadow, the layer rules, the global blur fine-tuning, and `debug { honor-xdg-activation-with-invalid-serial }`, which weakens niri's focus-steal protection and is commented as such);
+  everything is documented in niri 26.04's wiki (`/usr/share/doc/niri/wiki`) and accepted by `niri validate`; Noctalia's own docs were not read. `60-window-rules.kdl`: niri's two defaults, the dialog-title float rule, block-out-from
+  screen-capture for KeePassXC and GNOME Secrets, and a routing rule per app of the Flatpak preinstall lists (Web: Firefox; Media: Thunderbird, Calendar, Contacts, Music, Decibels, Podcasts, Showtime, Loupe, Snapshot,
+  Weather, Maps; General: Boxes, Builder, Connections, Deja Dup, File Roller, Firmware, Logs, Papers, Simple Scan, Text Editor, Disk Usage, Clocks, Flatseal, Extension Manager, Bazaar; floating utilities: Calculator, Characters,
+  Font Viewer, the Nautilus previewer), the Games launchers of `gaming-setup` (Steam, Lutris, Bottles, ProtonUp-Qt) and floating pavucontrol, blueman and nm-connection-editor. UNVERIFIED app ids: no id was checked under niri
+  except Firefox, Steam and WezTerm (the owner's earlier checks); the GNOME apps follow "a GTK app reports its application id"; Vorta (Qt) is deliberately unrouted (`// unrouted: com.borgbase.Vorta`). Not promoted: outputs,
+  `debug.kdl`, keybinds, the HHKB layer, Gruvbox colors, the owner's Mod+Comma and Mod+D, his personal apps, the terminal opacity rule, the gamescope and `steam_app` rules. `tests/niri-setup.sh` checks every
+  preinstall app has an entry in the rules part, so a new preinstall app cannot be forgotten.
 - **Selection rule applied to dot-files `config/niri`** (same rule as "System defaults"): excluded the MEH/HYPR binds
   (`41-binds-meh-hyper`), the app-folder binds (`42-binds-apps`: ghostty, yazi, helix, personal folders), workspace names and routing
   (`20-workspaces`, `51-workspace-routing`), the window rules (`50-window-rules`: opacity and blur for ghostty, Steam, personal apps),

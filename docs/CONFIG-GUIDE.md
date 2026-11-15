@@ -351,6 +351,12 @@ and safeguards are in `CLAUDE.md`. What you need to use them:
   portal set to oo7), `polkit` (`~/.config/noctalia/10-octarine-os.toml`, Noctalia's polkit agent; skipped without
   Noctalia) and `keybinds` (the EXPERIMENTAL keybind wizard, never part of the default run). A file that exists and
   differs is never replaced silently: diff, default keep, timestamped backup. No sudo.
+- **What the niri parts contain:** `10-environment`, `20-input` (tap, natural scroll, drag-lock, clickfinger, slower scrolling),
+  `30-layout` (centered focus, quarter to three-quarter column presets, third-width windows, shadows, 32 pixel outer gaps, left tab
+  bars), `35-gestures` (edge scroll and workspace switch while dragging, no hot corners), `40-binds`, `45-workspaces` (General,
+  Web, Media, Games), `50-noctalia` (the shell, its binds and its rounded, blurred look) and `60-window-rules` (apps routed to
+  those workspaces, small utilities and dialogs floating, password managers hidden from screen capture). Delete a part's
+  include line in `config.kdl` to drop it; the colors are niri's own.
 - **Keybind wizard (experimental):** without it you keep niri's default key bindings. It asks for a layout (Standard keys
   always, plus Compact with vim-style hjkl or HHKB, which exclude each other) and the modifiers for switching, moving and
   other actions (Ctrl+Alt, Ctrl+Super, MEH, HYPR; Super for other actions too). MEH and HYPR need keys mapped in the

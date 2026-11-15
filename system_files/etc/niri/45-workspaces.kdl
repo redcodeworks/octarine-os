@@ -1,0 +1,7 @@
+// Four named workspaces: General (the first one, where niri starts), Web, Media and Games. The window rules of 60-window-rules.kdl send apps
+// to them; delete this file and its include line (and the open-on-workspace lines of the rules, which are then ignored) for niri's
+// dynamic workspaces only. Reference: https://niri-wm.github.io/niri/Configuration:-Named-Workspaces
+workspace "General"
+workspace "Web"
+workspace "Media"
+workspace "Games"

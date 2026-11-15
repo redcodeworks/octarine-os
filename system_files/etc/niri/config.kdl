@@ -8,7 +8,9 @@
 include "10-environment.kdl"
 include "20-input.kdl"
 include "30-layout.kdl"
+include "35-gestures.kdl"
 include "40-binds.kdl"
+include "45-workspaces.kdl"
 include "50-noctalia.kdl"
 include "60-window-rules.kdl"
 
