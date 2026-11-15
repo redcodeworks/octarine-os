@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The plumbing every bump job shares: ONE pull request per pin, on the branch bump/<name>, into testing, created or updated in place, with only the
 # pin lines changed, and the Test workflow dispatched on the branch (events made with GITHUB_TOKEN start no workflow, workflow_dispatch is the exception:
-# `test` and `secrets` then run on the branch tip and attach to the pull request). The DECISION (what is newer, signatures, tag rules) stays in the
+# `test` and `secrets` then run on the branch tip; bump-checks.sh then reports them to the pull request, because a dispatched run alone does not count). The DECISION (what is newer, signatures, tag rules) stays in the
 # decision scripts, which differ per kind of pin.
 #
 #   bump-pr.sh --branch bump/<name> --title <title> --body-file <file> --message <commit message> --file <pin file> [--file ...] -- <writer command...>
@@ -39,6 +39,8 @@ open=$(gh pr list --head "${branch}" --base "${base}" --state open --json number
 if [[ -n "${open}" && "$(jq -r .title <<<"${open}")" == "${title}" ]]; then
     n=$(jq -r .number <<<"${open}")
     echo "A bump PR \"${title}\" is already open (#${n}): nothing to do"
+    # repair path: a PR whose checks were never reported (an earlier run was cancelled or the dispatch failed) gets them now
+    "${here}/bump-checks.sh" "${branch}" --dispatch-if-missing || true
     emit action noop; emit pr_number "${n}"; emit pr_url ""
     exit 0
 fi
@@ -70,7 +72,7 @@ git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
 body=$(cat "${bodyfile}")
 body+="
 
-Checks: the bump workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, so \`test\` and \`secrets\` run on this PR's head commit. If they do not appear, start them by hand: \`gh workflow run test.yml --ref ${branch}\`. (Not verified on GitHub: whether a dispatched run satisfies the required checks.)"
+Checks: the bump workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, waits for it and reports its \`test\` and \`secrets\` results to this PR as check runs (a dispatched run alone is not part of the PR rollup and would leave the required checks missing). If they do not appear, run the bump workflow again (\`gh workflow run bump-pins.yml --ref testing\`: an open bump PR without reported checks gets them then); the tests alone can be started with: \`gh workflow run test.yml --ref ${branch}\`."
 if [[ -n "${open}" ]]; then
     n=$(jq -r .number <<<"${open}")
     gh pr edit "${n}" --title "${title}" --body "${body}"
@@ -88,6 +90,8 @@ fi
 if true; then
     if gh workflow run test.yml --ref "${branch}"; then
         echo "Dispatched the Test workflow on ${branch}"
+        # a dispatched run is not part of the PR's rollup: wait for it and post `test` and `secrets` from this run (bump-checks.sh)
+        "${here}/bump-checks.sh" "${branch}" || true
     else
         msg="Could not dispatch the Test workflow on ${branch}: start it by hand with: gh workflow run test.yml --ref ${branch}"
         echo "::warning::${msg}"
