@@ -1747,7 +1747,20 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `search` (`org.gnome.desktop.search-providers`: Calculator, Bazaar, Characters and Clocks into `enabled`, Calculator
   first in `sort-order`; always merged with the value read just before writing, never rebuilt from constants, no write
   when nothing changes). `--yes` takes defaults; `--no` prints the plan; a failed step is reported, the rest continue, exit status
-  non-zero. Test hooks: `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
+  non-zero. **`editor` step (2026-11-15, Kevin: "define a default editor"; a step of its own right after `shell`, no sudo):** options vi (always), nano, vim, nvim, hx, only when found (PATH, then
+  `/home/linuxbrew/.linuxbrew/bin`, then `~/.local/bin`; hooks `USER_SETUP_EDITOR_DIRS` and `USER_SETUP_EDITOR_SYSDIRS`); the default answer is "keep the current settings" (`--yes` alone keeps too);
+  `--editor NAME` (unknown or not installed: exit 2 listing the detected ones) implies `--only editor`. It writes ONE managed file, `~/.config/environment.d/50-editor.conf`
+  (`EDITOR`, `VISUAL`, `SUDO_EDITOR`, KEY=value, a header with the undo): SUDO_EDITOR is always the absolute path (sudoedit runs with sudo's restricted PATH), EDITOR and VISUAL the plain name only when the
+  binary is in `/usr/bin`, `/bin` or `/usr/local/bin`, else the absolute path (Homebrew and `~/.local/bin` are on PATH only in login shells, not for everything the session starts). Lines in the
+  user's own rc files (`.bashrc`, `.bash_profile`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`, `.bashrc.d/*`, fish `config.fish` and `conf.d`, other `environment.d` files) that set these
+  variables are listed with file and line, never edited, and the question to write anyway defaults to NO (an explicit `--editor` writes with a note). Verified in environment.d(5): the files are read by
+  the systemd user manager and passed to the services it starts (GNOME's terminal server is the example in the man page), SSH logins and plain TTY logins do not read them. FOUND on nox (not tested end to end):
+  the image's base ships `nano-default-editor` (`/etc/profile.d/nano-default-editor.sh` sets `EDITOR=/usr/bin/nano` only when unset, its fish twin in `vendor_conf.d` uses `set -q`), and
+  `systemctl --user show-environment` on nox shows `EDITOR=/usr/bin/nano`: a session's `systemctl --user import-environment` (niri-session does it, GNOME imports the login environment) copies the LOGIN
+  SHELL's environment, which lacks environment.d, over the manager's, so environment.d alone would probably lose for EDITOR. Hence two small image files read the SAME managed file for login shells:
+  `system_files/etc/profile.d/octarine-os-editor.sh` (bash, zsh; sorts after the nano one; accepts only the three keys and plain path characters, parsed never executed) and
+  `system_files/usr/share/fish/vendor_conf.d/octarine-os-40-editor.fish`; a user's own rc files still win. UNVERIFIED: the import ordering in a real niri and GNOME login. Test hooks:
+  `USER_SETUP_FISH/ZSH/SHELLS/SKEL/SEARCH_DIRS/FONTS_BREWFILE`. Tests: `tests/user-setup.sh` (fake
   flatpak, sudo, id, getent, usermod, gsettings, brew, fc-list). The dot-files steps (`dotfiles`, `brew`, `gnome` with its
   GNOME extension installer) were removed from `user-setup` on 2026-11-09 by Kevin's decision; the dot-files repo itself and its
   `just` recipes still exist, independent of this image.
