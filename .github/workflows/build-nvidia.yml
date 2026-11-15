@@ -79,7 +79,7 @@ jobs:
           raw=$(skopeo inspect --raw "docker://${DEFAULT_IMAGE}:latest")
           [[ -n "${raw}" ]] || { echo "::error::Cannot read ${DEFAULT_IMAGE}:latest"; exit 1; }
           digest="sha256:$(printf '%s' "${raw}" | sha256sum | sed 's/ .*//')"
-          cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
           echo "Base image ${DEFAULT_IMAGE}:latest = ${digest} (signature valid)"
           echo "BASE_REF=${DEFAULT_IMAGE}@${digest}" >> "${GITHUB_ENV}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
@@ -88,7 +88,7 @@ jobs:
       - name: Read the kernel of the base image
         run: |
           set -euo pipefail
-          podman pull "${BASE_REF}" > /dev/null
+          .github/scripts/retry.sh podman pull "${BASE_REF}" > /dev/null
           kernel=$(podman run --rm "${BASE_REF}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
           echo "Kernel of the base image: ${kernel}"
           echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
@@ -112,7 +112,7 @@ jobs:
         id: akmods-sig
         continue-on-error: true
         run: |
-          cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
           echo "Signature of ${AKMODS_REF} is valid"
 
       - name: Report the akmods signature result
@@ -151,8 +151,8 @@ jobs:
       # Secure Boot: the kernel verifies against the pinned certificate (the variant adds modules, never a kernel)
       - name: Secure Boot check of the kernel
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/retry.sh sudo apt-get update -qq
+          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
           .github/scripts/secureboot-check.sh octarine-os-nvidia:build
 
       - name: Login to GitHub Container Registry
@@ -230,6 +230,6 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
