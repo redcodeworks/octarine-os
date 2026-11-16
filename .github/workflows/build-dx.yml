@@ -315,6 +315,13 @@ jobs:
               alias_tags="${CHANNEL}-$(date +%Y%m%d)-${sha} ${CHANNEL}"
             fi
           fi
+          if [[ "${CHANNEL}" == latest ]]; then
+            # a dx image belongs to the daily run when the default image it is built on carries today's daily-<date> tag (set by build.yml's
+            # scheduled run, which dispatches this workflow right after): same tag, so prune-daily.yml counts both packages alike
+            today="daily-$(date -u +%Y%m%d)"
+            seen=$(IMAGE="${BASE_IMAGE}" .github/scripts/registry-digest.sh "${today}" 2> /dev/null || true)
+            if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
+          fi
           echo "Tags: ${alias_tags}"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
 

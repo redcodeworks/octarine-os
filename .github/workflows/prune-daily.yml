@@ -1,0 +1,65 @@
+---
+name: Prune daily images
+# Images built by the scheduled daily build carry an extra tag `daily-YYYYMMDD` (octarine-os, and octarine-os-dx built on it). Weekly, only the
+# newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/prune-daily.py). Testing builds, the
+# NVIDIA images, the bare `latest` and anything else are never touched. Scheduled runs delete for real; start it by hand with dry_run on
+# (the default) to see the plan: `gh workflow run prune-daily.yml -f dry_run=true`. A failed run is just a red scheduled run.
+on:
+  schedule:
+    - cron: '0 5 * * 0'  # Sundays 05:00 UTC (scheduled runs come from the default branch)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only print what would be deleted"
+        type: boolean
+        default: true
+
+concurrency:
+  group: prune-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    name: Prune old daily images
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          owner="${OWNER,,}"
+          kind=$(gh api "users/${OWNER}" --jq '.type')
+          if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi
+          if [[ "${EVENT}" == "workflow_dispatch" ]]; then export DRY_RUN="${INPUT_DRY_RUN}"; else export DRY_RUN=false; fi
+
+          # Images that must survive: the default image behind `latest` and the base of the dx image behind `latest` (a label of the dx image).
+          # A lookup that fails stops the run: never prune without knowing the pair.
+          default="ghcr.io/${owner}/octarine-os"
+          latest=$(skopeo inspect --raw "docker://${default}:latest" | sha256sum | sed 's/ .*//')
+          dx_base=$(skopeo inspect --config "docker://${default}-dx:latest" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
+          [[ "${latest}" =~ ^[0-9a-f]{64}$ && "${dx_base}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read the latest pair (default ${latest}, dx base ${dx_base})"; exit 1; }
+          export PROTECT="sha256:${latest} ${dx_base}"
+          echo "Protected: ${PROTECT}"
+
+          failed=0
+          for name in octarine-os octarine-os-dx; do
+            export API_BASE="${scope}/packages/container/${name}"
+            echo "== ${API_BASE}, dry run: ${DRY_RUN}"
+            if ! gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-daily.py; then echo "::error::the prune of ${API_BASE} failed"; failed=1; fi
+          done
+          exit "${failed}"

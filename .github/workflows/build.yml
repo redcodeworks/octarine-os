@@ -511,6 +511,8 @@ jobs:
 
       - name: Generate Build Tags
         id: gen-build-tags
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           # main publishes only the dated tags; the bare `latest` is moved later by publish-latest.yml (see CLAUDE.md "Promoting
           # the default and dx images together")
@@ -518,6 +520,8 @@ jobs:
                         ${IMAGE_NAME} \
                         ${DEFAULT_TAG} \
                         false)"
+          # the scheduled daily build (not a push, a promotion or a dispatch) also gets daily-YYYYMMDD (UTC), which prune-daily.yml counts
+          if [[ "${EVENT}" == schedule ]]; then alias_tags="${alias_tags} daily-$(date -u +%Y%m%d)"; fi
 
           echo "Tags for this Action..."
           echo "${alias_tags}"
