@@ -15,7 +15,7 @@ What each top-level directory is for:
 - [`disk-images.md`](disk-images.md): `disk_config/`, settings for disk and installer images.
 - [`ci-workflows.md`](ci-workflows.md): `.github/`, the workflows and scripts, and how a change reaches `main`.
 - [`git-hooks.md`](git-hooks.md): `githooks/`, optional hooks for a local clone.
-- [`keys/README.md`](../keys/README.md): `keys/`, the vendored public keys and where each came from.
+- [`docs/signing-keys.md`](signing-keys.md): `keys/`, the vendored public keys and where each came from.
 
 Before editing: pushes that touch only the documentation (this folder and the top-level Markdown files) do not trigger an
 image build.

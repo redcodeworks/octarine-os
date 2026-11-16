@@ -2,6 +2,7 @@
 # Tests for the Secure Boot check of the kernel (.github/scripts/secureboot-check.sh with a fake sbverify and a stubbed key download) and its wiring in the image workflows. Run: tests/secureboot-check.sh. Needs: bash, openssl, python3 with PyYAML.
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY
@@ -32,8 +33,8 @@ sb FETCH_FAIL=1
 check "a failed key download fails clearly (exit 1) and never runs sbverify --cert" bash -c "[ $rc = 1 ] && grep -q 'could not download' '$root/run' && ! grep -q 'sbverify --cert' '$LOG'"
 sb FETCH_JUNK=1
 check "a download that is not a DER certificate fails (exit 1)" bash -c "[ $rc = 1 ] && grep -q 'not a DER certificate' '$root/run' && ! grep -q 'sbverify --cert' '$LOG'"
-check "the Fedora kernel-signer pin is gone from the repository (the Bluefin way uses the Universal Blue key only)" bash -c "[ ! -e '$here/keys/fedora-kernel-signer.pem' ] && ! grep -q 'fedora-kernel-signer' '$here/keys/README.md'"
-check "keys/README.md documents the live fetch and what it trusts" bash -c "grep -q 'ublue-os/akmods' '$here/keys/README.md' && grep -q '4E:5C:68:47' '$here/keys/README.md'"
+check "the Fedora kernel-signer pin is gone from the repository (the Bluefin way uses the Universal Blue key only)" bash -c "[ ! -e '$here/keys/fedora-kernel-signer.pem' ] && ! grep -q 'fedora-kernel-signer' '$keys_doc'"
+check "docs/signing-keys.md documents the live fetch and what it trusts" bash -c "grep -q 'ublue-os/akmods' '$keys_doc' && grep -q '4E:5C:68:47' '$keys_doc'"
 check "build.yml and build-beta.yml run the check on the rechunked image before anything is pushed; the NVIDIA workflow after its smoke test; the check is part of the image workflows only" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]

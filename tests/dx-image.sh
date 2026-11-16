@@ -6,6 +6,7 @@
 # Run: tests/dx-image.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 wf="$here/.github/workflows/build-dx.yml"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
@@ -204,7 +205,7 @@ check "no Flatpak preinstall list ships VS Code or virt-manager (dx has no flatp
   [ ! -e '$here/variants/dx/system_files/usr/share/flatpak' ] && ! grep -rqE 'visualstudio|virt_manager' '$here/system_files/usr/share/flatpak' \
   && grep -qx '\[Flatpak Preinstall org.gnome.Boxes\]' '$here/system_files/usr/share/flatpak/preinstall.d/gnome.preinstall'"
 check "the default Containerfile and build.sh stay free of the dx package list" bash -c "! grep -q 'dev-packages\|variants/dx' '$here/Containerfile' '$here/build_files/build.sh'"
-check "the vendored toolbox key is a public key and is described in keys/README.md" bash -c "head -1 '$here/keys/redcodeworks-toolbox-cosign.pub' | grep -qx -- '-----BEGIN PUBLIC KEY-----' && grep -q redcodeworks-toolbox-cosign.pub '$here/keys/README.md'"
+check "the vendored toolbox key is a public key and is described in docs/signing-keys.md" bash -c "head -1 '$here/keys/redcodeworks-toolbox-cosign.pub' | grep -qx -- '-----BEGIN PUBLIC KEY-----' && grep -q redcodeworks-toolbox-cosign.pub '$keys_doc'"
 
 # ---- signature policy: all three repositories, from any image name
 policy_run() { # image name

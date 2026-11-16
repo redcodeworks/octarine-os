@@ -10,7 +10,7 @@
 # 2. the key is downloaded (fetch_key, curl with retries; a failed download fails the check clearly) and converted from DER to PEM,
 # 3. `sbverify --list` is printed for diagnosis (a base kernel normally carries two signatures: Fedora's kernel-signer and Universal Blue's "ublue kernel"),
 # 4. `sbverify --cert <key>` decides: exit 0 verified; exit 1 otherwise ("Secureboot Signature Failed"). The Fedora signature is NOT checked.
-# Trust: the key is fetched live from the main branch of github.com/ublue-os/akmods on every run (see keys/README.md).
+# Trust: the key is fetched live from the main branch of github.com/ublue-os/akmods on every run (see docs/signing-keys.md).
 # Tools: podman (unless KERNEL_FILE), sbverify (sbsigntool/sbsigntools), curl, openssl.
 set -euo pipefail
 image=${1:?image}

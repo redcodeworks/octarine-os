@@ -58,7 +58,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   (`sha256:` plus 64 hex) and `ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}` in the Containerfile (a
   re-pushed tag cannot change what is built). Bump with `just brew-bump [tag]` (default: the newest dated tag; needs
   skopeo, cosign and python3): it resolves the digest (`skopeo inspect --raw | sha256sum`), runs `cosign verify --key
-  keys/ublue-os-brew-cosign.pub ghcr.io/ublue-os/brew@sha256:...` (the key is vendored, see `keys/README.md`) and only then
+  keys/ublue-os-brew-cosign.pub ghcr.io/ublue-os/brew@sha256:...` (the key is vendored, see `docs/signing-keys.md`) and only then
   writes tag and digest; `just brew-tags` lists the newest tags and the current pin. CI no longer resolves or verifies
   per build: the build job's "Check the brew image pin" step fails unless tag and digest have the right format and logs
   `Brew image pinned: ...` (the record of what a build used); the plan job output `brew_pin_changed` is true when the
@@ -624,7 +624,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (`fetch_key`, curl with 3 retries, from `https://github.com/ublue-os/akmods/raw/main/certs/public_key.der`; a failed download fails the check clearly), converted DER to PEM, `sbverify --list` is printed
   and `sbverify --cert` must accept the kernel, otherwise the build FAILS ("Secureboot Signature Failed"). The Fedora signature is not checked. The earlier attempt to pin Fedora's leaf or CA certificate was dropped (Kevin,
   2026-11-14: the leaf is one signing builder's, the CA is not in the image, and Bluefin's mechanism is proven). The key is read LIVE from the `main` branch of `ublue-os/akmods` on every run, so that repository's
-  controllers decide what passes (nothing is pinned, so key rotation needs no change here); `keys/README.md` has the fingerprint. What it proves: the kernel carries the signature that the Universal Blue MOK
+  controllers decide what passes (nothing is pinned, so key rotation needs no change here); `docs/signing-keys.md` has the fingerprint. What it proves: the kernel carries the signature that the Universal Blue MOK
   (enrolled on nox) accepts; it does NOT prove the kernel boots on a stock Secure Boot machine. Facts from the real image (octarine-os:latest, kernel 7.2.15-300.fc45, checked 2026-11-14): THREE signatures, Fedora's
   `kernel-signer` (bkernel01, Fedora Secure Boot CA 20200709), Universal Blue's `ublue kernel` and `ublue akmods`; the downloaded key is byte-identical to `/etc/pki/akmods/certs/akmods-ublue.der` of the image. The
   runner has no sbverify: the step installs `sbsigntool` (apt); no alpine fallback (Bluefin needs one for its own runners). The first CI run was the old branch's discovery run, which failed on purpose for want of a pin.
