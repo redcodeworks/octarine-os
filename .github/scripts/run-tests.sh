@@ -10,6 +10,8 @@
 # runner has four vCPUs). Every test makes its own temp directory and shares no fixed path or port, so they are independent. The runner
 # exports ONE variable to them, RUN_TESTS_OUT, with a name no test uses (a first version exported `out`, which a test took for its own).
 set -uo pipefail
+# the runner's own output files are not for the tests (each test sets the ones it needs)
+unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY GITHUB_PATH
 jobs=${TEST_JOBS:-4}
 files=()
 while (($#)); do

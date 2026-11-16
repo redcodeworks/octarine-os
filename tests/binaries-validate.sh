@@ -9,7 +9,6 @@ pass=0; failn=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
-unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY
 python3 -I - "$here" "$root" <<'PY'
 import sys, yaml
 root, out = sys.argv[1:3]

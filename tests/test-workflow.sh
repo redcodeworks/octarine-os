@@ -32,7 +32,6 @@ for k in ("test", "secrets"):
 assert j["suite"]["name"] != "test" and j["suite"]["name"] not in ("secrets",), j["suite"]["name"]
 assert "sanity.sh" in str(j["test"]["steps"]), "test runs the sanity script"
 assert "run-tests.sh" in str(j["suite"]["steps"]), "suite runs the behavior tests"
-assert "container" not in j["docs"], "the light docs job runs on the host runner"
 PY
 check "test.yml: read-only permissions, one concurrency group per workflow and ref" python3 - "$here" <<'PY'
 import sys, yaml
@@ -61,8 +60,6 @@ import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 runs = "\n".join(s.get("run", "") for s in w["jobs"]["suite"]["steps"])
 assert ".github/scripts/run-tests.sh --jobs 4" in runs, runs
-druns = "\n".join(s.get("run", "") for s in w["jobs"]["docs"]["steps"])
-assert "--doc-tests" in druns and "run-tests.sh" in druns, druns
 assert not re.search(r"tests/[\w-]+\.sh", runs.replace("tests/*.sh", "")), "a test is named by hand"
 PY
 check "test.yml: the secrets job scans the full history with a pinned gitleaks and checksum" python3 - "$here" <<'PY'

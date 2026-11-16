@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/run-tests.sh (the parallel shell test runner) and .github/scripts/test-scope.sh (documentation-only detection)
+# Tests .github/scripts/run-tests.sh (the parallel shell test runner)
 # with fixture scripts in a scratch directory. Run: tests/run-tests.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 runner="$here/.github/scripts/run-tests.sh"
-scope="$here/.github/scripts/test-scope.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0
@@ -37,42 +36,5 @@ check "a missing file is a failing test, not a crash" bash -c "[ $rc = 1 ] && gr
 check "without arguments it runs tests/*.sh of the current directory" bash -c "[ $rc = 0 ] && grep -q 'PASS tests/x.sh' '$root/out'"
 check "test.yml runs it with four at a time" grep -q 'run-tests.sh --jobs 4' "$here/.github/workflows/test.yml"
 
-# ---- test-scope.sh: documentation only?
-repo="$root/repo"; mkdir -p "$repo/docs" "$repo/tests" "$repo/system_files"
-(
-    cd "$repo" && git init -q -b main . && git config user.email t@example.invalid && git config user.name t
-    echo a > README.md; echo a > docs/x.md; echo a > LICENSE; echo a > .gitignore; echo a > tests/t.sh; echo a > system_files/f
-    git add -A && git commit -qm base
-    echo b >> README.md; echo b >> docs/x.md; git commit -qam docs
-    echo b >> tests/t.sh; git commit -qam test
-    echo b >> system_files/f; echo b >> README.md; git commit -qam mixed
-    echo b >> docs/x.md; git commit -qam docs2
-)
-c=($(cd "$repo" && git rev-list --reverse HEAD)); base=${c[0]}; d1=${c[1]}; t1=${c[2]}; mx=${c[3]}; d2=${c[4]}
-sc() { (cd "$repo" && bash "$scope" "$@" 2> "$root/err"); }
-check "documentation files only: docs" test "$(sc push "$base" "$d1")" = docs
-check "a changed test is NOT documentation here: full" test "$(sc push "$d1" "$t1")" = full
-check "a mixed push: full" test "$(sc push "$t1" "$mx")" = full
-check "a push range that is documentation again: docs" test "$(sc push "$mx" "$d2")" = docs
-check "a range that includes a non-documentation commit: full" test "$(sc push "$base" "$d2")" = full
-check "a first push of a branch with no origin/testing to compare with: full" test "$(sc push 0000000000000000000000000000000000000000 "$d1")" = full
-# a new branch is compared with its merge base with origin/testing
-(cd "$repo" && git update-ref refs/remotes/origin/testing "$base")
-check "a first push of a branch whose commits since origin/testing are documentation: docs" test "$(sc push 0000000000000000000000000000000000000000 "$d1")" = docs
-check "a first push of a branch with a non-documentation commit since origin/testing: full" test "$(sc push 0000000000000000000000000000000000000000 "$mx")" = full
-check "an unknown before commit: full" test "$(sc push 1111111111111111111111111111111111111111 "$d1")" = full
-check "an empty before: full" test "$(sc push "" "$d1")" = full
-check "a manual dispatch: full" test "$(sc workflow_dispatch "$base" "$d1")" = full
-check "an empty diff: full" test "$(sc push "$d1" "$d1")" = full
-check "outside a repository (git fails): full, the default of every doubt" bash -c "cd '$root' && [ \"\$(bash '$scope' push $base $d1 2>/dev/null)\" = full ]"
-check "--doc-tests lists the tests that read README, CLAUDE or docs/ (the config guide is under docs/) (derived, not a fixed list)" bash -c "cd '$here' && bash '$scope' --doc-tests | grep -q 'tests/readme-defaults.sh'"
-# ---- docs-sanity.sh
-san="$here/.github/scripts/docs-sanity.sh"
-mkdir -p "$root/san/docs"; echo ok > "$root/san/README.md"; echo ok > "$root/san/docs/a.md"
-check "docs-sanity.sh: fine text passes" bash -c "cd '$root/san' && bash '$san'"
-: > "$root/san/docs/a.md"
-check "docs-sanity.sh: an empty file fails" bash -c "cd '$root/san' && ! bash '$san'"
-printf '<<<<<<< HEAD\n' > "$root/san/docs/a.md"
-check "docs-sanity.sh: a merge conflict marker fails" bash -c "cd '$root/san' && ! bash '$san'"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

@@ -44,7 +44,6 @@ sha=$(printf 'a%.0s' {1..40})
 dig="sha256:$(printf 'b%.0s' {1..64})"
 export LOG="$root/log" STATE="$root/state" GITHUB_REPOSITORY=redcodeworks/octarine-os POLL_TRIES=3 POLL_WAIT=0 FAKE_SHA="$sha" FAKE_CHANNEL=testing FAKE_REF=testing
 mkdir -p "$STATE"
-unset GITHUB_STEP_SUMMARY
 run() { : >"$LOG"; rm -f "$STATE/dispatched" "$STATE/polls"; PATH="$root/bin" REF=${REF:-testing} bash "$script" "$@" >"$root/out" 2>&1; rc=$?; }
 
 run testing "$sha"
