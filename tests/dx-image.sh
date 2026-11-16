@@ -182,13 +182,8 @@ check "Containerfile: dev-packages digest is sha256: plus 64 hex characters" tes
 check "Containerfile: the devpkgs stage uses the digest, the bind mount runs install.sh through dx.sh" bash -c "
   grep -qx 'FROM ghcr.io/redcodeworks/dev-packages@\${DEV_PACKAGES_DIGEST} AS devpkgs' '$cf'
   grep -q 'from=devpkgs,source=/,target=/dev-packages' '$cf' && grep -q 'bash /dev-packages/install.sh' '$here/variants/dx/dx.sh'"
-dtag=$(sed -n 's/^ARG DATASTORE_IMAGES_TAG=//p' "$cf")
-ddig=$(sed -n 's/^ARG DATASTORE_IMAGES_DIGEST=//p' "$cf")
-check "Containerfile: datastore-images tag is latest or latest-YYYYMMDD-<sha>, digest is sha256 plus 64 hex" bash -c "printf '%s' '$dtag' | grep -qE '^(latest|latest-[0-9]{8}-[0-9a-f]{7})\$' && printf '%s' '$ddig' | grep -qE '^sha256:[0-9a-f]{64}\$'"
-check "Containerfile: the datastoreimgs stage uses the digest and is bind-mounted into the dx RUN at /datastore-images; dx.sh renders from its images.txt" bash -c "
-  grep -qx 'FROM ghcr.io/redcodeworks/datastore-images@\${DATASTORE_IMAGES_DIGEST} AS datastoreimgs' '$cf'
-  grep -q 'from=datastoreimgs,source=/,target=/datastore-images' '$cf' && grep -q '/datastore-images/images.txt' '$here/variants/dx/dx.sh'"
-check "the old pin file and its bump script are gone (the pins live in the fedora-toolbox repository)" bash -c "! test -e '$here/variants/dx/datastore/datastore.env' && ! test -e '$here/.github/scripts/datastore-pin-bump.sh' && ! test -e '$here/tests/datastore-bump.sh'"
+check "no datastore pin, stage, bind mount, helper, Quadlet or render script is left in the dx image's inputs (the datastore is a bundle fetched on demand)" bash -c "! grep -rqiE 'DATASTORE_IMAGES|datastoreimgs|datastore-images/images' '$here/variants/dx' '$here/.github/workflows' '$here/.github/scripts' '$here/Justfile' && ! test -e '$here/variants/dx/datastore' && ! test -e '$here/variants/dx/system_files/usr/share/octarine-os/lib/datastore.sh'"
+check "Containerfile: the build context carries the toolbox key for the bundle's signature policy" bash -c "grep -qx 'COPY keys/redcodeworks-toolbox-cosign.pub /toolbox-cosign.pub' '$cf'"
 check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN --network=none bootc container lint --fatal-warnings --no-truncate'"
 check "dx.sh: bash syntax, strict extras install, podman.socket, kernel unchanged" bash -c "
   bash -n '$here/variants/dx/dx.sh' && grep -q 'dnf5 -y install --setopt=strict=1' '$here/variants/dx/dx.sh' &&
@@ -226,6 +221,21 @@ assert d[0]['type'] == 'sigstoreSigned' and d[0]['signedIdentity'] == {'type': '
     check "policy ($n image): the catch-all stays last" python3 -c "import json; d=json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']; assert list(d)[-1]==''"
     check "policy ($n image): sigstore attachments enabled for the namespace" grep -q 'use-sigstore-attachments: true' "$root"/pol-$n/etc/containers/registries.d/*.yaml
 done
+# the dx.sh block that adds the policy for the datastore bundle: run on a copy of the default policy
+bt="$root/bundlepol"; mkdir -p "$bt/etc/containers/registries.d" "$bt/etc/pki/containers"
+echo '{"default":[{"type":"insecureAcceptAnything"}],"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[{"type":"sigstoreSigned","keyPath":"/k","signedIdentity":{"type":"matchRepository"}}],"":[{"type":"insecureAcceptAnything"}]}}}' >"$bt/etc/containers/policy.json"
+sed -n '/^# --- datastore bundle signature policy ---/,/^# --- end datastore bundle signature policy ---/p' "$here/variants/dx/dx.sh" | sed -e "s#/etc/#$bt/etc/#g" -e "s#/ctx/toolbox-cosign.pub#$here/keys/redcodeworks-toolbox-cosign.pub#g" >"$bt/block.sh"
+check "dx.sh bundle policy: the block runs" bash -e "$bt/block.sh"
+check "dx.sh bundle policy: a sigstoreSigned rule for the bundle repository with the toolbox key, the image's own rules and the catch-all kept, catch-all last" python3 -I - "$bt" "$here/keys/redcodeworks-toolbox-cosign.pub" <<'PY'
+import json, sys
+bt, pub = sys.argv[1:]
+d = json.load(open(bt + "/etc/containers/policy.json"))["transports"]["docker"]
+r = d["ghcr.io/redcodeworks/datastore-images"]
+assert len(r) == 1 and r[0]["type"] == "sigstoreSigned" and r[0]["signedIdentity"] == {"type": "matchRepository"}
+assert open(r[0]["keyPath"]).read() == open(pub).read()
+assert "ghcr.io/redcodeworks/octarine-os" in d and list(d)[-1] == ""
+PY
+check "dx.sh bundle policy: registries.d reads the signature attachments of exactly the bundle repository" bash -c "grep -q 'ghcr.io/redcodeworks/datastore-images:' '$bt'/etc/containers/registries.d/*.yaml && grep -q 'use-sigstore-attachments: true' '$bt'/etc/containers/registries.d/*.yaml"
 check "the default smoke test asserts the dx rule" bash -c "grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/scripts/default-smoke.sh'"
 
 # ---- the in-image smoke script with stub tools
@@ -261,12 +271,13 @@ F
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
     printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
-    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" "$here/variants/dx/datastore" "$here/tests/fixtures/datastore-images.txt" >/dev/null
-    echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/ublue-os/just/75-octarine-virthost.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
+    echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/ublue-os/just/75-octarine-virthost.just"
+    mkdir -p "$sb/etc/containers/registries.d" "$sb/etc/pki/containers"; cp "$here/keys/redcodeworks-toolbox-cosign.pub" "$sb/etc/pki/containers/redcodeworks-toolbox.pub"
+    printf 'docker:\n  ghcr.io/redcodeworks/datastore-images:\n    use-sigstore-attachments: true\n' >"$sb/etc/containers/registries.d/redcodeworks-datastore-images.yaml"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
     printf 'ID=fedora\nPRETTY_NAME="octarineOS"\nIMAGE_ID="octarine-os-dx"\nIMAGE_VERSION="%s"\n' "${OS_IMAGE_VERSION:-20261110-abc1234}" >"$sb/os-release"
-    echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"ghcr.io/redcodeworks/octarine-os-nvidia-dx":[],"":[]}}}' >"$sb/policy.json"
+    echo '{"transports":{"docker":{"ghcr.io/redcodeworks/octarine-os":[],"ghcr.io/redcodeworks/octarine-os-nvidia":[],"ghcr.io/redcodeworks/octarine-os-dx":[],"ghcr.io/redcodeworks/octarine-os-nvidia-dx":[],"ghcr.io/redcodeworks/datastore-images":[{"type":"sigstoreSigned","keyPath":"/etc/pki/containers/redcodeworks-toolbox.pub","signedIdentity":{"type":"matchRepository"}}],"":[]}}}' >"$sb/policy.json"
     printf '%s\n' rustup libvirt qemu-kvm cockpit-machines virt-manager virt-viewer virtiofsd swtpm swtpm-tools edk2-ovmf libvirt-nss dnsmasq glib2-devel openssl-devel pam-u2f snapper tailscale borgbackup zsh distrobox fwupd flatpak gnome-shell bcc >"$sb/rpms"
 }
 smoke_run() { # BASE_KERNEL
@@ -305,13 +316,10 @@ mk_world "$K"; : >"$sb/share/ublue-os/justfile"; smoke_run "$K"; check "smoke: t
 mk_world "$K"; echo 'kargs = ["iommu=pt"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: a kargs.d file that mentions iommu fails (no image ships one)" test $? -ne 0
 mk_world "$K"; echo 'kargs = ["quiet"]' >"$sb/lib/bootc/kargs.d/10-other.toml"; smoke_run "$K"; check "smoke: an unrelated kargs.d file does not fail the iommu check" test $? -eq 0
 mk_world "$K"; sed -i 's#^SHELL=.*#SHELL=/usr/bin/zsh#' "$sb/etc/default/useradd"; smoke_run "$K"; check "smoke: zsh as the default shell of new users fails" test $? -ne 0
-Q="$sb/share/containers/systemd/users"
-mk_world "$K"; rm "$Q/kafka.pod"; smoke_run "$K"; check "smoke: a missing datastore Quadlet fails" test $? -ne 0
-mk_world "$K"; printf '\n[Install]\nWantedBy=default.target\n' >>"$Q/postgresql.container"; smoke_run "$K"; check "smoke: an [Install] section in a Quadlet fails (nothing may start by itself)" test $? -ne 0
-mk_world "$K"; sed -i 's#^Image=.*#Image=docker.io/library/postgres:latest#' "$Q/postgresql.container"; smoke_run "$K"; check "smoke: a latest tag in a Quadlet fails" test $? -ne 0
-mk_world "$K"; sed -i 's#^\(Image=.*\)@sha256:[0-9a-f]*#\1#' "$Q/valkey.container"; smoke_run "$K"; check "smoke: a Quadlet image without a digest fails" test $? -ne 0
-mk_world "$K"; sed -i 's#^PublishPort=127.0.0.1:5432#PublishPort=0.0.0.0:5432#' "$Q/datastore.pod"; smoke_run "$K"; check "smoke: a published port that is not loopback-only fails" test $? -ne 0
-mk_world "$K"; printf 'AutoUpdate=registry\n' >>"$Q/kafka.container"; smoke_run "$K"; check "smoke: AutoUpdate= on a stateful unit fails" test $? -ne 0
+mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/datastore-images":\[[^]]*\]##' "$sb/policy.json"; smoke_run "$K"; check "smoke: the policy rule for the datastore bundle is required" test $? -ne 0
+mk_world "$K"; rm "$sb/etc/pki/containers/redcodeworks-toolbox.pub"; smoke_run "$K"; check "smoke: the key of the bundle's policy rule is required" test $? -ne 0
+mk_world "$K"; rm "$sb/etc/containers/registries.d/redcodeworks-datastore-images.yaml"; smoke_run "$K"; check "smoke: the registries.d entry of the bundle is required" test $? -ne 0
+mk_world "$K"; mkdir -p "$sb/share/containers/systemd/users"; touch "$sb/share/containers/systemd/users/datastore.pod"; smoke_run "$K"; check "smoke: a baked datastore unit fails (the datastore is not part of the image)" test $? -ne 0
 mk_world "$K"; rm "$sb/share/ublue-os/just/72-octarine-datastore.just"; smoke_run "$K"; check "smoke: the datastore recipe file is required" test $? -ne 0
 mk_world "$K"; rm "$sb/usr-bin/sdk"; smoke_run "$K"; check "smoke: the sdk wrapper is required" test $? -ne 0
 mk_world "$K"; rm "$sb/etc/profile.d/octarine-dx-cargo.sh"; smoke_run "$K"; check "smoke: the cargo profile snippet is required" test $? -ne 0
@@ -455,14 +463,6 @@ esac
 F
 cp "$cf" "$work/variants/dx/Containerfile"; bump
 check "bump latest: the matching dated tag is written for humans, testing tags are ignored" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_TAG=latest-20261109-0969783' '$work/variants/dx/Containerfile'"
-
-# the same recipe for the datastore-images list: its own two lines change, nothing else
-dbump() { (cd "$work" && PATH="$bin:$PATH" "$REAL_JUST" --justfile Justfile --working-directory . datastore-images-bump "$@") >"$root/out" 2>&1; rc=$?; }
-dexpect() { printf 'manifest of docker://ghcr.io/redcodeworks/datastore-images:%s' "$1" | sha256sum | sed 's/ .*//'; }
-cp "$cf" "$work/variants/dx/Containerfile"; : >"$LOG"; dbump latest-20261105-aaaaaaa
-check "datastore-images-bump with a dated tag: digest and tag written, cosign verified the reference with the toolbox key first, the rest untouched" bash -c "[ $rc = 0 ] && grep -qx 'ARG DATASTORE_IMAGES_DIGEST=sha256:$(dexpect latest-20261105-aaaaaaa)' '$work/variants/dx/Containerfile' && grep -qx 'ARG DATASTORE_IMAGES_TAG=latest-20261105-aaaaaaa' '$work/variants/dx/Containerfile' && grep -qF 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/datastore-images@sha256:$(dexpect latest-20261105-aaaaaaa)' '$LOG' && diff <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$cf') <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$work/variants/dx/Containerfile')"
-cp "$cf" "$work/variants/dx/Containerfile"; COSIGN_RC=1 dbump latest-20261105-aaaaaaa
-check "datastore-images-bump: a verification failure exits 1 and leaves the Containerfile unchanged" bash -c "[ $rc = 1 ] && cmp -s '$cf' '$work/variants/dx/Containerfile'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

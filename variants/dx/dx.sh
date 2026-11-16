@@ -33,7 +33,7 @@ dnf5 clean all
 rm -rf /var/cache/libdnf5 /var/cache/dnf /var/log/dnf5.log* /var/log/dnf.log* /root/.cache 2>/dev/null || true
 echo "::endgroup::"
 
-echo "::group::dx: files, recipes and datastore units"
+echo "::group::dx: files, recipes and the datastore signature policy"
 
 # dx-only files (the `ujust dev` recipe file, the sdk wrapper, the cargo PATH snippet)
 cp -avf /ctx/system_files/. /
@@ -51,13 +51,31 @@ fi
 grep -qxF "${dev_import}" "${ujust_main}"
 chmod 0755 /usr/bin/sdk
 
-# The opt-in datastore Quadlets (rootless, stopped by default, no [Install]): rendered from the one pin file
-# /datastore-images/images.txt (the bind-mounted datastore-images list) into the directory the user generator reads (/usr/share/containers/systemd/users, verified with
-# `quadlet --user --dryrun` on the default image's podman 6.1). Nothing is enabled and nothing is pulled at build time.
-test -s /datastore-images/images.txt
-bash /ctx/datastore/render.sh /usr/share/containers/systemd/users /ctx/datastore /datastore-images/images.txt
-! grep -rq '^\[Install\]' /usr/share/containers/systemd/users
-test -s /usr/share/octarine-os/lib/datastore.sh
+# `ujust datastore-install`, `datastore` and `datastore-setup`: the thin recipes of the opt-in datastore (the signed bundle is fetched on demand; the image ships no
+# datastore unit). Their container signature policy: the key of the fedora-toolbox repository, which signs the bundle, for exactly that repository.
+# --- datastore bundle signature policy ---
+test -s /ctx/toolbox-cosign.pub
+bundle_ref=ghcr.io/redcodeworks/datastore-images
+bundle_key=/etc/pki/containers/redcodeworks-toolbox.pub
+install -Dm644 /ctx/toolbox-cosign.pub "${bundle_key}"
+printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "${bundle_ref}" >/etc/containers/registries.d/redcodeworks-datastore-images.yaml
+python3 - "${bundle_key}" "${bundle_ref}" <<'PY'
+import json
+import sys
+
+key, ref = sys.argv[1:]
+path = "/etc/containers/policy.json"
+policy = json.load(open(path))
+scopes = policy["transports"]["docker"]
+catch_all = scopes.pop("", None)
+scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
+if catch_all is not None:
+    scopes[""] = catch_all
+with open(path, "w") as f:
+    json.dump(policy, f, indent=4)
+    f.write("\n")
+PY
+# --- end datastore bundle signature policy ---
 store_import='import? "/usr/share/ublue-os/just/72-octarine-datastore.just"'
 test -s /usr/share/ublue-os/just/72-octarine-datastore.just
 if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >> "${ujust_main}"; fi

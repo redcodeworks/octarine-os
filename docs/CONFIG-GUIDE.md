@@ -31,5 +31,6 @@ skip any step:
 - `ujust gaming-setup`: checklist for Steam, Lutris, gamescope, MangoHud and GameMode tuning.
 - `ujust toggle-updates`, then `ujust update`: choose which sources update automatically, and update them.
 - `ujust dev` (dx image only): developer setup checklist.
+- `ujust datastore-install` (dx image only): optional, downloads the signed datastore bundle (PostgreSQL, Valkey, SeaweedFS, Kafka as rootless containers).
 
 `ujust --list` shows every recipe.

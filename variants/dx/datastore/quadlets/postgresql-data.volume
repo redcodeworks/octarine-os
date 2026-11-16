@@ -1,6 +1,0 @@
-[Unit]
-Description=PostgreSQL data volume
-
-[Volume]
-VolumeName=postgresql-data
-Driver=local
