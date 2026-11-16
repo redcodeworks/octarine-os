@@ -112,7 +112,7 @@ jobs:
         uses: ./.github/actions/test-suite
 
   # Documentation-only push: the tests that read the documentation (derived by grep in test-scope.sh --doc-tests, never a fixed list) and a sanity
-  # check of the text, straight on the runner (no container, no installs beyond the cached pinned just).
+  # check of the text, straight on the runner (no container, no dnf; the pinned just is a cached download).
   docs:
     name: docs
     needs: [scope]
@@ -125,6 +125,12 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
+
+      # the one tool the documentation tests need that the runner lacks: a cached download of the pinned just (a few seconds)
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
 
       - name: Run the tests that read the documentation
         run: |
