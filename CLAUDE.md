@@ -167,8 +167,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
     (`BINARIES_ONLY`) must accept it, and the content-key label must be readable; otherwise it is refused (an optional component without one logs a warning, a required one fails).
     Not for: a failed lookup, a failed SIGNING (build succeeded, `sign` failed), a refused candidate. A Fedora library change that breaks a binary at link time
     is NOT covered (an old image would hit the same failure at the runtime check). Visible: summary and warning annotations from `binaries-decide.sh` (`FALLBACK:` and `OMITTED:`), the
-    labels above, the records above, and ONE issue labeled `ci-failure-binaries` from the `track` job on main only (named degraded components, a comment per
-    later run, closed with a comment when a main run has none degraded; `.github/scripts/ci-issue.sh`). The assembled `last-good` pointer is gone: components are the unit.
+    labels above, the records above. No issue is opened for it (2026-11-16, simplification: only the default and dx builds raise alerts). The assembled `last-good` pointer is gone: components are the unit.
   - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=scx,ghostty -f fallback_dry_run=true` (a comma list or `all`;
     `true` still means all) skips the reuse of those components, fails their build on purpose, runs the fallback checks on their real `last-good-<c>` images and reports `FALLBACK (dry run)`;
     nothing is pushed, signed, used or retagged.
@@ -215,7 +214,7 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   workflow `github.workflow` is the caller's name). The `check` job's step `final` decides: an own push run NEVER publishes (`nopublish`) but reuses an already signed image of the tree when the caller published it first, and builds
   to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run and a dispatch with `validate_only` also ignore the reuse shortcut (`usable=false`) and
   build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
-  `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
+  `signing` environment and secret are never reached), or move `last-good` (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
   are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
 - **Tag = assembled key** (see the per-component pipeline above; it replaced the tree hash `git rev-parse HEAD:binaries`): content-addressed, so the same content is built once and
   reused by `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free).
@@ -806,7 +805,7 @@ signed and the dx image was built on exactly that default digest.
   re-run green: `latest` moves at the re-run (inputs are reused: please check, see below). Docs-only merge: no digest, dx skips, Publish is a no-op.
   Base build fails: nothing is dispatched. Dispatch does not start: re-run `dispatch_dx` alone. Publish fails halfway: both images are valid and
   signed, re-run Publish (idempotent). Old green run re-run later: held by the ordering guard.
-- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) and of `publish-latest.yml` runs `ci-issue.sh fail`: it looks
+- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) runs `ci-issue.sh fail`: it looks
   for an OPEN issue with the label `ci-failure-dx` (created if missing; deduplicated on the label, not the title); none: one issue `dx/latest not
   published: <channel> <sha7>` with the run URL, the failed jobs and what Kevin can do; one open: a comment per further failure. When Publish moves
   `latest` the `recover` job comments "recovered: <run URL>" and closes it. A failed `dispatch_dx` (no dx run exists) is not covered: the red job
@@ -827,7 +826,7 @@ signed and the dx image was built on exactly that default digest.
   `publish-latest.sh` with `ALLOW_BACKWARDS=true` (same script, same verification: both signatures with `cosign.pub`, the dx image whose `base.digest` label is the default
   image's digest, the default image built from main, digests preserved with a read-back, dx first and the default image LAST, nothing signed, no `signing` environment, the
   concurrency group `publish-latest`); only the ordering guard is skipped and the summary says `ROLLBACK`. With no dx image built on that default image it REFUSES unless `default_only`
-  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback opens or updates the ONE `ci-failure-dx` issue. The next green dx run on main moves `latest`
+  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback raises no issue (the red run is the signal). The next green dx run on main moves `latest`
   forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry), `tests/rollback-latest.sh` (the shape).
   UNVERIFIED: a real rollback. GitHub only runs `workflow_dispatch` for a workflow file that exists on the default branch, so the first dry run is possible after the promotion that
   carries the file: `gh workflow run rollback-latest.yml --ref main -f vanilla_tag=latest-<date>-<sha7> -f reason=trial -f dry_run=true`.
@@ -1192,9 +1191,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The switch: `ujust toggle-motd` ("Toggle the motd (fastfetch summary or tips) in every shell"; prints "motd is now on/off") and `ujust toggle-user-motd` (the base recipe's name, a dependency on `toggle-motd`). `build.sh` keeps the base `00-default.just` as `00-default-base.just` (the way `10-update` and `30-distrobox` are kept); our `00-default.just` imports it and defines both names (a recipe of the importing file beats the imported one); the smoke tests check that each name is listed once. Tests: `tests/motd.sh`, `tests/just-recipes.sh`.
 - Only a real login shell can verify: an SSH login, a bash and a zsh login on a terminal, the fish greeting, and that the recipe wins over the base file in a real `ujust --list`.
 
-## Failure alerts (issues) for the scheduled workflows (2026-11-15)
+## Failure alerts (issues) (2026-11-16: only the two that matter)
 
-`ci-issue.sh` (one issue per streak of failures, deduplicated on the LABEL, a comment per further failure, closed by the next green run) now also covers the workflows that fail without anybody being told: the `alert` job at the end of `build.yml` (label `ci-failure-default`: the daily and promotion builds on main; the job needs plan, build_push, promote, build_result), `build-beta.yml` (`ci-failure-beta`), `build-nvidia.yml` (`ci-failure-nvidia`) and `prune-testing.yml` (`ci-failure-prune`; since the repository variable PRUNE_ENABLED is true the scheduled prune deletes, so a refusal above its limit or a failed pass raises the issue too). Each runs only on main (`github.ref`), has `issues: write` only, a `fail` step on any `failure` among its needs and a `recover` step (comment plus close) when the run's main job succeeded and nothing failed or was cancelled: a cancelled run raises nothing and closes nothing. The existing alerts stay (`ci-failure-dx`, `ci-failure-binaries`, publish-latest, rollback-latest). Labels are created by the script on first use. Test: `tests/alert-jobs.sh`. The hub's `scripts/scheduled-runs.sh` should also report open issues with these labels.
+`ci-issue.sh` (one issue per streak of failures, deduplicated on the LABEL, a comment per further failure, closed by the next green run; labels are created on first use) serves exactly two alerts: the `alert` job at the end of `build.yml` (label `ci-failure-default`: the daily and promotion builds on main; the job needs plan, build_push, promote, build_result) and the `alert` job of `build-dx.yml` (label `ci-failure-dx`: a red dx run on main holds `latest` back silently; the `recover` job of `publish-latest.yml` closes it when `latest` moves). Each runs only on main (`github.ref`), has `issues: write` only, a `fail` step on any `failure` among its needs and a `recover` step (comment plus close) when the run's main job succeeded and nothing failed or was cancelled: a cancelled run raises nothing and closes nothing. The alert jobs of the NVIDIA build, `binaries.yml` (degraded components), `publish-latest.yml`, `rollback-latest.yml`, the beta build and the prune were removed (a red run is the signal there, and the hub's `scripts/scheduled-runs.sh` lists failed newest scheduled runs). Test: `tests/alert-jobs.sh`, `tests/ci-issue.sh`.
 
 ## Beta channel (`octarine-os:beta`)
 

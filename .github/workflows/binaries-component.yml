@@ -15,7 +15,7 @@ name: Prebuilt binaries component
 #   optional component  every PUBLISHING run (testing and main, not an own validation run): last good image if one exists, else the component
 #                       is left out of the image (status absent); an optional component never blocks an image build
 #   rehearsal           a dispatch with fallback_dry_run reports the decision on any branch and changes nothing
-# The loud annotation and the issue come from binaries.yml's track job, on main only.
+# The loud annotation comes from binaries.yml's track job, on main only.
 on:
   workflow_call:
     secrets:

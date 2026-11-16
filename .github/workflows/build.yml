@@ -243,7 +243,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      issues: write
     # the signing secret is a repository secret, which a called workflow only gets when it is passed on
     secrets:
       SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}

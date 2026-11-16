@@ -16,8 +16,7 @@ name: Prebuilt binaries
 #
 # Own runs (Kevin, 2026-11-14; the README badge): `push` to main and testing (only when binaries/, this workflow, binaries-component.yml
 # or their scripts change) and a WEEKLY `schedule` on main (Friday 08:00 UTC) run it under its own name; a called run belongs to the
-# caller. An own `push` or `schedule` run, and a dispatch with `validate_only`, NEVER publish, sign, move last-good tags or touch the
-# issue: the push run only proves that this content builds (it reuses already signed images when the caller published them first), and
+# caller. An own `push` or `schedule` run, and a dispatch with `validate_only`, NEVER publish, sign, or move last-good tags: the push run only proves that this content builds (it reuses already signed images when the caller published them first), and
 # the schedule run and `validate_only` ignore the reuse shortcut and build again against the pinned sources and today's Fedora 45
 # packages, failing visibly when a required component fails. Nothing of it gets the signing secret (the sign jobs are skipped).
 #
@@ -438,7 +437,7 @@ jobs:
           fi
 
   # After the decision: move `last-good-<component>` for every component this run built or reused on main (only a signed build or
-  # reuse), and keep the ONE issue for degraded binaries. Never fails the run (continue-on-error).
+  # reuse). Never fails the run (continue-on-error).
   track:
     name: Track the last good binaries
     needs: [assemble, result]
@@ -449,7 +448,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      issues: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -481,27 +479,3 @@ jobs:
             [[ "${got}" == "${digest}" ]] || { echo "::warning::last-good-${name} is ${got}, expected ${digest}"; continue; }
             echo "last-good-${name} -> ${digest}" | tee -a "${GITHUB_STEP_SUMMARY}"
           done
-
-      - name: Issue for degraded binaries (one, label ci-failure-binaries)
-        if: github.ref == 'refs/heads/main' && needs.assemble.outputs.degraded != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-          LABEL: ci-failure-binaries
-          LABEL_DESC: the image build used a component's last good binaries or left an optional component out because its build failed (one open issue at a time)
-          ISSUE_TITLE: "binaries build failed for a component: the image uses its last good build or leaves it out"
-          DEGRADED: ${{ needs.assemble.outputs.degraded }}
-          KEY: ${{ needs.assemble.outputs.key }}
-          FAIL_COMMENT: ${{ format('the binaries build failed again, degraded components {0}', needs.assemble.outputs.degraded) }}
-        run: |
-          export ISSUE_BODY="The build of these components of \`binaries/\` failed: ${DEGRADED} (\`fallback\` = the image uses the component's last good build, \`absent\` = an optional component with no last good build is left out of the image). The assembled binaries image is \`${KEY}\`, labeled \`org.octarineos.binaries-degraded\`, and so is the OS image (\`org.octarineos.binaries-fallback=true\`); the installed SOURCE, BUILDINFO, FALLBACK and MISSING records say which. Fix the component in \`binaries/\` (or revert the change); the next main run in which no component is degraded closes this issue. A Fedora library change that breaks a binary at link time is NOT covered by the fallback: only a rebuild fixes it. See CLAUDE.md, Prebuilt binaries."
-          .github/scripts/ci-issue.sh fail
-
-      - name: Close the issue when nothing is degraded any more
-        if: github.ref == 'refs/heads/main' && needs.assemble.outputs.degraded == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-          LABEL: ci-failure-binaries
-          RECOVER_COMMENT: every component of the binaries was built or reused without a fallback
-        run: .github/scripts/ci-issue.sh recover

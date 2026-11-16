@@ -84,7 +84,7 @@ assert all("github.event_name" not in str(v) for v in env.values()), "the event 
 assert next(s for s in pub["steps"] if s.get("id") == "publish")["run"] == ".github/scripts/publish-latest.sh"
 assert w["jobs"]["recover"]["permissions"] == {"contents": "read", "issues": "write"}
 assert "needs.publish.outputs.moved == 'true'" in w["jobs"]["recover"]["if"]
-assert "needs.publish.result == 'failure'" in w["jobs"]["alert"]["if"]
+assert "alert" not in w["jobs"]
 PY
 check "build-dx.yml: the alert job runs only for latest on main after a failure, with issues: write and nothing else" python3 - "$wf/build-dx.yml" <<'PY'
 import sys, yaml

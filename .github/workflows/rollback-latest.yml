@@ -5,7 +5,7 @@ name: Roll back latest
 # image to roll back to. Modelled on Bazzite's retag workflow (a re-point of the tags from an old tag with a short cancel window).
 #
 #   vanilla_tag   the dated tag of the DEFAULT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-*, beta* and latest are refused
-#   reason        free text (required), goes into the summary and the issue
+#   reason        free text (required), goes into the summary
 #   default_only  false (default): the dx image built on that default image moves with it; the run REFUSES when no dx image was built on it.
 #                 true: only the default image moves and dx `latest` stays behind (the summary says so), as publish-latest's vanilla-only
 #   dry_run       true (default): plan and report only, nothing is written
@@ -14,8 +14,7 @@ name: Roll back latest
 # before anything moves (cosign.pub), the dx image is the one whose base-digest label is the default image's digest, the default image was built from
 # main, the digests are preserved (skopeo copy --all --preserve-digests, each tag read back), dx moves first and the default image LAST, nothing is
 # signed (so no `signing` environment), nothing is written on any ref but main, one move at a time (the same concurrency group as publish-latest). New:
-# the first job is a 30-second cancel window (cancel the run in that time and nothing happens), and a failed rollback opens or updates the ONE
-# ci-failure-dx issue. The next green dx run on main moves `latest` forward again to the newest pair: roll back, then fix main, or hold the daily build.
+# the first job is a 30-second cancel window (cancel the run in that time and nothing happens). The next green dx run on main moves `latest` forward again to the newest pair: roll back, then fix main, or hold the daily build.
 on:
   workflow_dispatch:
     inputs:
@@ -111,27 +110,3 @@ jobs:
           set -euo pipefail
           [[ -n "${VANILLA_TAG}" && -n "${REASON}" ]] || { echo "::error::vanilla_tag and reason are required"; exit 1; }
           .github/scripts/publish-latest.sh
-
-  alert:
-    name: Report a failed rollback
-    needs: [window, rollback]
-    if: always() && needs.rollback.result == 'failure' && github.ref == 'refs/heads/main' && inputs.dry_run != true
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Open the failure issue or comment on it
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          NEEDS_JSON: ${{ toJSON(needs) }}
-          ISSUE_TITLE: "rollback of latest failed"
-          ISSUE_BODY: "A rollback of `latest` (rollback-latest.yml) failed on main: `latest` of both images stays where it was. Open the run for the reason (an unsigned image, no dx image built on that default image, a tag that is not a dated tag of the default image, or a registry error) and dispatch it again; a dry run plans without writing."
-          FAIL_COMMENT: "A rollback of latest failed again"
-        run: .github/scripts/ci-issue.sh fail

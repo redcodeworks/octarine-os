@@ -238,13 +238,13 @@ check "binaries.yml: only testing and main publish, the assembled image is tagge
   grep -q 'COSIGN_PRIVATE_KEY: \${{ secrets.SIGNING_SECRET }}' '$wfb' && grep -q -- 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wfb' &&
   grep -q 'cosign verify --key cosign.pub \"\${IMAGE}@\${DIGEST}\"' '$wfb' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${KEY}\"' '$wfb'"
 check "binaries.yml: the result job takes the digest from exactly one producer per case (the lookup of an existing image, the sign job, or nothing for a validation) and the outputs say action built, reused or validated" bash -c "grep -q 'digest=\${REUSE_DIGEST}' '$wfb' && grep -q 'digest=\${SIGN_DIGEST}' '$wfb' && grep -q 'action=reused' '$wfb' && grep -q 'action=built' '$wfb' && grep -q 'action=validated' '$wfb'"
-check "binaries.yml: the track job moves last-good-<component> only on main, never for an own or validation run, and keeps the ONE issue (opened with the degraded components named, closed when none is degraded)" python3 -I - "$wfb" <<'PY'
+check "binaries.yml: the track job moves last-good-<component> only on main, never for an own or validation run" python3 -I - "$wfb" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); t = w["jobs"]["track"]
 assert t.get("continue-on-error") is True
 assert "needs.assemble.outputs.nopublish != 'true'" in t["if"]
 s = str(t["steps"])
-assert "refs/heads/main" in s and "last-good-${name}" in s and "ci-failure-binaries" in s and "needs.assemble.outputs.degraded != ''" in s and "needs.assemble.outputs.degraded == ''" in s
+assert "refs/heads/main" in s and "last-good-${name}" in s
 assert "last-good\"" not in s.replace("last-good-", ""), "no assembled last-good pointer any more"
 PY
 check "the run summary says what each component and the assembled image did (reused, built and signed, validation only, fallback, omitted)" bash -c "grep -q 'Binaries image: reused' '$wfb' && grep -q 'Binaries image: assembled .*signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && grep -q 'Component \${comp}: reused' '$here/.github/scripts/binaries-decide.sh' && grep -q 'OMITTED' '$here/.github/scripts/binaries-decide.sh' && grep -q 'FALLBACK: component' '$here/.github/scripts/binaries-decide.sh'"
@@ -257,7 +257,7 @@ for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
     w = yaml.safe_load(open(f"{root}/.github/workflows/{f}"))
     j = w["jobs"]["binaries"]
     assert j["uses"] == "./.github/workflows/binaries.yml", f
-    assert j["permissions"] == {"contents": "read", "packages": "write", "issues": "write"}, f  # issues: the track job files the fallback issue
+    assert j["permissions"] == {"contents": "read", "packages": "write"}, f
     assert j.get("secrets") == {"SIGNING_SECRET": "${{ secrets.SIGNING_SECRET }}"}, f + ": the called workflow signs with SIGNING_SECRET, which it gets only when the caller passes it (no secrets: inherit)"
     needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
     assert "binaries" in needs, f
