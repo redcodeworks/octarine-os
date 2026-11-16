@@ -17,7 +17,9 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/   
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 lib="$here/system_files/usr/libexec/octarine-os"
 tsv_src="$here/binaries/scx/schedulers.tsv"
-real_names="rusty lavd cake bpfland cosmos flash p2dq"
+# the instance names come from the manifest source (name without scx_), not from a literal list
+real_names=$(grep -vE '^[[:space:]]*(#|$)' "$tsv_src" | cut -f1 | sed 's/^scx_//' | tr '\n' ' '); real_names=${real_names% }
+alt=${real_names// /|}
 
 # ---- the registry and the drop-ins generated from the manifest
 mk_dest() { # dest, tsv content on stdin
@@ -33,14 +35,14 @@ d="$root/dest"; mk_dest "$d" <"$root/real4.tsv"
 gen() { DESTDIR="$1" bash "$here/build_files/gen-schedulers.sh" >"$root/run" 2>&1; rc=$?; }
 gen "$d"
 reg="$d/usr/share/octarine-os/schedulers.d"
-check "gen: one registry file per scheduler, instance = name without scx_ (rusty lavd cake bpfland cosmos flash p2dq)" bash -c "[ $rc = 0 ] && [ \"\$(ls '$reg' | sed 's/.conf$//' | sort | tr '\n' ' ')\" = \"\$(echo $real_names | tr ' ' '\n' | sort | tr '\n' ' ')\" ]"
+check "gen: one registry file per scheduler, instance = name without scx_" bash -c "[ $rc = 0 ] && [ \"\$(ls '$reg' | sed 's/.conf$//' | sort | tr '\n' ' ')\" = \"\$(echo $real_names | tr ' ' '\n' | sort | tr '\n' ' ')\" ]"
 check "gen: no registered instance name is another one followed by _ (the ops-name prefix match must stay unambiguous; a new scheduler that breaks this needs a smarter match)" bash -c "for a in \$(ls '$reg' | sed 's/.conf\$//'); do for b in \$(ls '$reg' | sed 's/.conf\$//'); do case \$b in \${a}_*) echo ambiguous: \$a \$b; exit 1;; esac; done; done"
 check "gen: registry fields NAME INSTANCE BINARY DESCRIPTION MIN_KERNEL FLAGS, empty minimum kernel kept empty" bash -c "grep -qx 'NAME=scx_rusty' '$reg/rusty.conf' && grep -qx 'INSTANCE=rusty' '$reg/rusty.conf' && grep -qx 'BINARY=/usr/bin/scx_rusty' '$reg/rusty.conf' && grep -qx 'MIN_KERNEL=' '$reg/rusty.conf' && grep -qx 'FLAGS=' '$reg/rusty.conf' && grep -q '^DESCRIPTION=.\\{10,\\}' '$reg/rusty.conf'"
 check "gen: every description of the registry is the manifest's, at most 120 characters" bash -c "for n in $real_names; do dsc=\$(sed -n 's/^DESCRIPTION=//p' '$reg'/\$n.conf); [ -n \"\$dsc\" ] && [ \${#dsc} -le 120 ] && grep -qF -- \"\$dsc\" '$root/real4.tsv' || exit 1; done"
 for n in $real_names; do
     dd="$d/usr/lib/systemd/system/scx@$n.service.d"
     others=$(for o in $real_names; do [ "$o" = "$n" ] || printf 'scx@%s.service ' "$o"; done)
-    check "gen: scx@$n conflicts with and is ordered After= exactly the six others (the old one's stop finishes first), no kernel condition (minimum kernel empty)" bash -c "grep -qx 'Conflicts=${others% }' '$dd/10-conflicts.conf' && grep -qx 'After=${others% }' '$dd/10-conflicts.conf' && [ ! -e '$dd/20-kernel.conf' ]"
+    check "gen: scx@$n conflicts with and is ordered After= exactly all the others (the old one's stop finishes first), no kernel condition (minimum kernel empty)" bash -c "grep -qx 'Conflicts=${others% }' '$dd/10-conflicts.conf' && grep -qx 'After=${others% }' '$dd/10-conflicts.conf' && [ ! -e '$dd/20-kernel.conf' ]"
 done
 # a minimum kernel gives a ConditionKernelVersion drop-in
 printf 'scx_a\tbin/scx_a\t6.12\tAlpha\nscx_b\tbin/scx_b\t\tBeta\n' | mk_dest "$root/d2"; gen "$root/d2"
@@ -59,7 +61,7 @@ printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/d8"; rm "$root/d8/usr/bin/
 check "gen: a scheduler whose binary is not installed fails" test "$rc" != 0
 printf 'scx_a\tbin/scx_a\tsix\tAlpha\n' | mk_dest "$root/d9"; gen "$root/d9"
 check "gen: a minimum kernel that is not MAJOR.MINOR fails" test "$rc" != 0
-check "build.sh generates the registry after installing the binaries, and checks the helpers and the rule are there" bash -c "grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && grep -q 'scx-preflight scx-wait-idle scx-run scx-verify gamemode-start gamemode-end' '$here/build_files/build.sh' && grep -q '50-octarine-scx.rules' '$here/build_files/build.sh'"
+check "build.sh installs the binaries before it generates the registry from the manifest they install (the helper and rule existence is asserted by build.sh itself)" bash -c "b='$here/build_files/build.sh'; i=\$(grep -n '^/ctx/install-binaries.sh' \$b | head -1 | cut -d: -f1); g=\$(grep -n '^/ctx/gen-schedulers.sh' \$b | head -1 | cut -d: -f1); [ -n \"\$i\" ] && [ -n \"\$g\" ] && [ \$i -lt \$g ]"
 
 # ---- the template unit and the preset
 u="$here/system_files/usr/lib/systemd/system/scx@.service"
@@ -75,7 +77,7 @@ check "build files never enable or start a scheduler" bash -c "! grep -E 'system
 rules="$d/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
 tpl="$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in"
 check "polkit: the repo has only the template (the rule that ships is generated at image build from the registry)" bash -c "[ -f '$tpl' ] && grep -q '@INSTANCES@' '$tpl' && [ ! -e '$here/system_files/usr/share/polkit-1/rules.d/50-octarine-scx.rules' ]"
-check "polkit: the generated rule has the exact alternation of the registry instance names, no placeholder, no generic character class" bash -c "grep -qF '/^scx@(rusty|lavd|cake|bpfland|cosmos|flash|p2dq)\\.service\$/' '$rules' && ! grep -q '@INSTANCES@' '$rules' && ! grep -q 'A-Za-z0-9_-' '$rules'"
+check "polkit: the generated rule has the exact alternation of the manifest instance names, no placeholder, no generic character class" bash -c "grep -qF '/^scx@($alt)\\.service\$/' '$rules' && ! grep -q '@INSTANCES@' '$rules' && ! grep -q 'A-Za-z0-9_-' '$rules'"
 cat >"$root/rule-test.js" <<'JSEOF'
 const fs = require("fs");
 let handler = null;
@@ -127,7 +129,7 @@ console.log(cases.length + " simulated actions");
 process.exit(bad ? 1 : 0);
 JSEOF
 if command -v node >/dev/null; then
-    check "polkit rule (node, GENERATED rule): each of the seven real names matches for start and stop, restart does not match for any; unregistered, suffixed, hyphenated, uppercase and empty names, other verbs and subjects do not" node "$root/rule-test.js" "$rules" "$real_names"
+    check "polkit rule (node, GENERATED rule): each of the real names matches for start and stop, restart does not match for any; unregistered, suffixed, hyphenated, uppercase and empty names, other verbs and subjects do not" node "$root/rule-test.js" "$rules" "$real_names"
 else
     bad "polkit rule test needs node (install nodejs)"
 fi

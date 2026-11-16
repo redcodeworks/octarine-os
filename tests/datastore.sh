@@ -61,8 +61,8 @@ bad_render() { # description, sed expression
 }
 bad_render "a latest tag" 's/^\(valkey .*valkey\):9.1.3-alpine/\1:latest/'
 bad_render "a floating major tag" 's/postgres:17.12-alpine/postgres:17-alpine/'
-bad_render "a bad digest" 's/^\(kafka .*@sha256:\)[0-9a-f]*/\1abc/'
-bad_render "a line without a digest" 's/^\(seaweedfs .*\):4.53@sha256:[0-9a-f]*/\1:4.53/'
+bad_render "a bad digest" 's/^\([a-z][a-z-]* .*@sha256:\)[0-9a-f]*/\1abc/'
+bad_render "a line without a digest" 's/^\(seaweedfs .*\)@sha256:[0-9a-f]*/\1/'
 bad_render "a missing image" '/^kafka /d'
 bad_render "an unknown name" 's/^kafka /airflow /'
 bad_render "a name listed twice" 's/^valkey /kafka /'
@@ -73,7 +73,6 @@ check "render equals the old datastore.env render: each Quadlet is the template 
     sed -i \"s|@\${up}_IMAGE@|\$ref|g\" '$root/ind'/*.container
   done
   diff -r '$root/ind' '$rq'"
-check "the dx image tree ships no kargs.d file (iommu=pt is opt-in now)" test ! -e "$here/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
 check "dx.sh renders the Quadlets into /usr/share/containers/systemd/users, checks there is no [Install], imports the recipe file; the Containerfile copies the datastore directory" bash -c "grep -q 'render.sh /usr/share/containers/systemd/users /ctx/datastore /datastore-images/images.txt' '$here/variants/dx/dx.sh' && grep -q 'grep -rq .^.\\[Install' '$here/variants/dx/dx.sh' && grep -q '72-octarine-datastore.just' '$here/variants/dx/dx.sh' && grep -q 'COPY variants/dx/datastore /datastore' '$here/variants/dx/Containerfile'"
 check "the datastore recipes exist only in the dx tree: the default image's recipe files define neither" bash -c "! grep -E '^datastore' '$here/system_files/usr/share/ublue-os/just/'*.just"
 

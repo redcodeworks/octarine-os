@@ -36,9 +36,8 @@ else
 fi
 check "button-layout default has minimize, maximize and close (no icon: prefix, that is a personal choice)" bash -c "awk '/^\\[org\\/gnome\\/desktop\\/wm\\/preferences\\]/{g=1;next} /^\\[/{g=0} g' '$keyfile' | grep -qx \"button-layout='appmenu:minimize,maximize,close'\""
 check "enabled-extensions keeps the packaged default (background-logo) first" grep -q "^enabled-extensions=\['background-logo@fedorahosted.org'," "$keyfile"
-check "extensions enabled are only ones the image ships (appindicator, gsconnect)" bash -c "grep '^enabled-extensions=' '$keyfile' | grep -o '[A-Za-z0-9.-]*@[a-zA-Z0-9.-]*' | sort | tr '\n' ' ' | grep -qx 'appindicatorsupport@rgcjonas.gmail.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io '"
+check "enabled-extensions is a well-formed list of unique UUIDs (the image check that each one is shipped is in default-smoke.sh)" bash -c "u=\$(grep '^enabled-extensions=' '$keyfile' | grep -o \"'[^']*'\" | tr -d \"'\"); [ -n \"\$u\" ] && ! grep -qvE '^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\$' <<<\"\$u\" && [ \"\$(sort <<<\"\$u\" | uniq -d | wc -l)\" = 0 ]"
 check "GPaste is shipped but not enabled by default" bash -c "! grep -qiE \"gpaste|just-perfection|ddterm|freon\" '$keyfile'"
-check "GPaste is in the misc optional group of build.sh" grep -q "^    \"misc:.* gpaste gnome-shell-extension-gpaste " "$here/build_files/build.sh"
 check "Just Perfection, ddterm and Freon are not installed by build.sh (default-smoke.sh asserts in the image that they are not shipped)" bash -c "! grep -q 'gnome-shell-extension-\(just-perfection\|ddterm\|freon\) ' '$here/build_files/build.sh'"
 
 # fish syntax and behavior

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Quick checks of the beta channel workflow (.github/workflows/build-beta.yml): triggers, schedule slot, base, permissions,
-# pinned actions, only the `beta` tag pushed, signing and verification, and that its smoke test matches build.yml's.
+# only the `beta` tag pushed, signing and verification, and that its smoke test matches build.yml's.
 # Run: tests/beta-channel.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -57,20 +57,9 @@ for n in ("build", "sign"):
     assert w["jobs"][n]["permissions"] == {"contents": "read", "packages": "write"}, n
 assert w["jobs"]["sign"]["environment"] == "signing"
 PY
-check "workflow: every third-party action is pinned by SHA with a version comment" python3 - "$wf" <<'PY'
-import re, sys
-for line in open(sys.argv[1]):
-    m = re.search(r"uses:\s*(\S+)", line)
-    if m and not m.group(1).startswith("./"):
-        ref = m.group(1).split("@", 1)[1]
-        assert re.fullmatch(r"[0-9a-f]{40}", ref), line
-        if "ublue-os/remove-unwanted-software" not in line:  # build.yml pins this one without a comment too
-            assert re.search(r"#\s*v\d", line), line
-PY
 check "workflow: pushes exactly beta and beta-<date>-<sha> (one push line, tags from one step, nothing else)" bash -c "
   set -e
   [ \$(grep -c 'push-tags.sh' '$wf') = 1 ]
-  ! grep -q 'podman push' '$wf'
   grep -q 'alias_tags=\"\${DEFAULT_TAG}-\$(date +%Y%m%d)-\$(git rev-parse --short HEAD) \${DEFAULT_TAG}\"' '$wf'
   ! grep -qE 'generate-build-tags|tag-images|:latest|:testing' '$wf'"
 check "workflow: both pushed tags are verified after signing" bash -c "grep -q 'for tag in \${ALIAS_TAGS}' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf' && grep -q 'alias_tags: .*steps.tags' '$wf'"

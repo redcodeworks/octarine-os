@@ -7,7 +7,7 @@
 # `check "<description>" "<command>"`: the command runs under eval, so quote it as ONE string (tests/check-call-shape.sh
 # guards joined strings, which would pass vacuously). Run order matters nowhere; every failure is listed, exit 1 at the end.
 fail=0
-check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+check() { if (eval "$2") >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 
 echo "== os-release (the Fedora release the base tag resolved to)"
 cat /etc/os-release
@@ -120,6 +120,7 @@ check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/wate
 check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
 check "dconf profile lists the distro database" "grep -qx system-db:distro /etc/dconf/profile/user"
 check "dconf distro database holds the enabled extensions (dconf update ran over our keyfile)" "grep -aq enabled-extensions /etc/dconf/db/distro"
+check "every extension enabled by default is shipped (directory in the image), or the build recorded a missing optional package" "for u in \$(grep ^enabled-extensions= /etc/dconf/db/distro.d/90-octarine-os | grep -o \"[A-Za-z0-9._-]*@[A-Za-z0-9._-]*\"); do test -d /usr/share/gnome-shell/extensions/\$u || test -s /usr/share/octarine-os/optional-packages-missing || exit 1; done"
 check "dconf distro database holds our hot corner default" "grep -aq enable-hot-corners /etc/dconf/db/distro"
 check "dconf distro database holds our button-layout default" "grep -aq button-layout /etc/dconf/db/distro"
 for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
