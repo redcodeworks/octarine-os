@@ -255,7 +255,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -277,11 +276,3 @@ jobs:
       - name: Retag testing to latest
         id: promote
         run: .github/scripts/binaries-promote.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}"
-
-      # The image installs from latest and reads it only when it builds, so a moved latest needs a build on main (a dispatch: it builds, never promotes)
-      - name: Build the image on main with the new binaries
-        if: steps.promote.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: gh workflow run build.yml --ref main

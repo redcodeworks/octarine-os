@@ -27,15 +27,19 @@ is_dx_only() {
     esac
 }
 
-# The pipeline-only paths: the files that decide how images are PUBLISHED, not what is in them (the dispatch of the dx run, the publication of
-# `latest`, the failure issue) and their tests. Neither hash counts them: changing one rebuilds neither image. (build.yml and build-dx.yml
-# still count: they contain the builds.)
-# The prebuilt binaries (binaries/, their workflows and scripts) are NOT in this list since 2026-11-16: a testing build reads octarine-binaries:testing, so a binaries
-# change must rebuild the image on testing. On main the same hash decides promotion of the tested testing image (which holds those binaries), so nothing else changes there.
+# The pipeline-only paths: files that run in CI but are not read by any image build, so changing one rebuilds neither image: the publication of `latest`
+# and the rollback, the dx dispatch, the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan
+# config, the git hooks, and the NVIDIA variant (built by its own workflow from the published default image). (build.yml, build-dx.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries (binaries/, their
+# workflows and scripts) are NOT in this list since 2026-11-16: a testing build reads octarine-binaries:testing, so a binaries change must rebuild the image on testing.
+# On main the same hash decides promotion of the tested testing image (which holds those binaries), so nothing else changes there.
 is_pipeline_only() {
     case "$1" in
-        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/workflows/publish-latest.yml) return 0 ;;
-        tests/dispatch-dx.sh | tests/publish-latest.sh | tests/publish-latest-workflow.sh | tests/ci-issue.sh) return 0 ;;
+        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
+        .github/scripts/bump-*.sh | .github/scripts/upstream-check.sh | .github/scripts/ghostty-check.sh) return 0 ;;
+        .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
+        .github/workflows/require-testing-branch.yml | .github/workflows/test.yml | .github/workflows/zizmor.yml) return 0 ;;
+        .github/workflows/build-nvidia.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;
+        .github/zizmor.yml | .github/dependabot.yml | .gitleaks.toml | githooks/*) return 0 ;;
         *) return 1 ;;
     esac
 }

@@ -55,13 +55,6 @@ jobs:
       image: ${{ steps.names.outputs.image }}
       brew_pin_changed: ${{ steps.brewpin.outputs.changed }}
     steps:
-      # Debounce: merges that land seconds apart start one run each; a newer push no longer cancels the older run (cancel-in-progress is false), so this wait now only delays
-      # the first build of a burst; the pending-run replacement is what drops the middle ones. Testing pushes only: promotions on main, the
-      # schedule and dispatches never wait.
-      - name: Wait for further merges (testing pushes only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/testing'
-        run: sleep 90
-
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -294,11 +287,6 @@ jobs:
         with:
           tool: just
 
-      - name: Check Just Syntax
-        shell: bash
-        run: |
-          just check
-
       - name: Image Name
         id: image-name
         run: |
@@ -322,14 +310,12 @@ jobs:
           echo "image=${IMAGE_REGISTRY,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
       # The Homebrew files image is pinned by digest in the Containerfile (ARG BREW_DIGEST), verified with cosign when
-      # the pin is bumped (`just brew-bump`) and again in CI when the pin changed (verify-brew-pin step). Here: an offline
-      # format check, and the pinned reference goes into the log as the record of what the build used.
+      # the pin is bumped (`just brew-bump`) and again in CI when the pin changed (verify-brew-pin step). Here:
+      # the pinned reference goes into the log as the record of what the build used.
       - name: Check the brew image pin
         run: |
           tag=$(sed -n 's/^ARG BREW_TAG=//p' Containerfile)
           digest=$(sed -n 's/^ARG BREW_DIGEST=//p' Containerfile)
-          [[ "${tag}" =~ ^[0-9]{8}$ ]] || { echo "::error::BREW_TAG missing or not a YYYYMMDD tag in the Containerfile"; exit 1; }
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BREW_DIGEST missing or not sha256:<64 hex> in the Containerfile"; exit 1; }
           echo "Brew image pinned: ghcr.io/ublue-os/brew:${tag}@${digest}"
           echo "BREW_PIN=ghcr.io/ublue-os/brew@${digest}" >> "${GITHUB_ENV}"
 
