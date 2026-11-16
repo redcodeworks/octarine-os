@@ -9,8 +9,8 @@ image (`latest-<sha7>`, `latest-YYYYMMDD`, `latest-YYYYMMDD-<sha7>`, `YYYYMMDD`,
 created_at) are kept; the older candidates are deleted. The cosign signature version (`sha256-<digest>.sig`) of each deleted image is deleted
 with it, and so is a signature whose image digest is not a version of this package at all (provable from the list).
 
-PROTECT (space separated sha256 digests, set by the workflow) lists images that must never be deleted: the digest behind `latest` and the base
-image of the current dx `latest` (that pairing is a label of the dx image, so the workflow reads it and passes it in).
+PROTECT (space separated sha256 digests, set by the workflow) lists images that must never be deleted: the digest behind each image's own `latest` and the base
+image of each variant `latest` (dx, gx; that is a label of the variant image, so the workflow reads it and passes it in).
 
 DRY_RUN (default true) only prints the plan. API_BASE (e.g. users/<owner>/packages/container/<name>) is needed to delete. More than MAX_DELETES
 (default 30) versions in the plan: nothing is deleted and the run fails.
