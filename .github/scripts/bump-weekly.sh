@@ -52,7 +52,7 @@ body="One commit per pin that moved. To drop a pin, revert its commit (\`git rev
 | pin | from | to | what changed upstream | days the new value has existed |
 |---|---|---|---|---|
 ${rows}
-Only pin lines change. Zig moves with Ghostty in one commit (a Ghostty tag needs its Zig minor); a Zig patch alone is its own commit. A builder bump rebuilds every binaries component once after the merge. Check the scheduler READMEs when scx moves. Not verified: nothing was built or booted by the bump; the checks below run the test suite on the branch tip, and the image build after the merge into \`${base}\` is the first build with these pins. The owner merges this pull request.
+Only pin lines change. Zig moves only inside the Ghostty commit (a Ghostty tag needs its Zig minor), never on its own. A builder bump rebuilds every binaries component once after the merge. Check the scheduler READMEs when scx moves. Not verified: nothing was built or booted by the bump; the checks below run the test suite on the branch tip, and the image build after the merge into \`${base}\` is the first build with these pins. The owner merges this pull request.
 
 Checks: this commit is tested by the \`Test\` workflow (dispatched on \`${base}\` for it, because a pull request opened with the workflow token starts no workflow itself) and its \`test\` and \`secrets\` results are reported here as check runs. If they are missing, run the bump workflow again (\`gh workflow run bump-pins.yml --ref ${base}\`): it makes a new branch and pull request and closes this one."
 

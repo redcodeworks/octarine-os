@@ -14,15 +14,9 @@ name: Prebuilt binaries
 # Only testing and main publish; on any other ref (a validation dispatch) components are built and checked but never pushed or signed,
 # no digest is handed over, and the image build then stops with an instruction (binaries-use.sh).
 #
-# Own runs (Kevin, 2026-11-14; the README badge): a WEEKLY `schedule` on main (no `push` trigger since 2026-11-16: build.yml calls this workflow
-# on every push, and a second run of the same content could race it on the same `c-<component>-<key>` tag) (Friday 08:00 UTC) runs it under its own name; a called run belongs to the
-# caller. An own `schedule` (or any `push`) run NEVER publishes or signs: the push run only proves that this content builds (it reuses already
-# signed images when the caller published them first), and the schedule run ignores the reuse shortcut and builds again against the
-# pinned sources and today's Fedora 45 packages, failing visibly when a required component fails. Nothing of it gets the signing secret
-# (the sign jobs are skipped).
+# Nothing rebuilds the binaries on a timer: they and their pins (Zig and the builder included) change only through a pull request that is
+# approved and merged, and then build.yml's call here builds them. To rebuild by hand: `gh workflow run binaries.yml --ref <branch>`.
 on:
-  schedule:
-    - cron: "0 8 * * 5"  # Fridays 08:00 UTC: validate that the binaries still build (nothing is published)
   workflow_call:
     secrets:
       SIGNING_SECRET:
@@ -103,7 +97,6 @@ jobs:
       components: ${{ steps.decide.outputs.components }}
       image: ${{ steps.names.outputs.image }}
       usable: ${{ steps.final.outputs.usable }}
-      nopublish: ${{ steps.final.outputs.nopublish }}
       published: ${{ steps.channel.outputs.publish }}
       ok: ${{ steps.record.outputs.ok }}
       digest: ${{ steps.final.outputs.digest }}
@@ -175,19 +168,13 @@ jobs:
         id: channel
         env:
           REF: ${{ github.ref }}
-          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
-          EVENT: ${{ github.event_name }}
         run: |
           publish=false
           case "${REF}" in
             refs/heads/main | refs/heads/testing) publish=true ;;
           esac
-          nopublish=false
-          if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
-          [[ "${nopublish}" != true ]] || publish=false
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
-          echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
-          echo "publish=${publish} nopublish=${nopublish} (only testing and main publish; any other ref builds for validation)"
+          echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
 
       - name: Published and signed already?
         id: lookup
@@ -197,24 +184,17 @@ jobs:
           KEY: ${{ steps.decide.outputs.key }}
         run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${KEY}"
 
-      # the assembled image of this key is reused when it exists and verifies, except for the weekly validation run (it builds again)
-      - name: Usable (not for the weekly validation)
+      # the assembled image of this key is reused when it exists and verifies
+      - name: Usable
         id: final
         env:
           LOOKUP: ${{ steps.lookup.outputs.usable }}
           LOOKUP_DIGEST: ${{ steps.lookup.outputs.digest }}
-          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
-          EVENT: ${{ github.event_name }}
-          NOPUBLISH: ${{ steps.channel.outputs.nopublish }}
         run: |
           usable=${LOOKUP:-false}
-          force=false
-          if [[ "${OWN}" == true && "${EVENT}" == schedule ]]; then force=true; fi
-          [[ "${force}" != true ]] || usable=false
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
-          echo "nopublish=${NOPUBLISH}" >> "${GITHUB_OUTPUT}"
           [[ "${usable}" != true ]] || echo "digest=${LOOKUP_DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "usable=${usable} nopublish=${NOPUBLISH} force=${force}"
+          echo "usable=${usable}"
 
       # Assemble from the component images by digest (each verified again), layout check, push. A failure does not fail the job:
       # the record step says, the result job decides.
@@ -337,7 +317,6 @@ jobs:
       hash: ${{ needs.assemble.outputs.key }}
       image: ${{ needs.assemble.outputs.image }}
       degraded: ${{ needs.assemble.outputs.degraded }}
-      nopublish: ${{ needs.assemble.outputs.nopublish }}
     steps:
       - name: Pick the digest
         id: pick

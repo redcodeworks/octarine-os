@@ -7,7 +7,7 @@
 #
 #   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|brew|builder
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins), image digest pins (bump-pin.sh: the dev-packages
+# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins together), image digest pins (bump-pin.sh: the dev-packages
 # list image of the fedora-toolbox repository, chunkah), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
 # on every write) and the Fedora builder digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for
 # MIN_AGE_DAYS, default 7: the creation date of the image is the stand-in for "has not been replaced since", a registry has no tag history).
@@ -69,9 +69,6 @@ case "${pin}" in
             bump) # a new Ghostty tag brings the Zig minor it needs: one commit for both, they cannot be applied apart
                 proposed="${a1}, zig ${a3}"; "${here}/bump-ghostty.sh" ghostty "${a1}" "${a2}" "${a3}" "${a4}" "${a5}" "${a6}" || fail "bump-ghostty.sh failed"
                 commit_pin "Bump ghostty to ${a1} (Zig ${a3})" "https://github.com/${UPSTREAM_WATCH}/compare/${UPSTREAM_TAG}...${a1}" "$(commit_age "${UPSTREAM_WATCH}" "${a2}")" ;;
-            zigbump) # a newer patch of the pinned Zig minor, its own commit
-                proposed="${current%%,*}, zig ${a1}"; "${here}/bump-ghostty.sh" zig "${a1}" "${a2}" "${a3}" "${a4}" || fail "bump-ghostty.sh failed"
-                commit_pin "Bump the Ghostty Zig toolchain to ${a1}" "https://ziglang.org/download/${a1}/" "unknown" ;;
             wait) status="nothing to bump yet: ${decision#wait }" ;;
             unreachable) fail "${decision#unreachable }" ;;
             *) status="nothing to bump: ${decision}" ;;

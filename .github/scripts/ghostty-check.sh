@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-# Ask upstream whether Ghostty (binaries/ghostty) or its Zig toolchain has something newer than the pins, and print ONE decision line:
+# Ask upstream whether Ghostty (binaries/ghostty) has a newer stable tag than the pin, and print ONE decision line (Zig is only ever moved together with the tag):
 #
 #   ghostty-check.sh
 #
 #   current <what>                                      nothing to do
 #   bump <tag> <commit> <zig-version> <url> <sha256> <size>   a newer STABLE Ghostty tag (v<major>.<minor>.<patch> only: not tip, not vt-*, not a
 #                                                       pre-release) with its peeled commit, and the Zig release that goes with it
-#   zigbump <zig-version> <url> <sha256> <size>         same Ghostty tag, a newer patch of the PINNED Zig minor (a separate low-priority pull request)
 #   wait <tag> <text>                                   a newer Ghostty tag exists but ziglang.org has no published x86_64-linux tarball of the Zig minor
 #                                                       it needs yet: nothing is opened (the job summary says so); the next weekly run tries again
 #   unreachable <text>                                  something could not be asked or read; fail soft (exit 0)
 #
 # The Zig MINOR follows from the Ghostty tag, never independently: for a new tag the minimum is read from `.minimum_zig_version` in that tag's
 # build.zig.zon (gh api), the newest published patch of that minor comes from ziglang.org/download/index.json (x86_64-linux tarball, shasum, size).
-# Ghostty's build (src/build/zig.zig requireZig) accepts the same major.minor with any patch >= the minimum, so a newer patch of the pinned minor is
-# allowed; it is checked against the minimum at the PINNED tag. Reads upstream.env and zig.env of binaries/ghostty. Overrides for the tests: REPO_ROOT,
+# Ghostty's build accepts the same major.minor with any patch >= the minimum, so the newest published patch of that minor goes in with the tag. A Zig release alone never
+# causes a bump. Reads upstream.env and zig.env of binaries/ghostty. Overrides for the tests: REPO_ROOT,
 # ZIG_INDEX_FILE (a local copy of index.json, else downloaded with curl). Only `gh api` GET reads; nothing is written.
 # shellcheck disable=SC2015
 set -uo pipefail
@@ -66,16 +65,5 @@ if [[ "${latest}" != "${pin_tag}" && "${top}" == "${latest}" ]]; then
     exit 0
 fi
 
-# the pinned tag is current (or ahead of the newest stable tag): a newer patch of the pinned Zig minor?
-min=$(min_zig_at "${pin_tag}")
-[[ "${min}" =~ ^0\.[0-9]+\.[0-9]+$ ]] || { echo "unreachable cannot read minimum_zig_version of ${repo} ${pin_tag}"; exit 0; }
-pin_minor=${pin_zig%.*}
-if [[ "${min%.*}" != "${pin_minor}" ]]; then echo "unreachable the pinned Zig ${pin_zig} is not of the minor ${min%.*} that ${pin_tag} requires: fix zig.env by hand"; exit 0; fi
-zv=$(newest_patch "${pin_minor}")
-if [[ -n "${zv}" && "${zv}" != "${pin_zig}" && "$(printf '%s\n%s\n' "${pin_zig}" "${zv}" | sort -V | tail -n1)" == "${zv}" ]]; then
-    [[ "$(printf '%s\n%s\n' "${min}" "${zv}" | sort -V | tail -n1)" == "${zv}" ]] || { echo "current ${pin_tag} with Zig ${pin_zig}"; exit 0; }
-    e=$(entry "${zv}") || { echo "unreachable index.json has no official x86_64-linux tarball entry for ${zv}"; exit 0; }
-    echo "zigbump ${zv} ${e}"
-    exit 0
-fi
-echo "current ${pin_tag} is the newest stable Ghostty tag and Zig ${pin_zig} the newest published ${pin_minor}.x"
+# the pinned tag is current (or ahead of the newest stable tag): nothing to do; Zig changes only together with a Ghostty tag
+echo "current ${pin_tag} is the newest stable Ghostty tag (Zig ${pin_zig})"

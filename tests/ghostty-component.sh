@@ -250,9 +250,6 @@ check "check: the pinned tag is the newest stable tag and Zig the newest publish
 setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0 v1.5.0 v1.5.0-rc1 tip vt-1.0.1 v1.3.1; zi 0.17.0 0.17.1 0.17.2; newc v1.5.0 0.17.0; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: a new tag with an unchanged Zig minor: bump with the tag, its peeled commit and the NEWEST published patch of that minor (0.17.2), with URL, sha256 and size from index.json" bash -c "[ \"$out\" = \"bump v1.5.0 $(sha c) 0.17.2 https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz $zsh2 123\" ]"
-setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0 v1.5.0-rc1 v1.5.0-rc2 tip vt-1.0.2 vt-1.1.0; zi 0.17.0 0.17.1 0.17.2; newc v1.4.0 0.17.0
-out=$(chk)
-check "check: pre-releases, tip and vt-* tags are ignored (and the same-tag run still finds the newer Zig patch: zigbump)" bash -c "[ \"$out\" = \"zigbump 0.17.2 https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz $zsh2 123\" ]"
 setpin v1.4.0 0.17.1; reply; tagsfile v1.9.0 v1.10.0 v1.4.0; zi 0.17.0 0.17.1; newc v1.10.0 0.17.0; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: tags are compared as versions (v1.10.0 is newer than v1.9.0 and v1.4.0)" bash -c "[[ \"$out\" == 'bump v1.10.0 '* ]]"
@@ -271,12 +268,6 @@ check "check: the new tag needs Zig 0.17.3 or newer and only 0.17.1 is published
 setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0; printf '{"0.17.1":{"x86_64-linux":{"tarball":"https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz","shasum":"%s","size":"1"}},"0.17.2":{"aarch64-linux":{"tarball":"x","shasum":"y","size":"1"}}}\n' "$zsh1" >"$root/idx.json"; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: a newer patch that has no x86_64-linux tarball is not offered" bash -c "[[ \"$out\" == current* ]]"
-setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0; zi 0.17.0 0.17.1; newc v1.4.0 0.17.2
-out=$(chk)
-check "check: the pinned Zig is below the minimum of the pinned tag: no zigbump is offered below it" bash -c "[[ \"$out\" == current* ]]"
-setpin v1.4.0 0.16.0; reply; tagsfile v1.4.0; zi 0.17.0 0.17.1; newc v1.4.0 0.17.0
-out=$(chk)
-check "check: a pinned Zig of another minor than the tag requires is reported unreachable (fix by hand), not auto-bumped" bash -c "[[ \"$out\" == unreachable* ]]"
 setpin v1.4.0 0.17.1; reply; zi 0.17.1
 check "check: the tags API failing is unreachable (fail soft, exit 0)" bash -c "[[ \"\$(PATH='$bin:$PATH' REPO_ROOT='$cr' ZIG_INDEX_FILE='$root/idx.json' bash '$cr/.github/scripts/ghostty-check.sh'; echo rc=\$?)\" == *unreachable*rc=0 ]]"
 reply; tagsfile v1.4.0 v1.5.0; newc v1.5.0 0.17.0; echo 'not json' >"$root/idx.json"
@@ -296,13 +287,8 @@ check "bump ghostty: upstream.env AND zig.env change together (tag, peeled commi
   [ $rc = 0 ] && z=\$(cat '$wc/binaries/ghostty/zig.env') && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
   grep -qx 'ZIG_SIGNATURE_URL=$Z3.minisig' <<<\"\$z\" && grep -qx 'ZIG_MINISIGN_KEY=$key' <<<\"\$z\" && grep -q '^# ' <<<\"\$z\" &&
   u=\$(cat '$wc/binaries/ghostty/upstream.env') && grep -qx 'UPSTREAM_TAG=v1.5.0' <<<\"\$u\" && grep -qx 'UPSTREAM_COMMIT=$(sha d)' <<<\"\$u\""
-cp "$root/up.orig" "$wc/binaries/ghostty/upstream.env"; cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"
-bump zig 0.17.2 "$Z2" "$(printf 'd%.0s' {1..64})" 555
-check "bump zig: only zig.env changes (upstream.env is untouched)" bash -c "[ $rc = 0 ] && cmp -s '$root/up.orig' '$wc/binaries/ghostty/upstream.env' && grep -qx 'ZIG_VERSION=0.17.2' '$wc/binaries/ghostty/zig.env'"
-cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"; bump zig 0.17.2 "https://example.org/zig.tar.xz" "$(printf 'd%.0s' {1..64})" 555
-check "bump: Zig arguments that are not an official ziglang.org x86_64-linux entry are refused before anything is touched" bash -c "[ $rc = 2 ] && cmp -s '$g/zig.env' '$wc/binaries/ghostty/zig.env'"
-bump other 1 2 3 4
-check "bump: an unknown mode is refused" test "$rc" = 2
+bump zig 0.17.2 1 2 3
+check "bump: a standalone Zig bump is refused (mode zig no longer exists)" test "$rc" = 2
 
 echo
 echo "passed: $pass, failed: $failn"
