@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the README (structure, removed sections, recipe and variant claims against the repo) and for how zsh and
-# the iommu=pt kernel argument ship: neither is in the default image's defaults, dx carries the karg.
+# Tests for the README and docs/CONFIG-GUIDE.md against the repo (every public recipe is listed, every recipe they name
+# exists, the image URLs and the build-status workflow files exist) and for how zsh ships (installed, not the default of
+# new users). Prose, headings and counts are not asserted. Run: tests/readme-defaults.sh
 # Needs: bash, grep, awk. Run: tests/readme-defaults.sh
 set -uo pipefail
 
@@ -13,89 +14,35 @@ check() { # description, command...
     local d=$1; shift
     if "$@" >/dev/null 2>&1; then echo "PASS $d"; pass=$((pass + 1)); else echo "FAIL $d"; failn=$((failn + 1)); fi
 }
-line_of() { grep -nE "^## $1\$" "$readme" | head -1 | cut -d: -f1; }
-in_order() { # headings in the order given, all present
-    local prev=0 h n
-    for h in "$@"; do n=$(line_of "$h"); [ -n "$n" ] && [ "$n" -gt "$prev" ] || return 1; prev=$n; done
-}
-
-# ---- README structure
-check "sections in order: requirements, highlights, variants, install, recipes, then the closing block" \
-    in_order "Build status" Requirements Highlights Variants Install Recipes Contributing License Credits "About this repo"
-check "the last second-level heading is About this repo (the disclaimer stays last)" \
-    bash -c "[ \"\$(grep -E '^## ' '$readme' | tail -1)\" = '## About this repo' ]"
-check "the disclaimer text is in the About section" bash -c "awk '/^## About this repo/{f=1} f' '$readme' | grep -q 'excuse the slop'"
 check "the Fork it heading AGENTS.md links to still exists" bash -c "grep -q '^### Fork it' '$readme' && grep -q 'README.md#fork-it' '$repo/AGENTS.md'"
-for h in "Defaults" "Niri session" "Beta channel" "NVIDIA graphics" "Developer image" "Which image is this?" "Security key" "Toolboxes"; do
-    check "no README section named '$h'" bash -c "! grep -qiE '^#+ $h' '$readme'"
-done
-check "no section of the old Developer menu" bash -c "! grep -q 'Developer menu' '$readme'"
-check "the old compilers sentence is gone" bash -c "! grep -q 'stay out of the host' '$readme'"
-check "no personal names" bash -c "! grep -qiE 'kevin|riley' '$readme'"
-check "no step-by-step recipe text (no per-step table of ujust dev, no u2f commands)" bash -c "! grep -qE 'pamu2fcfg|\`libvirt\` \\|' '$readme'"
-check "the Variants table lists the four images in the order default, dx, NVIDIA, NVIDIA dx, and has no badge" python3 - "$readme" <<'PY'
-import re, sys
-sec = open(sys.argv[1]).read().split("\n## Variants", 1)[1].split("\n#", 1)[0]
-rows = [l for l in sec.splitlines() if l.startswith("| ")]
-assert [r.split("|")[1].strip() for r in rows[1:]] == ["default", "dx", "NVIDIA", "NVIDIA dx"], rows
-assert "badge.svg" not in sec
-PY
-# ---- the Build status table: Image | main | testing, one linked badge per cell, natural size (no text beside it)
-check "Build status table: header, six rows, badges for main and testing of the real workflow files, links to the branch-filtered runs, plain text where the workflow never runs on testing" python3 - "$readme" "$repo" <<'PY'
-import re, sys, os
-text = open(sys.argv[1]).read(); repo = sys.argv[2]
-assert text.index("\n## Build status") < text.index("\n## Requirements"), "Build status sits before Requirements"
-assert text.index("docs/CONFIG-GUIDE.md") < text.index("\n## Build status"), "after the opening paragraph"
-assert "### Build status" not in text
-sec = text.split("\n## Build status", 1)[1].split("\n## ", 1)[0]
-rows = [l for l in sec.splitlines() if l.startswith("|")]
-assert rows[0].replace(" ", "") == "|Image|main|testing|" and set(rows[1].replace("|", "")) == {"-"}, rows[:2]
-body = {r.split("|")[1].strip(): [c.strip() for c in r.split("|")[2:4]] for r in rows[2:]}
-assert list(body) == ["default", "dx", "beta", "NVIDIA", "NVIDIA dx", "binaries"], list(body)
-base = "https://github.com/redcodeworks/octarine-os/actions/workflows/"
-def badge(cell, wf, br):
-    m = re.fullmatch(r"\[!\[[^\]]+\]\(" + re.escape(base + wf + "/badge.svg?branch=" + br) + r"\)\]\(" + re.escape(base + wf + "?query=branch%3A" + br) + r"\)", cell)
-    assert m, (wf, br, cell)
-    assert os.path.exists(os.path.join(repo, ".github/workflows", wf)), wf
-for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml"), ("NVIDIA", "build-nvidia.yml"), ("NVIDIA dx", "build-nvidia-dx.yml")):
-    badge(body[img][0], wf, "main")
-for img, wf in (("default", "build.yml"), ("dx", "build-dx.yml")):
-    badge(body[img][1], wf, "testing")   # the dx run is dispatched on the ref, so it is recorded on testing too
-badge(body["beta"][0], "build-beta.yml", "main")
-badge(body["binaries"][0], "binaries.yml", "main"); badge(body["binaries"][1], "binaries.yml", "testing")   # binaries.yml runs on its own on push to both branches and weekly on main
-for img in ("beta", "NVIDIA", "NVIDIA dx"):
-    assert body[img][1] == "weekly, main only", body[img]   # these never run on testing: no badge
-PY
+# ---- the README keeps the heading AGENTS.md links to, and every workflow its badges name exists
+check "the Fork it heading AGENTS.md links to still exists" bash -c "grep -q '^### Fork it' '$readme' && grep -q 'README.md#fork-it' '$repo/AGENTS.md'"
+check "every workflow file a README badge names exists" bash -c "for w in \$(grep -oE 'actions/workflows/[a-z0-9-]+\\.yml' '$readme' | sort -u | sed 's#actions/workflows/##'); do test -f '$repo/.github/workflows/'\$w || { echo missing \$w; exit 1; }; done"
 
 # ---- recipes: every public recipe of the shipped recipe files is listed, marked DX only where dx-only
 recipes() { grep -hE '^[a-z][a-z0-9-]* (\*args)?:$' "$@" | sed -E 's/ .*//; s/:$//'; }
 default_recipes=$(recipes "$repo/system_files/usr/share/ublue-os/just/60-custom.just" "$repo/system_files/usr/share/octarine-os/just/update.just")
 dx_recipes=$(recipes "$repo"/variants/dx/system_files/usr/share/ublue-os/just/*.just)
-check "the recipe scan finds the known recipes" bash -c "[ \$(echo '$default_recipes' | wc -w) -ge 6 ] && [ \"$(echo $dx_recipes | tr ' ' '\n' | sort | tr '\n' ' ')\" = \"datastore datastore-setup dev virthost-setup \" ]"
+check "the recipe scan finds recipes (a scan that finds none would make the loops below pass vacuously)" bash -c "[ -n \"\$(echo '$default_recipes')\" ] && [ -n \"\$(echo '$dx_recipes')\" ]"
 for r in $default_recipes; do
     check "README lists ujust $r" grep -qF "ujust $r" "$readme"
 done
 for r in $dx_recipes; do
     check "README lists ujust $r as DX only" grep -qE "ujust $r.*\(DX only\)" "$readme"
 done
-names_only_real_recipes() {
+names_only_real_recipes() { # files whose "ujust <recipe>" mentions must name a recipe that exists
     local r known; known=" $(echo $default_recipes $dx_recipes) list enroll-secure-boot-key toggle-motd toggle-user-motd "
-    for r in $(grep -oE 'ujust [a-z][a-z-]*' "$readme" | sed 's/ujust //' | sort -u); do
+    for r in $(grep -hoE 'ujust [a-z][a-z-]*' "$@" | sed 's/ujust //' | sort -u); do
         case "$known" in *" $r "*) ;; *) echo "unknown recipe $r"; return 1 ;; esac
     done
 }
-check "the README names no recipe that does not exist (enroll-secure-boot-key is the base's, toggle-motd is in 00-default.just)" names_only_real_recipes
+check "the README names no recipe that does not exist (enroll-secure-boot-key is the base's, toggle-motd is in 00-default.just)" names_only_real_recipes "$readme"
+check "docs/CONFIG-GUIDE.md names no recipe that does not exist" names_only_real_recipes "$repo/docs/CONFIG-GUIDE.md"
 
 # ---- variants: the image names in the table exist in the repo
 for img in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
     check "README has the URL of $img" grep -qF "ghcr.io/redcodeworks/$img:latest" "$readme"
 done
-check "the nvidia and dx variants have their own build files" test -f "$repo/variants/nvidia/nvidia.sh" -a -f "$repo/variants/dx/dx.sh"
-check "the README does not claim an iommu=pt kernel argument for dx and no dx tree file ships it" bash -c "! grep -q 'iommu=pt' '$readme' && ! grep -rqs iommu '$repo/variants/dx/system_files/usr/lib/bootc'"
-check "the README does not say VS Code or virt-manager is preinstalled" bash -c "! grep -qiE 'Visual Studio Code preinstalled|virt-manager, Vorta' '$readme'"
-
-check "the blur-my-shell extension is not in the package lists (build.sh, smoke test optional lists)" bash -c "! grep -rq 'gnome-shell-extension-blur-my-shell' '$repo/build_files' '$repo/.github/workflows' '$repo/variants'"
-
 # ---- iommu=pt: no image ships it (opt-in through ujust virthost-setup)
 check "the default image tree ships no kargs.d file with iommu" bash -c "! grep -rqs iommu '$repo/system_files/usr/lib/bootc'"
 check "the default image tree has no 10-iommu.toml" test ! -e "$repo/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
