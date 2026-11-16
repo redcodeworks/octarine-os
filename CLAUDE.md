@@ -39,9 +39,9 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   `toggle-nvk` recipe is still installed, generate the
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
-- `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
+- `Justfile` (repo root, not in the image): build and release recipes. `just check` runs `just --fmt --check`.
 - `.github/workflows/`: `build-dx.yml` (the dx image, see "Input hashes and dx on testing"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
-  environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
+  environment), `require-testing-branch.yml`, `prune-testing.yml` (details under "CI and
   signing flow").
 - `config/`: `image.env` (IMAGE_NAME, REPO_NAME and the label values; the Justfile loads it with `set dotenv-path`, the workflows read it by path; renamed from the template's `image-template.env` on 2026-11-14) and `chunkah.env` (the chunkah pin). Both are image-build inputs (any path outside `docs/`, `tests/` and top-level `*.md` is). `docs/` holds `CONFIG-GUIDE.md` (moved from the root 2026-11-14); `artifacthub-repo.yml` (template stub) was deleted the same day.
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -88,7 +88,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - **brew** (new): the newest 8-digit dated tag of `ghcr.io/ublue-os/brew` (the rule of `just brew-bump`), only when newer than `ARG BREW_TAG`; `just brew-bump <tag>` IS the pin writer (digest and the cosign check against `keys/ublue-os-brew-cosign.pub`).
 - **builder** (new): `binaries/builder.env` keeps the Fedora major and moves to the current digest of `fedora:<major>` only once that digest has been the tag's value for `MIN_AGE_DAYS` (default 7; the image's creation date is the stand-in, a registry has no tag history; the same idea as a Dependabot cooldown, and it avoids rebuilding every component for a digest that Fedora replaces the next day). A builder bump changes the content key of EVERY binaries component (about 4.4 min scx, 1 min extest, 11 min Ghostty on a runner, in parallel): the PR body says so.
 - The datastore-images pin was removed on 2026-11-16 (item 15): the datastore bundle is fetched on demand by `ujust datastore-install`, see "Datastore containers".
-- Stay MANUAL by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor in `setup-tool` and the workflows), bootc-image-builder, the runner label, the repository variables and the signing key. Tests: `tests/bump-run.sh` (helper, brew and builder with stub registries, the table, the workflow and this list), `tests/bump-pins.sh`, `tests/upstream-check.sh`.
+- Stay MANUAL by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor in `setup-tool` and the workflows), the runner label, the repository variables and the signing key. Tests: `tests/bump-run.sh` (helper, brew and builder with stub registries, the table, the workflow and this list), `tests/bump-pins.sh`, `tests/upstream-check.sh`.
 
 ## Prebuilt binaries (binaries/)
 
@@ -417,7 +417,6 @@ Compared with Bluefin's `build_files/` (shared/validate-repos.sh, base/04-packag
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
-The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
 ## Branching: GitLab Flow
 
@@ -646,7 +645,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `just build` and re-passed by the rechunk. Failure modes: a stale or unavailable registry lookup builds (costs minutes,
   never skips wrongly); a base digest label from a different lookup method would build every day (the build computes the
   label the same way the plan does).
-- **Runners and cache.** Every job runs on the pinned `ubuntu-26.04` (build-disk also `ubuntu-26.04-arm`), not
+- **Runners and cache.** Every job runs on the pinned `ubuntu-26.04`, not
   `ubuntu-latest`, so the toolchain (podman, skopeo, just) changes only when this repo changes it. No layer or registry
   cache: the image is one large `RUN build.sh` after `COPY system_files`, whose cache key changes with every commit and
   with the daily base, so a layer cache would almost never hit, and the rechunk step rebuilds the layers anyway; the
@@ -691,10 +690,6 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   aggregate means built, signed and published. `aggregate-result.sh` (tested by `tests/aggregate-result.sh`)
   accepts a skipped `sign` only when nothing was published and fails when sign was expected and did not succeed. Pruning stays safe: a version
   carrying `latest*` next to `testing*` tags is never a candidate (`tests/prune-testing.sh`).
-- **Disk images.** `build-disk.yml` runs only on `workflow_dispatch` (Run workflow in the Actions tab, or
-  `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
-  `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
-  container`). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
 
 ## Input hashes and dx on testing
 
@@ -1506,8 +1501,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `build.yml` asserts `libvirt`, `qemu-kvm`, `cockpit-machines`, `virt-manager`, `virt-viewer` and `libvirt-nss`
   are absent (and `guestfs-tools` present); `nvidia-smoke.sh present` asserts the same for the plain NVIDIA image (skipped for an
   `-dx` image id); `dx-smoke.sh` asserts the full set, the `libvirtd`, `virtqemud`, `virtnetworkd` and `virtstoraged` units and
-  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). The root `Justfile` recipe `test-vm`
-  needs libvirt on the host, so it runs on a dx machine. Switching a machine from dx to the default image removes VM hosting
+  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). Switching a machine from dx to the default image removes VM hosting
   (`ujust dev --only libvirt` and `ujust virthost-setup` are dx-only; the hardware-setup `virtualization` step was removed; the user's `libvirt` group membership stays
   in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
   2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
@@ -1638,8 +1632,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 Edit `config/image.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key
 (`COSIGN_PASSWORD="" cosign generate-key-pair`), commit `cosign.pub`, create a protected environment
 `signing` limited to `main` and `testing` (deployment branch policies through the API) and store the private key
-as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Point `disk_config/iso.toml` at the
-image, review `build.sh` and `system_files/`, enable Actions and make the GHCR package public.
+as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Review `build.sh` and `system_files/`, enable Actions and make the GHCR package public.
 
 ## build.sh notes
 
