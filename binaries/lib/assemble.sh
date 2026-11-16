@@ -12,7 +12,7 @@ set -euo pipefail
 dir="${1:?directory}"
 [[ -s "${dir}/COMPONENTS" ]] || { echo "assemble.sh: ${dir}/COMPONENTS is missing or empty" >&2; exit 1; }
 comps=()
-while IFS=$'\t' read -r name _; do [[ -z "${name}" || "${name}" == \#* ]] || comps+=("${name}"); done < "${dir}/COMPONENTS"
+mapfile -t comps < <(jq -r .name "${dir}/COMPONENTS")
 for c in "${comps[@]}"; do
     for f in LICENSES SOURCE BUILDINFO; do
         [[ -e "${dir}/${c}/${f}" ]] || { echo "assemble.sh: ${dir}/${c}/${f} is missing" >&2; exit 1; }

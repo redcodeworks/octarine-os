@@ -45,7 +45,7 @@ check "decision: a signed image of this key existed: status reused with its dige
 dec PUBLISHED=false SIGN=skipped
 check "decision: built on a ref that cannot publish: status validated, no digest" bash -c "[ $rc = 0 ] && grep -qx 'status=validated' '$root/gho' && grep -qx 'digest=' '$root/gho'"
 dec BUILD_OK=true SIGN=failure
-check "decision: signing failed: fails" bash -c "[ $rc = 1 ] && grep -q 'signing the scx image failed' '$root/run' && grep -qP '\tfailed\t' '$root/res/scx.tsv'"
+check "decision: signing failed: fails" bash -c "[ $rc = 1 ] && grep -q 'signing the scx image failed' '$root/run' && jq -e '.status == \"failed\"' '$root/res/scx.json'"
 dec BUILD_OK=false SIGN=skipped
 check "decision: a component whose build failed FAILS (no older image is used instead)" bash -c "[ $rc = 1 ] && grep -qx 'status=failed' '$root/gho' && grep -q 'the build failed' '$root/run'"
 dec CHECK=failure BUILD=skipped
@@ -58,7 +58,16 @@ mkdir -p "$root/res2"
 printf 'scx\nextest\nghostty\n' >"$root/comps.tsv"
 D1=sha256:$(printf '1%.0s' {1..64}); D2=sha256:$(printf '2%.0s' {1..64}); D3=sha256:$(printf '3%.0s' {1..64})
 K1=$(printf '1%.0s' {1..40}); K2=$(printf '2%.0s' {1..40}); K3=$(printf '3%.0s' {1..40})
-res() { printf '%s\t%s\t%s\t%s\t\n' "$1" "$2" "$3" "$4" >"$root/res2/$1.tsv"; }
+# the result of a component, made by the REAL writer (binaries-decide.sh): res <name> built|reused|failed|validated <digest> <key>
+res() {
+    local e=(COMPONENT="$1" CHECK=success USABLE=false CHECK_DIGEST= KEY="$4" BUILD=success BUILD_OK=true PUBLISHED=true SIGN=success SIGN_DIGEST="$3" RESULT_DIR="$root/res2")
+    case "$2" in
+        reused) e+=(USABLE=true CHECK_DIGEST="$3") ;;
+        failed) e+=(BUILD_OK=false) ;;
+        validated) e+=(PUBLISHED=false SIGN=skipped) ;;
+    esac
+    env "${e[@]}" bash "$here/.github/scripts/binaries-decide.sh" >/dev/null 2>&1 || true
+}
 asm() { : >"$root/gho"; env GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-assemble.sh" "$root/comps.tsv" "$root/res2" "$root/out2" >"$root/run" 2>&1; rc=$?; }
 rm -f "$root/res2"/*; res scx built $D1 $K1 ""; res extest reused $D2 $K2 ""; res ghostty built $D3 $K3 ""
 asm
@@ -77,8 +86,8 @@ key3=$(grep '^key=' "$root/gho" | cut -d= -f2)
 check "assemble: the assembled key is binaries-key.sh --assembled over the included name=key pairs, order independent, and differs when a key differs" bash -c "[ '$key3' = \"\$('$here/.github/scripts/binaries-key.sh' --assembled ghostty=$K3 scx=$K1 extest=$K2)\" ] && [ '$key3' != \"\$('$here/.github/scripts/binaries-key.sh' --assembled scx=$K1 extest=$K2 ghostty=$K1)\" ] && [[ '$key3' =~ ^[0-9a-f]{40}\$ ]]"
 res scx failed "" "" ""; asm
 check "assemble: a component that failed: action failed, exit 1" bash -c "[ $rc = 1 ] && grep -qx 'action=failed' '$root/gho'"
-res scx built $D1 $K1 ""; rm "$root/res2/extest.tsv"; asm
-check "assemble: a component without a result line fails" bash -c "[ $rc = 1 ] && grep -q 'extest has no result line' '$root/run'"
+res scx built $D1 $K1 ""; rm "$root/res2/extest.json"; asm
+check "assemble: a component without a result fails" bash -c "[ $rc = 1 ] && grep -q 'extest has no result' '$root/run'"
 res extest reused $D2 $K2 ""; res ghostty validated "" "$K3" ""; asm
 check "assemble: a component built only for validation: action validated (nothing is assembled or published), no key" bash -c "[ $rc = 0 ] && grep -qx 'action=validated' '$root/gho' && grep -qx 'key=' '$root/gho'"
 res ghostty built "sha256:short" $K3 ""; asm
@@ -117,7 +126,7 @@ mkimg() { # dir: every component (unless WITH_GHOSTTY=0 for ghostty), with their
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"
-mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/^extest/d' "$root/img/COMPONENTS"; inst X=1
+mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/"extest"/d' "$root/img/COMPONENTS"; inst X=1
 check "installer: a missing component fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component extest is not in the binaries image' '$root/run'"
 mkimg "$root/img"; mkdir -p "$root/img/stray"; inst X=1
 check "installer: a component directory that COMPONENTS does not list is refused" bash -c "[ $rc != 0 ] && grep -q 'not in COMPONENTS' '$root/run'"

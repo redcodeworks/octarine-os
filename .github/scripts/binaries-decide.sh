@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The decision of ONE component of the prebuilt binaries (the `result` job of binaries-component.yml): what became of it, and the one
-# line the assemble job reads. Writes <RESULT_DIR>/<component>.tsv with the tab separated fields
-#   name  status  digest  key  reason
+# JSON object the assemble job reads. Writes <RESULT_DIR>/<component>.json, one object with the named fields
+#   name, status, digest, key, reason
 # status is one of
 #   reused      a signed image of this component's content key already existed (digest = that image)
 #   built       built, pushed and signed by this run (digest = the signed image)
@@ -17,7 +17,7 @@ dir=${RESULT_DIR:-.}
 mkdir -p "${dir}"
 sum() { [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "$*" >> "${GITHUB_STEP_SUMMARY}"; echo "$*"; }
 finish() { # status digest key reason
-    printf '%s\t%s\t%s\t%s\t%s\n' "${comp}" "$1" "$2" "$3" "$4" > "${dir}/${comp}.tsv"
+    jq -n --arg name "${comp}" --arg status "$1" --arg digest "$2" --arg key "$3" --arg reason "$4" '$ARGS.named' > "${dir}/${comp}.json"
     if [[ -n "${GITHUB_OUTPUT:-}" ]]; then { echo "status=$1"; echo "digest=$2"; echo "key=$3"; } >> "${GITHUB_OUTPUT}"; fi
     echo "status=$1 digest=$2 key=$3"
 }
