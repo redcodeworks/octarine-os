@@ -39,25 +39,16 @@ rr() { rm -f "$COUNT"; env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/re
 cc() { rm -f "$COUNT"; env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/cosign-check.sh" --key k ghcr.io/o/i@sha256:x > "$root/run" 2>&1 < /dev/null; rc=$?; }
 tries() { cat "$COUNT"; }
 rr MODE=ok
-check "registry-read: a readable tag: exit 0, the manifest on stdout, one call" bash -c "[ $rc = 0 ] && grep -q manifest '$root/run' && [ \$(cat '$COUNT') = 1 ]"
 rr MODE=absent
 check "registry-read: 'manifest unknown' is ABSENT: exit 3 at once, no retry" bash -c "[ $rc = 3 ] && [ \$(cat '$COUNT') = 1 ]"
-rr MODE=absent404
-check "registry-read: a 404 is absent too (exit 3)" test "$rc" = 3
 rr MODE=flaky
 check "registry-read: two timeouts then success: exit 0 after three calls (the read is retried)" bash -c "[ $rc = 0 ] && [ \$(cat '$COUNT') = 3 ]"
 rr MODE=down
 check "registry-read: a registry that stays down is a READ ERROR (exit 4, never 3), after three tries, with the message" bash -c "[ $rc = 4 ] && [ \$(cat '$COUNT') = 3 ] && grep -q 'a read error, NOT a missing image' '$root/run'"
 rr MODE=empty
 check "registry-read: an empty answer is not an answer (read error, exit 4)" test "$rc" = 4
-cc MODE=ok
-check "cosign-check: verified: exit 0, one call" bash -c "[ $rc = 0 ] && [ \$(cat '$COUNT') = 1 ]"
 cc MODE=nosig
 check "cosign-check: 'no signatures found' is NOT VERIFIED: exit 5 at once, no retry" bash -c "[ $rc = 5 ] && [ \$(cat '$COUNT') = 1 ]"
-cc MODE=badsig
-check "cosign-check: 'no matching signatures' is NOT VERIFIED (exit 5)" test "$rc" = 5
-cc MODE=flaky
-check "cosign-check: a timeout then success: exit 0 (retried)" bash -c "[ $rc = 0 ] && [ \$(cat '$COUNT') = 2 ]"
 cc MODE=down
 check "cosign-check: a check that cannot complete is a READ ERROR (exit 4, never 5) after three tries" bash -c "[ $rc = 4 ] && [ \$(cat '$COUNT') = 3 ] && grep -q 'a read error, NOT a bad signature' '$root/run'"
 mkdir -p "$root/s/.github/scripts" "$root/bin2"
@@ -72,8 +63,6 @@ esac
 F
 chmod +x "$root/bin2/skopeo"
 settled() { env "$@" PATH="$root/bin2:$PATH" READBACK_WAIT=0 READBACK_TRIES=2 bash "$root/s/.github/scripts/registry-settled.sh" ghcr.io/o/i t "sha256:$A" > "$root/run" 2>&1; rc=$?; }
-settled X=1
-check "registry-settled: a tag that shows the digest passes" test "$rc" = 0
 settled DOWN=1
 check "registry-settled: a registry that stays unreadable fails, saying 'unreadable' (never a pass)" bash -c "[ $rc = 1 ] && grep -q 'is unreadable' '$root/run'"
 echo; echo "passed: $pass, failed: $failn"

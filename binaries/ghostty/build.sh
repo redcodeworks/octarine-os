@@ -32,39 +32,22 @@ version=${UPSTREAM_TAG#v}
 export ZIG_GLOBAL_CACHE_DIR="$(mktemp -d /tmp/zig-global-cache.XXXXXX)"
 sys="$(mktemp -d /tmp/zig-syspkgs.XXXXXX)"
 (cd "${srcdir}" && zig fetch --help > /dev/null 2>&1 || true)
-# Downloaded-package cache (an optimisation only; CI mounts /dep-cache, a local build has none): the saved tarball of every package, named by its Zig hash.
-# Nothing in it is trusted: the expected hash of every URL is the one the PINNED source says (build.zig.zon.json of the checkout: hash key to url), a
-# cached tarball is run through `zig fetch` again, which recomputes the content hash from the bytes, and it is used only if that equals the expected
-# hash; a mismatch (a corrupt or poisoned entry) discards the entry and the package is downloaded as usual. A downloaded package is checked against the
-# same expected hash too.
-tarcache=""
-depdir=${DEP_CACHE_DIR:-/dep-cache}   # the override is for the tests
-if [[ -d "${depdir}" && -w "${depdir}" ]]; then tarcache="${depdir}/ghostty-packages"; mkdir -p "${tarcache}"; fi
+# The expected hash of every URL is the one the PINNED source says (build.zig.zon.json of the checkout: hash key to url); a package that fetches as
+# anything else fails the build.
 zonjson="${srcdir}/build.zig.zon.json"
-hits=0 misses=0 discarded=0
 n=0
 while IFS= read -r url; do
     [[ -n "${url}" ]] || continue
     expected=""
     if [[ -f "${zonjson}" ]]; then expected=$(jq -r --arg u "${url}" 'to_entries[] | select(.value.url == $u) | .key' "${zonjson}" | head -n1); fi
-    h=""
-    if [[ -n "${tarcache}" && -n "${expected}" && -f "${tarcache}/${expected}.tar.gz" ]]; then
-        got=$(cd "${srcdir}" && zig fetch "${tarcache}/${expected}.tar.gz" 2> /dev/null) || got=""
-        if [[ "${got}" == "${expected}" ]]; then h=${got}; hits=$((hits + 1)); else rm -f "${tarcache}/${expected}.tar.gz"; discarded=$((discarded + 1)); echo "::warning::the cached package for ${url} did not verify (got '${got}', expected ${expected}): discarded, downloading it"; fi
-    fi
-    if [[ -z "${h}" ]]; then
-        h=$(cd "${srcdir}" && zig fetch "${url}" 2> "${ZIG_GLOBAL_CACHE_DIR}/fetch.err") || { cat "${ZIG_GLOBAL_CACHE_DIR}/fetch.err" >&2; echo "build.sh: zig fetch failed for ${url}" >&2; exit 1; }
-        [[ -z "${expected}" || "${h}" == "${expected}" ]] || { echo "build.sh: ${url} fetched as ${h}, the pinned source expects ${expected}" >&2; exit 1; }
-        misses=$((misses + 1))
-    fi
+    h=$(cd "${srcdir}" && zig fetch "${url}" 2> "${ZIG_GLOBAL_CACHE_DIR}/fetch.err") || { cat "${ZIG_GLOBAL_CACHE_DIR}/fetch.err" >&2; echo "build.sh: zig fetch failed for ${url}" >&2; exit 1; }
+    [[ -z "${expected}" || "${h}" == "${expected}" ]] || { echo "build.sh: ${url} fetched as ${h}, the pinned source expects ${expected}" >&2; exit 1; }
     pkg="${ZIG_GLOBAL_CACHE_DIR}/p/${h}.tar.gz"
     [[ -f "${pkg}" ]] || { echo "build.sh: zig fetch left no ${h}.tar.gz for ${url} (a Zig that unpacks into p/ again? then use --system <cache>/p)" >&2; ls -A "${ZIG_GLOBAL_CACHE_DIR}/p" | head >&2; exit 1; }
-    if [[ -n "${tarcache}" && ! -f "${tarcache}/${h}.tar.gz" ]]; then cp -- "${pkg}" "${tarcache}/${h}.tar.gz"; fi
     tar -xzf "${pkg}" -C "${sys}"
     rm -f "${pkg}"
     n=$((n + 1))
 done < "${srcdir}/build.zig.zon.txt"
-echo "package cache: ${hits} verified from the cache, ${misses} downloaded, ${discarded} cached entries discarded"
 echo "fetched and unpacked ${n} packages"
 for d in "${sys}"/*/; do
     entries=$(ls -A "${d}" | wc -l)

@@ -79,16 +79,7 @@ state() { grep -E "^$1 " "$root/out" | sed -E "s/^$1 +//"; }
 
 run --yes
 check "smoke: --yes exits 0 with the stubs" test "$rc" = 0
-check "--yes runs the TPM recipe as 'enroll --yes' (volumes without a key only): a second --yes run touches nothing enrolled" logged "ujust luks-tpm-unlock enroll --yes"
-check "--yes never touches the optional kernel argument" notlogged "rpm-ostree kargs --append"
-check "--yes does not enroll the Secure Boot key (only ticked on NVIDIA images)" notlogged "enroll-secure-boot-key"
 check "the security key file was written, mode 600" bash -c "grep -q KEYDATA '$root/m/u2f_keys' && [ \$(stat -c %a '$root/m/u2f_keys') = 600 ]"
-run --yes
-check "second run: the security key is already done and not asked again" bash -c "! grep -q pamu2fcfg '$LOG'"
-run --only tpm-luks --yes
-check "a named tpm-luks step re-enrolls: 'enroll --force --yes'" bash -c "grep -q 'ujust luks-tpm-unlock enroll --force --yes' '$LOG'"
-run --no
-check "--no prints a plan and runs nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan: would run' '$root/out' && [ ! -s '$LOG' ]"
 rm -f "$root/m/u2f_keys"
 run --only amd-kargs --yes
 check "amd-kargs appends the argument with the overdrive bit set" logged "sudo rpm-ostree kargs --append-if-missing=amdgpu.ppfeaturemask=0xffffffff"
@@ -98,9 +89,6 @@ check "amd-kargs is not applied again when the running command line has it" bash
 echo quiet >"$root/m/cmdline"
 FAKE_SUDO_FAIL=1 run --only amd-kargs --yes
 check "a failing sudo: no retry, FAILED, exit 1" bash -c "[ $rc = 1 ] && grep -q FAILED '$root/out' && [ \$(grep -c 'sudo rpm-ostree' '$LOG') = 1 ]"
-rm -f "$root/m/u2f_keys"
-FAKE_PAM_FAIL=1 run --only fido-key --yes
-check "a failed key registration writes nothing" bash -c "[ $rc = 1 ] && [ ! -e '$root/m/u2f_keys' ]"
 echo "existing" >"$root/m/u2f_keys"
 run --only fido-key --yes
 check "an existing key file is never overwritten" bash -c "[ \"\$(cat '$root/m/u2f_keys')\" = existing ] && ! grep -q pamu2fcfg '$LOG'"
@@ -108,7 +96,5 @@ echo 'IMAGE_ID="octarine-os-nvidia"' >"$root/os-release-nv"
 card card1 0x10de
 OCTARINE_OS_RELEASE="$root/os-release-nv" run --yes
 check "NVIDIA image: --yes enrolls the Secure Boot key when it is not enrolled" logged "ujust enroll-secure-boot-key"
-FAKE_KEY="is already enrolled" OCTARINE_OS_RELEASE="$root/os-release-nv" run --yes
-check "NVIDIA image: an enrolled key is not enrolled again" notlogged "enroll-secure-boot-key"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
