@@ -12,7 +12,6 @@ rules:
       - binaries.yml
       - build-beta.yml
       - build-dx.yml
-      - build-fedora-base.yml
       - build-nvidia-dx.yml
       - build-nvidia.yml
       - build.yml
