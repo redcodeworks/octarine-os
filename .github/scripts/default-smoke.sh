@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Smoke test of the default octarine-os image, run INSIDE the freshly built image (build.yml and build-beta.yml mount this
-# file and run it with bash; one copy for both workflows, the dx variants have .github/scripts/dx-smoke.sh).
+# Smoke test of the default octarine-os image, run INSIDE the freshly built image (build.yml mounts this
+# file and runs it with bash; the dx variants have .github/scripts/dx-smoke.sh).
 #
-# Environment: REF (registry path of the image, for the signature policy), BASE_TAG (the base tag the build resolved),
-# VERSION_RE (the IMAGE_VERSION pattern: a `beta-` prefix on the beta channel).
+# Environment: REF (registry path of the image, for the signature policy), BASE_TAG (the base tag the build resolved).
 # `check "<description>" "<command>"`: the command runs under eval, so quote it as ONE string (tests/check-call-shape.sh
 # guards joined strings, which would pass vacuously). Run order matters nowhere; every failure is listed, exit 1 at the end.
 fail=0
@@ -96,7 +95,7 @@ check "distrobox present" "rpm -q distrobox"
 check "gnome-software removed" "! rpm -q gnome-software"
 for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
 check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
-check "image version format" "grep -qE \"^IMAGE_VERSION=\\\"\$VERSION_RE\\\"\\\$\" /etc/os-release"
+check "image version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' /etc/os-release"
 
 check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
 check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"

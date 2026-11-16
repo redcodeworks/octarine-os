@@ -3,7 +3,7 @@
 # signature, layout contract, this tree's installer, content key label), the decision of one component (binaries-decide.sh, every
 # combination of build, sign, fallback, event, optional or required), the decision of the assemble job (binaries-assemble.sh and the keys of
 # binaries-key.sh), the wiring in build.yml, the plan-skip rule, the installer's FALLBACK, MISSING and REMOVED records and its runtime
-# library check, and the issue mechanics. Fake skopeo, cosign, podman and gh; nothing is pulled or built. Run: tests/binaries-fallback.sh
+# library check. Fake skopeo, cosign and podman; nothing is pulled or built. Run: tests/binaries-fallback.sh
 # Needs: bash, git, python3 with PyYAML, jq, tar, readelf.
 # shellcheck disable=SC2016
 set -uo pipefail
@@ -182,19 +182,15 @@ check "key: a new builder pin moves the key of every component" bash -c "[ '$(K 
 check "key: keys are 40 hex, the components list is the manifest, a bad name is refused" bash -c "[[ '$(K scx)' =~ ^[0-9a-f]{40}\$ ]] && [ \"\$(REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' --components | tr '\n' ' ')\" = 'scx extest ' ] && ! REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' 'Bad Name' 2>/dev/null"
 
 # ---- the wiring
-check "build.yml: allow_fallback is true only for the schedule event; the calling job may write issues; degraded binaries are recorded for the image build and in the summary" python3 -I - "$here" <<'PY'
+check "build.yml: allow_fallback is true only for the schedule event; degraded binaries are recorded for the image build and in the summary" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]
 w = yaml.safe_load(open(f"{root}/.github/workflows/build.yml"))
 j = w["jobs"]["binaries"]
 assert j["with"]["allow_fallback"] == "${{ github.event_name == 'schedule' }}"
-assert j["permissions"]["issues"] == "write"
 t = open(f"{root}/.github/workflows/build.yml").read()
 for needle in ("FALLBACK: using binaries image", "BINARIES_FALLBACK_TREE=", "org.octarineos.binaries-fallback", "LATEST_FALLBACK=", "needs.binaries.outputs.degraded"):
     assert needle in t, needle
-b = yaml.safe_load(open(f"{root}/.github/workflows/build-beta.yml"))
-assert "with" not in b["jobs"]["binaries"], "the beta build passes no allow_fallback (an optional component still degrades)"
-assert b["jobs"]["binaries"]["permissions"]["issues"] == "write"
 PY
 check "Justfile and Containerfile: degraded binaries label the image with org.octarineos.binaries-fallback=true plus the assembled key; the installer reads COMPONENTS, no build argument carries the fallback any more" bash -c "grep -q 'org.octarineos.binaries-fallback=true' '$here/Justfile' && grep -q 'org.octarineos.binaries-tree=' '$here/Justfile' && ! grep -q 'BINARIES_FALLBACK_CREATED' '$here/Justfile' '$here/Containerfile' '$here/build_files/install-binaries.sh'"
 
@@ -268,26 +264,6 @@ check "installer: an OPTIONAL component with a missing library is REMOVED again 
 mkimg "$root/img"; for f in "$root"/img/scx/bin/*; do elf64 "$f"; done; sed -i '/^extest/d' "$root/img/COMPONENTS"; rm -r "$root/img/extest"
 rm -rf "$dest"; BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$root/inst-opt.sh" >"$root/run" 2>&1; rc=$?
 check "installer: an ABSENT optional component is never skipped silently: a WARNING and annotation say what is not installed, and MISSING records it; the build goes on" bash -c "[ $rc = 0 ] && grep -q 'WARNING: optional component extest is not in the binaries image: it is NOT installed' '$root/run' && grep -q '^::warning::optional component extest' '$root/run' && grep -q '^extest: not in the binaries image' '$lic/MISSING' && [ ! -e '$dest/usr/lib/extest' ]"
-# ---- the issue: one, labeled ci-failure-binaries, a comment per later failure, closed when the binaries are fine again
-cat >"$bin/gh" <<'F'
-#!/usr/bin/env bash
-echo "gh $*" >>"$LOG"
-case "$1 $2" in
-    "issue list") if [ -n "${OPEN_ISSUE:-}" ]; then echo "$OPEN_ISSUE"; fi ;;
-    *) exit 0 ;;
-esac
-F
-chmod +x "$bin/gh"
-iss() { : >"$LOG"; env GITHUB_REPOSITORY=redcodeworks/octarine-os SHA=$H40 RUN_URL=https://example.invalid/run/1 LABEL=ci-failure-binaries LABEL_DESC=desc ISSUE_TITLE=title ISSUE_BODY=body FAIL_COMMENT="failed again" RECOVER_COMMENT="fine again" "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/ci-issue.sh" "$MODE" >"$root/run" 2>&1; rc=$?; }
-MODE=fail iss X=1
-check "issue: degraded binaries open ONE issue with the label ci-failure-binaries (and create the label)" bash -c "[ $rc = 0 ] && grep -q 'gh label create ci-failure-binaries' '$LOG' && grep -q 'gh issue create .*--label ci-failure-binaries' '$LOG' && ! grep -q 'issue comment' '$LOG'"
-MODE=fail iss OPEN_ISSUE=7
-check "issue: a later degradation comments on the open issue instead of opening another" bash -c "[ $rc = 0 ] && grep -q 'gh issue comment 7' '$LOG' && grep -q 'failed again' '$LOG' && ! grep -q 'issue create' '$LOG'"
-MODE=recover iss OPEN_ISSUE=7
-check "issue: when no component is degraded any more the issue gets a recovered comment and is closed" bash -c "[ $rc = 0 ] && grep -q 'gh issue comment 7' '$LOG' && grep -q 'recovered: fine again' '$LOG' && grep -q 'gh issue close 7' '$LOG'"
-MODE=recover iss X=1
-check "issue: nothing open, nothing to close" bash -c "[ $rc = 0 ] && ! grep -q 'issue close' '$LOG'"
-
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

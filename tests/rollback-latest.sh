@@ -35,13 +35,4 @@ assert "cosign sign" not in t and "SIGNING_SECRET" not in t
 assert j["permissions"] == {"contents": "read", "packages": "write"}
 assert "inputs.default_only && 'vanilla-only' || 'both'" in t
 PY
-check "rollback-latest.yml: a failed (not dry-run) rollback on main opens or updates the ONE ci-failure-dx issue" python3 -I - "$here" <<'PY'
-import sys, yaml
-t = open(sys.argv[1] + "/.github/workflows/rollback-latest.yml").read()
-w = yaml.safe_load(t); a = w["jobs"]["alert"]
-c = " ".join(a["if"].split())
-assert "needs.rollback.result == 'failure'" in c and "github.ref == 'refs/heads/main'" in c and "inputs.dry_run != true" in c
-assert ".github/scripts/ci-issue.sh fail" in t and "LABEL" not in t, "the default label ci-failure-dx"
-assert a["permissions"]["issues"] == "write"
-PY
 echo; echo "passed: $pass, failed: $failn"; [ "$failn" = 0 ]

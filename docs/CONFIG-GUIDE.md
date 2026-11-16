@@ -13,7 +13,7 @@ sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
 ```
 
-For a variant (the developer image `octarine-os-dx`, the NVIDIA images) or a channel (`beta`, `testing`), use
+For a variant (the developer image `octarine-os-dx`, the NVIDIA images) or a channel (`testing`), use
 `ujust switch-image` once the image is running; `ujust switch-image --list` shows what exists, and
 [image-variants.md](image-variants.md) says what each variant is for.
 

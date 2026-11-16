@@ -75,7 +75,7 @@ w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/require-testing-branch
 on = w.get(True) or w.get("on")
 assert on == {"pull_request": {"branches": ["main"]}}, on
 PY
-check "other workflows have no pull_request trigger (daily, beta, NVIDIA, disk unchanged)" python3 - "$here" <<'PY'
+check "other workflows have no pull_request trigger (daily, NVIDIA unchanged)" python3 - "$here" <<'PY'
 import glob, sys, yaml
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     if f.endswith(("build.yml", "require-testing-branch.yml", "zizmor.yml")):  # zizmor.yml audits workflow changes in pull requests

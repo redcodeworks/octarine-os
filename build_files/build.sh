@@ -147,7 +147,7 @@ echo "::endgroup::"
 # libxcrypt-devel and kernel-headers as dependencies. The dx and NVIDIA dx images inherit them (the dx layer installs the shared
 # developer list on top; dnf5 skips what is already installed). cmake, ninja, meson and the development-tools group are still not here.
 #
-# CRITICAL (keep in step with the smoke tests in .github/workflows/build.yml and build-beta.yml; tests/compilers.sh checks it):
+# CRITICAL (keep in step with the smoke tests in .github/workflows/build.yml; tests/compilers.sh checks it):
 echo "::group::Packages: critical"
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
@@ -199,8 +199,8 @@ for entry in "${optional_groups[@]}"; do
 done
 echo "== optional packages missing:"
 cat "${missing_file}"
-# The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a beta on a coming Fedora
-# that no longer has them fails here too, which is what it is for). The rest of the list stays soft.
+# The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a coming Fedora that no longer has
+# them fails here too, which is what it is for). The rest of the list stays soft.
 for pkg in niri noctalia; do
     if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
 done
@@ -244,8 +244,7 @@ sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="octarineOS"/' /usr/lib/os-release
 grep -qx 'PRETTY_NAME="octarineOS"' /usr/lib/os-release
 
 # Image identity: IMAGE_ID and IMAGE_VERSION (the fields os-release(5) defines for this). The version is the build's own
-# channel-neutral one (<YYYYMMDD>-<short sha>, passed in by `just build`), the same string as the OCI version label; the
-# beta channel build gets a `beta-` prefix because it is never promoted. A promoted image (testing -> latest) is the same
+# channel-neutral one (<YYYYMMDD>-<short sha>, passed in by `just build`), the same string as the OCI version label; a promoted image (testing -> latest) is the same
 # image, so it keeps exactly these fields.
 set_os_release_field() { # key value: replace the line when it exists, append it otherwise
     local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests

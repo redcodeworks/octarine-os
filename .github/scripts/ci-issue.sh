@@ -9,8 +9,7 @@
 #
 # Environment: GH_TOKEN (permission issues: write), GITHUB_REPOSITORY, SHA (the commit of the run), CHANNEL (default latest), RUN_URL
 # (default: this run), NEEDS_JSON (toJSON(needs), optional: names the failed jobs), LABEL (default ci-failure-dx), DOCS_URL
-# (the CLAUDE.md section), NOW (default: today's date, for tests), and for another kind of failure (the binaries fallback uses
-# LABEL=ci-failure-binaries): ISSUE_TITLE, ISSUE_BODY (the text of a new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT. Tools: gh, jq.
+# (the CLAUDE.md section), NOW (default: today's date, for tests), and for the default build's alert (LABEL=ci-failure-default): ISSUE_TITLE, ISSUE_BODY (the text of a new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT. Tools: gh, jq.
 set -euo pipefail
 mode="${1:?fail or recover}"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY}"

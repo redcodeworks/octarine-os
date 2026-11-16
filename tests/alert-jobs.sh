@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Checks the `alert` jobs that turn a failed scheduled build into ONE issue (ci-issue.sh, deduplicated on the label): the default build, the beta and
-# NVIDIA builds. A cancelled run raises nothing and closes nothing. Run: tests/alert-jobs.sh
+# Checks the `alert` jobs that turn a failed scheduled build into ONE issue (ci-issue.sh, deduplicated on the label): the default build (the dx alert is
+# checked in tests/dx-image.sh and publish-latest-workflow.sh). A cancelled run raises nothing and closes nothing. Run: tests/alert-jobs.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 -I - "$here" <<'PY'
 import sys, yaml
 h = sys.argv[1]
 labels = {}
-for f, main in (("build", "build_result"), ("build-beta", "sign"), ("build-nvidia", "sign")):
+for f, main in (("build", "build_result"),):
     w = yaml.safe_load(open("%s/.github/workflows/%s.yml" % (h, f)))
     a = w["jobs"]["alert"]
     assert a["permissions"] == {"contents": "read", "issues": "write"}, (f, a["permissions"])
@@ -25,8 +25,6 @@ for f, main in (("build", "build_result"), ("build-beta", "sign"), ("build-nvidi
     assert fail["env"]["LABEL"] == rec["env"]["LABEL"], f
     labels[f] = fail["env"]["LABEL"]
 assert len(set(labels.values())) == len(labels), labels  # one label (one open issue) per workflow
-for f in ("build-dx", "publish-latest", "rollback-latest"):
-    t = open("%s/.github/workflows/%s.yml" % (h, f)).read()
-    assert "ci-issue.sh fail" in t, f
+assert labels == {"build": "ci-failure-default"}, labels
 print("alert jobs: %s" % labels)
 PY

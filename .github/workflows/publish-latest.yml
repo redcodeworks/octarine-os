@@ -129,25 +129,3 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
         run: .github/scripts/ci-issue.sh recover
-
-  # a failed publish: one issue, a comment per further failure
-  alert:
-    name: Report a failed publish
-    needs: publish
-    if: always() && needs.publish.result == 'failure' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Open the failure issue or comment on it
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          NEEDS_JSON: ${{ toJSON(needs) }}
-        run: .github/scripts/ci-issue.sh fail

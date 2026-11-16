@@ -2281,7 +2281,7 @@ gnome-candy *args:
     fi
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, beta, testing)
+# Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, testing)
 [group('Setup')]
 [positional-arguments]
 switch-image *args:
@@ -2302,15 +2302,15 @@ switch-image *args:
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), beta (built on the next Fedora base), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
             --force) force=1 ;;
             default | dx | nvidia | nvidia-dx) image=$a ;;
-            latest | beta | testing) channel=$a ;;
+            latest | testing) channel=$a ;;
             -*) echo "Unknown option: $a (use --yes, --no, --force or --list)" >&2; exit 2 ;;
-            *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, beta, testing)" >&2; exit 2 ;;
+            *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, testing)" >&2; exit 2 ;;
         esac
     done
     name_of() {
@@ -2338,7 +2338,7 @@ switch-image *args:
         for k in default dx nvidia nvidia-dx; do
             if [ "$cur_name" = "$(name_of "$k")" ]; then cur_image=$k; registry=${cur%/*}; fi
         done
-        case "$cur_tag" in latest | beta | testing) cur_channel=$cur_tag ;; esac
+        case "$cur_tag" in latest | testing) cur_channel=$cur_tag ;; esac
     fi
     # probe IMAGE CHANNEL: 0 published, 1 not published, 2 registry unreachable
     probe() {
@@ -2360,15 +2360,15 @@ switch-image *args:
         tmp=$(mktemp -d)
         trap 'rm -rf -- "$tmp"' EXIT
         for k in default dx nvidia nvidia-dx; do
-            for c in latest beta testing; do
+            for c in latest testing; do
                 (probe "$k" "$c"; echo $? >"$tmp/$k.$c") &
             done
         done
         wait
-        printf '%-12s %-18s %-18s %-18s\n' IMAGE latest beta testing
+        printf '%-12s %-18s %-18s\n' IMAGE latest testing
         for k in default dx nvidia nvidia-dx; do
             row=$(printf '%-12s' "$k")
-            for c in latest beta testing; do
+            for c in latest testing; do
                 case "$(cat "$tmp/$k.$c" 2>/dev/null)" in 0) s=published ;; 1) s="not published" ;; *) s=unknown ;; esac
                 if [ "$k" = "$cur_image" ] && [ "$c" = "$cur_channel" ]; then s="$s (current)"; fi
                 row+=$(printf ' %-18s' "$s")
@@ -2396,7 +2396,6 @@ switch-image *args:
         elif menu_ready_one; then
             menu_one "Which channel?" \
                 "latest^latest: tested daily build (recommended)" \
-                "beta^beta: built on the next Fedora base, not tested for daily use" \
                 "testing^testing: unreleased builds" || { echo "No channel chosen; nothing changed."; exit 0; }
             channel=$MENU_ONE
         else
@@ -2453,7 +2452,7 @@ switch-image *args:
         nvidia-dx) echo "If bootc refuses with a signature-policy error, update to the newest image of your current line, reboot, and run this again (this image's signature rule only exists on images built after it was added)." ;;
     esac
     case "$channel" in
-        beta | testing) echo "The $channel channel is not tested for daily use." ;;
+        testing) echo "The $channel channel is not tested for daily use." ;;
     esac
     cmd=(sudo bootc switch --enforce-container-sigpolicy "$ref")
     # a pending kernel-argument change would be replaced by the staged image: warn, ask (default no; --yes goes on, --no is the plan)

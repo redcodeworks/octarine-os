@@ -35,7 +35,7 @@ assert "needs.build_push.outputs.digests || needs.promote.outputs.digests" in st
 assert "github.ref == 'refs/heads/main'" in step["env"]["BASE_DIGEST"]
 assert '"${BASE_DIGEST}"' in step["run"]
 PY
-check "build-dx.yml: channel latest is grouped per commit (testing and beta per channel), never cancelling; the pin reaches the plan" python3 - "$wf/build-dx.yml" <<'PY'
+check "build-dx.yml: channel latest is grouped per commit (testing per channel), never cancelling; the pin reaches the plan" python3 - "$wf/build-dx.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 g = w["concurrency"]["group"]
@@ -44,7 +44,7 @@ assert w["concurrency"]["cancel-in-progress"] is False
 plan = next(s for s in w["jobs"]["plan"]["steps"] if s.get("id") == "plan")
 assert plan["env"]["BASE_DIGEST_PIN"] == "${{ inputs.channel == 'latest' && inputs.base_digest || '' }}"
 PY
-check "build-dx.yml: the latest channel pushes and promotes dated tags only; beta keeps its bare tag; no step copies to :latest" python3 - "$wf/build-dx.yml" <<'PY'
+check "build-dx.yml: the latest channel pushes and promotes dated tags only; testing keeps its bare tag; no step copies to :latest" python3 - "$wf/build-dx.yml" <<'PY'
 import sys, re, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 tags = next(s for s in w["jobs"]["build"]["steps"] if s.get("id") == "tags")["run"]
@@ -84,7 +84,7 @@ assert all("github.event_name" not in str(v) for v in env.values()), "the event 
 assert next(s for s in pub["steps"] if s.get("id") == "publish")["run"] == ".github/scripts/publish-latest.sh"
 assert w["jobs"]["recover"]["permissions"] == {"contents": "read", "issues": "write"}
 assert "needs.publish.outputs.moved == 'true'" in w["jobs"]["recover"]["if"]
-assert "needs.publish.result == 'failure'" in w["jobs"]["alert"]["if"]
+assert "alert" not in w["jobs"]
 PY
 check "build-dx.yml: the alert job runs only for latest on main after a failure, with issues: write and nothing else" python3 - "$wf/build-dx.yml" <<'PY'
 import sys, yaml
@@ -97,7 +97,7 @@ assert j["permissions"] == {"contents": "read", "issues": "write"}
 assert any(s.get("run") == ".github/scripts/ci-issue.sh fail" for s in j["steps"])
 PY
 check "no workflow other than publish-latest.yml writes a bare :latest tag of the default or the dx image (skopeo copy or push-tags to a :latest tag)" bash -c "
-    ! grep -nE 'skopeo copy[^#]*(octarine-os|octarine-os-dx|IMAGE)[^ ]*:latest( |\$)' $wf/build.yml $wf/build-dx.yml $wf/build-beta.yml &&
+    ! grep -nE 'skopeo copy[^#]*(octarine-os|octarine-os-dx|IMAGE)[^ ]*:latest( |\$)' $wf/build.yml $wf/build-dx.yml &&
     grep -q 'docker://\$1:latest' '$here/.github/scripts/publish-latest.sh'"
 check "every expression of every workflow uses only functions that GitHub has (a run with an unknown one fails as a 'workflow file issue' with no job, e.g. substring)" python3 - "$wf" <<'PY'
 import glob, re, sys
