@@ -14,8 +14,8 @@ ARG BASE_DIGEST=
 # fedora-toolbox repository, pinned by DIGEST. The tag is for humans. Bump both with `just dev-packages-bump [tag]`, which
 # resolves the digest, verifies it with cosign against keys/redcodeworks-toolbox-cosign.pub and writes both lines; CI checks
 # the format and the signature on every build.
-ARG DEV_PACKAGES_TAG=latest-20261109-0969783
-ARG DEV_PACKAGES_DIGEST=sha256:011daff3e22d1155890ce9e8612a21a6a1223574e390ae1794e6c04c3433d640
+ARG DEV_PACKAGES_TAG=latest-20261115-2ae8e11
+ARG DEV_PACKAGES_DIGEST=sha256:30db0bbf32391f9b05a550091a102c6b04fe20ba892a22da7e87bb2c67f6b052
 
 FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 # (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
