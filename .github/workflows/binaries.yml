@@ -14,21 +14,13 @@ name: Prebuilt binaries
 # Only testing and main publish; on any other ref (a validation dispatch) components are built and checked but never pushed or signed,
 # no digest is handed over, and the image build then stops with an instruction (binaries-use.sh).
 #
-# Own runs (Kevin, 2026-11-14; the README badge): `push` to main and testing (only when binaries/, this workflow, binaries-component.yml
-# or their scripts change) and a WEEKLY `schedule` on main (Friday 08:00 UTC) run it under its own name; a called run belongs to the
-# caller. An own `push` or `schedule` run NEVER publishes or signs: the push run only proves that this content builds (it reuses already
+# Own runs (Kevin, 2026-11-14; the README badge): a WEEKLY `schedule` on main (no `push` trigger since 2026-11-16: build.yml calls this workflow
+# on every push, and a second run of the same content could race it on the same `c-<component>-<key>` tag) (Friday 08:00 UTC) runs it under its own name; a called run belongs to the
+# caller. An own `schedule` (or any `push`) run NEVER publishes or signs: the push run only proves that this content builds (it reuses already
 # signed images when the caller published them first), and the schedule run ignores the reuse shortcut and builds again against the
 # pinned sources and today's Fedora 45 packages, failing visibly when a required component fails. Nothing of it gets the signing secret
 # (the sign jobs are skipped).
 on:
-  push:
-    branches: [main, testing]
-    paths:
-      - "binaries/**"
-      - ".github/workflows/binaries.yml"
-      - ".github/workflows/binaries-component.yml"
-      - ".github/scripts/binaries-*.sh"
-      - ".github/scripts/push-tags.sh"
   schedule:
     - cron: "0 8 * * 5"  # Fridays 08:00 UTC: validate that the binaries still build (nothing is published)
   workflow_call:
