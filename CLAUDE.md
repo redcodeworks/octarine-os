@@ -8,7 +8,7 @@ secrets, hostnames or personal data in it.
 
 A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) built on
 `${BASE_IMAGE}:${FEDORA_VERSION}` (now `ghcr.io/ublue-os/silverblue-main:45`; see the Containerfile bullet). It exists to make one desktop reproducible. See `README.md`
-for the user-facing description and `docs/CONFIG-GUIDE.md` for the wider desktop setup.
+for the user-facing description and `docs/CONFIG-GUIDE.md` for the two-step setup guide (rebase, then recipes); `docs/README.md` indexes the directory documents.
 
 ## README policy
 
@@ -915,9 +915,10 @@ signed and the dx image was built on exactly that default digest.
 Shipped to everyone who uses the image as-is (moved here from the README's former "Personal choices" section):
 
 - **PAM:** `pam_u2f sufficient` for sudo and polkit: a security-key touch is accepted instead of the password; the
-  password still works when no key is registered; no PIN is required. Details in `docs/CONFIG-GUIDE.md`.
+  password still works when no key is registered; no PIN is required. Enrollment and the second key are under "Security key mechanics" below.
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
-  Tailscale's UDP port (`docs/CONFIG-GUIDE.md` has the zone notes).
+  Tailscale's UDP port, with the wide high-port range of the stock zone removed. A zone that names a service that does not exist makes firewalld silently fall back to the wide stock config: check a change with `firewall-cmd --check-config`.
+- **sshd:** off by default; `45-hardening.conf` disables root login, X11 forwarding and TCP forwarding. Key-only login (`PasswordAuthentication no`) is not shipped: the user sets it once their `authorized_keys` works.
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
 - **Size and compilers:** the default image carries only `gcc`, `gcc-c++`, `make` and `binutils` since 2026-11-14 (the base had none; about 221 MiB); the dx image provides the full toolchain, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
