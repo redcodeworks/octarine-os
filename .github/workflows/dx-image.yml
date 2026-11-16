@@ -222,7 +222,7 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
 
-      # The shared developer package list (dev-packages, built and signed by the fedora-toolbox repository, a package this project owns) floats at latest: resolved to a digest once,
+      # The shared developer package list (dev-packages, built and signed by the octarine-images repository (renamed from fedora-toolbox), a package this project owns) floats at latest: resolved to a digest once,
       # verified with the toolbox key, passed to the build as DEV_PACKAGES_REF and recorded in the dev-packages image label
       - name: Resolve and verify the dev-packages image
         run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF

@@ -3878,7 +3878,7 @@ toolbox *args:
     # One row per tool or group, fields separated by ^ :
     #   id ^ label ^ source (image, installer or group) ^ tool name or installer URL ^ installed test
     #   ^ environment for the installer ^ installer arguments ^ preselected (1/0) ^ exports ^ note
-    # image rows are baked into the toolbox image (packages/dev.txt in the fedora-toolbox repo); the recipe
+    # image rows are baked into the toolbox image (packages/dev.txt in the octarine-images repo); the recipe
     # cannot install packages (that would need sudo), it only sets them up and exports them. Group rows are exported without a checklist.
     # Exports, space separated: cmd:NAME exports the binary command -v finds in the box (skipped when absent),
     # dir:PATH every executable in a directory, wrapper:sdk writes the sdk wrapper script.

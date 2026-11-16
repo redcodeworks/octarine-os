@@ -100,8 +100,8 @@ Rule (Kevin, revised 2026-11-16): "Anything that comes from another repository i
 | negativo17 `fedora-multimedia` (the `codecs` group), the base's akmods COPR | dnf | float with the base; `validate-repos.sh` allow-list |
 | COPR or vendor repositories | dnf (external) | none today; policy: pinned to an exact version, optional only (structure in `build.sh`) |
 | `ghcr.io/redcodeworks/octarine-bins` | other repository | pinned by digest (`ARG BINS_DIGEST` in the `Containerfile`, verified with `keys/octarine-bins.pub` on every build, recorded in the label `io.github.redcodeworks.octarine-os.binaries`), weekly bump PR (`bins` kind) |
-| `ghcr.io/redcodeworks/dev-packages` (fedora-toolbox) | owned | floats at `latest` (digest in the label `...dev-packages`) |
-| `ghcr.io/redcodeworks/datastore-images` (fedora-toolbox) | owned | floats at `latest`, pulled at runtime by `ujust datastore-install` (container policy checks the signature); no build input |
+| `ghcr.io/redcodeworks/dev-packages` (octarine-images, renamed from fedora-toolbox on 2026-11-16; the package names did not change) | owned | floats at `latest` (digest in the label `...dev-packages`) |
+| `ghcr.io/redcodeworks/datastore-images` (octarine-images) | owned | floats at `latest`, pulled at runtime by `ujust datastore-install` (container policy checks the signature); no build input |
 | `octarine-os:latest` / `octarine-os-nvidia:latest` under the dx images | owned | floats; the pipeline hands over the digest it just published |
 | `ghcr.io/ublue-os/brew` | external | pinned by digest (`ARG BREW_DIGEST` in the `Containerfile`), weekly bump PR |
 | `quay.io/coreos/chunkah` | external | pinned by digest (`config/chunkah.env`), weekly bump PR |
@@ -214,7 +214,7 @@ after install; the owner decides default-on after a soak. Whatever fails, the ma
 ## Datastore containers (dx image only, opt-in, a bundle fetched on demand; item 15, 2026-11-16)
 
 The dx image ships NO datastore unit, image list, helper or pin (removed 2026-11-16; Kevin decided on 2026-11-15 that the services stay Quadlets but leave the image). The Quadlets, their
-render step, the secrets, pin, update and backup logic and their tests live in the fedora-toolbox repository (`datastore-images/`), published as the signed `FROM scratch` image
+render step, the secrets, pin, update and backup logic and their tests live in the octarine-images repository (`datastore-images/`), published as the signed `FROM scratch` image
 `ghcr.io/redcodeworks/datastore-images` (layout: `/bin/datastore`, `/lib/datastore.sh`, `/lib/render.sh`, `/quadlets/*`, `/images.txt`, `/README`). This repository carries only the thin recipes and the trust.
 
 - **Recipes** (dx file `variants/dx/system_files/usr/share/ublue-os/just/72-octarine-datastore.just`, imported by `dx.sh`, group Setup, all refuse root): `ujust datastore-install [--digest sha256:...]` pulls
@@ -228,7 +228,7 @@ render step, the secrets, pin, update and backup logic and their tests live in t
   `dx.sh` through the `ctx` stage of `variants/dx/Containerfile`. Verified by toolbox-project with skopeo and podman against the published image: the right key is accepted, a wrong key and a missing registries.d entry are rejected.
 - **Tests.** `tests/datastore-recipe.sh` (stub podman: the pull, create, export and extract path, `--digest`, the old-bundle message, atomic replace, root refusal, passthrough with `DATASTORE_UJUST=1`), `tests/dx-image.sh` (deleted 2026-11-16; it checked workflow text; the policy block run on a copy of the policy; the smoke script's checks of
   the rule, the key and registries.d; nothing datastore-related left in the dx inputs).
-- **Sequence.** The `latest` tag of the bundle pointed at the old list-only image until fedora-toolbox's promotion PR (#23) merged: the promotion PR of this change must not merge before it (until then use `--digest` or the `testing` tag).
+- **Sequence.** The `latest` tag of the bundle pointed at the old list-only image until the promotion PR (#23) of the repository now called octarine-images (then fedora-toolbox) merged: the promotion PR of this change must not merge before it (until then use `--digest` or the `testing` tag).
 - Removed with it: the Containerfile ARGs, stage and bind mount, the image label, the pin check steps of both dx workflows, the `datastore-images` entry of `bump-pins.yml`, `bump-pin.sh` and `bump-run.sh`, `just datastore-images-bump`, `tests/datastore.sh` and its fixture. The dx build pins and verifies only the dev-packages list.
 
 ## virthost-setup and wake-on-lan
@@ -314,7 +314,7 @@ integration branch (GitLab's "main"); `main` is the production branch.
   GHCR" need `publish == 'true'`; the `sign` job runs only after a publish or a promotion, so it skips; no tags are
   pushed; the aggregate job `Build and push image` still passes. Concurrency group is workflow plus ref,
   cancel-in-progress only for `testing` (see "Cancelling"). The workflow must exist on that branch.
-- The owner's other repos (candy-for-gnome, fedora-toolbox, dot-files) still commit straight on `testing`.
+- The owner's other repos (candy-for-gnome, octarine-images, dot-files) still commit straight on `testing`.
 
 ## Test workflow
 
@@ -393,7 +393,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - The default image carries `gcc`, `gcc-c++`, `make` and `binutils` (critical tier of `build.sh`, the owner's decision of 2026-11-14, which reversed the earlier rule that the image has none; 221 MiB installed, dependencies glibc-devel, libstdc++-devel, libxcrypt-devel and kernel-headers) but no clang, cmake, ninja, meson or -devel libraries (the dx image has the full toolchain); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
-  an image from the fedora-toolbox repo.
+  an image from the octarine-images repo.
 
 ## CI and signing flow
 
@@ -756,7 +756,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   and TERM empty or dumb. Never touches menus, pickers, data lines, indented lines, `--help` (printf) or captured output. `OCTARINE_FORCE_EMOJI=1` skips only
   the terminal test (tests/emoji.sh). It is launcher-neutral: any launcher that runs the recipes gets it.
   Without it by design (2026-11-16): `logs-this-boot`, `logs-last-boot`, `changelogs`, `update-firmware` (pass-through of journalctl and tools), the empty or wrapper-only
-  `15-luks`, `40-nvidia`, `50-akmods`, `00-default`, `10-update`, `30-distrobox` files (no message lines of ours), and the output of the datastore bundle (fedora-toolbox repo); `72-octarine-datastore.just` loads it for its own lines.
+  `15-luks`, `40-nvidia`, `50-akmods`, `00-default`, `10-update`, `30-distrobox` files (no message lines of ours), and the output of the datastore bundle (octarine-images repo); `72-octarine-datastore.just` loads it for its own lines.
 - Menus come from the shared helper `system_files/usr/share/octarine-os/lib/menu.sh`, sourced at the top of a recipe
   with `menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"` plus inline no-op fallbacks if the file is
   missing. Items are `id^text^selected` strings; an empty id is a section heading, never returned; commas in text show
@@ -1100,7 +1100,7 @@ also needs `src/builder.env` of octarine-bins bumped first and the octarine-bins
 
 ## ROCm is opt-in (not in the dx images)
 
-- The shared `dev-packages` list (fedora-toolbox repo, floating at `latest`) still carries `rocminfo rocm-smi rocm-hip rocm-opencl hipcc` because
+- The shared `dev-packages` list (octarine-images repo, floating at `latest`) still carries `rocminfo rocm-smi rocm-hip rocm-opencl hipcc` because
   it also builds the owner's `fedora-toolbox` container. `variants/dx/dx.sh` runs the installer with
   `EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc"` (EXCLUDE takes exact package names, space separated; an excluded entry is not looked up;
   present in the pinned installer, `dev-packages/install.sh`), and fails the build if any of the five is installed afterwards. `dx-smoke.sh`
@@ -1275,7 +1275,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   with it; a dx-only Flatpak drop-in would need no recipe change, `ujust flatpak-preinstall` reads every `*.preinstall` there),
   `.github/scripts/dx-smoke.sh`, `tests/dx-image.sh`.
 - **The shared package list (floats at `latest`).** `ghcr.io/redcodeworks/dev-packages` is a signed FROM scratch image from the
-  fedora-toolbox repository (`/dev.txt`, `/install.sh`, `/README`; `dev-toolbox` installs the same list). It is not pinned: the dx workflows run
+  octarine-images repository (`/dev.txt`, `/install.sh`, `/README`; `dev-toolbox` installs the same list). It is not pinned: the dx workflows run
   `latest-ref.sh`, which resolves `:latest` to a digest once, verifies the signature with `keys/redcodeworks-toolbox-cosign.pub`
   (the toolbox repository's cosign key, ECDSA) and exports `DEV_PACKAGES_REF`, which the build passes as `ARG DEV_PACKAGES_REF` (no default)
   and records in the label `io.github.redcodeworks.octarine-os.dev-packages`. The Containerfile installs it with
@@ -1472,7 +1472,7 @@ as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Review `b
 - Packages come from the base's repos (distrobox, ffmpeg and pam-u2f already ship in `silverblue-main`; its
   multimedia stack is negativo17, so `gstreamer1-plugins-bad/-ugly` replace the `-free` variants and there is no
   `mesa-va-drivers-freeworld`). Package names are release-specific; `dnf5 install` stops on an unknown name.
-- `solaar` and `solaar-udev` are in the critical `dnf5 install` block (added 2026-11-14; `solaar-udev` already ships in the base and stays listed in case the base drops it) and in the `CRITICAL` list of both smoke tests. Dry run on Fedora 45: `solaar` 1.1.20, 5.7 MiB, plus `python3-typing-extensions`, `python3-xlib` and the weak `python3-hid-parser` (8 MiB in all); no Qt, no service. The RPM ships `/etc/xdg/autostart/solaar.desktop` unchanged (the tray icon needs a tray extension, which the owner's desktop has; nothing here conflicts, no autostart override ships), `/usr/bin/solaar`, `/usr/bin/hidconsole` and the udev rules of `solaar-udev` (`42-logitech-unify-permissions.rules`). Not verifiable without a boot: that Solaar starts and sees a receiver (`solaar show`).
+- `solaar-udev` is in the critical `dnf5 install` block (it already ships in the base and stays listed in case the base drops it) and in the `CRITICAL` list of both smoke tests; it provides `/usr/lib/udev/rules.d/42-logitech-unify-permissions.rules` (device permissions, including the uinput line). **The `solaar` GUI package is NOT in the image (Kevin, 2026-11-16, after briefly shipping it with an opt-in autostart toggle, PR #228 history):** a user who wants Solaar installs the Flatpak (Flathub `io.github.pwr_solaar.solaar`, community-packaged and unverified, no autostart: they add their own autostart entry). `default-smoke.sh` checks that `solaar` is not installed and that the rules file exists and has the uinput line. Not verifiable without a boot: that the Flatpak sees a receiver.
 - Only `gcc`, `gcc-c++`, `make` and `binutils` in the default image (2026-11-14; no cmake, ninja, meson, clang or -devel libraries): bigger builds happen in a toolbox or on the dx image. Nothing in the image build compiles from source.
 - Only `PRETTY_NAME` changes in os-release (ID, NAME, VERSION_ID stay, as update tooling reads them).
   os-release is printed before and after.
@@ -1490,7 +1490,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 
 - **Scope.** `<name>` selects `/usr/share/ublue-os/distrobox/<name>.ini` (override the directory with
   `TOOLBOX_DEFINITIONS`); the `[<name>]` section is the container name. `image=` points at an image built in the
-  `fedora-toolbox` repo (`dev-toolbox`: `ghcr.io/redcodeworks/fedora-toolbox:latest`, weekly, packages baked in);
+  `octarine-images` repo (`dev-toolbox`: `ghcr.io/redcodeworks/fedora-toolbox:latest`, weekly, packages baked in);
   `TOOLBOX_IMAGE` overrides the reference of the named toolbox and the recipe prints the image it uses. No name
   lists the definitions with box state (missing, stopped, running), the default marker and the image. An
   unknown name fails with the known ones. `dev` is the old name of `dev-toolbox` (renamed 2026-11): with a `dev` state file it still means the old box, for `--remove` only; otherwise it is an alias.
@@ -1520,7 +1520,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   `created` whose basename is the box name, never a symlink, `/` or the user's home. A home that `existed`
   before the recipe is adopted but never purged (delete it by hand).
 - **The `gaming` toolbox.** `gaming.ini` and `gaming.conf` describe `ghcr.io/redcodeworks/fedora-gaming`
-  (built in the fedora-toolbox repo: RPM Fusion Steam, gamescope, mangohud, gamemode, protontricks and more; no
+  (built in the octarine-images repo: RPM Fusion Steam, gamescope, mangohud, gamemode, protontricks and more; no
   Terra). `init=false`, `nvidia=false`, distrobox's default privileged host-network container (`unshare_netns=true`
   is only a documented fallback for `bwrap ... resolv.conf` errors after suspend), isolated home, `steam` launcher
   exported, no tools, bins or IDEs. It replaces nothing: the host Flatpak Steam stays the primary client, and the
@@ -1534,7 +1534,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - **Options** (all on the named toolbox): `--list`, `--recreate`, `--force` (rerun installers), `--remove
   [--dry-run]` (lists with sizes, needs `yes`, never touches `/usr`, `/etc` or files it did not create),
   `--upgrade [--check]` (pull the image, compare image ids, show digests and Fedora versions, warn when the
-  major changes, confirm, replace via recreate; no package resolution test, the fedora-toolbox CI covers it),
+  major changes, confirm, replace via recreate; no package resolution test, the octarine-images CI covers it),
   `--update` (`distrobox upgrade`), `--set-default`, `--ide [names]`, `--ide-custom NAME COMMAND [ICON]`,
   `--ide --list`, `--ide --remove [--dry-run]`. Options exclusive of each other are rejected with exit 2.
 - **Default container.** The recipe asks one line: `Default container for 'distrobox enter' (current: <value or
@@ -1562,7 +1562,7 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
   directory the script launches); VS Code uses `code` in the box or a tarball under `~/.local/opt`, `~/opt` or
   `~/Applications`. `StartupWMClass` values are from memory and unverified.
 - **Adding a toolbox.** Ship `<name>.ini` (section `[<name>]`) and optionally `<name>.conf` in
-  `system_files/usr/share/ublue-os/distrobox/`, with an image from the fedora-toolbox repo; extend `tests/toolbox.sh`.
+  `system_files/usr/share/ublue-os/distrobox/`, with an image from the octarine-images repo; extend `tests/toolbox.sh`.
 - **Wrapper scripts.** Exported wrappers need a stdin guard, or they hang tools that talk over stdio.
 - **Installer scripts.** SDKMAN and nvm (in the toolbox) are the only installer
   scripts; nothing here needs sudo.

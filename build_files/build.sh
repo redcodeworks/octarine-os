@@ -134,7 +134,7 @@ echo "::endgroup::"
 # https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/<release>/x86_64/repoview/index.html&protocol=https&redirect=1
 
 # distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips them; solaar-udev is listed anyway so it stays
-# if the base drops it). solaar (the Logitech device manager, GTK, Python) is the new one: 5.7 MiB plus three small Python dependencies.
+# if the base drops it). solaar-udev (the Logitech udev rules) stays for the Solaar Flatpak and any host-side Solaar; the Solaar GUI package is NOT in the image.
 # Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
 # packages from the host are not used: gstreamer1-plugins-bad/-ugly (group `codecs`, optional because they
 # come from negativo17) are the negativo17 equivalents and replace the base's -free variants. They are
@@ -151,7 +151,7 @@ echo "::endgroup::"
 echo "::group::Packages: critical"
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev \
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev \
     gcc gcc-c++ make binutils
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
@@ -344,8 +344,8 @@ lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/
 echo "::endgroup::"
 
 # --- Prebuilt binaries: sched_ext schedulers and the extest libraries (the two scripts print their own log groups) ---
-# Two signed files-only images from the fedora-toolbox repository, pinned by digest in the Containerfile and bind-mounted
-# at /binaries/<name> (the image pinned by digest in the Containerfile); install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
+# The signed files-only octarine-bins image (built by the octarine-bins repository), pinned by digest in the Containerfile and bind-mounted
+# at /binaries; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
 # no unit, no preset, nothing is started.
 /ctx/install-binaries.sh
 

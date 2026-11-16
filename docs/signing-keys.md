@@ -12,8 +12,8 @@ NVIDIA variant build tries to verify the `akmods-nvidia-lts` image against it; i
 README uses in its example, and that it signs the nvidia akmods image is UNVERIFIED (a failed verification is logged
 as a warning in the build, never skipped silently).
 
-`redcodeworks-toolbox-cosign.pub` is the cosign public key of the fedora-toolbox repository (the owner's own project,
-`cosign.pub` at https://github.com/redcodeworks/fedora-toolbox, copied 2026-11-09, identical to the key printed in the
+`redcodeworks-toolbox-cosign.pub` is the cosign public key of the octarine-images repository (the owner's own project, renamed from fedora-toolbox on 2026-11-16,
+`cosign.pub` at https://github.com/redcodeworks/octarine-images, copied 2026-11-09, identical to the key printed in the
 README of `ghcr.io/redcodeworks/dev-packages`). It signs `ghcr.io/redcodeworks/dev-packages`, the developer package list
 the `octarine-os-dx` image installs (verified with the key, not keyless); `build-dx.yml` resolves its `latest` to a digest and verifies it against it
 before every build. It also signs `ghcr.io/redcodeworks/datastore-images`, the opt-in datastore bundle: the dx image installs
