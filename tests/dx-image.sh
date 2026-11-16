@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Quick checks of the developer image (octarine-os-dx): the workflow (triggers, guards, channel mapping, permissions,
 # pins, tags, signing, concurrency, the plan step with stub tools), the Containerfile and package lists, the signature
-# policy of all three repositories, the in-image smoke script (stub tools), the prune rule and the dev-packages pin
+# policy of all three repositories, the in-image smoke script (stub tools) and the dev-packages pin
 # (format and `just dev-packages-bump` with fake skopeo and cosign). Nothing here builds an image.
 # Run: tests/dx-image.sh
 set -uo pipefail
@@ -35,18 +35,18 @@ inp = on["workflow_dispatch"]["inputs"]
 assert set(inp) == {"channel", "sha", "base_digest", "force", "dry_run"}, inp
 assert inp["base_digest"]["type"] == "string" and inp["base_digest"]["default"] == ""
 assert inp["dry_run"]["type"] == "boolean" and inp["dry_run"]["default"] is False
-assert inp["channel"]["options"] == ["testing", "latest", "beta"] and inp["channel"]["default"] == "latest"
+assert inp["channel"]["options"] == ["testing", "latest"] and inp["channel"]["default"] == "latest"
 assert inp["sha"]["type"] == "string" and inp["force"]["type"] == "boolean" and inp["force"]["default"] is False
 assert w["run-name"] == "dx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}", w["run-name"]
 assert "workflow_run" not in "".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("#"))
 PY
-check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml' && grep -qx 'name: Build beta image' '$here/.github/workflows/build-beta.yml'"
-check "workflow: the plan job runs only on testing (channel testing) or main (latest, beta), never another ref; the later jobs follow the plan" python3 - "$wf" <<'PY'
+check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml'"
+check "workflow: the plan job runs only on testing (channel testing) or main (latest), never another ref; the later jobs follow the plan" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 cond = " ".join(w["jobs"]["plan"]["if"].split())
 assert "github.ref == 'refs/heads/testing' && inputs.channel == 'testing'" in cond, cond
-assert "github.ref == 'refs/heads/main' && contains(fromJSON('[\"latest\",\"beta\"]'), inputs.channel)" in cond, cond
+assert "github.ref == 'refs/heads/main' && inputs.channel == 'latest'" in cond, cond
 assert "pull_request" not in cond and "feat" not in cond
 assert w["jobs"]["build"]["needs"] == "plan" and w["jobs"]["build"]["if"] == "needs.plan.outputs.build == 'true' && !inputs.dry_run"
 assert w["jobs"]["promote"]["needs"] == "plan" and w["jobs"]["promote"]["if"] == "needs.plan.outputs.promote == 'true' && !inputs.dry_run"
@@ -117,7 +117,7 @@ check "workflow: the build is by digest and has explicit labels (base name and d
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.base-index-digest' '$wf'
   grep -q 'io.github.redcodeworks.octarine-os.dx-tree=' '$wf' && grep -q 'io.github.redcodeworks.octarine-os.dx-inputs=\${DX_INPUTS}' '$wf'
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs' '$wf'"
-check "build.yml and build-beta.yml only dispatch the dx workflow (no dx build steps, no uses:), the NVIDIA variant never mentions it" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml' && ! grep -q 'build-dx.yml$' <(grep 'uses:' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml')"
+check "build.yml only dispatches the dx workflow (no dx build steps, no uses:), the NVIDIA variant never mentions it" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' && ! grep -q 'build-dx.yml$' <(grep 'uses:' '$here/.github/workflows/build.yml')"
 
 # ---- the plan: the decision table is tested by tests/plan-dx.sh, which the runner runs on its own
 check "workflow: the aggregate job always runs, needs plan, build, promote and sign; it is named 'Build dx and push image' only when the built commit is the tip of the ref (else 'Build dx (older commit)', and never the required name in a dry run); the commit status of the same name is posted on the BUILT commit for channel testing only, never in a dry run" python3 - "$wf" <<'PY'
@@ -152,14 +152,6 @@ for n, j in w["jobs"].items():
     nd = j.get("needs") or []
     nd = [nd] if isinstance(nd, str) else nd
     assert n == "dispatch_dx" or "dispatch_dx" not in nd, n
-PY
-check "build-beta.yml: dispatch_dx follows the beta sign job, main only, channel beta, actions: write" python3 - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-beta.yml"))
-d = w["jobs"]["dispatch_dx"]
-assert d["needs"] == "sign" and d["if"].startswith("always() && needs.sign.result == 'success'") and "refs/heads/main" in d["if"], d
-assert d["permissions"] == {"contents": "read", "actions": "write"}
-assert any('dispatch-dx.sh beta "${GITHUB_SHA}"' in s.get("run", "") for s in d["steps"])
 PY
 check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and, polling, after" bash -c "
   grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'registry-settled.sh \"\${IMAGE}\" \"\${tag}\" \"\${SOURCE_DIGEST}\"' '$wf'"
@@ -336,86 +328,12 @@ mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release";
 mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
 mk_world "$K"; sed -i '/^IMAGE_VERSION=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_VERSION fails" test $? -ne 0
 OS_IMAGE_VERSION=latest-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a channel word in a stable IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION fails on the latest channel" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION passes on the beta channel" test $? -eq 0
-mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: an unprefixed IMAGE_VERSION fails on the beta channel" test $? -ne 0
-check "workflow: the dx build passes IMAGE_VERSION (beta- prefixed on beta), the smoke test gets the channel, the neutral check knows beta" bash -c "
-  grep -q 'os_version=\"beta-\${version}\"' '$wf' && grep -q 'IMAGE_VERSION=\${os_version}' '$wf'
-  grep -q 'IMAGE_CHANNEL=\"\${CHANNEL}\"' '$wf' && grep -q 'BETA=\$' '$wf'
+OS_IMAGE_VERSION=x-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a prefixed IMAGE_VERSION fails (the version is <date>-<sha> only)" test $? -ne 0
+check "workflow: the dx build passes IMAGE_VERSION and the neutral check runs" bash -c "
+  grep -q 'IMAGE_VERSION=\${version}' '$wf' && grep -q 'check-version-neutral.sh' '$wf'
   grep -q '^ARG IMAGE_VERSION' '$here/variants/dx/Containerfile' && grep -q 'set_os_release_field IMAGE_ID .*image_id' '$here/variants/dx/dx.sh' && grep -q '^ARG DX_IMAGE_ID=octarine-os-dx' '$here/variants/dx/Containerfile'"
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0
-
-# ---- prune rule for the dx package
-prune=$here/.github/scripts/prune-testing.py
-dxj() { # channel counts: n_latest n_beta [bare-on-oldest]
-    python3 - "$1" "$2" "${3:-}" <<'PY'
-import json, sys
-nl, nb, extra = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
-vs = []
-i = 0
-for ch, n in (("latest", nl), ("beta", nb)):
-    for k in range(1, n + 1):
-        i += 1
-        vs.append({"id": (100 if ch == "latest" else 200) + k, "name": "sha256:" + format(i, "02x") * 32, "created_at": f"2026-02-{k:02d}T00:00:00Z",
-                   "metadata": {"container": {"tags": [f"{ch}-202602{k:02d}-{k}{k}{k}{k}{k}{k}{k}"]}}})
-if extra == "bare-on-oldest":
-    vs[0]["metadata"]["container"]["tags"].append("latest")
-    vs[nl]["metadata"]["container"]["tags"].append("beta")
-# versions of other kinds that must never be touched
-vs += [{"id": 900, "name": "sha256:" + "e" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["testing-aaaaaaa"]}}},
-       {"id": 901, "name": "sha256:" + "f" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["20250101-bbbbbbb"]}}},
-       {"id": 902, "name": "sha256:" + "d" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": []}}},
-       {"id": 903, "name": "sha256:" + "9" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["latest-20250101-ccccccc", "something-else"]}}},
-       {"id": 904, "name": "sha256:" + "8" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": [f"sha256-{'3' * 64}.sig"]}}}]
-print(json.dumps(vs))
-PY
-}
-out=$(dxj 5 5 | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: 5 latest and 5 beta builds delete the 2 oldest of each channel" bash -c "[ \$(grep -c 'DELETE image' <<<'$out') = 4 ] && for id in 101 102 201 202; do grep -q \"DELETE image id=\$id \" <<<'$out' || exit 1; done"
-check "prune dx: the newest 3 of each channel are kept" bash -c "! grep -qE 'DELETE image id=(103|104|105|203|204|205) ' <<<'$out'"
-check "prune dx: other tags, untagged versions and signatures of other images are untouched" bash -c "! grep -qE 'id=(900|901|902|903|904) ' <<<'$out'"
-out=$(dxj 5 5 bare-on-oldest | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: a version holding the bare latest or beta tag is kept however old" bash -c "! grep -qE 'DELETE image id=(101|201) ' <<<'$out'"
-# the oldest of beta (id 201) holds the bare beta tag, the oldest of latest (101) the bare latest tag
-check "prune dx: the other old builds still go" bash -c "grep -q 'DELETE image id=102 ' <<<'$out' && grep -q 'DELETE image id=202 ' <<<'$out'"
-out=$(dxj 3 2 | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: nothing to delete with 3 and 2 builds (keep 3)" grep -q 'Nothing to prune' <<<"$out"
-out=$(dxj 5 0 | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: counts the channels separately (5 latest, no beta: only 2 deleted)" bash -c "[ \$(grep -c 'DELETE image' <<<'$out') = 2 ]"
-sigv() { dxj 5 0 | python3 -c '
-import json, sys
-vs = json.load(sys.stdin)
-doomed = next(v for v in vs if v["id"] == 101)
-vs.append({"id": 950, "name": "sha256:" + "7" * 64, "created_at": "2026-02-01T00:00:00Z", "metadata": {"container": {"tags": ["sha256-" + doomed["name"].split(":")[1] + ".sig"]}}})
-print(json.dumps(vs))'; }
-out=$(sigv | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: the signature of a deleted image is deleted with it" grep -q 'DELETE sig   id=950 ' <<<"$out"
-check "prune dx: dry run is the default" bash -c "echo '[]' | env -u DRY_RUN PRUNE_KIND=dx python3 -I '$prune' | grep -q 'Nothing to prune'"
-check "prune workflow also prunes the dx testing builds (the generic testing pass on the -dx package, keep \$KEEP)" python3 - "$here" <<'PY'
-import re, sys
-t = open(sys.argv[1] + "/.github/workflows/prune-testing.yml").read()
-i = t.index('API_BASE="${scope}/packages/container/${image}-dx"')
-tail = t[i:]
-assert re.search(r'pass "testing builds, keep \$\{KEEP\}" PRUNE_KIND=testing', tail), tail  # the generic pass (the pass function runs gh api ... | prune-testing.py)
-PY
-dx_tj() { cat <<EOJ
-[
- {"id":1,"name":"sha256:$(printf 'a%.0s' {1..64})","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["testing-1111111"]}}},
- {"id":2,"name":"sha256:$(printf 'b%.0s' {1..64})","created_at":"2026-01-02T00:00:00Z","metadata":{"container":{"tags":["testing-2222222","testing"]}}},
- {"id":3,"name":"sha256:$(printf 'c%.0s' {1..64})","created_at":"2026-01-03T00:00:00Z","metadata":{"container":{"tags":["testing-3333333","latest","latest-20260103-3333333"]}}},
- {"id":4,"name":"sha256:$(printf 'd%.0s' {1..64})","created_at":"2026-01-04T00:00:00Z","metadata":{"container":{"tags":["latest-20260104-4444444"]}}},
- {"id":5,"name":"sha256:$(printf 'e%.0s' {1..64})","created_at":"2026-01-05T00:00:00Z","metadata":{"container":{"tags":["testing-5555555","testing"]}}}
-]
-EOJ
-}
-out=$(dx_tj | KEEP=1 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx testing: an old testing build is deleted, the newest kept" bash -c "grep -q 'DELETE image id=1 ' <<<'$out' && ! grep -qE 'DELETE image id=5 ' <<<'$out'"
-check "prune dx testing: a promoted version (testing and latest tags) and dated latest builds are never deleted" bash -c "! grep -qE 'DELETE image id=(3|4) ' <<<'$out'"
-out=$(dx_tj | PRUNE_KIND=dx KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune dx: the dx kind leaves testing-shaped tags alone" bash -c "! grep -qE 'DELETE image id=(1|2|3|5) ' <<<'$out'"
-check "prune workflow passes the dx kind with keep 3 for the -dx package only" bash -c "grep -q 'PRUNE_KIND=dx KEEP=3' '$here/.github/workflows/prune-testing.yml' && grep -q 'packages/container/\${image}-dx' '$here/.github/workflows/prune-testing.yml'"
-check "the other prune kinds ignore dx-shaped tags" bash -c "dxj 5 5 | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I '$prune' | grep -q 'DELETE image id=[12]0[1-5] ' && exit 1 || exit 0"
 
 # ---- just dev-packages-bump with fake skopeo and cosign
 work="$root/work"; bin="$root/bin"

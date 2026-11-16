@@ -243,7 +243,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      issues: write
     # the signing secret is a repository secret, which a called workflow only gets when it is passed on
     secrets:
       SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
@@ -265,7 +264,6 @@ jobs:
       packages: write
 
     steps:
-      # These stage versions are pinned by https://github.com/renovatebot/renovate
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -442,7 +440,7 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -v "${PWD}/.github/scripts/default-smoke.sh:/default-smoke.sh:ro" -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" -e VERSION_RE='[0-9]{8}-[0-9a-f]{7,}' "${IMAGE_NAME}:${DEFAULT_TAG}" bash /default-smoke.sh
+          podman run --rm -v "${PWD}/.github/scripts/default-smoke.sh:/default-smoke.sh:ro" -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" "${IMAGE_NAME}:${DEFAULT_TAG}" bash /default-smoke.sh
 
       # The compilers and the linker the image ships (gcc, gcc-c++, make, binutils) must work: compile, link and run a C and a C++ program
       - name: Compiler smoke test
@@ -497,7 +495,7 @@ jobs:
       # A promoted image keeps its build's version, so no version may name a channel
       - name: Check the version is channel-neutral
         run: |
-          # the labels plus os-release IMAGE_VERSION of the rechunked image (a beta build's must start with beta-)
+          # the labels plus os-release IMAGE_VERSION of the rechunked image
           {
             podman image inspect "${IMAGE_NAME}:${DEFAULT_TAG}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
@@ -513,6 +511,8 @@ jobs:
 
       - name: Generate Build Tags
         id: gen-build-tags
+        env:
+          EVENT: ${{ github.event_name }}
         run: |
           # main publishes only the dated tags; the bare `latest` is moved later by publish-latest.yml (see CLAUDE.md "Promoting
           # the default and dx images together")
@@ -520,6 +520,8 @@ jobs:
                         ${IMAGE_NAME} \
                         ${DEFAULT_TAG} \
                         false)"
+          # the scheduled daily build (not a push, a promotion or a dispatch) also gets daily-YYYYMMDD (UTC), which prune-daily.yml counts
+          if [[ "${EVENT}" == schedule ]]; then alias_tags="${alias_tags} daily-$(date -u +%Y%m%d)"; fi
 
           echo "Tags for this Action..."
           echo "${alias_tags}"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Content keys of the prebuilt binaries (content-addressed, so the same content is built once and reused by testing, main, the beta
-# channel and the daily rebuild).
+# Content keys of the prebuilt binaries (content-addressed, so the same content is built once and reused by testing, main
+# and the daily rebuild).
 #
 #   binaries-key.sh <component>          key of one component: 40 hex, sha1 of "<tree of binaries/<c>> <tree of binaries/lib> <blob of
 #                                        binaries/builder.env>". A change inside the component, in lib/ or in the builder pin changes it; a

@@ -9,11 +9,6 @@ repo_name := env_var_or_default("REPO_NAME", image_name)
 export image_keywords := env_var("IMAGE_KEYWORDS")
 export image_logo_url := env_var("IMAGE_LOGO_URL")
 export default_tag := env_var("DEFAULT_TAG")
-export bib_image := env_var("BIB_IMAGE")
-
-alias build-vm := build-qcow2
-alias rebuild-vm := rebuild-qcow2
-alias run-vm := run-vm-qcow2
 
 [private]
 default:
@@ -51,7 +46,6 @@ clean:
     rm -f previous.manifest.json
     rm -f changelog.md
     rm -f output.env
-    rm -rf output/
 
 # Sudo Clean Repo
 [group('Utility')]
@@ -102,7 +96,7 @@ build $target_image=image_name $tag=default_tag:
 
     BUILD_ARGS=()
     BUILD_ARGS+=("--build-arg" "IMAGE_ORG={{ repo_organization }}")
-    BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a localhost/ prefix from local disk-image rebuilds
+    BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a registry or localhost/ prefix
     # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
     # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the assembled key of binaries/
@@ -114,8 +108,8 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
     # CI resolves the floating base to a digest once and verifies its signature (base-pin.sh): the build is FROM that digest
     if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
-    # os-release IMAGE_VERSION: the build's version, `beta-` prefixed when the beta workflow sets IMAGE_VERSION_PREFIX
-    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=${IMAGE_VERSION_PREFIX:-}$(.github/scripts/image-version.sh)")
+    # os-release IMAGE_VERSION: the build's version
+    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=$(.github/scripts/image-version.sh)")
     LABELS=()
     # Trace the image to its base (CI exports BASE_DIGEST after pulling the base)
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
@@ -281,199 +275,6 @@ image_name $target_image=image_name:
 
     echo "${image_name}"
 
-# Command: _rootful_load_image
-# Description: This script checks if the current user is root or running under sudo. If not, it attempts to resolve the image tag using podman inspect.
-#              If the image is found, it loads it into rootful podman. If the image is not found, it pulls it from the repository.
-#
-# Parameters:
-#   $target_image - The name of the target image to be loaded or pulled.
-#   $tag - The tag of the target image to be loaded or pulled. Default is 'default_tag'.
-#
-# Example usage:
-#   _rootful_load_image my_image latest
-#
-# Steps:
-# 1. Check if the script is already running as root or under sudo.
-# 2. Check if target image is in the non-root podman container storage)
-# 3. If the image is found, load it into rootful podman using podman scp.
-# 4. If the image is not found, pull it from the remote repository into reootful podman.
-
-_rootful_load_image $target_image=image_name $tag=default_tag:
-    #!/usr/bin/env bash
-    set -eoux pipefail
-
-    # Check if already running as root or under sudo
-    if [[ -n "${SUDO_USER:-}" || "${UID}" -eq "0" ]]; then
-        echo "Already root or running under sudo, no need to load image from user podman."
-        exit 0
-    fi
-
-    # Try to resolve the image tag using podman inspect
-    set +e
-    resolved_tag=$(podman inspect -t image "${target_image}:${tag}" | jq -r '.[].RepoTags.[0]')
-    return_code=$?
-    set -e
-
-    USER_IMG_ID=$(podman images --filter reference="${target_image}:${tag}" --format "'{{ '{{.ID}}' }}'")
-
-    if [[ $return_code -eq 0 ]]; then
-        # If the image is found, load it into rootful podman
-        ID=$(just sudoif podman images --filter reference="${target_image}:${tag}" --format "'{{ '{{.ID}}' }}'")
-        if [[ "$ID" != "$USER_IMG_ID" ]]; then
-            # If the image ID is not found or different from user, copy the image from user podman to root podman
-            COPYTMP=$(mktemp -p "${PWD}" -d -t _build_podman_scp.XXXXXXXXXX)
-            just sudoif TMPDIR=${COPYTMP} podman image scp ${UID}@localhost::"${target_image}:${tag}" root@localhost::"${target_image}:${tag}"
-            rm -rf "${COPYTMP}"
-        fi
-    else
-        # If the image is not found, pull it from the repository
-        just sudoif podman pull "${target_image}:${tag}"
-    fi
-
-# Build a bootc bootable image using Bootc Image Builder (BIB)
-# Converts a container image to a bootable image
-# Parameters:
-#   target_image: The name of the image to build (ex. localhost/fedora)
-#   tag: The tag of the image to build (ex. latest)
-#   type: The type of image to build (ex. qcow2, raw, iso)
-#   config: The configuration file to use for the build (default: disk_config/disk.toml)
-
-# Example: just _rebuild-bib localhost/fedora latest qcow2 disk_config/disk.toml
-_build-bib $target_image $tag $type $config: (_rootful_load_image target_image tag)
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    args="--type ${type} "
-    args+="--use-librepo=True "
-    args+="--rootfs=btrfs"
-
-    BUILDTMP=$(mktemp -p "${PWD}" -d -t _build-bib.XXXXXXXXXX)
-
-    sudo podman run \
-      --rm \
-      -it \
-      --privileged \
-      --pull=newer \
-      --net=host \
-      --security-opt label=type:unconfined_t \
-      -v $(pwd)/${config}:/config.toml:ro \
-      -v $BUILDTMP:/output \
-      -v /var/lib/containers/storage:/var/lib/containers/storage \
-      "${bib_image}" \
-      ${args} \
-      "${target_image}:${tag}"
-
-    mkdir -p output
-    sudo mv -f $BUILDTMP/* output/
-    sudo rmdir $BUILDTMP
-    sudo chown -R $USER:$USER output/
-
-# Podman builds the image from the Containerfile and creates a bootable image
-# Parameters:
-#   target_image: The name of the image to build (ex. localhost/fedora)
-#   tag: The tag of the image to build (ex. latest)
-#   type: The type of image to build (ex. qcow2, raw, iso)
-#   config: The configuration file to use for the build (deafult: disk_config/disk.toml)
-
-# Example: just _rebuild-bib localhost/fedora latest qcow2 disk_config/disk.toml
-_rebuild-bib $target_image $tag $type $config: (build target_image tag) && (_build-bib target_image tag type config)
-
-# Build a QCOW2 virtual machine image
-[group('Build Virtal Machine Image')]
-build-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "qcow2" "disk_config/disk.toml")
-
-# Build a RAW virtual machine image
-[group('Build Virtal Machine Image')]
-build-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "raw" "disk_config/disk.toml")
-
-# Build an ISO virtual machine image
-[group('Build Virtal Machine Image')]
-build-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_build-bib target_image tag "iso" "disk_config/iso.toml")
-
-# Rebuild a QCOW2 virtual machine image
-[group('Build Virtal Machine Image')]
-rebuild-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "qcow2" "disk_config/disk.toml")
-
-# Rebuild a RAW virtual machine image
-[group('Build Virtal Machine Image')]
-rebuild-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "raw" "disk_config/disk.toml")
-
-# Rebuild an ISO virtual machine image
-[group('Build Virtal Machine Image')]
-rebuild-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_rebuild-bib target_image tag "iso" "disk_config/iso.toml")
-
-# Run a virtual machine with the specified image type and configuration
-_run-vm $target_image $tag $type $config:
-    #!/usr/bin/env bash
-    set -eoux pipefail
-
-    # Determine the image file based on the type
-    image_file="output/${type}/disk.${type}"
-    if [[ $type == iso ]]; then
-        image_file="output/bootiso/install.iso"
-    fi
-
-    # Build the image if it does not exist
-    if [[ ! -f "${image_file}" ]]; then
-        just "build-${type}" "$target_image" "$tag"
-    fi
-
-    # Determine an available port to use
-    port=8006
-    while grep -q :${port} <<< $(ss -tunalp); do
-        port=$(( port + 1 ))
-    done
-    echo "Using Port: ${port}"
-    echo "Connect to http://localhost:${port}"
-
-    # Set up the arguments for running the VM
-    run_args=()
-    run_args+=(--rm --privileged)
-    run_args+=(--pull=newer)
-    run_args+=(--publish "127.0.0.1:${port}:8006")
-    run_args+=(--env "CPU_CORES=4")
-    run_args+=(--env "RAM_SIZE=8G")
-    run_args+=(--env "DISK_SIZE=64G")
-    run_args+=(--env "TPM=Y")
-    run_args+=(--env "GPU=Y")
-    run_args+=(--device=/dev/kvm)
-    run_args+=(--volume "${PWD}/${image_file}":"/boot.${type}")
-    run_args+=(docker.io/qemux/qemu)
-
-    # Run the VM and open the browser to connect
-    (sleep 30 && xdg-open http://localhost:"$port") &
-    podman run "${run_args[@]}"
-
-# Run a virtual machine from a QCOW2 image
-[group('Run Virtal Machine')]
-run-vm-qcow2 $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "qcow2" "disk_config/disk.toml")
-
-# Run a virtual machine from a RAW image
-[group('Run Virtal Machine')]
-run-vm-raw $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "raw" "disk_config/disk.toml")
-
-# Run a virtual machine from an ISO
-[group('Run Virtal Machine')]
-run-vm-iso $target_image=("localhost/" + image_name) $tag=default_tag: && (_run-vm target_image tag "iso" "disk_config/iso.toml")
-
-# Run a virtual machine using systemd-vmspawn
-[group('Run Virtal Machine')]
-spawn-vm rebuild="0" type="qcow2" ram="6G":
-    #!/usr/bin/env bash
-
-    set -euo pipefail
-
-    [ "{{ rebuild }}" -eq 1 ] && echo "Rebuilding the ISO" && just build-vm {{ rebuild }} {{ type }}
-
-    systemd-vmspawn \
-      -M "bootc-image" \
-      --console=gui \
-      --cpus=2 \
-      --ram=$(echo {{ ram }}| numfmt --from=iec) \
-      --network-user-mode \
-      --vsock=false --pass-ssh-key=false \
-      -i ./output/**/*.{{ type }}
-
 # Runs shell check on all Bash scripts
 lint:
     #!/usr/bin/env bash
@@ -497,94 +298,6 @@ format:
     fi
     # Run shfmt on all Bash scripts
     find . -iname "*.sh" -type f -exec shfmt --write "{}" ';'
-
-# Create a libvirt test VM from the local repo, built under a registry channel (default testing, so updates inside the VM follow it). An existing test VM is kept and started, because updating it is the normal way to test; pass recreate=true to rebuild it from scratch
-[group('Test')]
-test-vm $name="ublue-test" $ram="8192" $cpus="4" $pool="pool-container_data" $channel="testing" $recreate="false":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export LIBVIRT_DEFAULT_URI=qemu:///system
-    marker="created by just test-vm"
-    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "VM name may only contain letters, digits, dot, dash and underscore"; exit 1; }
-    [[ "$ram" =~ ^[0-9]+$ && "$cpus" =~ ^[0-9]+$ ]] || { echo "ram (MiB) and cpus must be numbers"; exit 1; }
-    [[ "$channel" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "channel must be an image tag such as testing or latest"; exit 1; }
-    [[ "$recreate" == "true" || "$recreate" == "false" ]] || { echo "recreate must be true or false"; exit 1; }
-
-    # Keep an existing test VM (updating it is the point), unless asked to rebuild it
-    if virsh dominfo "$name" >/dev/null 2>&1; then
-        if ! virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
-            echo "A VM named '$name' already exists and was not created by this recipe. Pick another name."
-            exit 1
-        fi
-        if [[ "$recreate" != "true" ]]; then
-            virsh start "$name" >/dev/null 2>&1 || true
-            echo "VM '$name' already exists and was kept. To test a new build, update it from inside the VM:"
-            echo "  sudo bootc upgrade && sudo systemctl reboot"
-            echo "To rebuild it from scratch: just test-vm $name $ram $cpus $pool $channel true"
-            exit 0
-        fi
-    fi
-
-    # Build the local repo under the registry name of the channel (ghcr.io/<owner>/<image>:<channel>).
-    # bootc-image-builder records the name it is given as the installed system's update source, so
-    # `bootc upgrade` inside the VM follows that channel instead of a local image that does not exist there.
-    image="ghcr.io/${repo_organization,,}/${image_name,,}"
-    "{{ just_executable() }}" rebuild-qcow2 "$image" "$channel"
-
-    # Only a VM this recipe created reaches this point; recreate=true replaces it
-    if virsh dominfo "$name" >/dev/null 2>&1; then
-        virsh destroy "$name" >/dev/null 2>&1 || true
-        virsh undefine "$name" --nvram --remove-all-storage
-    fi
-
-    virsh pool-info "$pool" >/dev/null 2>&1 || { echo "No libvirt storage pool named '$pool'. Pools: $(virsh pool-list --all --name | xargs)"; exit 1; }
-    virsh pool-start "$pool" >/dev/null 2>&1 || true
-    dir=$(virsh pool-dumpxml "$pool" | sed -n 's#.*<path>\(.*\)</path>.*#\1#p')
-    [[ -n "$dir" ]] || { echo "Could not read the path of storage pool '$pool'"; exit 1; }
-    dest="$dir/$name.qcow2"
-    if [[ -w "$dir" ]]; then
-        cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
-    else
-        sudo cp --reflink=auto --sparse=always output/qcow2/disk.qcow2 "$dest"
-    fi
-    virsh pool-refresh "$pool" >/dev/null
-
-    virt-install \
-        --name "$name" \
-        --memory "$ram" \
-        --vcpus "$cpus" \
-        --cpu host-passthrough \
-        --import \
-        --disk path="$dest",format=qcow2,bus=virtio \
-        --osinfo fedora-unknown \
-        --network network=default,model=virtio \
-        --graphics spice \
-        --video virtio \
-        --boot uefi \
-        --metadata description="$marker" \
-        --noautoconsole
-
-    echo
-    echo "VM '$name' is running. The first boot opens GNOME Initial Setup to create a user."
-    echo "  Updates inside it follow $image:$channel. To make bootc verify signatures, run once in the VM:"
-    echo "    sudo bootc switch --enforce-container-sigpolicy $image:$channel"
-    echo "  View it:    virt-viewer --connect qemu:///system $name   (or open it in Cockpit or virt-manager)"
-    echo "  Delete it:  just test-vm-delete $name"
-
-# Delete a VM created by test-vm, together with its disk
-[group('Test')]
-test-vm-delete $name="ublue-test":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    export LIBVIRT_DEFAULT_URI=qemu:///system
-    marker="created by just test-vm"
-    virsh dominfo "$name" >/dev/null 2>&1 || { echo "No VM named '$name'"; exit 0; }
-    if ! virsh desc "$name" 2>/dev/null | grep -qxF "$marker"; then
-        echo "'$name' was not created by just test-vm; refusing to delete it."
-        exit 1
-    fi
-    virsh destroy "$name" >/dev/null 2>&1 || true
-    virsh undefine "$name" --nvram --remove-all-storage
 
 # Open the release pull request from testing into main. Pass true to also wait for the required checks and merge it
 [group('Release')]

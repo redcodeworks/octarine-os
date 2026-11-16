@@ -12,7 +12,6 @@ What each top-level directory is for:
 - [`image-variants.md`](image-variants.md): `variants/`, the developer and NVIDIA images.
 - [`prebuilt-binaries.md`](prebuilt-binaries.md): `binaries/`, the programs built separately and shipped in the images.
 - [`config-files.md`](config-files.md): `config/`, shared build settings.
-- [`disk-images.md`](disk-images.md): `disk_config/`, settings for disk and installer images.
 - [`ci-workflows.md`](ci-workflows.md): `.github/`, the workflows and scripts, and how a change reaches `main`.
 - [`git-hooks.md`](git-hooks.md): `githooks/`, optional hooks for a local clone.
 - [`docs/signing-keys.md`](signing-keys.md): `keys/`, the vendored public keys and where each came from.

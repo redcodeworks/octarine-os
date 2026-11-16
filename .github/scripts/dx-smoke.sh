@@ -4,7 +4,6 @@
 # default image's smoke test (build.yml) that still apply to a layer on top of it.
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the dx image must carry exactly that one kernel).
-# IMAGE_CHANNEL (latest or beta, default latest: beta images carry a `beta-` IMAGE_VERSION).
 # EXPECT_IMAGE_ID (default octarine-os-dx; octarine-os-nvidia-dx for the same layer on the NVIDIA variant).
 # For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, BIN_DIR, LIB_DIR.
 #
@@ -21,10 +20,7 @@ share_dir="${SHARE_DIR:-/usr/share}"
 etc_dir="${ETC_DIR:-/etc}"
 bin_dir="${BIN_DIR:-/usr/bin}"
 lib_dir="${LIB_DIR:-/usr/lib}"
-case "${IMAGE_CHANNEL:-latest}" in
-    beta) version_re='beta-[0-9]{8}-[0-9a-f]{7,}' ;;
-    *) version_re='[0-9]{8}-[0-9a-f]{7,}' ;;
-esac
+version_re='[0-9]{8}-[0-9a-f]{7,}'
 fail=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -116,7 +112,7 @@ echo "== checks of the default image that still apply"
 check "release is Fedora" "grep -qx ID=fedora ${os_release}"
 check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' ${os_release}"
 check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-dx}\"' ${os_release}"
-check "image version has the build's version format (${IMAGE_CHANNEL:-latest})" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
+check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"
 for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
     check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Guard for the in-image smoke tests of the workflows (and any script with the same `check "<description>" "<command>"` helper): a call with the two
-# strings joined (`check "a""b"`, a missing space) runs `eval` on nothing and passes vacuously (found 2026-11-15 in build.yml and build-beta.yml).
+# strings joined (`check "a""b"`, a missing space) runs `eval` on nothing and passes vacuously (found 2026-11-15 in build.yml).
 # Every line that starts with `check "` must hold exactly two shell words after `check` (description, command) when it is a complete one-line call.
 # Run: tests/check-call-shape.sh
 set -uo pipefail

@@ -75,7 +75,7 @@ w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/require-testing-branch
 on = w.get(True) or w.get("on")
 assert on == {"pull_request": {"branches": ["main"]}}, on
 PY
-check "other workflows have no pull_request trigger (daily, beta, NVIDIA, disk, prune unchanged)" python3 - "$here" <<'PY'
+check "other workflows have no pull_request trigger (daily, NVIDIA unchanged)" python3 - "$here" <<'PY'
 import glob, sys, yaml
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     if f.endswith(("build.yml", "require-testing-branch.yml", "zizmor.yml")):  # zizmor.yml audits workflow changes in pull requests
@@ -104,7 +104,7 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     if isinstance(on, dict) and "workflow_run" in on:
         assert f.endswith("build-nvidia-dx.yml"), f
 PY
-check "schedules: every cron is on the hour and unique; the prune runs before the daily build, the NVIDIA build after it" python3 - "$here" <<'PY'
+check "schedules: every cron is on the hour and unique; the NVIDIA build runs after the daily build" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
@@ -116,7 +116,7 @@ for name, c in crons.items():
     assert m == "0" and h.isdigit() and 0 <= int(h) < 24, (name, c)
 assert len(set(crons.values())) == len(crons), crons
 hour = lambda n: int(crons[n].split()[1])
-assert hour("prune-testing.yml") < hour("build.yml") < hour("build-nvidia.yml"), crons
+assert hour("build.yml") < hour("build-nvidia.yml"), crons
 PY
 check "the final decision of the plan: promote, reuse (nothing to build), build, never skip on a failed verification" bash -s -- "$here" "$root" <<'SH'
 python3 - "$1" "$2" <<'PY'

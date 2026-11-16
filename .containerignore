@@ -7,9 +7,6 @@
 .vscode
 output
 _build*
-*.qcow2
-*.raw
-*.iso
 **/__pycache__
 cosign.key
 **/*.key

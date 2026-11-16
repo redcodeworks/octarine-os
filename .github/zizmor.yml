@@ -10,7 +10,6 @@ rules:
       - action.yml
       - binaries-component.yml
       - binaries.yml
-      - build-beta.yml
       - build-dx.yml
       - build-nvidia-dx.yml
       - build-nvidia.yml
@@ -40,4 +39,3 @@ rules:
   unpinned-images:
     ignore:
       - test.yml
-      - build-beta.yml

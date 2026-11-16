@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for the NVIDIA variant: the workflow triggers, the signature policy of both repositories, the kernel-matched
-# akmods tag (stub skopeo), the in-image smoke checks (stub rpm, semodule) and the prune mode for released tags.
+# akmods tag (stub skopeo), the in-image smoke checks (stub rpm, semodule).
 # Run: tests/nvidia-variant.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -168,8 +168,8 @@ mk_image "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$root/img/os-rel
 smoke present >"$root/out" 2>&1; check "smoke present: the default image's IMAGE_ID fails" test $? -ne 0
 mk_image "$K"; sed -i '/^IMAGE_VERSION=/d' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: a missing IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_image "$K"
-smoke present >"$root/out" 2>&1; check "smoke present: a beta- IMAGE_VERSION fails (the variant is never beta)" test $? -ne 0
+OS_IMAGE_VERSION=x-20261110-abc1234 mk_image "$K"
+smoke present >"$root/out" 2>&1; check "smoke present: a prefixed IMAGE_VERSION fails" test $? -ne 0
 mk_image "$K"; sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="other"/' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: a changed PRETTY_NAME fails" test $? -ne 0
 check "variant: the Containerfile takes IMAGE_VERSION, the workflow passes it, nvidia.sh sets both fields" bash -c "
@@ -226,22 +226,6 @@ smoke present >"$root/smoke2.out" 2>&1; check "smoke present: a failing lsinitrd
 check "smoke present: the diagnostics keep lsinitrd's stderr and status" bash -c "grep -q 'DIAG lsinitrd exit status: 3' '$root/smoke2.out' && grep -q 'DIAG   cpio: boom' '$root/smoke2.out'"
 check "smoke present: the diagnostics list the nvidia lines and ls -l" bash -c "grep -q 'DIAG   .*extra/nvidia/nvidia.ko.xz' '$root/smoke2.out' && grep -q 'DIAG ls -l of the initramfs' '$root/smoke2.out'"
 cp "$root/lsinitrd.real" "$root/bin/lsinitrd"
-
-# ---- prune: released tags of the variant
-d() { printf "$1%.0s" {1..64}; }
-json=$(cat <<EOJ
-[
- {"id":1,"name":"sha256:$(d a)","created_at":"2026-01-01T00:00:00Z","metadata":{"container":{"tags":["latest","latest-20260101-1111111","20260101"]}}},
- {"id":2,"name":"sha256:$(d b)","created_at":"2026-01-08T00:00:00Z","metadata":{"container":{"tags":["latest-20260108-2222222","20260108-2222222","latest-2222222"]}}},
- {"id":3,"name":"sha256:$(d c)","created_at":"2026-01-15T00:00:00Z","metadata":{"container":{"tags":["latest-20260115-3333333","latest-3333333"]}}},
- {"id":4,"name":"sha256:$(d d)","created_at":"2026-01-22T00:00:00Z","metadata":{"container":{"tags":["latest","latest-20260122-4444444"]}}}
-]
-EOJ
-)
-out=$(PRUNE_KIND=released KEEP=1 DRY_RUN=true python3 -I "$here/.github/scripts/prune-testing.py" <<<"$json")
-check "prune released: an old dated-only build is deleted" grep -q 'DELETE image id=2 ' <<<"$out"
-check "prune released: the newest dated-only build is kept (keep 1)" bash -c "! grep -q 'DELETE image id=3 ' <<<'$out'"
-check "prune released: a version that still carries latest is never deleted" bash -c "! grep -qE 'DELETE image id=(1|4) ' <<<'$out'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

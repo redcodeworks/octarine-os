@@ -79,7 +79,7 @@ run local:build ghcr.io/o/img
 [[ $? -ne 0 ]] && pass "no tag: fails" || bad "no tag"
 
 echo "== workflows"
-for wf in build build-beta build-dx build-nvidia; do
+for wf in build build-dx build-nvidia; do
     f="$here/.github/workflows/$wf.yml"
     [[ "$(grep -c 'podman push' "$f")" == 0 ]] && pass "$wf.yml: no podman push in the workflow (a second push of one image gives another digest)" || bad "$wf.yml: podman push"
     [[ "$(grep -c '\.github/scripts/push-tags.sh ' "$f")" == 1 ]] && pass "$wf.yml: pushes once through push-tags.sh" || bad "$wf.yml: push-tags.sh"
