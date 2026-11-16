@@ -2,15 +2,14 @@
 # No rule is disabled wholesale; an ignore names a FILE (not a line: line numbers shifted with every edit and broke the audit), so a new finding of the same rule in
 # another file fails the audit, while one more in a listed file does not (review the diff of that file by eye).
 rules:
-  # `uses: ./.github/actions/setup-tool` (and `./.github/workflows/binaries.yml`): zizmor suggests the `$/...` self-repository syntax. The local
+  # `uses: ./.github/actions/setup-tool`: zizmor suggests the `$/...` self-repository syntax. The local
   # path resolves to the SAME commit as the workflow, which is the property that matters here, and the `$` form is not used anywhere else in
   # this repository or tested; changing 31 call sites to an unverified syntax would risk every build for a style finding (severity: help).
   self-repository:
     ignore:
       - action.yml
-      - binaries-component.yml
-      - binaries.yml
       - build-dx.yml
+      - dx-image.yml
       - build-nvidia-dx.yml
       - build-nvidia.yml
       - build.yml

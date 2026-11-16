@@ -1,4 +1,0 @@
-# component   (one build job each in binaries.yml; every component is required, see CLAUDE.md "Prebuilt binaries")
-scx
-extest
-ghostty

@@ -345,7 +345,7 @@ echo "::endgroup::"
 
 # --- Prebuilt binaries: sched_ext schedulers and the extest libraries (the two scripts print their own log groups) ---
 # Two signed files-only images from the fedora-toolbox repository, pinned by digest in the Containerfile and bind-mounted
-# at /binaries/<name>; install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
+# at /binaries/<name> (the image pinned by digest in the Containerfile); install-binaries.sh installs them (checks, layout and licenses are described there). Installed only:
 # no unit, no preset, nothing is started.
 /ctx/install-binaries.sh
 

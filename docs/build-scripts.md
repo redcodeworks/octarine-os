@@ -4,7 +4,7 @@ The shell scripts that turn the Universal Blue base into this image. They are no
 `Containerfile` mounts them during the build only.
 
 - `build.sh` is the main script: package installs and removals, enabling services, and the rest of the image setup.
-- `install-binaries.sh` and `gen-schedulers.sh` install the prebuilt programs from `binaries/` and generate the scheduler
+- `install-binaries.sh` and `gen-schedulers.sh` install the prebuilt programs from the pinned octarine-bins image and generate the scheduler
   registry from their manifest.
 - `validate-repos.sh` fails the build if an unexpected package repository is left enabled, and `final-cleanup.sh` is the
   last step, leaving nothing that `bootc container lint` complains about. The variant builds in `variants/` reuse both.

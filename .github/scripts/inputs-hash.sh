@@ -15,27 +15,30 @@ set -euo pipefail
 # shellcheck source=docs-only.sh
 source "$(dirname "${BASH_SOURCE[0]}")/docs-only.sh"
 
-# The dx-only paths: the variant directory, the dx workflow (and the NVIDIA dx one, which builds the same layer) and its scripts, the key the
+# The dx-only paths: the variant directory, the dx workflow, the reusable one both dx callers share (dx-image.yml) and the NVIDIA dx caller, and its scripts, the key the
 # dev-packages pin is verified with. The tests are no input of either image (docs-only.sh lists tests/** with the docs). Everything else (Containerfile, build_files, system_files, Justfile, the other
 # workflows and scripts) belongs to the default image: a change there rebuilds it, and then dx follows its new digest.
 is_dx_only() {
     case "$1" in
         variants/dx/* | .github/workflows/build-dx.yml | .github/scripts/dx-smoke.sh | .github/scripts/plan-dx.sh) return 0 ;;
         .github/scripts/aggregate-dx.sh | keys/redcodeworks-toolbox-cosign.pub) return 0 ;;
-        .github/workflows/build-nvidia-dx.yml) return 0 ;;
+        .github/workflows/build-nvidia-dx.yml | .github/workflows/dx-image.yml) return 0 ;;
         *) return 1 ;;
     esac
 }
 
-# The pipeline-only paths: the files that decide how images are PUBLISHED, not what is in them (the dispatch of the dx run, the publication of
-# `latest`, the failure issue) and their tests. Neither hash counts them: changing one rebuilds neither image. (build.yml and build-dx.yml
-# still count: they contain the builds.) The prebuilt binaries (binaries/, their workflows and scripts) are in this list too: the image installs from
-# octarine-binaries (testing builds: :testing, others: :latest), so a change to the sources reaches the image only when the binaries workflow has promoted it, which starts the image build itself.
+# The pipeline-only paths: files that run in CI but are not read by any image build, so changing one rebuilds neither image: the publication of `latest`
+# and the rollback, the dx dispatch, the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan
+# config, the git hooks, and the NVIDIA variant (built by its own workflow from the published default image). (build.yml, build-dx.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries are no special case any more
+# (2026-11-16): the digest pin of octarine-bins in the Containerfile is an ordinary image input, so a bump rebuilds the image on testing.
 is_pipeline_only() {
     case "$1" in
-        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/workflows/publish-latest.yml) return 0 ;;
-        binaries/* | .github/workflows/binaries.yml | .github/workflows/binaries-component.yml | .github/scripts/binaries-*.sh) return 0 ;;
-        tests/dispatch-dx.sh | tests/publish-latest.sh | tests/publish-latest-workflow.sh | tests/ci-issue.sh) return 0 ;;
+        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
+        .github/scripts/bump-*.sh) return 0 ;;
+        .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
+        .github/workflows/require-testing-branch.yml | .github/workflows/test.yml | .github/workflows/zizmor.yml) return 0 ;;
+        .github/workflows/build-nvidia.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;
+        .github/zizmor.yml | .github/dependabot.yml | .gitleaks.toml | githooks/*) return 0 ;;
         *) return 1 ;;
     esac
 }

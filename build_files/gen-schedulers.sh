@@ -12,7 +12,7 @@
 #            /usr/share/polkit-1/rules.d/50-octarine-scx.rules   from usr/share/octarine-os/polkit/50-octarine-scx.rules.in with
 #                                                                the exact alternation of the instance names
 # The instance name is the scheduler name without the scx_ prefix (scx_rusty -> rusty): scx@rusty.service. Adding a scheduler is a
-# line in binaries/scx/schedulers.tsv plus the next bump of the binaries; nothing here changes.
+# line in src/scx/schedulers.tsv of octarine-bins plus the next bump of the octarine-bins pin; nothing here changes.
 set -euo pipefail
 # Log group (folded in the GitHub Actions build log, plain text elsewhere); the trap closes it however the script ends and prints an
 # "::error::" line outside it on failure. Exit status unchanged.
