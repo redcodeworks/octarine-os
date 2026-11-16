@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# Tests for the per-component fallback and the assembly decisions of the prebuilt binaries: the candidate checks (binaries-fallback.sh:
-# signature, layout contract, this tree's installer, content key label), the decision of one component (binaries-decide.sh, every
-# combination of build, sign, fallback, event, optional or required), the decision of the assemble job (binaries-assemble.sh and the keys of
-# binaries-key.sh), the wiring in build.yml, the plan-skip rule, the installer's FALLBACK, MISSING and REMOVED records and its runtime
-# library check. Fake skopeo, cosign and podman; nothing is pulled or built. Run: tests/binaries-fallback.sh
+# Tests for what the binaries pipeline decides without a fallback: the decision of one component (binaries-decide.sh), the decision of the
+# assemble job (binaries-assemble.sh) and the content keys that make signed component images reusable (binaries-key.sh), the wiring in
+# build.yml, the plan-skip rule for an image that left an optional component out, the installer's MISSING and REMOVED records and its
+# runtime library check. Nothing is pulled or built. Run: tests/binaries-decide.sh
 # Needs: bash, git, python3 with PyYAML, jq, tar, readelf.
 # shellcheck disable=SC2016
 set -uo pipefail
@@ -11,11 +10,9 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
-unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY   # exported by the CI runner as files this user cannot write
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/     run: /' "$root/run"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
-IMG=ghcr.io/redcodeworks/octarine-os-binaries
 H40=$(printf 'b%.0s' {1..40})
 bin="$root/bin"; mkdir -p "$bin"
 
@@ -37,62 +34,10 @@ mkfix() { # dir component
     fi
     echo src >"$d/$c/SOURCE"; echo build >"$d/$c/BUILDINFO"
 }
-fix="$root/fix"
-
-cat >"$bin/skopeo" <<'F'
-#!/usr/bin/env bash
-echo "skopeo $*" >>"$LOG"
-case "$2" in
-    --raw) [ "${NO_TAG:-0}" = 1 ] && exit 1; printf 'manifest of %s' "${@: -1}" ;;
-    --config) printf '{"config":{"Labels":{"org.octarineos.binaries-component-key":"%s","org.opencontainers.image.created":"2026-11-10T04:00:00Z"}}}' "$CAND_KEY" ;;
-esac
-F
-cat >"$bin/cosign" <<'F'
-#!/usr/bin/env bash
-echo "cosign $*" >>"$LOG"
-exit "${COSIGN_RC:-0}"
-F
-cat >"$bin/podman" <<'F'
-#!/usr/bin/env bash
-echo "podman $*" >>"$LOG"
-case "$1" in
-    create) echo cid ;;
-    export) tar -C "$FIX" -c . ;;
-    rm) ;;
-esac
-F
-chmod +x "$bin"/*
-export LOG="$root/log" CAND_KEY="$H40"
-echo key >"$root/cosign.pub"
-gawk_tsv="$here/binaries/scx/schedulers.tsv"
-fb() { comp=$1; shift; : >"$LOG"; : >"$root/gho"; env "$@" FIX="$fix" PATH="$bin:$PATH" COSIGN_KEY_FILE="$root/cosign.pub" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-fallback.sh" "$IMG" "last-good-$comp" "$comp" "$gawk_tsv" "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
-
-mkfix "$fix" scx; fb scx X=1
-want="sha256:$(printf 'manifest of docker://%s:last-good-scx' "$IMG" | sha256sum | sed 's/ .*//')"
-check "fallback: a signed candidate with the full layout passes; outputs its digest, content key, created date and tag" bash -c "[ $rc = 0 ] && grep -qx 'digest=$want' '$root/gho' && grep -qx 'key=$H40' '$root/gho' && grep -qx 'created=2026-11-10T04:00:00Z' '$root/gho' && grep -qx 'tag=last-good-scx' '$root/gho'"
-check "fallback: the signature is verified against the repo key by DIGEST, before the image is pulled" bash -c "grep -q 'cosign verify --key $root/cosign.pub $IMG@$want' '$LOG' && [ \$(grep -n '^cosign' '$LOG' | head -1 | cut -d: -f1) -lt \$(grep -n '^podman create' '$LOG' | head -1 | cut -d: -f1) ]"
-mkfix "$fix" extest; fb extest X=1
-check "fallback: the extest component is checked on its own (a single-component image passes for its name)" bash -c "[ $rc = 0 ] && grep -qx 'tag=last-good-extest' '$root/gho'"
-mkfix "$fix" scx; fb scx COSIGN_RC=1
-check "fallback: a signature that does not verify is REFUSED (exit 1), nothing is pulled" bash -c "[ $rc = 1 ] && grep -q 'does not verify' '$root/run' && ! grep -q '^podman' '$LOG' && ! grep -q '^digest=' '$root/gho'"
-fb scx NO_TAG=1
-check "fallback: no last-good tag yet: refused with an error" bash -c "[ $rc = 1 ] && grep -q 'does not exist' '$root/run' && grep -q '^::error::' '$root/run'"
-fb scx NO_TAG=1 FALLBACK_REFUSAL_LEVEL=warning
-check "fallback: the same refusal is only a warning for an optional component (FALLBACK_REFUSAL_LEVEL=warning), still exit 1" bash -c "[ $rc = 1 ] && grep -q '^::warning::' '$root/run' && ! grep -q '^::error::' '$root/run'"
-mkfix "$fix" scx; rm "$fix/scx/bin/scx_p2dq"; fb scx X=1
-check "fallback: a candidate without a scheduler of this tree's manifest fails the layout contract and is named" bash -c "[ $rc = 1 ] && grep -q 'lacks scx/bin/scx_p2dq' '$root/run' && ! grep -q '^digest=' '$root/gho'"
-mkfix "$fix" extest; rm "$fix/extest/lib/libextest.so"; fb extest X=1
-check "fallback: an extest candidate without the 32-bit library is refused" bash -c "[ $rc = 1 ] && grep -q 'lacks extest/lib/libextest.so' '$root/run'"
-mkfix "$fix" scx; rm "$fix/scx/LICENSES/scx-LICENSE"; fb scx X=1
-check "fallback: a candidate the layout contract refuses (no license files) is refused" bash -c "[ $rc = 1 ]"
-mkfix "$fix" scx; printf 'scx_rusty\tbin/scx_rusty\tonly three fields\n' >"$fix/scx/schedulers.tsv"; fb scx X=1
-check "fallback: a manifest the installer cannot read is refused" bash -c "[ $rc = 1 ]"
-mkfix "$fix" scx; fb scx CAND_KEY=zzz
-check "fallback: a candidate without a readable content key label is refused (the assembled key needs it)" bash -c "[ $rc = 1 ] && grep -q 'content key label' '$root/run'"
 
 # ---- the decision of ONE component: binaries-decide.sh, with each combination
-dec() { rm -rf "$root/res"; : >"$root/gho"; : >"$root/sum"; env COMPONENT=scx OPTIONAL=false CHECK=success USABLE=false CHECK_DIGEST= KEY=$H40 BUILD=success BUILD_OK=true PUBLISHED=true SIGN=success SIGN_DIGEST=sha256:$(printf '5%.0s' {1..64}) FALLBACK=skipped FB_OK= FB_DIGEST=sha256:$(printf 'f%.0s' {1..64}) FB_KEY=$H40 FB_CREATED=2026-11-10T04:00:00Z DRY_RUN=false EVENT=schedule RESULT_DIR="$root/res" "$@" GITHUB_OUTPUT="$root/gho" GITHUB_STEP_SUMMARY="$root/sum" bash "$here/.github/scripts/binaries-decide.sh" >"$root/run" 2>&1; rc=$?; line=$(cat "$root/res/${COMP:-scx}.tsv" 2>/dev/null || true); }
-fbd=sha256:$(printf 'f%.0s' {1..64}); sgd=sha256:$(printf '5%.0s' {1..64})
+dec() { rm -rf "$root/res"; : >"$root/gho"; : >"$root/sum"; env COMPONENT=scx OPTIONAL=false CHECK=success USABLE=false CHECK_DIGEST= KEY=$H40 BUILD=success BUILD_OK=true PUBLISHED=true SIGN=success SIGN_DIGEST=sha256:$(printf '5%.0s' {1..64}) KNOWN_FAIL= RESULT_DIR="$root/res" "$@" GITHUB_OUTPUT="$root/gho" GITHUB_STEP_SUMMARY="$root/sum" bash "$here/.github/scripts/binaries-decide.sh" >"$root/run" 2>&1; rc=$?; }
+sgd=sha256:$(printf '5%.0s' {1..64})
 dec
 check "decision: built, published and signed: status built with the signed digest and the key" bash -c "[ $rc = 0 ] && grep -qx 'status=built' '$root/gho' && grep -qx 'digest=$sgd' '$root/gho' && grep -qx 'key=$H40' '$root/gho'"
 dec USABLE=true CHECK_DIGEST=sha256:$(printf '1%.0s' {1..64}) BUILD=success BUILD_OK=
@@ -100,36 +45,12 @@ check "decision: a signed image of this key existed: status reused with its dige
 dec PUBLISHED=false SIGN=skipped
 check "decision: built on a ref that cannot publish: status validated, no digest" bash -c "[ $rc = 0 ] && grep -qx 'status=validated' '$root/gho' && grep -qx 'digest=' '$root/gho'"
 dec BUILD_OK=true SIGN=failure
-check "decision: signing failed: fails, even with a fallback available (only a failed build may fall back)" bash -c "[ $rc = 1 ] && grep -q 'signing the scx image failed' '$root/run' && grep -qP '\tfailed\t' '$root/res/scx.tsv'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=true
-check "decision: required, build failed, the last good image is usable (the daily run on main): status fallback with the fallback image's digest, key and date" bash -c "[ $rc = 0 ] && grep -qx 'status=fallback' '$root/gho' && grep -qx 'digest=$fbd' '$root/gho' && grep -q '::warning::FALLBACK: component scx' '$root/run' && grep -q 'FALLBACK: component scx uses its last good image' '$root/sum'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=skipped
-check "decision: build failed and no fallback applies on this run (push, pull request, promotion, not main): fails closed, for a required component" bash -c "[ $rc = 1 ] && grep -q 'no fallback applies' '$root/run'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true EVENT=push
-check "decision: an OPTIONAL component whose build failed on a run type without a fallback job (push or validation run on testing, pull request): status absent, exit 0, a loud warning and summary line: it never turns the run red" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q '::warning::OMITTED: optional component scx' '$root/run' && grep -q 'OMITTED' '$root/sum'"
-for ev in push schedule workflow_dispatch pull_request; do
-    dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true EVENT=$ev
-    check "decision: optional + failed build + no fallback job ($ev): never failed" bash -c "[ $rc = 0 ]"
-    dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=false EVENT=$ev
-    check "decision: REQUIRED + failed build + no fallback job ($ev): still fails" bash -c "[ $rc = 1 ]"
-done
-# end to end through the assemble decision: a failed optional component leaves the image green, a failed required one does not
-rm -f "$root/res2"/*; printf 'scx\trequired\ngh\toptional\n' >"$root/comps2.tsv"
-dec BUILD_OK=false SIGN=skipped FALLBACK=skipped OPTIONAL=true COMPONENT=gh EVENT=push RESULT_DIR="$root/res2"
-dec BUILD_OK=true PUBLISHED=false SIGN=skipped RESULT_DIR="$root/res2"
-: >"$root/gho"; env GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-assemble.sh" "$root/comps2.tsv" "$root/res2" "$root/out3" >"$root/run" 2>&1; rc=$?
-check "assemble: a validation run with a failed optional component does not fail (validated for the rest), the omission is listed" bash -c "[ $rc = 0 ] && grep -qx 'degraded=gh:absent' '$root/gho'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false
-check "decision: required, the last good image was refused or does not exist: fails (never ships without a required component)" bash -c "[ $rc = 1 ] && grep -q 'required' '$root/run'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false OPTIONAL=true COMPONENT=scx
-check "decision: OPTIONAL, build failed, no usable last good image: status absent, exit 0 (left out of the image), a warning" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q 'OMITTED: optional component scx is left out' '$root/run'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=true OPTIONAL=true
-check "decision: OPTIONAL with a usable last good image: status fallback" bash -c "[ $rc = 0 ] && grep -qx 'status=fallback' '$root/gho'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=true EVENT=workflow_dispatch DRY_RUN=true
-check "decision: a dispatch rehearsal reports the fallback but uses nothing (status validated, no digest, FALLBACK (dry run) in the summary)" bash -c "[ $rc = 0 ] && grep -qx 'status=validated' '$root/gho' && grep -qx 'digest=' '$root/gho' && grep -q 'FALLBACK (dry run) scx' '$root/sum'"
-dec BUILD_OK=false SIGN=skipped FALLBACK=success FB_OK=false EVENT=workflow_dispatch DRY_RUN=true OPTIONAL=true
-check "decision: a rehearsal for an optional component with no last good image says it would be left out, and exits 0" bash -c "[ $rc = 0 ] && grep -q 'LEFT OUT' '$root/sum'"
-dec BUILD=skipped BUILD_OK= OPTIONAL=true KNOWN_FAIL=true EVENT=push
+check "decision: signing failed: fails" bash -c "[ $rc = 1 ] && grep -q 'signing the scx image failed' '$root/run' && grep -qP '\tfailed\t' '$root/res/scx.tsv'"
+dec BUILD_OK=false SIGN=skipped
+check "decision: a REQUIRED component whose build failed FAILS (no older image is used instead)" bash -c "[ $rc = 1 ] && grep -qx 'status=failed' '$root/gho' && grep -q 'component is required' '$root/run'"
+dec BUILD_OK=false SIGN=skipped OPTIONAL=true COMPONENT=ghostty
+check "decision: an OPTIONAL component whose build failed: status absent, exit 0 (left out of the image), a warning and a summary line" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q '^::warning::OMITTED: optional component ghostty' '$root/run' && grep -q OMITTED '$root/sum'"
+dec OPTIONAL=true KNOWN_FAIL=true BUILD=skipped COMPONENT=ghostty
 check "decision: a known failure of this key (optional): absent, exit 0, a loud warning that names the key and says when it is tried again" bash -c "[ $rc = 0 ] && grep -qx 'status=absent' '$root/gho' && grep -q 'failed to build before' '$root/run' && grep -q 'daily run on main' '$root/run'"
 dec CHECK=failure BUILD=skipped
 check "decision: a failed lookup fails closed" bash -c "[ $rc = 1 ] && grep -q 'lookup of the scx image failed' '$root/run'"
@@ -141,19 +62,17 @@ mkdir -p "$root/res2"
 printf 'scx\trequired\nextest\trequired\nghostty\toptional\n' >"$root/comps.tsv"
 D1=sha256:$(printf '1%.0s' {1..64}); D2=sha256:$(printf '2%.0s' {1..64}); D3=sha256:$(printf '3%.0s' {1..64})
 K1=$(printf '1%.0s' {1..40}); K2=$(printf '2%.0s' {1..40}); K3=$(printf '3%.0s' {1..40})
-res() { printf '%s\t%s\t%s\t%s\t%s\t\n' "$1" "$2" "$3" "$4" "$5" >"$root/res2/$1.tsv"; }
+res() { printf '%s\t%s\t%s\t%s\t\n' "$1" "$2" "$3" "$4" >"$root/res2/$1.tsv"; }
 asm() { : >"$root/gho"; env GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-assemble.sh" "$root/comps.tsv" "$root/res2" "$root/out2" >"$root/run" 2>&1; rc=$?; }
 rm -f "$root/res2"/*; res scx built $D1 $K1 ""; res extest reused $D2 $K2 ""; res ghostty built $D3 $K3 ""
 asm
-check "assemble: every component built or reused: action assemble, three components, nothing degraded, moves for all three" bash -c "[ $rc = 0 ] && grep -qx 'action=assemble' '$root/gho' && grep -qx 'degraded=' '$root/gho' && grep -qx 'moves=scx=$D1 extest=$D2 ghostty=$D3' '$root/gho' && [ \$(wc -l < '$root/out2/COMPONENTS') = 3 ]"
+check "assemble: every component built or reused: action assemble, three components, nothing degraded" bash -c "[ $rc = 0 ] && grep -qx 'action=assemble' '$root/gho' && grep -qx 'degraded=' '$root/gho' && [ \$(wc -l < '$root/out2/COMPONENTS') = 3 ]"
 key3=$(grep '^key=' "$root/gho" | cut -d= -f2)
 check "assemble: the assembled key is binaries-key.sh --assembled over the included name=key pairs, order independent, and differs when a key differs" bash -c "[ '$key3' = \"\$('$here/.github/scripts/binaries-key.sh' --assembled ghostty=$K3 scx=$K1 extest=$K2)\" ] && [ '$key3' != \"\$('$here/.github/scripts/binaries-key.sh' --assembled scx=$K1 extest=$K2 ghostty=$K1)\" ] && [[ '$key3' =~ ^[0-9a-f]{40}\$ ]]"
 res ghostty absent "" "" ""; asm
 check "assemble: an optional component left out: still assemble, degraded=ghostty:absent, no line for it in COMPONENTS, and a different key than with it" bash -c "[ $rc = 0 ] && grep -qx 'degraded=ghostty:absent' '$root/gho' && [ \$(wc -l < '$root/out2/COMPONENTS') = 2 ] && ! grep -q ghostty '$root/out2/COMPONENTS' && ! grep -qx 'key=$key3' '$root/gho'"
 rm "$root/res2/ghostty.tsv"; asm
 check "assemble: an optional component without any result line (its leg did not finish) counts as absent" bash -c "[ $rc = 0 ] && grep -qx 'degraded=ghostty:absent' '$root/gho'"
-res ghostty built $D3 $K3 ""; res scx fallback $D1 $K1 2026-11-01T00:00:00Z; asm
-check "assemble: a required component that fell back: assemble, degraded=scx:fallback, and it is NOT in the moves (last-good moves only after a build or reuse)" bash -c "[ $rc = 0 ] && grep -qx 'degraded=scx:fallback' '$root/gho' && grep -qx 'moves=extest=$D2 ghostty=$D3' '$root/gho' && grep -P '^scx\trequired\t$K1\tfallback' '$root/out2/COMPONENTS'"
 res scx failed "" "" ""; asm
 check "assemble: a required component that failed: action failed, exit 1" bash -c "[ $rc = 1 ] && grep -qx 'action=failed' '$root/gho'"
 res scx built $D1 $K1 ""; rm "$root/res2/extest.tsv"; asm
@@ -182,24 +101,22 @@ check "key: a new builder pin moves the key of every component" bash -c "[ '$(K 
 check "key: keys are 40 hex, the components list is the manifest, a bad name is refused" bash -c "[[ '$(K scx)' =~ ^[0-9a-f]{40}\$ ]] && [ \"\$(REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' --components | tr '\n' ' ')\" = 'scx extest ' ] && ! REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' 'Bad Name' 2>/dev/null"
 
 # ---- the wiring
-check "build.yml: allow_fallback is true only for the schedule event; degraded binaries are recorded for the image build and in the summary" python3 -I - "$here" <<'PY'
+check "build.yml: degraded binaries (an optional component left out) are recorded for the image build, in the summary and in the label the scheduled skip check reads; nothing passes a fallback input" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]
 w = yaml.safe_load(open(f"{root}/.github/workflows/build.yml"))
-j = w["jobs"]["binaries"]
-assert j["with"]["allow_fallback"] == "${{ github.event_name == 'schedule' }}"
+assert "with" not in w["jobs"]["binaries"], "binaries.yml takes no inputs"
 t = open(f"{root}/.github/workflows/build.yml").read()
-for needle in ("FALLBACK: using binaries image", "BINARIES_FALLBACK_TREE=", "org.octarineos.binaries-fallback", "LATEST_FALLBACK=", "needs.binaries.outputs.degraded"):
-    assert needle in t, needle
+for needle in ("BINARIES_DEGRADED=", "org.octarineos.binaries-degraded", "LATEST_DEGRADED=", "needs.binaries.outputs.degraded"):
+    assert needle in t or needle in open(f"{root}/Justfile").read(), needle
 PY
-check "Justfile and Containerfile: degraded binaries label the image with org.octarineos.binaries-fallback=true plus the assembled key; the installer reads COMPONENTS, no build argument carries the fallback any more" bash -c "grep -q 'org.octarineos.binaries-fallback=true' '$here/Justfile' && grep -q 'org.octarineos.binaries-tree=' '$here/Justfile' && ! grep -q 'BINARIES_FALLBACK_CREATED' '$here/Justfile' '$here/Containerfile' '$here/build_files/install-binaries.sh'"
 
-# ---- plan-skip: an image built with degraded binaries is never kept
-out1=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_FALLBACK= bash "$here/.github/scripts/plan-skip.sh")
-out2=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_FALLBACK=true bash "$here/.github/scripts/plan-skip.sh")
-check "plan-skip: unchanged inputs and no fallback label: skipped; the same with the fallback label: build (the next daily run replaces an image with degraded binaries)" bash -c "[[ '$out1' == skipped* && '$out2' == build:*fallback* ]]"
+# ---- plan-skip: an image that left an optional component out is never kept
+out1=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_DEGRADED= bash "$here/.github/scripts/plan-skip.sh")
+out2=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_DEGRADED=ghostty:absent bash "$here/.github/scripts/plan-skip.sh")
+check "plan-skip: unchanged inputs and no degraded label: skipped; with the degraded label: build (the next daily run tries the component again)" bash -c "[[ '$out1' == skipped* && '$out2' == build:*ghostty:absent* ]]"
 
-# ---- the installer: COMPONENTS, per-component FALLBACK notes, MISSING for an absent optional component, the runtime library check
+# ---- the installer: COMPONENTS, MISSING for an absent optional component, the runtime library check
 mkghostty() { # dir: a staged ghostty component (root/usr tree, FILES, LICENSES, SOURCE, BUILDINFO)
     local g=$1/ghostty
     mkdir -p "$g/root/usr/bin" "$g/root/usr/share/applications" "$g/root/usr/share/ghostty/themes" "$g/LICENSES"
@@ -209,26 +126,24 @@ mkghostty() { # dir: a staged ghostty component (root/usr tree, FILES, LICENSES,
     printf 'MIT License\n' >"$g/LICENSES/ghostty-LICENSE"; echo src >"$g/SOURCE"; echo build >"$g/BUILDINFO"
     (cd "$g/root" && find . -type f | sed 's#^\./##' | sort) >"$g/FILES"
 }
-mkimg() { # dir: both required components, COMPONENTS with origins from the arguments
+mkimg() { # dir: both required components and (unless WITH_GHOSTTY=0) ghostty, with their COMPONENTS
     local d=$1; shift
     mkfix "$d.scx" scx; mkfix "$d.ext" extest; rm -rf "$d"; mkdir -p "$d/LICENSES"; cp -a "$d.scx/scx" "$d/"; cp -a "$d.ext/extest" "$d/"; echo gpl >"$d/LICENSES/scx-LICENSE"; echo src >"$d/SOURCE"; echo build >"$d/BUILDINFO"   # the top-level union and records of an assembled image
-    printf 'scx\trequired\t%s\t%s\t%s\tsha256:%s\nextest\trequired\t%s\t%s\t%s\tsha256:%s\n' "$H40" "${1:-built}" "${3:-}" "$(printf 'a%.0s' {1..64})" "$H40" "${2:-built}" "${4:-}" "$(printf 'b%.0s' {1..64})" >"$d/COMPONENTS"
+    printf 'scx\trequired\t%s\tbuilt\tsha256:%s\nextest\trequired\t%s\treused\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$d/COMPONENTS"
     if [ "${WITH_GHOSTTY:-1}" = 1 ]; then
         mkghostty "$d"
-        printf 'ghostty\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$d/COMPONENTS"
+        printf 'ghostty\toptional\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$d/COMPONENTS"
     fi
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-os-binaries"
 mkimg "$root/img"; inst X=1
-check "installer: a normal build writes no FALLBACK, MISSING or REMOVED record" bash -c "[ $rc = 0 ] && for f in FALLBACK MISSING REMOVED; do [ ! -e '$lic'/\$f ] || exit 1; done && ! grep -rq FALLBACK '$lic'"
-mkimg "$root/img" built fallback "" 2026-11-10T04:00:00Z; inst X=1
-check "installer: a fallback component says in its OWN SOURCE and BUILDINFO and in FALLBACK that it is NOT from this commit's tree, naming key and date; the other component stays clean" bash -c "[ $rc = 0 ] && grep -q 'NOT built from the binaries/ tree of this image' '$lic/extest/SOURCE' && grep -q 'content key $H40' '$lic/extest/BUILDINFO' && grep -q '2026-11-10T04:00:00Z' '$lic/FALLBACK' && grep -q '^extest:' '$lic/FALLBACK' && ! grep -q FALLBACK '$lic/scx/SOURCE'"
+check "installer: a normal build writes no MISSING or REMOVED record" bash -c "[ $rc = 0 ] && for f in MISSING REMOVED; do [ ! -e '$lic'/\$f ] || exit 1; done"
 mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/^extest/d' "$root/img/COMPONENTS"; inst X=1
 check "installer: a missing REQUIRED component fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component extest is not in the binaries image' '$root/run'"
 mkimg "$root/img"; mkdir -p "$root/img/stray"; inst X=1
 check "installer: a component directory that COMPONENTS does not list is refused" bash -c "[ $rc != 0 ] && grep -q 'not in COMPONENTS' '$root/run'"
-mkimg "$root/img"; printf 'nosuch\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$root/img/COMPONENTS"; mkdir -p "$root/img/nosuch"; inst X=1
+mkimg "$root/img"; printf 'nosuch\toptional\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$root/img/COMPONENTS"; mkdir -p "$root/img/nosuch"; inst X=1
 check "installer: a component this installer does not know is refused (an image newer than the installer)" bash -c "[ $rc != 0 ] && grep -q 'does not know' '$root/run'"
 mkimg "$root/img"; rm "$root/img/COMPONENTS"; inst X=1
 check "installer: an image without COMPONENTS is not an assembled binaries image: refused" bash -c "[ $rc != 0 ] && grep -q 'COMPONENTS is missing' '$root/run'"
@@ -257,7 +172,7 @@ check "installer: without BINARIES_CHECK_NEEDED a DESTDIR run does not check (on
 # the removal path of an OPTIONAL component, with a one-off installer copy whose optional list names extest (the check function is the same code)
 WITH_GHOSTTY=0 mkimg "$root/img"; for f in "$root"/img/scx/bin/*; do elf64 "$f"; done; elf64 "$root/img/extest/lib64/libextest.so"; elf32 "$root/img/extest/lib/libextest.so"
 sed 's/^required="scx extest"/required="scx"/; s/^optional="ghostty"/optional="extest ghostty"/' "$here/build_files/install-binaries.sh" >"$root/inst-opt.sh"
-printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$root/img/COMPONENTS"
+printf 'scx\trequired\t%s\tbuilt\tsha256:%s\nextest\toptional\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$root/img/COMPONENTS"
 printf '#!/usr/bin/env bash\ncase "$1" in *extest*) echo "\tlibfoo.so.1 => not found" ;; *) echo "\tlibc.so.6 => ok" ;; esac\n' >"$bin/ldd-ext"; chmod +x "$bin/ldd-ext"
 rm -rf "$dest"; BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ext" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$root/inst-opt.sh" >"$root/run" 2>&1; rc=$?
 check "installer: an OPTIONAL component with a missing library is REMOVED again with a WARNING and a REMOVED record; the build goes on and the required component stays" bash -c "[ $rc = 0 ] && grep -q 'WARNING: optional component extest needs shared libraries' '$root/run' && [ ! -e '$dest/usr/lib/extest' ] && [ ! -e '$lic/extest' ] && grep -q '^extest: removed' '$lic/REMOVED' && [ -x '$dest/usr/bin/scx_rusty' ]"

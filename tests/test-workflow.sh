@@ -23,19 +23,15 @@ assert c["group"].index("inputs.ref") < c["group"].index("github.ref"), c
 # a newer run of a group must replace the older one on every ref, the testing tip included (the tip's newest run is never cancelled: nothing newer exists)
 assert c["cancel-in-progress"] is True, c
 PY
-check "test.yml: test and secrets keep their required names, secrets needs nothing, test runs inside the base the images are built on, and only a documentation scope skips base and test (never a failed scope)" python3 - "$here" <<'PY'
+check "test.yml: the required jobs test and secrets exist under those names and need nothing, test is the fast sanity script, and suite (the behavior tests) is a different, not required job" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
-assert "needs" not in w["jobs"]["secrets"], "secrets must not wait for anything"
-for k in ("base", "test"):
-    assert "always()" in w["jobs"][k]["if"] and "scope" in w["jobs"][k]["if"], k  # a failed scope job must not skip them
-assert "if" not in w["jobs"]["secrets"], "secrets always runs"
-assert "container" not in w["jobs"]["docs"], "the light docs job runs on the host runner"
-assert not w["jobs"]["docs"].get("needs", []) or w["jobs"]["docs"]["needs"] == ["scope"], "docs waits for scope only (no base image)"
+j = w["jobs"]
 for k in ("test", "secrets"):
-    assert w["jobs"][k]["name"] == k, k
-# the test job runs INSIDE the base the images are built on: its container is the digest the base job resolved (base-pin.sh), never a fixed image
-assert "needs.base.outputs.image" in str(w["jobs"]["test"]["container"]), w["jobs"]["test"]["container"]
+    assert j[k]["name"] == k and "needs" not in j[k] and "if" not in j[k], k
+assert j["suite"]["name"] != "test" and j["suite"]["name"] not in ("secrets",), j["suite"]["name"]
+assert "sanity.sh" in str(j["test"]["steps"]), "test runs the sanity script"
+assert "run-tests.sh" in str(j["suite"]["steps"]), "suite runs the behavior tests"
 PY
 check "test.yml: read-only permissions, one concurrency group per workflow and ref" python3 - "$here" <<'PY'
 import sys, yaml
@@ -62,10 +58,8 @@ PY
 check "test.yml: tests/*.sh run by a glob, no hard-coded test list" python3 - "$here" <<'PY'
 import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
-runs = "\n".join(s.get("run", "") for s in yaml.safe_load(open(sys.argv[1] + "/.github/actions/test-suite/action.yml"))["runs"]["steps"])
+runs = "\n".join(s.get("run", "") for s in w["jobs"]["suite"]["steps"])
 assert ".github/scripts/run-tests.sh --jobs 4" in runs, runs
-druns = "\n".join(s.get("run", "") for s in w["jobs"]["docs"]["steps"])
-assert "--doc-tests" in druns and "run-tests.sh" in druns, druns
 assert not re.search(r"tests/[\w-]+\.sh", runs.replace("tests/*.sh", "")), "a test is named by hand"
 PY
 check "test.yml: the secrets job scans the full history with a pinned gitleaks and checksum" python3 - "$here" <<'PY'

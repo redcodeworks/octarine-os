@@ -94,18 +94,18 @@ bump nothing
 check "an unknown image name: exit 3" test "$rc" = 3
 
 
-# ---- the weekly workflow (the consolidated bump-pins.yml is tested in tests/bump-run.sh)
+# ---- the weekly workflow (the combined bump-pins.yml is tested in tests/bump-run.sh)
 wf="$here/.github/workflows/bump-pins.yml"
-check "test.yml has a workflow_dispatch trigger, a dispatch is never documentation-only (scope full), and only the documentation scope skips a job, so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
+check "test.yml has a workflow_dispatch trigger and no condition on test and secrets, so a dispatched run reports both" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert "workflow_dispatch" in (w.get(True) or w.get("on"))
 for k, j in w["jobs"].items():
     assert j["name"] == k, k
-    assert "if" not in j or "scope" in j["if"], k  # the only condition a job may have is the documentation scope
+for k in ("test", "secrets"):
+    assert "if" not in w["jobs"][k], k
 PY
-check "test-scope.sh answers full for a workflow_dispatch event, whatever the range" bash -c "cd '$here' && [ \"\$(bash .github/scripts/test-scope.sh workflow_dispatch HEAD HEAD 2>/dev/null)\" = full ]"
-check "bump-pins.yml bumps chunkah and dev-packages as digest pins and no datastore pin remains" bash -c "grep -q 'pin: \\[chunkah, dev-packages\\]' '$here/.github/workflows/bump-pins.yml' && ! grep -qi datastore '$here/.github/workflows/bump-pins.yml' '$here/.github/scripts/bump-run.sh' '$here/.github/scripts/bump-pin.sh'"
+check "bump-weekly.sh bumps chunkah and dev-packages as digest pins and no datastore pin remains" bash -c "grep -q 'chunkah dev-packages' '$here/.github/scripts/bump-weekly.sh' && ! grep -qi datastore '$here/.github/workflows/bump-pins.yml' '$here/.github/scripts/bump-run.sh' '$here/.github/scripts/bump-pin.sh'"
 check "bump-pin.sh parses and knows only the toolbox list images and chunkah" bash -c "bash -n '$here/.github/scripts/bump-pin.sh' && ! grep -q 'scx-bin\|extest-bin' '$here/.github/scripts/bump-pin.sh'"
 
 echo

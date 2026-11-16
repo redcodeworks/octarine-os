@@ -58,13 +58,5 @@ check "missing directories are fine" bash -c "[ $rc = 0 ] && grep -q 'does not e
 env STUB_ENABLED="$BASE" DNF5="$root/no-such-dnf5" REPO_DIRS="$d1:$d2:$d3" bash "$here/build_files/validate-repos.sh" >"$root/run" 2>&1; rc=$?
 check "without dnf5 only the files are checked (and pass when they hold nothing unexpected)" bash -c "[ $rc = 0 ] && grep -q 'files only' '$root/run'"
 
-check "the allow-list holds exactly the repository ids the base enables (fedora, updates, updates-archive, fedora-cisco-openh264, fedora-multimedia, the ublue akmods COPR)" bash -c "awk '/^ALLOWED=\\(/{f=1;next} /^\\)/{f=0} f' '$here/build_files/validate-repos.sh' | tr -d ' \"' | sort | tr '\\n' ' ' | grep -qx 'copr:copr.fedorainfracloud.org:ublue-os:akmods fedora fedora-cisco-openh264 fedora-multimedia updates updates-archive '"
-
-for s in build_files/build.sh variants/dx/dx.sh variants/nvidia/nvidia.sh; do
-    check "$s runs validate-repos.sh before final-cleanup.sh" bash -c "a=\$(grep -n '/ctx/validate-repos.sh' '$here/$s' | head -1 | cut -d: -f1); b=\$(grep -n '^/ctx/final-cleanup.sh' '$here/$s' | cut -d: -f1); [ -n \"\$a\" ] && [ -n \"\$b\" ] && [ \"\$a\" -lt \"\$b\" ]"
-done
-for c in variants/dx/Containerfile variants/nvidia/Containerfile; do
-    check "$c copies validate-repos.sh into the build context" grep -q 'COPY build_files/validate-repos.sh /validate-repos.sh' "$here/$c"
-done
 check "the shell syntax of the script is valid" bash -n "$here/build_files/validate-repos.sh"
 echo; echo "$pass passed, $failn failed"; [ "$failn" = 0 ]

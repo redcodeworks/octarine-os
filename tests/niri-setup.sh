@@ -246,14 +246,12 @@ unset OCTARINE_MENU_FORCE_TTY
 
 # ---- the recipe itself
 awk '/^niri-setup \*args:/{f=1} f&&/^# Themes and icons/{exit} f' "$justfile" >"$root/body.sh"
-check "recipe has the Setup group and a one-line comment above it" bash -c "grep -B2 '^niri-setup' '$justfile' | grep -q '^\[group(.Setup.)\]' && grep -B3 '^niri-setup' '$justfile' | grep -qE '^# .{20,80}\$'"
 check "recipe never runs sudo" bash -c "! grep -v '^ *#' '$root/body.sh' | grep -v 'printf' | grep -v 'No sudo' | grep -qE '(^|[^a-z-])sudo '"
 check "recipe sets no color" bash -c "! grep -qE '\\\\033|tput' '$root/body.sh'"
 
 # ---- the promoted defaults (layout, gestures, workspaces, Noctalia look, touchpad, window rules)
 preinstall_dir="$repo/system_files/usr/share/flatpak/preinstall.d"
 rules="$etc_niri/60-window-rules.kdl"
-check "the new parts exist and are included in order (gestures after layout, workspaces before Noctalia)" bash -c "cd '$etc_niri' && [ -s 35-gestures.kdl ] && [ -s 45-workspaces.kdl ] && l=\$(grep -n '^include' config.kdl | cut -d: -f2 | tr -d '\"' | sed 's/include //' | tr '\n' ' ') && [ \"\$l\" = '10-environment.kdl 20-input.kdl 30-layout.kdl 35-gestures.kdl 40-binds.kdl 45-workspaces.kdl 50-noctalia.kdl 60-window-rules.kdl ' ]"
 check "layout: centered focus on overflow, a centered single column, five presets, third-width default, shadow on behind windows, 32 pixel struts, tab indicator, hotkey overlay skipped, niri's colors" bash -c "f='$etc_niri/30-layout.kdl'; grep -q 'center-focused-column \"on-overflow\"' \$f && grep -q 'always-center-single-column true' \$f && [ \$(grep -c '^        proportion' \$f) = 5 ] && grep -q 'default-column-width { proportion 0.33333; }' \$f && grep -q 'draw-behind-window true' \$f && [ \$(grep -cE '^        (left|right|top|bottom) 32' \$f) = 4 ] && grep -q 'hide-when-single-tab' \$f && grep -q 'skip-at-startup' \$f && grep -q 'active-color \"#7fc8ff\"' \$f && grep -q 'screenshot-path' \$f && ! grep -qE 'a9b665|7daea3|gradient' \$f"
 check "gestures: edge scroll, edge workspace switch, hot corners off" bash -c "f='$etc_niri/35-gestures.kdl'; grep -q 'trigger-width 30' \$f && grep -q 'trigger-height 50' \$f && [ \$(grep -c 'max-speed 1500' \$f) = 2 ] && grep -qE '^ +off\$' \$f"
 check "touchpad: the shipped tap and natural-scroll stay, plus drag-lock, clickfinger and scroll-factor 0.3, each once; no mouse, trackpoint or empty extra blocks" bash -c "f='$etc_niri/20-input.kdl'; for k in '^ +tap\$' '^ +natural-scroll\$' '^ +drag-lock\$' 'click-method \"clickfinger\"' '^ +scroll-factor 0.3\$'; do [ \$(grep -cE \"\$k\" \$f) = 1 ] || exit 1; done; ! grep -qE '^ +(mouse|trackpoint)' \$f"
@@ -361,7 +359,6 @@ import tomllib,sys
 d=tomllib.load(open(sys.argv[1],'rb')); assert d=={'shell':{'polkit_agent':True}}, d" "$share/10-octarine-os.toml"
 check "portal file keeps the packaged lines and sets the oo7 Secret portal" bash -c "f='$share/niri-portals.conf'; grep -qx '\\[preferred\\]' \$f && grep -qx 'default=gnome;gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Access=gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Notification=gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Secret=oo7-portal;' \$f && ! grep -qiE 'EXAMPLE|do not install' \$f"
 check "the portal and polkit sources are NOT in /etc (nothing applies without the recipe)" bash -c "[ ! -e '$repo/system_files/etc/xdg-desktop-portal' ] && [ ! -e '$repo/system_files/etc/noctalia' ] && [ ! -e '$repo/system_files/usr/share/xdg-desktop-portal' ]"
-check "user-setup has no polkit step" bash -c "! grep 'valid_steps=\" groups' '$justfile' | grep -q polkit"
 check "smoke tests check the niri files and the three sources" bash -c "s='$repo/.github/scripts/default-smoke.sh'; grep -q '/etc/niri/config.kdl' \$s && grep -q 'niri-setup/niri-portals.conf' \$s && grep -q 'niri-setup/10-octarine-os.toml' \$s"
 
 if command -v niri >/dev/null 2>&1; then

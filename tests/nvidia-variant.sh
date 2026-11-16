@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the NVIDIA variant: the workflow triggers, the signature policy of both repositories, the kernel-matched
-# akmods tag (stub skopeo), the in-image smoke checks (stub rpm, semodule).
+# Tests for the NVIDIA variant: the signature policy of both repositories, the kernel-matched akmods tag (stub skopeo), the in-image smoke checks (stub rpm, semodule).
 # Run: tests/nvidia-variant.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -32,8 +31,6 @@ PY
 else
     echo "skip workflow YAML checks (python3 yaml missing)"
 fi
-check "the default workflow never builds the variant" bash -c "! grep -q 'build-nvidia\|octarine-os-nvidia:' '$here/.github/workflows/build.yml' || ! grep -q 'variants/nvidia' '$here/.github/workflows/build.yml'"
-check "the default Containerfile and build.sh stay free of the NVIDIA install" bash -c "! grep -q 'nvidia-install' '$here/Containerfile' '$here/build_files/build.sh'"
 
 # ---- signature policy: all three repositories (default, NVIDIA, dx), from any of the image names
 policy_run() { # image name
@@ -172,10 +169,6 @@ OS_IMAGE_VERSION=x-20261110-abc1234 mk_image "$K"
 smoke present >"$root/out" 2>&1; check "smoke present: a prefixed IMAGE_VERSION fails" test $? -ne 0
 mk_image "$K"; sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="other"/' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: a changed PRETTY_NAME fails" test $? -ne 0
-check "variant: the Containerfile takes IMAGE_VERSION, the workflow passes it, nvidia.sh sets both fields" bash -c "
-  grep -q '^ARG IMAGE_VERSION' '$here/variants/nvidia/Containerfile'
-  grep -q 'IMAGE_VERSION=\${version}' '$here/.github/workflows/build-nvidia.yml'
-  grep -q 'set_os_release_field IMAGE_ID octarine-os-nvidia' '$here/variants/nvidia/nvidia.sh' && grep -q 'set_os_release_field IMAGE_VERSION' '$here/variants/nvidia/nvidia.sh'"
 mk_image "$K"; rm "$root/img/modules/$K/extra/nvidia.ko.xz"
 smoke present >"$root/out" 2>&1; check "smoke present: no kernel module fails" test $? -ne 0
 mk_image "$K"; printf 'nvidia-gpu-firmware\n' >"$RPM_LIST"

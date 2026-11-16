@@ -10,7 +10,6 @@ updates:
     directories:
       - "/"
       - "/.github/actions/setup-tool"
-      - "/.github/actions/test-suite"
     target-branch: "testing"
     schedule:
       interval: "weekly"

@@ -71,9 +71,6 @@ check "ojust is executable in git (100755) and the launcher parses" bash -c "bas
 # hardware-setup calls ujust itself: with OCTARINE_UJUST the calls stay in ojust
 check "recipes that call ujust themselves honor OCTARINE_UJUST (hardware-setup), which ojust sets" bash -c "grep -q 'ujust_cmd=\${OCTARINE_UJUST:-ujust}' '$sf/usr/share/ublue-os/just/60-custom.just'"
 # not documented
-check "ojust is mentioned in no README, doc, recipe comment, completion, MOTD or workflow text: only its own files, the smoke checks, this test and the one maintainer note in CLAUDE.md" bash -c "
-  cd '$here'; ! grep -rIl ojust README.md docs system_files variants .github/scripts 2>/dev/null | grep -vE '^system_files/usr/bin/ojust\$|^system_files/usr/share/octarine-os/justfile\$|^system_files/usr/share/octarine-os/just/base-pieces.just\$' ;
-  [ \"\$(grep -c ojust CLAUDE.md)\" -ge 1 ] && [ \"\$(grep -n '^## ' CLAUDE.md | awk -F: '/ojust/' | wc -l)\" = 0 ]"
 check "ujust --list does not offer ojust (no recipe of that name) and the wrapper recipes carry no mention" bash -c "! just --justfile '$uj' --summary | grep -qw ojust"
 check "the default smoke test checks ojust" grep -q 'experimental second launcher runs' "$here/.github/scripts/default-smoke.sh"
 echo

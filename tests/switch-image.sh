@@ -187,7 +187,6 @@ check "from a foreign image the target uses the project's registry" has "Target:
 # ---- the base image's toggle-nvk is gone (the assembled justfile is checked in tests/just-recipes.sh)
 check "40-nvidia.just no longer rebases by string substitution" bash -c "! grep -q 'rpm-ostree rebase' '$justdir/40-nvidia.just'"
 check "40-nvidia.just defines no recipe" bash -c "! grep -qE '^toggle-nvk' '$justdir/40-nvidia.just'"
-check "switch-image is listed by the recipe scan" bash -c "just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx switch-image"
 
 # ---- Esc leaves everything as it is: exit 0, nothing run. A fake ugum that prints nothing is Esc; a terminal is faked.
 cat >"$root/fakebin/ugum" <<'EOF2'

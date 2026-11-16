@@ -5,17 +5,10 @@ name: Prebuilt binaries component
 # .github/scripts/binaries-key.sh (the component's directory, lib/ and builder.env: a change to another component does not touch it).
 #
 # Jobs: check (key, lookup: published and signed under the tag means nothing to build), build (podman build in the pinned builder, layout
-# check, push; its steps never fail the job, they record `ok`), sign (environment `signing`), fallback (the component's own last good image,
-# tag last-good-<component>, verified and checked against THIS tree's installer), result (binaries-decide.sh: what became of the
-# component, uploaded as the artifact binres-<component> for the assemble job). The job fails only for a decision that stops the run: a
-# required component that is neither built, reused nor validly fallen back (decided in binaries-decide.sh, with the table in its header).
-#
-# When the fallback applies (the workflow's `if`, the decision is binaries-decide.sh):
-#   required component  only the scheduled daily run on main (the caller passes allow_fallback), as before (Kevin, 2026-11-14)
-#   optional component  every PUBLISHING run (testing and main, not an own validation run): last good image if one exists, else the component
-#                       is left out of the image (status absent); an optional component never blocks an image build
-#   rehearsal           a dispatch with fallback_dry_run reports the decision on any branch and changes nothing
-# The loud annotation comes from binaries.yml's track job, on main only.
+# check, push; its steps never fail the job, they record `ok`), sign (environment `signing`), result (binaries-decide.sh: what became of the
+# component, uploaded as the artifact binres-<component> for the assemble job). There is no fallback to an older image: a REQUIRED
+# component whose build failed fails the run (decided in binaries-decide.sh, with the table in its header); an OPTIONAL component whose
+# build failed is left out of the image (status absent) and never blocks an image build.
 on:
   workflow_call:
     secrets:
@@ -29,22 +22,6 @@ on:
         required: true
       optional:
         description: "true for an optional component (binaries/components.tsv)"
-        type: boolean
-        default: false
-      allow_fallback:
-        description: "true on the scheduled daily build: a failed build of a REQUIRED component on main may fall back to its last good image"
-        type: boolean
-        default: false
-      validate_only:
-        description: "Validation: ignore the reuse shortcut and build again; publish, sign and track nothing"
-        type: boolean
-        default: false
-      simulate:
-        description: "Rehearsal: comma separated components (or all) whose build fails on purpose (a dispatch only)"
-        type: string
-        default: ""
-      fallback_dry_run:
-        description: "Rehearsal: when the build failed, run the fallback checks on the last good image and report; never publishes or uses it"
         type: boolean
         default: false
 
@@ -119,37 +96,30 @@ jobs:
           key: known-fail-${{ inputs.component }}-${{ steps.key.outputs.key }}-${{ steps.week.outputs.w }}
           lookup-only: true
 
-      # a rehearsal of a failed build must not be short-circuited by an existing signed image of this key
-      - name: Usable (not for a rehearsal)
+      - name: Usable (not for the weekly validation)
         id: final
         env:
           LOOKUP: ${{ steps.lookup.outputs.usable }}
-          SIMULATE_LIST: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate || '' }}
           # github.workflow is the top-level workflow's name, also in a nested call: true only for binaries.yml's own runs
           OWN: ${{ github.workflow == 'Prebuilt binaries' }}
           EVENT: ${{ github.event_name }}
-          VALIDATE_ONLY: ${{ inputs.validate_only == true }}
           OPTIONAL: ${{ inputs.optional }}
           KNOWN_FAIL_HIT: ${{ steps.knownfail.outputs.cache-hit }}
         run: |
           usable=${LOOKUP}
-          [[ "${KNOWN_FAIL_HIT}" != true ]] || echo "::warning::${COMPONENT}: this exact key failed to BUILD earlier this week and is not built again on a push (the daily run, a change of the component or the next week retry): an image built from this commit leaves ${COMPONENT} out unless an older good one exists"
-          simulate=false
-          if [[ "${SIMULATE_LIST}" == all || "${SIMULATE_LIST}" == true || ",${SIMULATE_LIST// /}," == *",${COMPONENT},"* ]]; then simulate=true; fi
-          # own push and schedule runs and validate_only never publish; the schedule run and validate_only also ignore the reuse shortcut
+          [[ "${KNOWN_FAIL_HIT}" != true ]] || echo "::warning::${COMPONENT}: this exact key failed to BUILD earlier this week and is not built again on a push (the daily run, a change of the component or the next week retry): an image built from this commit leaves ${COMPONENT} out"
+          # own push and schedule runs never publish; the own schedule run also ignores the reuse shortcut
           nopublish=false force=false
           if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
-          if [[ "${VALIDATE_ONLY}" == true || ( "${OWN}" == true && "${EVENT}" == schedule ) ]]; then nopublish=true; force=true; fi
-          [[ "${simulate}" != true ]] || force=true
-          [[ "${force}" != true ]] || { usable=false; echo "validation or rehearsal: the reuse is skipped"; }
+          if [[ "${OWN}" == true && "${EVENT}" == schedule ]]; then force=true; fi
+          [[ "${force}" != true ]] || { usable=false; echo "weekly validation: the reuse is skipped"; }
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
           echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
-          echo "simulate=${simulate}" >> "${GITHUB_OUTPUT}"
-          # skip a build that failed before with this same key: optional components only, never the daily schedule, a rehearsal or a validation
+          # skip a build that failed before with this same key: optional components only, never the daily schedule
           knownfail=false
-          if [[ "${OPTIONAL}" == true && "${KNOWN_FAIL_HIT}" == true && "${usable}" != true && "${EVENT}" != schedule && "${simulate}" != true && "${VALIDATE_ONLY}" != true ]]; then knownfail=true; fi
+          if [[ "${OPTIONAL}" == true && "${KNOWN_FAIL_HIT}" == true && "${usable}" != true && "${EVENT}" != schedule ]]; then knownfail=true; fi
           echo "knownfail=${knownfail}" >> "${GITHUB_OUTPUT}"
-          echo "usable=${usable} nopublish=${nopublish} force=${force} simulate=${simulate} knownfail=${knownfail}"
+          echo "usable=${usable} nopublish=${nopublish} force=${force} knownfail=${knownfail}"
 
   build:
     name: Build the ${{ inputs.component }} image
@@ -214,13 +184,8 @@ jobs:
         env:
           KEY: ${{ needs.check.outputs.key }}
           TAG: ${{ needs.check.outputs.tag }}
-          SIMULATE_LIST: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate || '' }}
         run: |
           set -euo pipefail
-          if [[ "${SIMULATE_LIST}" == all || "${SIMULATE_LIST}" == true || ",${SIMULATE_LIST// /}," == *",${COMPONENT},"* ]]; then
-            echo "::error::simulated build failure of ${COMPONENT} (simulate_build_failure)"
-            exit 1
-          fi
           builder=$(sed -n 's/^BUILDER=//p' binaries/builder.env)
           [[ "${builder}" =~ ^registry\.fedoraproject\.org/fedora:[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "::error::binaries/builder.env has no digest-pinned BUILDER"; exit 1; }
           podman build \
@@ -340,62 +305,9 @@ jobs:
           echo "signed: ${IMAGE}:${TAG} = ${DIGEST}"
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
 
-  # The component's own fallback: only after a failed BUILD of this component (not a failed signing, not a failed lookup). The
-  # step may fail (no last good image yet, a signature or layout refusal) without failing the job: binaries-decide.sh reads the outcome.
-  fallback:
-    name: Last good ${{ inputs.component }} image
-    needs: [check, build]
-    if: >-
-      always() && needs.check.result == 'success' && needs.build.result == 'success' && needs.build.outputs.ok == 'false' &&
-      ((inputs.optional && needs.check.outputs.nopublish != 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')) ||
-       (inputs.allow_fallback && github.event_name == 'schedule' && github.ref == 'refs/heads/main') ||
-       (github.event_name == 'workflow_dispatch' && inputs.fallback_dry_run))
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      packages: read
-    outputs:
-      ok: ${{ steps.record.outputs.ok }}
-      digest: ${{ steps.pick.outputs.digest }}
-      key: ${{ steps.pick.outputs.key }}
-      created: ${{ steps.pick.outputs.created }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Set up cosign
-        uses: ./.github/actions/setup-tool
-        with:
-          tool: cosign
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Verify and check the last good image
-        id: pick
-        continue-on-error: true
-        env:
-          IMAGE: ${{ needs.check.outputs.image }}
-          # an optional component without a last good image yet is expected, not an error
-          FALLBACK_REFUSAL_LEVEL: ${{ inputs.optional && 'warning' || 'error' }}
-        run: .github/scripts/binaries-fallback.sh "${IMAGE}" "last-good-${COMPONENT}" "${COMPONENT}" binaries/scx/schedulers.tsv build_files/install-binaries.sh
-
-      - name: Record
-        id: record
-        if: always()
-        env:
-          PICK: ${{ steps.pick.outcome }}
-        run: echo "ok=$([[ "${PICK}" == success ]] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
-
   result:
     name: Result of ${{ inputs.component }}
-    needs: [check, build, sign, fallback]
+    needs: [check, build, sign]
     if: always()
     runs-on: ubuntu-26.04
     permissions:
@@ -419,14 +331,7 @@ jobs:
           PUBLISHED: ${{ needs.build.outputs.published }}
           SIGN: ${{ needs.sign.result }}
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
-          FALLBACK: ${{ needs.fallback.result }}
-          FB_OK: ${{ needs.fallback.outputs.ok }}
           KNOWN_FAIL: ${{ needs.check.outputs.knownfail }}
-          FB_DIGEST: ${{ needs.fallback.outputs.digest }}
-          FB_KEY: ${{ needs.fallback.outputs.key }}
-          FB_CREATED: ${{ needs.fallback.outputs.created }}
-          DRY_RUN: ${{ inputs.fallback_dry_run == true }}
-          EVENT: ${{ github.event_name }}
           RESULT_DIR: ${{ runner.temp }}/binres
         run: .github/scripts/binaries-decide.sh
 

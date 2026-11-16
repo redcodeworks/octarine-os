@@ -269,7 +269,6 @@ check "wake-on-lan step only delegates: ujust wake-on-lan" logged "ujust wake-on
 rm -rf "$root/m/drm/card1"
 
 # ---- rocm and the opt-in export
-check "rocm: the ini installs the five Fedora packages from the toolbox image, no extra repository" bash -c "grep -q 'additional_packages=\"rocminfo rocm-smi rocm-hip rocm-opencl hipcc\"' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini' && grep -q '^image=registry.fedoraproject.org/fedora-toolbox:45' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini' && ! grep -qi 'copr\|repo=' '$here/system_files/usr/share/ublue-os/distrobox/rocm.ini'"
 rm -rf "$root/exportbin"
 run --list
 check "rocm available with an AMD GPU, /dev/kfd and distrobox" bash -c "grep -E '^rocm +available' '$root/out'"

@@ -69,8 +69,8 @@ COPY --from=brew /system_files /
 
 # The prebuilt binaries image is bind-mounted, not copied, so build.sh installs exactly what it checks (scx/bin,
 # scx/schedulers.tsv, extest/lib, extest/lib64, and LICENSES/, SOURCE, BUILDINFO of each component)
-# Which components the image holds and where each came from is in /binaries/COMPONENTS: install-binaries.sh records fallbacks and
-# omissions from it and checks that the shared libraries the binaries need are in this image
+# Which components the image holds and where each came from is in /binaries/COMPONENTS: install-binaries.sh records omissions
+# from it and checks that the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \
     --mount=type=cache,dst=/var/cache \
