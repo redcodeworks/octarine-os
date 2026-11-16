@@ -10,6 +10,7 @@ rules:
       - action.yml
       - binaries.yml
       - build-dx.yml
+      - dx-image.yml
       - build-nvidia-dx.yml
       - build-nvidia.yml
       - build.yml
