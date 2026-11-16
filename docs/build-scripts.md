@@ -1,4 +1,4 @@
-# Build scripts
+# Build scripts (`build_files/`)
 
 The shell scripts that turn the Universal Blue base into this image. They are not shipped in the image: the
 `Containerfile` mounts them during the build only.

@@ -1,4 +1,4 @@
-# Image variants
+# Image variants (`variants/`)
 
 Build recipes for the images that sit on top of the default `octarine-os` image.
 

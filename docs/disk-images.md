@@ -1,4 +1,4 @@
-# Disk image configuration
+# Disk image configuration (`disk_config/`)
 
 Settings for [bootc-image-builder](https://github.com/osbuild/bootc-image-builder), the tool that turns the container image
 into something you can boot or install from.
