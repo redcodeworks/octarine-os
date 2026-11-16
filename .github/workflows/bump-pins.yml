@@ -1,15 +1,15 @@
 name: Bump pins
-# ONE weekly workflow for every external pin that is bumped automatically, ONE combined pull request into `testing` (branch bump/weekly-YYYYMMDD, one commit per pin that
-# moved, only the pin lines changed; nothing is built or published here; the owner merges it, or drops a pin by reverting its commit). Monday 07:00 UTC; scheduled
-# workflows run only from the default branch, so the schedule starts after the first promotion of this file into `main`; workflow_dispatch works from any branch
-# that has the file (`gh workflow run bump-pins.yml --ref testing`; with `-f dry_run=true` it prints the would-be pull request and pushes and opens nothing, and may
-# be dispatched from any branch to try its scripts).
+# ONE weekly workflow for every external pin that is bumped automatically, ONE INDEPENDENT pull request into `testing` PER PIN that moved (branch bump/<pin>-YYYYMMDD cut
+# from testing, one commit, only that pin's lines changed; the owner merges any subset in any order and closes the rest; nothing is built or published here). Monday 07:00 UTC;
+# scheduled workflows run only from the default branch, so the schedule starts after the first promotion of this file into `main`; workflow_dispatch works from any branch
+# that has the file (`gh workflow run bump-pins.yml --ref testing`; with `-f dry_run=true` it prints what it would open, keep or close, one pull request per pin, and
+# pushes and opens nothing, and may be dispatched from any branch to try its scripts).
 #
-# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (chunkah, brew, bins (the octarine-bins image digest); the
-# decision scripts per kind and the pin writers), each pin that moved becomes a commit, then the pull request is opened and every older open weekly one is closed with a
-# pointer to it. A failing pin (a registry that cannot be reached, a signature that does not verify) changes nothing and turns the run red, which scripts/scheduled-runs.sh
-# reports; the other pins still go in. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), the runner label, the repository
-# variables and the signing key.
+# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (chunkah, brew, bins (the octarine-bins image digest)), each pin that moved gets its own
+# branch, commit and pull request, an open pull request of the same pin that already proposes the same value stays, an older one is closed with a pointer to the new one (no
+# force-push, so a moved upstream means a new pull request), and a stale one (testing already has the value) is closed. A failing pin (a registry that cannot be reached, a
+# signature that does not verify) changes nothing and turns the run red, which scripts/scheduled-runs.sh reports; the other pins still go in. Stay manual by the owner's decision: the
+# tool versions (cosign, just, gitleaks, zizmor), the runner label, the repository variables and the signing key.
 #
 # Token: only the default GITHUB_TOKEN. Its pushes and pull requests start no workflow except workflow_dispatch, so bump-checks.sh dispatches the Test workflow ON TESTING with
 # `ref=<bump commit>` (`actions: write`; it tests that commit). A run dispatched on the bump branch would not count (found 2026-11-15 on #137: a dispatched run is not part of a
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Print the would-be pull request (title, branch, commits, table); push and open nothing
+        description: Print what would be opened, kept or closed (one pull request per pin); push and open nothing
         type: boolean
         default: false
 
@@ -36,7 +36,7 @@ jobs:
   bump:
     name: Bump the pins
     runs-on: ubuntu-26.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write

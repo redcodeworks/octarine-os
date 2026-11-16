@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The weekly bump check of ONE pin: decide (the decision scripts of its kind) and, when something is newer, write the pin into the working tree and make ONE
 # commit for it (its message ends with the row of the pull request's table: pin | from | to | what changed upstream | days the new value has existed).
-# bump-weekly.sh runs every pin one after the other on one branch and opens the one pull request. Exits non-zero when the pin's check FAILED (a registry that
+# bump-weekly.sh runs every pin one after the other, each on its own branch cut from testing, and opens one independent pull request per pin. Exits non-zero when the pin's check FAILED (a registry that
 # cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
 # Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
