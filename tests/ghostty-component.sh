@@ -48,7 +48,7 @@ check "build.sh: Zig 0.17 recipe: a FRESH empty Zig cache, zig fetch of every bu
   grep -q -- '--smoke root/usr/bin/ghostty:--version' \$b && grep -q -- '--elf-x86-64 root/usr/bin/ghostty' \$b && grep -q 'FILES' \$b && grep -q 'com.mitchellh.ghostty.desktop' \$b"
 check "the OS image build installs gtk4-layer-shell (the runtime library Ghostty links); a missing one is recorded as an optional package, and the runtime check then removes Ghostty with a warning" bash -c "grep -q '\"misc:.* gtk4-layer-shell\"' '$here/build_files/build.sh'"
 check "components.tsv lists ghostty as optional and the installer's lists agree; the layout contract knows ghostty" bash -c "grep -qP '^ghostty\toptional\$' '$here/binaries/components.tsv' && grep -q '^optional=\"ghostty\"' '$here/build_files/install-binaries.sh' && grep -q 'ghostty) need ghostty/root/usr/bin/ghostty' '$here/.github/scripts/binaries-layout.sh'"
-check "both smoke tests check ghostty (installed with its desktop file and resolved libraries, or recorded as left out)" bash -c "for f in build.yml build-beta.yml; do grep -q 'optional ghostty: installed with its desktop file' '$here/.github/workflows/'\$f || exit 1; done"
+check "the default smoke test checks ghostty (installed with its desktop file and resolved libraries, or recorded as left out)" grep -q 'optional ghostty: installed with its desktop file' "$here/.github/scripts/default-smoke.sh"
 
 # ---- fetch-zig.sh with a fake tarball, a stub curl, minisign and index.json
 ver=0.17.9
@@ -141,7 +141,7 @@ rm -rf "$dest"; mkdir -p "$dest/usr/share/terminfo/g"; echo base >"$dest/usr/sha
 env BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?
 check "installer: a terminfo file the image already has (ncurses-term ships ghostty) is KEPT and skipped, everything else of ghostty is installed, no conflict" bash -c "[ $rc = 0 ] && grep -q 'kept the image.s own terminfo: usr/share/terminfo/g/ghostty' '$root/run' && [ \"\$(cat '$dest/usr/share/terminfo/g/ghostty')\" = base ] && [ -x '$dest/usr/bin/ghostty' ] && [ ! -e '$lic/MISSING' ]"
 check "installer: the ghostty files are extracted into DESTDIR or, when DESTDIR is empty (the real image build), into / (tar -C with an empty string is not the root: the first real install put nothing at /usr/bin/ghostty)" bash -c "grep -q 'tar -C \"\\\${dest:-/}\" -xf -' '$here/build_files/install-binaries.sh'"
-check "installer: after installing ghostty in the REAL build (empty DESTDIR) the hicolor icon cache and the desktop database are refreshed and the cache is checked for com.mitchellh.ghostty (the base's cache and directory share the epoch mtime, so a stale cache looks valid and the icon is not found); the smoke test checks the cache too" bash -c "i='$here/build_files/install-binaries.sh'; grep -q 'gtk-update-icon-cache gtk4-update-icon-cache' \$i && grep -q 'update-desktop-database -q /usr/share/applications' \$i && grep -q 'grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache' \$i && grep -q -- '-f -t /usr/share/icons/hicolor' \$i && grep -q 'hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache' '$here/.github/workflows/build.yml'"
+check "installer: after installing ghostty in the REAL build (empty DESTDIR) the hicolor icon cache and the desktop database are refreshed and the cache is checked for com.mitchellh.ghostty (the base's cache and directory share the epoch mtime, so a stale cache looks valid and the icon is not found); the smoke test checks the cache too" bash -c "i='$here/build_files/install-binaries.sh'; grep -q 'gtk-update-icon-cache gtk4-update-icon-cache' \$i && grep -q 'update-desktop-database -q /usr/share/applications' \$i && grep -q 'grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache' \$i && grep -q -- '-f -t /usr/share/icons/hicolor' \$i && grep -q 'hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache' '$here/.github/scripts/default-smoke.sh'"
 mkimg "$root/img"; echo '../../etc/passwd' >>"$root/img/ghostty/FILES"; inst X=1
 check "installer: a FILES entry outside usr/ leaves ghostty out (nothing is written outside /usr)" bash -c "[ $rc = 0 ] && grep -q 'outside usr/' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ]"
 printf '#!/usr/bin/env bash\necho "\tlibgtk4-layer-shell.so.0 => not found"\n' >"$bin/ldd-missing"; chmod +x "$bin/ldd-missing"
@@ -282,6 +282,7 @@ f="$GH_DIR/$(printf '%s' "$path" | tr '/?=&' '____')"
 F
 chmod +x "$bin/gh"
 export GH_LOG="$root/gh.log" GH_DIR="$root/gh"
+export GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0
 reply() { rm -rf "$GH_DIR"; mkdir -p "$GH_DIR"; : >"$GH_LOG"; }
 put() { printf '%s\n' "$2" >"$GH_DIR/$1"; }
 zon() { printf '.{ .name = .ghostty, .version = "x", .minimum_zig_version = "%s", }\n' "$1" | base64 -w0; echo; }
@@ -334,7 +335,7 @@ check "check: an unreadable index.json is unreachable" bash -c "[[ \"$out\" == u
 # ---- bump-ghostty.sh: a local origin and a stub gh
 origin="$root/origin.git"; git init -q --bare -b testing "$origin"
 wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty" "$wc/.github/scripts"
-cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$wc/.github/scripts/"
+cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$here/.github/scripts/bump-checks.sh" "$wc/.github/scripts/"
 cp "$g/upstream.env" "$g/zig.env" "$wc/binaries/ghostty/"
 git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$origin"; git -C "$wc" push -q origin testing
 cat >"$bin/gh" <<'F'
@@ -351,7 +352,7 @@ Z2=https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz; Z3=https:
 bump() { PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash "$wc/.github/scripts/bump-ghostty.sh" "$@" >"$root/run" 2>&1; rc=$?; }
 : >"$root/prlist"; : >"$GH_LOG"
 bump ghostty v1.5.0 "$(sha d)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qx 'gh workflow run test.yml --ref bump/ghostty' '$GH_LOG'"
+check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}$' '$GH_LOG'"
 check "bump ghostty: upstream.env AND zig.env change in the same branch (tag, peeled commit, Zig version, URL, sha256, size, signature URL; the minisign key and the comments stay), nothing else" bash -c "
   [ \"\$(git -C '$origin' diff --name-only testing bump/ghostty | sort | tr '\n' ' ')\" = 'binaries/ghostty/upstream.env binaries/ghostty/zig.env ' ] &&
   z=\$(git -C '$origin' show bump/ghostty:binaries/ghostty/zig.env) && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&

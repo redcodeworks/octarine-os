@@ -203,19 +203,6 @@ jobs:
           echo "dev-packages pinned: ${tag} ${ref} (signature valid)"
           echo "DEV_PACKAGES_REF=${ref}" >> "${GITHUB_ENV}"
 
-      # The datastore image list is pinned by digest in the Containerfile too: format check, then the signature
-      - name: Check the datastore-images pin
-        run: |
-          set -euo pipefail
-          tag=$(sed -n 's/^ARG DATASTORE_IMAGES_TAG=//p' variants/dx/Containerfile)
-          digest=$(sed -n 's/^ARG DATASTORE_IMAGES_DIGEST=//p' variants/dx/Containerfile)
-          [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "::error::DATASTORE_IMAGES_TAG missing or not latest or latest-YYYYMMDD-<sha> in variants/dx/Containerfile"; exit 1; }
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::DATASTORE_IMAGES_DIGEST missing or not sha256:<64 hex> in variants/dx/Containerfile"; exit 1; }
-          ref="ghcr.io/redcodeworks/datastore-images@${digest}"
-          cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null
-          echo "datastore-images pinned: ${tag} ${ref} (signature valid)"
-          echo "DATASTORE_IMAGES_REF=${ref}" >> "${GITHUB_ENV}"
-
       # The digest comes from the plan job; verify it again here, then pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
         run: |
@@ -264,7 +251,6 @@ jobs:
             --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
             --label "io.github.redcodeworks.octarine-os.dx-inputs=${DX_INPUTS}" \
             --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
-            --label "io.github.redcodeworks.octarine-os.datastore-images=${DATASTORE_IMAGES_REF}" \
             --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
             --label "io.artifacthub.package.deprecated=false" \
             --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},developer" \
@@ -401,10 +387,10 @@ jobs:
           now=$("${lookup}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
-            after=$("${lookup}" "${tag}")
-            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
-            echo "promoted ${tag} -> ${after}"
+            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
+            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 
   sign:

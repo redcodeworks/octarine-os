@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Decides whether the digest pin of an external image (dev-packages and datastore-images, built by the fedora-toolbox repository) has to move to its
+# Decides whether the digest pin of an external image (dev-packages, built by the fedora-toolbox repository) has to move to its
 # `latest` tag, and rewrites the pin when it has. Used by the weekly workflow bump-pins.yml; tested with fake skopeo and
 # cosign by tests/bump-pins.sh. Run from the repository root.
 #
-#   bump-pin.sh dev-packages|datastore-images|chunkah
+#   bump-pin.sh dev-packages|chunkah
 #
 # chunkah (quay.io/coreos/chunkah, pinned in config/chunkah.env as KEY=VALUE lines) is verified KEYLESS (the GitHub Actions OIDC issuer and an identity
 # under https://github.com/coreos/chunkah/) instead of with a key file; everything else is the same decision table.
@@ -23,9 +23,8 @@ set -uo pipefail
 image=${1:-}
 case "${image}" in
     dev-packages) file=variants/dx/Containerfile; prefix=DEV_PACKAGES; argp="ARG "; repo=ghcr.io/redcodeworks/${image} ;;
-    datastore-images) file=variants/dx/Containerfile; prefix=DATASTORE_IMAGES; argp="ARG "; repo=ghcr.io/redcodeworks/${image} ;;
     chunkah) file=${CHUNKAH_ENV:-config/chunkah.env}; prefix=CHUNKAH; argp=""; repo=quay.io/coreos/chunkah ;;
-    *) echo "::error::unknown image '${image}' (dev-packages, datastore-images or chunkah)"; exit 3 ;;
+    *) echo "::error::unknown image '${image}' (dev-packages or chunkah)"; exit 3 ;;
 esac
 key=${COSIGN_KEY_FILE:-keys/redcodeworks-toolbox-cosign.pub}
 out() { [[ -z "${GITHUB_OUTPUT:-}" ]] || echo "$1=$2" >> "${GITHUB_OUTPUT}"; }

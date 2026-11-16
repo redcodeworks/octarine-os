@@ -17,14 +17,9 @@ ARG BASE_DIGEST=
 # the format and the signature on every build.
 ARG DEV_PACKAGES_TAG=latest-20261115-2ae8e11
 ARG DEV_PACKAGES_DIGEST=sha256:30db0bbf32391f9b05a550091a102c6b04fe20ba892a22da7e87bb2c67f6b052
-FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 
-# The container images of the opt-in datastore Quadlets: a tiny signed FROM scratch image (/images.txt, one `<name> <image>:<tag>@sha256:<digest>`
-# line per image, edited BY HAND in the fedora-toolbox repository, datastore-images/images.txt), pinned by DIGEST like the list above. The tag is for
-# humans. Bump both with `just datastore-images-bump [tag]` (or the weekly bump pull request); CI checks the format and the signature on every build.
-ARG DATASTORE_IMAGES_TAG=latest-20261115-2ae8e11
-ARG DATASTORE_IMAGES_DIGEST=sha256:0b107dc33efd5bacb321048e214ac030c3bcd8e58de6204c7442b8b4eeb115e0
-FROM ghcr.io/redcodeworks/datastore-images@${DATASTORE_IMAGES_DIGEST} AS datastoreimgs
+FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
+# (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
 
 FROM scratch AS ctx
 COPY variants/dx/dx.sh /dx.sh
@@ -32,7 +27,7 @@ COPY build_files/final-cleanup.sh /final-cleanup.sh
 COPY build_files/validate-repos.sh /validate-repos.sh
 COPY variants/dx/packages/extras.txt /extras.txt
 COPY variants/dx/system_files /system_files
-COPY variants/dx/datastore /datastore
+COPY keys/redcodeworks-toolbox-cosign.pub /toolbox-cosign.pub
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
@@ -41,9 +36,8 @@ ARG IMAGE_VERSION
 # os-release IMAGE_ID: octarine-os-dx, or octarine-os-nvidia-dx when the base is the NVIDIA variant (same layer, same packages)
 ARG DX_IMAGE_ID=octarine-os-dx
 
-# The shared list and the datastore image list through bind mounts, then the extras, in dx.sh (which also keeps the kernel unchanged)
+# The shared list through a bind mount, then the extras, in dx.sh (which also keeps the kernel unchanged)
 RUN --mount=type=bind,from=devpkgs,source=/,target=/dev-packages \
-    --mount=type=bind,from=datastoreimgs,source=/,target=/datastore-images \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \

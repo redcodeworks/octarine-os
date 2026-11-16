@@ -6,17 +6,17 @@ name: Bump pins
 #
 # Jobs, independent of each other (a failing pin does not stop the others; the final job fails the run when any pin failed, which scripts/scheduled-runs.sh reports):
 #   sources  scx, extest, ghostty (and the Zig pin of binaries/ghostty/zig.env, moved by the Ghostty PR; a newer Zig patch of the pinned minor is its own low-priority PR)
-#   digests  chunkah, dev-packages, datastore-images (the pointer to the list image of the four datastore container images; the images INSIDE the list are edited by hand in the fedora-toolbox repository and never bumped here)
+#   digests  chunkah, dev-packages
 #   external brew (ghcr.io/ublue-os/brew, Containerfile; the `just brew-bump` recipe is the pin writer) and builder (the Fedora builder digest of
 #            binaries/builder.env; the same major, only once the digest has been the tag's value for 7 days; a builder bump rebuilds every binaries component)
 # Every pin goes through .github/scripts/bump-run.sh (the decision scripts per kind, then .github/scripts/bump-pr.sh for the branch, the commit, the PR and the dispatch
 # of the Test workflow); .github/scripts/bump-summary.sh writes the table. A registry that cannot be reached or a signature that does not verify fails that pin and changes
 # nothing. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), bootc-image-builder, the runner label, the repository variables and the signing key.
 #
-# Token: only the default GITHUB_TOKEN. Its pushes and pull requests start no workflow except workflow_dispatch, so bump-pr.sh dispatches the Test workflow on each bump
-# branch (`actions: write`), whose jobs `test` and `secrets` are the required checks into `testing`. A dispatched run is NOT part of a pull request's status rollup (found
-# 2026-11-15 on #137, also for a dispatch by a person), so bump-checks.sh waits for it and posts check runs named `test` and `secrets` with its real results from THIS run
-# (`checks: write`; a different commit than the bump commit, hence a suite the PR counts). The repository setting "Allow GitHub Actions to create and approve pull requests" must be on (it is).
+# Token: only the default GITHUB_TOKEN. Its pushes and pull requests start no workflow except workflow_dispatch, so bump-pr.sh dispatches the Test workflow ON TESTING with
+# `ref=<bump commit>` (`actions: write`; it tests that commit). A run dispatched on the bump branch would not count (found 2026-11-15 on #137: a dispatched run is not part of a
+# PR's rollup, and check runs posted into its suite are not counted either), so bump-checks.sh waits for the run and posts check runs named `test` and `secrets` with its real
+# results on the bump commit (`checks: write`; a commit without a suite of its own takes them). "Allow GitHub Actions to create and approve pull requests" must be on (it is).
 on:
   schedule:
     - cron: '0 7 * * 1'  # Monday 07:00 UTC
@@ -84,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pin: [chunkah, dev-packages, datastore-images]
+        pin: [chunkah, dev-packages]
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -192,4 +192,4 @@ jobs:
           path: ${{ runner.temp }}/rows
 
       - name: Table (red when any pin failed)
-        run: .github/scripts/bump-summary.sh "${RUNNER_TEMP}/rows" scx extest ghostty chunkah dev-packages datastore-images brew builder
+        run: .github/scripts/bump-summary.sh "${RUNNER_TEMP}/rows" scx extest ghostty chunkah dev-packages brew builder

@@ -91,13 +91,7 @@ check "workflow: size guard, rechunk, neutral-version check, one push (push-tags
 check "workflow: it signs every pushed digest with the repository key and verifies every tag" bash -c "
   grep -q 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wf'
   grep -q 'SIGNING_SECRET' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf'"
-check "workflow: every third-party action is pinned by commit sha" python3 - "$wf" <<'PY'
-import re, sys
-for l in open(sys.argv[1]):
-    m = re.search(r"uses: (\S+)", l)
-    if m and not m.group(1).startswith("./"):
-        assert re.search(r"@[0-9a-f]{40}\b", m.group(1)), l
-PY
+# (the SHA pins of every workflow are checked once, in tests/test-workflow.sh)
 check "workflow: bash -n on every run block" python3 - "$wf" "$root" <<'PY'
 import subprocess, sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
@@ -117,7 +111,6 @@ for n in ("Check disk space", "Maximize build space (fallback, only when the dis
     sa, sb = step(a, "build", n), step(b, "build", n)
     assert {k: v for k, v in sa.items() if k != "run"} == {k: v for k, v in sb.items() if k != "run"}, n
 assert step(a, "build", "Check the dev-packages pin")["run"] == step(b, "build", "Check the dev-packages pin")["run"]
-assert step(a, "build", "Check the datastore-images pin")["run"] == step(b, "build", "Check the datastore-images pin")["run"]
 PY
 check "workflow: a doc or comment never says the CUDA toolkit is in the image (licensing: it is installed by the user in a distrobox)" bash -c "! grep -qiE 'cuda-toolkit|nvidia/cuda' '$wf'"
 

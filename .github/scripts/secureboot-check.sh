@@ -10,14 +10,14 @@
 # 2. the key is downloaded (fetch_key, curl with retries; a failed download fails the check clearly) and converted from DER to PEM,
 # 3. `sbverify --list` is printed for diagnosis (a base kernel normally carries two signatures: Fedora's kernel-signer and Universal Blue's "ublue kernel"),
 # 4. `sbverify --cert <key>` decides: exit 0 verified; exit 1 otherwise ("Secureboot Signature Failed"). The Fedora signature is NOT checked.
-# Trust: the key is fetched live from the main branch of github.com/ublue-os/akmods on every run (see keys/README.md).
+# Trust: the key is fetched live from the main branch of github.com/ublue-os/akmods on every run (see docs/signing-keys.md).
 # Tools: podman (unless KERNEL_FILE), sbverify (sbsigntool/sbsigntools), curl, openssl.
 set -euo pipefail
 image=${1:?image}
 url=${UBLUE_KEY_URL:-https://github.com/ublue-os/akmods/raw/main/certs/public_key.der}
 
 # Download helper: one place to stub in tests (the test puts its own fetch_key in a file named by FETCH_KEY_OVERRIDE).
-fetch_key() { curl --fail --silent --show-error --retry 3 -L -o "$2" "$1"; }
+fetch_key() { "$(dirname "${BASH_SOURCE[0]}")/retry.sh" curl --fail --silent --show-error --retry 3 -L -o "$2" "$1"; }  # curl's own --retry covers only some errors; retry.sh (3 tries, backoff) covers the rest of a transient failure of github.com
 if [[ -n "${FETCH_KEY_OVERRIDE:-}" ]]; then
     # shellcheck disable=SC1090
     source "${FETCH_KEY_OVERRIDE}"

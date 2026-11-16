@@ -79,7 +79,7 @@ jobs:
           raw=$(skopeo inspect --raw "docker://${DEFAULT_IMAGE}:latest")
           [[ -n "${raw}" ]] || { echo "::error::Cannot read ${DEFAULT_IMAGE}:latest"; exit 1; }
           digest="sha256:$(printf '%s' "${raw}" | sha256sum | sed 's/ .*//')"
-          cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
           echo "Base image ${DEFAULT_IMAGE}:latest = ${digest} (signature valid)"
           echo "BASE_REF=${DEFAULT_IMAGE}@${digest}" >> "${GITHUB_ENV}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
@@ -88,7 +88,7 @@ jobs:
       - name: Read the kernel of the base image
         run: |
           set -euo pipefail
-          podman pull "${BASE_REF}" > /dev/null
+          .github/scripts/retry.sh podman pull "${BASE_REF}" > /dev/null
           kernel=$(podman run --rm "${BASE_REF}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
           echo "Kernel of the base image: ${kernel}"
           echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
@@ -112,7 +112,7 @@ jobs:
         id: akmods-sig
         continue-on-error: true
         run: |
-          cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
           echo "Signature of ${AKMODS_REF} is valid"
 
       - name: Report the akmods signature result
@@ -151,8 +151,8 @@ jobs:
       # Secure Boot: the kernel verifies against the pinned certificate (the variant adds modules, never a kernel)
       - name: Secure Boot check of the kernel
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/retry.sh sudo apt-get update -qq
+          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
           .github/scripts/secureboot-check.sh octarine-os-nvidia:build
 
       - name: Login to GitHub Container Registry
@@ -230,6 +230,44 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
+
+  # A failed weekly NVIDIA image build: ONE issue (label ci-failure-nvidia, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly NVIDIA image build
+    needs: [build, sign]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-nvidia
+          LABEL_DESC: the weekly NVIDIA image build failed (one open issue at a time)
+          ISSUE_TITLE: "The NVIDIA image build failed"
+          ISSUE_BODY: "The weekly build of octarine-os-nvidia failed (kernel module signing, akmods or the base). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, NVIDIA variant."
+          FAIL_COMMENT: "weekly NVIDIA image build failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.sign.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-nvidia
+          RECOVER_COMMENT: "the next weekly NVIDIA image build succeeded"
+        run: .github/scripts/ci-issue.sh recover

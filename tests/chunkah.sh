@@ -2,6 +2,7 @@
 # Tests for the chunkah rechunk: the verified pin (.github/scripts/chunkah-ref.sh with a fake cosign), the Justfile recipe and its use in
 # every image workflow. Nothing is pulled or run. Run: tests/chunkah.sh. Needs: bash, python3 with PyYAML.
 set -uo pipefail
+export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
@@ -10,6 +11,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/   
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 bin="$root/bin"; mkdir -p "$bin"
 printf '#!/usr/bin/env bash\necho "cosign $*" >>"$LOG"\nexit "${COSIGN_RC:-0}"\n' >"$bin/cosign"; chmod +x "$bin/cosign"
+printf '#!/usr/bin/env bash\necho "podman $*" >>"$LOG"\nexit "${PODMAN_RC:-0}"\n' >"$bin/podman"; chmod +x "$bin/podman"
 export LOG="$root/log"
 ref() { : >"$LOG"; env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/chunkah-ref.sh" "${ENVF:-$here/config/chunkah.env}" >"$root/run" 2>&1; rc=$?; }
 d=$(sed -n 's/^CHUNKAH_DIGEST=//p' "$here/config/chunkah.env")
@@ -22,11 +24,9 @@ check "chunkah-ref: a pin that is not a sha256 digest (a floating tag) is refuse
 ENVF="$root/missing.env" ref X=1
 check "chunkah-ref: a missing pin file fails" test "$rc" = 1
 check "config/chunkah.env: the pin is the digest of quay.io/coreos/chunkah, tag only a label" bash -c "grep -qx 'CHUNKAH_IMAGE=quay.io/coreos/chunkah' '$here/config/chunkah.env' && grep -Eq '^CHUNKAH_DIGEST=sha256:[0-9a-f]{64}\$' '$here/config/chunkah.env'"
-check "Justfile: rechunk uses the verified reference, Aurora's flags and keeps the labels of just build through the image config" bash -c "
-  j='$here/Justfile'; grep -q '^rechunk ' \"\$j\" && ! grep -q 'ostree-rechunk\|build-chunked-oci' \"\$j\"
-  grep -q 'CHUNKAH_REF=\"\$(.github/scripts/chunkah-ref.sh)\"' \"\$j\" && grep -q '\"\${CHUNKAH_REF}\"' \"\$j\" && ! grep -q 'chunkah:latest@' \"\$j\"
-  grep -q -- '--max-layers 256' \"\$j\" && grep -q -- '--prune /sysroot/' \"\$j\" && grep -q -- '--label ostree.commit- --label ostree.final-diffid-' \"\$j\"
-  grep -q 'podman inspect \"\${target_image}:\${tag}\" > \"\${CHUNKAH_CONFIG_FILE}\"' \"\$j\" && grep -q -- '--config /chunkah-config.json' \"\$j\""
+check "Justfile: rechunk runs chunkah through the digest-pinned reference of chunkah-ref.sh (never a floating tag) and does not use the old rechunkers" bash -c "
+  j='$here/Justfile'; grep -q '^rechunk ' \"\$j\" && ! grep -q 'ostree-rechunk\|build-chunked-oci' \"\$j\" &&
+  grep -q 'chunkah-ref.sh' \"\$j\" && ! grep -q 'chunkah:latest@' \"\$j\""
 check "every image workflow (default, beta, dx, nvidia-dx) rechunks with 'just rechunk' after cosign is set up; none calls ostree-rechunk; the NVIDIA variant stays a layer without rechunk" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]

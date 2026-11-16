@@ -96,26 +96,16 @@ check "an unknown image name: exit 3" test "$rc" = 3
 
 # ---- the weekly workflow (the consolidated bump-pins.yml is tested in tests/bump-run.sh)
 wf="$here/.github/workflows/bump-pins.yml"
-check "test.yml has a workflow_dispatch trigger and its jobs have no skipping conditions (test: always(), runs even when scope fails), so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
+check "test.yml has a workflow_dispatch trigger, a dispatch is never documentation-only (scope full), and only the documentation scope skips a job, so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert "workflow_dispatch" in (w.get(True) or w.get("on"))
 for k, j in w["jobs"].items():
-    assert j.get("if", "always()") == "always()" and j["name"] == k, k
+    assert j["name"] == k, k
+    assert "if" not in j or "scope" in j["if"], k  # the only condition a job may have is the documentation scope
 PY
-# ---- the datastore-images list pointer: same table, its own two ARG lines, the toolbox key, the same branch rule as dev-packages
-reset_bump
-sed -i "s/^ARG DATASTORE_IMAGES_DIGEST=.*/ARG DATASTORE_IMAGES_DIGEST=sha256:$(dg datastore-images latest)/" "$bw/variants/dx/Containerfile"
-cp "$bw/variants/dx/Containerfile" "$root/before"
-bump datastore-images
-check "datastore-images, pin equals latest: exit 0, file untouched, cosign verified latest with the toolbox key" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && cmp -s '$root/before' '$bw/variants/dx/Containerfile' && grep -q 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/datastore-images@sha256:$(dg datastore-images latest)' '$root/log'"
-reset_bump
-bump datastore-images TAGS_JSON='{"Tags":["latest","latest-20261120-3333333"]}'
-check "datastore-images, newer: exit 10, only the DATASTORE_IMAGES lines change, the dev-packages pin stays" bash -c "[ $rc = 10 ] && grep -qx 'ARG DATASTORE_IMAGES_DIGEST=sha256:$(dg datastore-images latest)' '$bw/variants/dx/Containerfile' && diff <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$here/variants/dx/Containerfile') <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$bw/variants/dx/Containerfile')"
-reset_bump
-bump datastore-images COSIGN_RC=1
-check "datastore-images, bad signature: exit 2 and the file is untouched" bash -c "[ $rc = 2 ] && cmp -s '$here/variants/dx/Containerfile' '$bw/variants/dx/Containerfile'"
-check "bump-pins.yml bumps the datastore-images pointer as a third digest pin and lists it in the summary" bash -c "grep -q 'pin: \\[chunkah, dev-packages, datastore-images\\]' '$here/.github/workflows/bump-pins.yml' && grep -q 'dev-packages datastore-images brew builder' '$here/.github/workflows/bump-pins.yml'"
+check "test-scope.sh answers full for a workflow_dispatch event, whatever the range" bash -c "cd '$here' && [ \"\$(bash .github/scripts/test-scope.sh workflow_dispatch HEAD HEAD 2>/dev/null)\" = full ]"
+check "bump-pins.yml bumps chunkah and dev-packages as digest pins and no datastore pin remains" bash -c "grep -q 'pin: \\[chunkah, dev-packages\\]' '$here/.github/workflows/bump-pins.yml' && ! grep -qi datastore '$here/.github/workflows/bump-pins.yml' '$here/.github/scripts/bump-run.sh' '$here/.github/scripts/bump-pin.sh'"
 check "bump-pin.sh parses and knows only the toolbox list images and chunkah" bash -c "bash -n '$here/.github/scripts/bump-pin.sh' && ! grep -q 'scx-bin\|extest-bin' '$here/.github/scripts/bump-pin.sh'"
 
 echo

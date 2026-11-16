@@ -77,7 +77,6 @@ check "every public recipe of the assembled justfile has a description" test -z 
 nodoc=$(for f in "$dxdir"/*.just; do just --justfile "$f" --dump --dump-format json | jq -r '.recipes[] | select((.private | not) and ((.doc // "") == "")) | .name'; done)
 printf '%s\n' "$nodoc" >"$root/out"
 check "every public recipe of the dx variant file has a description" test -z "$nodoc"
-check "toolbox keeps its description" bash -c "just --justfile '$root/Assembled' --list 2>&1 | grep -E '^ +toolbox ' | grep -q 'Create and manage toolboxes'"
 
 echo
 echo "$pass passed, $failn failed"

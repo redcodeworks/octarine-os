@@ -13,6 +13,8 @@
 #   MAX_AGE_DAYS      `latest` older than this always rebuilds. 7 days because the build installs RPMs from live
 #                     Fedora and RPM Fusion repositories, so package updates arrive without a base image change
 #   SIGNED            `true` when `latest` has a valid signature
+#   LATEST_MISSING    the label org.octarineos.optional-packages-missing of `latest` (`none` or a comma separated list, set by `just rechunk`): a list means
+#                     optional packages failed to install; such an image is never kept, the next run tries again
 #   LATEST_FALLBACK   the label org.octarineos.binaries-fallback of `latest`: `true` means the image was built with the last good
 #                     binaries image because the binaries build failed; such an image is never kept, the next run tries again
 #
@@ -26,6 +28,7 @@ build() { echo "build: $*"; exit 0; }
 [[ "${REF:-}" == refs/heads/main ]] || build "not main (${REF:-unset})"
 [[ -n "${BASE_NOW:-}" && -n "${LATEST_BASE:-}" ]] || build "base digest unknown (now '${BASE_NOW:-}', in latest '${LATEST_BASE:-}')"
 [[ "${BASE_NOW}" == "${LATEST_BASE}" ]] || build "base image changed"
+[[ -z "${LATEST_MISSING:-}" || "${LATEST_MISSING}" == none ]] || build "latest was built with optional packages missing (${LATEST_MISSING}): trying again"
 [[ "${LATEST_FALLBACK:-}" != true ]] || build "latest was built with the fallback binaries image: trying the real binaries again"
 [[ "${REPO_SAME:-}" == true ]] || build "repository content differs from, or is unknown for, the commit latest was built from"
 [[ -n "${LATEST_CREATED:-}" ]] || build "age of latest unknown"

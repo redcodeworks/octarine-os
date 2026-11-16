@@ -186,6 +186,14 @@ rechunk $target_image=image_name $tag=default_tag:
     trap 'rm -f "${CHUNKAH_CONFIG_FILE}"; rm -rf "${CHUNKAH_OUTPUT_DIR}"' EXIT
     podman inspect "${target_image}:${tag}" > "${CHUNKAH_CONFIG_FILE}"
 
+    # The optional packages that did not install (build.sh writes the list into the image) become a LABEL, so the daily's skip check can see a degraded latest and
+    # rebuild it instead of keeping it for up to a week (plan-skip.sh): "none" or a comma separated list; no label when the image has no such file
+    MISSING_LABEL=()
+    if missing="$(podman run --rm --network none "${target_image}:${tag}" cat /usr/share/octarine-os/optional-packages-missing 2> /dev/null)"; then
+      csv="$(printf '%s\n' "${missing}" | grep -v '^$' | paste -sd, - || true)"
+      MISSING_LABEL=(--label "org.octarineos.optional-packages-missing=${csv:-none}")
+    fi
+
     podman run --rm \
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
@@ -197,6 +205,7 @@ rechunk $target_image=image_name $tag=default_tag:
       --max-layers 256 \
       --prune /sysroot/ \
       --label ostree.commit- --label ostree.final-diffid- \
+      "${MISSING_LABEL[@]}" \
       --config /chunkah-config.json \
       --output oci:/run/out/chunked
 
@@ -635,11 +644,7 @@ brew-bump tag="":
 [group('Image')]
 dev-packages-bump tag="latest": (_list-image-bump "dev-packages" "DEV_PACKAGES" tag)
 
-# Bump the pinned datastore-images digest (the list of the datastore container images) in the dx Containerfile (verified)
-[group('Image')]
-datastore-images-bump tag="latest": (_list-image-bump "datastore-images" "DATASTORE_IMAGES" tag)
-
-# The shared body of the two list image bumps: resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
+# The body of the list image bump (dev-packages): resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
 [private]
 _list-image-bump name prefix tag:
     #!/usr/bin/env bash
