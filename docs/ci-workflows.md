@@ -13,7 +13,7 @@ Everything that builds, tests, signs and publishes the images runs from here.
 How a change flows: work on a feature branch, where `test.yml` runs a fast sanity check (the required `test`, only the obvious: shell syntax and workflow files that parse) and the behavior tests (`suite`, not required, cancelable); open a pull request into `testing`; merging
 it makes `build.yml` build and publish the `testing` image (a newer merge cancels an older build: the per-commit tags are pushed, signed and verified first, and `testing` moves to the signed digest only after that, so a cancel leaves the previous signed image in place). A pull request from `testing` into `main` (the only way into
 `main`, enforced by `require-testing-branch.yml` and the branch rules) is checked, and merging it promotes the tested
-build instead of building again; the `latest` tag then moves for the default and dx images together. Pushes that change
+build instead of building again; each image then moves its own `latest` tag, independently of the others. Pushes that change
 only documentation skip the image builds.
 
 Before editing: workflows are audited for security problems, and the required checks (`test`, `secrets` and the build
@@ -26,13 +26,14 @@ images accumulate (public registry storage is free); delete old package versions
 
 ## What the build depends on, and how each part is held
 
-The rule: anything that comes from another repository is pinned by digest and moves only through a bump pull request (the weekly pin bump, approved by the owner); the base image and the Fedora packages float. `dev-packages` and `datastore-images` still float at their `latest` for now.
+The rule: anything that comes from another repository is pinned by digest and moves only through a bump pull request (the weekly pin bump, approved by the owner); the base image and the Fedora packages float. `datastore-images` still floats at its `latest` for now.
 
 | Dependency | Treatment |
 |---|---|
 | Base image `silverblue-main` | floats at the tag; resolved to a digest and signature-checked on every build |
 | Fedora packages, negativo17 multimedia packages | float (installed from the live repositories); a COPR or vendor repository would be pinned and optional only (none today) |
-| `dev-packages`, `datastore-images` (the owner's octarine-images repository) | float at `latest`; the digest is checked and recorded in an image label |
+| `dev-packages` (the developer package list image of the owner's octarine-images repository; the list and installer only, the packages themselves still float) | pinned by digest in the dx `Containerfile`, verified on every dx build with its own key, moved by the weekly bump pull request |
+| `datastore-images` (the owner's octarine-images repository) | float at `latest`; the digest is checked and recorded in an image label |
 | `octarine-bins` (prebuilt scx, extest, Ghostty; the owner's octarine-bins repository) | pinned by digest in the `Containerfile`, verified on every build with its own key, moved by the weekly bump pull request |
 | Homebrew files image, chunkah | pinned, moved by the weekly bump pull request |
 | GitHub Actions | pinned by commit, moved by Dependabot pull requests |
