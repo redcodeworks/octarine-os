@@ -8,7 +8,7 @@ secrets, hostnames or personal data in it.
 
 A personal, publicly shared bootc image (`ghcr.io/redcodeworks/octarine-os`) built on
 `${BASE_IMAGE}:${FEDORA_VERSION}` (now `ghcr.io/ublue-os/silverblue-main:45`; see the Containerfile bullet). It exists to make one desktop reproducible. See `README.md`
-for the user-facing description and `docs/CONFIG-GUIDE.md` for the wider desktop setup.
+for the user-facing description and `docs/CONFIG-GUIDE.md` for the two-step setup guide (rebase, then recipes); `docs/README.md` indexes the directory documents.
 
 ## README policy
 
@@ -58,7 +58,7 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   (`sha256:` plus 64 hex) and `ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}` in the Containerfile (a
   re-pushed tag cannot change what is built). Bump with `just brew-bump [tag]` (default: the newest dated tag; needs
   skopeo, cosign and python3): it resolves the digest (`skopeo inspect --raw | sha256sum`), runs `cosign verify --key
-  keys/ublue-os-brew-cosign.pub ghcr.io/ublue-os/brew@sha256:...` (the key is vendored, see `keys/README.md`) and only then
+  keys/ublue-os-brew-cosign.pub ghcr.io/ublue-os/brew@sha256:...` (the key is vendored, see `docs/signing-keys.md`) and only then
   writes tag and digest; `just brew-tags` lists the newest tags and the current pin. CI no longer resolves or verifies
   per build: the build job's "Check the brew image pin" step fails unless tag and digest have the right format and logs
   `Brew image pinned: ...` (the record of what a build used); the plan job output `brew_pin_changed` is true when the
@@ -443,6 +443,7 @@ Compared with Bluefin's `build_files/` (shared/validate-repos.sh, base/04-packag
   libstdc++-devel 41.3, kernel-headers 7.1 (surprising on a non-dev image, a gcc dependency through glibc-devel), glibc-devel 2.3, make 1.8, libxcrypt-devel 0.03 MiB. dx and the NVIDIA images inherit them; nothing in `variants/dx` listed any of them, so nothing was removed there.
   The step `Compiler smoke test` (`.github/scripts/compiler-smoke.sh`, mounted into the built image by both workflows) compiles, links and runs a C and a C++ program, links through `ld` (`-fuse-ld=bfd`), runs `make` and assembles, links (`ld`) and runs a tiny program (`as`, `ar`).
   Tests: `tests/compilers.sh` (the lists agree, the script and its wiring). Still absent from the default image: clang, cmake, ninja, meson, gdb, the development-tools group and `-devel` libraries.
+- **One smoke script for the default image (2026-11-15, item 14).** The in-image smoke test of `build.yml` and `build-beta.yml` is `.github/scripts/default-smoke.sh` (mounted into the built image and run with bash; env `REF`, `BASE_TAG`, `VERSION_RE`, the beta workflow passes the `beta-` pattern): one copy, no drift test needed. `tests/check-call-shape.sh` still guards joined `check "a" "b"` strings. `check` runs its command in a subshell: an `exit 1` inside a command (the `for ... || exit 1` forms) used to end the whole script silently at the first failure, with no FAIL line; now every failure is listed. To try the script by hand against a pulled image: `podman run --rm -v <copy of the script>:/default-smoke.sh:ro,z -e REF=... -e BASE_TAG=45 -e VERSION_RE=... <image> bash /default-smoke.sh` (older images fail the checks they predate). The default-enabled extensions must each have a directory in the image or the build must have recorded a missing optional package. Dropped as pure restatements: checks that `build.sh` already asserts during the build (PRETTY_NAME, IMAGE_ID, the plymouth theme file and selection, zsh in `/etc/shells` and not the useradd default), the sudo timeout literal, file-exists checks of files that tests/ read from the tree, and the dconf mtime comparison (the chunkah rechunk normalizes mtimes: the compiled database must hold the keys instead). The iommu check is one assertion: no `kargs.d` file mentions iommu.
 - **Grouped build logs.** Every section of `build.sh`, `dx.sh` and `nvidia.sh` and each of `install-binaries.sh`, `gen-schedulers.sh`, `final-cleanup.sh` and `validate-repos.sh` prints `::group::<name>` ... `::endgroup::` (folded in the GitHub Actions log; plain text elsewhere, and
   `just build` output is only decorated). GitHub does not nest groups, so a script that runs another is called BETWEEN two of its own groups. The helper scripts open one group at the top and close it from an `EXIT` trap; `build.sh` and the layers also set an `EXIT` trap that
   prints `::endgroup::` and then `::error::<script> failed (exit N)` outside the group, so a failure is not folded away; exit status, `set -x` and trap order are unchanged. Tests: `tests/build-log-groups.sh` (balanced and not nested per script, a failing script closes its group and prints the error).
@@ -623,7 +624,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (`fetch_key`, curl with 3 retries, from `https://github.com/ublue-os/akmods/raw/main/certs/public_key.der`; a failed download fails the check clearly), converted DER to PEM, `sbverify --list` is printed
   and `sbverify --cert` must accept the kernel, otherwise the build FAILS ("Secureboot Signature Failed"). The Fedora signature is not checked. The earlier attempt to pin Fedora's leaf or CA certificate was dropped (Kevin,
   2026-11-14: the leaf is one signing builder's, the CA is not in the image, and Bluefin's mechanism is proven). The key is read LIVE from the `main` branch of `ublue-os/akmods` on every run, so that repository's
-  controllers decide what passes (nothing is pinned, so key rotation needs no change here); `keys/README.md` has the fingerprint. What it proves: the kernel carries the signature that the Universal Blue MOK
+  controllers decide what passes (nothing is pinned, so key rotation needs no change here); `docs/signing-keys.md` has the fingerprint. What it proves: the kernel carries the signature that the Universal Blue MOK
   (enrolled on nox) accepts; it does NOT prove the kernel boots on a stock Secure Boot machine. Facts from the real image (octarine-os:latest, kernel 7.2.15-300.fc45, checked 2026-11-14): THREE signatures, Fedora's
   `kernel-signer` (bkernel01, Fedora Secure Boot CA 20200709), Universal Blue's `ublue kernel` and `ublue akmods`; the downloaded key is byte-identical to `/etc/pki/akmods/certs/akmods-ublue.der` of the image. The
   runner has no sbverify: the step installs `sbsigntool` (apt); no alpine fallback (Bluefin needs one for its own runners). The first CI run was the old branch's discovery run, which failed on purpose for want of a pin.
@@ -914,9 +915,10 @@ signed and the dx image was built on exactly that default digest.
 Shipped to everyone who uses the image as-is (moved here from the README's former "Personal choices" section):
 
 - **PAM:** `pam_u2f sufficient` for sudo and polkit: a security-key touch is accepted instead of the password; the
-  password still works when no key is registered; no PIN is required. Details in `docs/CONFIG-GUIDE.md`.
+  password still works when no key is registered; no PIN is required. Enrollment and the second key are under "Security key mechanics" below.
 - **Firewall:** the default zone allows named services for Sunshine, MoonDeckBuddy, Steam streaming, GSConnect and
-  Tailscale's UDP port (`docs/CONFIG-GUIDE.md` has the zone notes).
+  Tailscale's UDP port, with the wide high-port range of the stock zone removed. A zone that names a service that does not exist makes firewalld silently fall back to the wide stock config: check a change with `firewall-cmd --check-config`.
+- **sshd:** off by default; `45-hardening.conf` disables root login, X11 forwarding and TCP forwarding. Key-only login (`PasswordAuthentication no`) is not shipped: the user sets it once their `authorized_keys` works.
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
 - **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
 - **Size and compilers:** the default image carries only `gcc`, `gcc-c++`, `make` and `binutils` since 2026-11-14 (the base had none; about 221 MiB); the dx image provides the full toolchain, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
@@ -1215,7 +1217,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - fastfetch: OUR build does not install it and must not (owner's rule; a Homebrew install is the owner's way); only a default configuration ships. On the owner's machine `/usr/bin/fastfetch` exists anyway (fastfetch-2.68.1-1.fc45, not layered): it is not in `build.sh`, the dx lists or the `packages.json` of ublue-os/main, so it comes with the upstream Fedora Silverblue set that the base image carries (to confirm with `rpm -qf /usr/bin/fastfetch`: open item for the hub); the motd script works with and without it. Default configuration:
   `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
   so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
-  they are missing, and `n/a` elsewhere. Test: `tests/fastfetch-default.sh` (strips the `//` lines, then `jq`). Never add fastfetch to
+  they are missing, and `n/a` elsewhere. Check: `default-smoke.sh` parses it in the built image (strips the `//` lines, then `jq`); the separate test file was removed (it could not catch a wrong command). Never add fastfetch to
   `build.sh` or a Brewfile.
 
 ## The motd: one script, one switch for every shell

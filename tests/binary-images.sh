@@ -9,6 +9,7 @@ set -uo pipefail
 export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0
@@ -127,7 +128,7 @@ check "Containerfile: the binaries image comes from BINARIES_IMAGE (no default, 
 check "build.sh runs install-binaries.sh and generates the registry; no build file enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && ! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh' '$here/build_files/gen-schedulers.sh'"
 check "every scx unit file of system_files is disabled by the preset (nothing is wanted by default)" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! find '$here/system_files' -path '*wants*' -iname '*scx*' | grep -q ."
 check "Justfile: build passes BINARIES_IMAGE (default: the assembled-key tag of binaries/) and labels the image with it" bash -c "grep -q 'BINARIES_IMAGE=\${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:\$(.github/scripts/binaries-key.sh)}' '$here/Justfile' && grep -q 'io.github.redcodeworks.octarine-os.binaries=' '$here/Justfile'"
-check "the old foreign-image machinery is gone (pin check script, toolbox-key paragraph, foreign tests)" bash -c "! test -e '$here/.github/scripts/check-binary-pins.sh' && ! grep -rq 'check-binary-pins' '$here/.github' '$here/CLAUDE.md' && ! grep -q 'scx-bin' '$here/keys/README.md'"
+check "the old foreign-image machinery is gone (pin check script, toolbox-key paragraph, foreign tests)" bash -c "! test -e '$here/.github/scripts/check-binary-pins.sh' && ! grep -rq 'check-binary-pins' '$here/.github' '$here/CLAUDE.md' && ! grep -q 'scx-bin' '$keys_doc'"
 
 
 # ---- install-binaries.sh against a fake binaries image
@@ -163,23 +164,19 @@ check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text
 mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
 
-# ---- the smoke assertions are in build.yml and build-beta.yml, identical
-check "smoke: ldd, --version and ELF class assertions in both workflows, same text" python3 -I - "$here" <<'PY'
-import re, sys
+# ---- the smoke assertions are in default-smoke.sh (one copy; build.yml and build-beta.yml run it)
+check "smoke: ldd, ldd -r, --version and ELF class assertions are in default-smoke.sh, and both workflows run that script" python3 -I - "$here" <<'PY'
+import sys
 root = sys.argv[1]
-blocks = []
-for w in ("build.yml", "build-beta.yml"):
-    s = open(f"{root}/.github/workflows/{w}").read()
-    a = s.index("# prebuilt binaries (binaries/: scx, extest)")
-    b = s.index("\n", s.index("source and build records ship for both binary images"))
-    blocks.append(s[a:b])
-assert blocks[0] == blocks[1], "the smoke assertions drifted between build.yml and build-beta.yml"
-t = blocks[0]
+s = open(f"{root}/.github/scripts/default-smoke.sh").read()
+a = s.index("# prebuilt binaries (binaries/: scx, extest)")
+t = s[a:s.index("\n", s.index("source and build records ship for both binary images"))]
 for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-bit", "/usr/lib/extest/lib/libextest.so",
                "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
                "ldd -r /usr/bin/", "undefined symbol", "libraries the shipped binaries link", "BUILDINFO of the binaries image"):
     assert needle in t, needle
-assert "'" not in t, "a single quote would end the podman run bash -c string"
+for w in ("build.yml", "build-beta.yml"):
+    assert "default-smoke.sh" in open(f"{root}/.github/workflows/{w}").read(), w
 PY
 
 

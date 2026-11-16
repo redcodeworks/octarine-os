@@ -96,13 +96,15 @@ check "an unknown image name: exit 3" test "$rc" = 3
 
 # ---- the weekly workflow (the consolidated bump-pins.yml is tested in tests/bump-run.sh)
 wf="$here/.github/workflows/bump-pins.yml"
-check "test.yml has a workflow_dispatch trigger and its jobs have no skipping conditions (test: always(), runs even when scope fails), so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
+check "test.yml has a workflow_dispatch trigger, a dispatch is never documentation-only (scope full), and only the documentation scope skips a job, so a dispatched run reports test and secrets" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert "workflow_dispatch" in (w.get(True) or w.get("on"))
 for k, j in w["jobs"].items():
-    assert j.get("if", "always()") == "always()" and j["name"] == k, k
+    assert j["name"] == k, k
+    assert "if" not in j or "scope" in j["if"], k  # the only condition a job may have is the documentation scope
 PY
+check "test-scope.sh answers full for a workflow_dispatch event, whatever the range" bash -c "cd '$here' && [ \"\$(bash .github/scripts/test-scope.sh workflow_dispatch HEAD HEAD 2>/dev/null)\" = full ]"
 # ---- the datastore-images list pointer: same table, its own two ARG lines, the toolbox key, the same branch rule as dev-packages
 reset_bump
 sed -i "s/^ARG DATASTORE_IMAGES_DIGEST=.*/ARG DATASTORE_IMAGES_DIGEST=sha256:$(dg datastore-images latest)/" "$bw/variants/dx/Containerfile"

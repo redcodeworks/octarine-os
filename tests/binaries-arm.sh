@@ -35,7 +35,7 @@ run() { : > "$LOG"; (env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/bina
 dg() { sha256sum < "$1" | cut -d' ' -f1; }
 mk; run X=1
 check "every component with a signed c-<component>-<key> image gets last-good-<component> pointing at exactly that digest" bash -c "[ $rc = 0 ] && for c in $comps; do k=\$('$here/.github/scripts/binaries-key.sh' \$c); [ \"\$(sha256sum < '$reg/last-good-'\$c | cut -d' ' -f1)\" = \"\$(sha256sum < '$reg/c-'\$c'-'\$k | cut -d' ' -f1)\" ] || exit 1; done"
-check "the tag names are the ones the fallback reads (binaries-component.yml passes last-good-\${COMPONENT}) and the copy keeps the digest" bash -c "grep -q 'last-good-\${COMPONENT}' '$here/.github/workflows/binaries-component.yml' && grep -q 'preserve-digests' '$here/.github/scripts/binaries-arm.sh' && grep -q 'skopeo copy --all --preserve-digests' '$LOG'"
+check "the tag names are the ones the fallback reads (binaries-component.yml passes last-good-\${COMPONENT}) and the copy keeps the digest" bash -c "grep -q 'last-good-\${COMPONENT}' '$here/.github/workflows/binaries-component.yml' && grep -q 'skopeo copy --all --preserve-digests' '$LOG'"
 run X=1
 check "a second run changes nothing (already armed: no copy)" bash -c "[ $rc = 0 ] && ! grep -q 'skopeo copy' '$LOG' && grep -q 'already is' '$root/run'"
 rm -f "$reg"/last-good-*; run BAD_SIG=1

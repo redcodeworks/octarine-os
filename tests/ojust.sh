@@ -75,7 +75,7 @@ check "ojust is mentioned in no README, doc, recipe comment, completion, MOTD or
   cd '$here'; ! grep -rIl ojust README.md docs system_files variants .github/scripts 2>/dev/null | grep -vE '^system_files/usr/bin/ojust\$|^system_files/usr/share/octarine-os/justfile\$|^system_files/usr/share/octarine-os/just/base-pieces.just\$' ;
   [ \"\$(grep -c ojust CLAUDE.md)\" -ge 1 ] && [ \"\$(grep -n '^## ' CLAUDE.md | awk -F: '/ojust/' | wc -l)\" = 0 ]"
 check "ujust --list does not offer ojust (no recipe of that name) and the wrapper recipes carry no mention" bash -c "! just --justfile '$uj' --summary | grep -qw ojust"
-check "both image smoke steps check ojust" bash -c "for f in build.yml build-beta.yml; do grep -q 'experimental second launcher runs' '$here/.github/workflows/'\$f || exit 1; done"
+check "the default smoke test checks ojust" grep -q 'experimental second launcher runs' "$here/.github/scripts/default-smoke.sh"
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
