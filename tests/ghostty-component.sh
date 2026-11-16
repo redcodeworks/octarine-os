@@ -90,9 +90,9 @@ mkimg() { # dir
     printf 'MIT License\n' >"$1/ghostty/LICENSES/l"
     (cd "$1/ghostty/root" && find . -type f | sed 's#^\./##' | sort) >"$1/ghostty/FILES"
     for c in scx extest ghostty; do echo src >"$1/$c/SOURCE"; echo build >"$1/$c/BUILDINFO"; done
-    printf 'scx\t%s\tbuilt\t\tsha256:%s\nextest\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
+    printf 'scx\t%s\tbuilt\tsha256:%s\nextest\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
     [ "${NO_GHOSTTY:-0}" != 1 ] || rm -rf "$1/ghostty"
-    [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
+    [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"

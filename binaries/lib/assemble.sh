@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Put the staged components together into the content of the published image:
 #
-#   assemble.sh <dir>        <dir> holds COMPONENTS (written by binaries-assemble.sh: name, required|optional, key, origin,
+#   assemble.sh <dir>        <dir> holds COMPONENTS (written by binaries-assemble.sh: name, key, origin,
 #                            digest per component that is in the image) and one directory per listed component, each with LICENSES/,
 #                            SOURCE and BUILDINFO from stage.sh
 #
