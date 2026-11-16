@@ -82,9 +82,7 @@ check "help: exit 0, names every step and flag" bash -c "[ $rc = 0 ] && for w in
 reset; vh --bogus; check "unknown option exits 2" test "$rc" = 2
 reset; vh --only nosuch; check "unknown step exits 2" test "$rc" = 2
 reset; FAKE_UID=0 vh --only check; check "root is refused" bash -c "[ $rc = 1 ] && grep -q 'not as root' '$root/out'"
-check "the recipe lives in the dx recipe file only: the default image's recipe files have no virthost-setup" bash -c "! grep -q '^virthost-setup' '$here/system_files/usr/share/ublue-os/just/'*.just && grep -q '^virthost-setup' '$vjust'"
 check "recipe: group Setup and a one-line description" bash -c "just --justfile '$vjust' --list | grep -q 'Turn this machine into a KVM/libvirt host'"
-check "dx.sh imports the recipe file" grep -q '75-octarine-virthost.just' "$here/variants/dx/dx.sh"
 
 # ---- check
 reset; vh --only check

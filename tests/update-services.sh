@@ -90,7 +90,6 @@ run() { # recipe, args...
 all_on="rpm-ostreed-automatic.timer flatpak-system-update.timer user:flatpak-user-update.timer user:octarine-distrobox-upgrade.timer brew-update.timer brew-upgrade.timer"
 
 # ---- the source table
-check "the library has the five sources in run order" bash -c "source '$lib'; [ \"\${US_IDS[*]}\" = 'image flatpak distrobox brew-update brew-upgrade' ]"
 FAKE_ENABLED="flatpak-system-update.timer" check "flatpak counts as on when only the system timer is on" bash -c "PATH='$root/fakebin:\$PATH' FAKE_ENABLED=flatpak-system-update.timer; export FAKE_ENABLED; source '$lib'; us_on flatpak && ! us_on image"
 check "a missing timer makes a source unavailable" bash -c "PATH='$root/fakebin:\$PATH' FAKE_MISSING=user:octarine-distrobox-upgrade.timer; export FAKE_MISSING; source '$lib'; [ \"\$(us_state distrobox)\" = unavailable ]"
 

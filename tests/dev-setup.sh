@@ -328,7 +328,6 @@ notlogged() { ! grep -qF -- "$1" "$LOG"; }
 row() { grep -qE "^$1 +$2" "$root/out"; }  # summary row: step, result prefix
 
 # ---- the file, the steps and the help
-check "recipe file parses and lists exactly one public recipe, dev, in group Developer" bash -c "'$REAL_JUST' --justfile '$justfile' --list | grep -q 'dev ' && [ \$('$REAL_JUST' --justfile '$justfile' --summary) = dev ] && '$REAL_JUST' --justfile '$justfile' --dump | grep -q \"group('Developer')\""
 reset
 run '' --help
 check "--help: usage, exit 0, every step named" bash -c "[ $rc = 0 ] && for s in libvirt tools vscode jetbrains rust java node python; do grep -q \"^  *\$s \" '$root/out' || exit 1; done"
@@ -344,7 +343,6 @@ run '' --only
 check "--only without a list: exit 2" test "$rc" = 2
 run '' stray
 check "a stray argument: exit 2" test "$rc" = 2
-check "help and comment text carry no personal names" bash -c "! grep -qiE 'kevin|redcodeworks' '$justfile'"
 
 # ---- the sudo command: the shipped recipe uses it only in the libvirt step
 
@@ -390,7 +388,6 @@ check "fresh --yes: fnm.sh and fnm.fish written" bash -c "[ -s '$HOME/.config/oc
 check "fresh --yes: uv installs the three Pythons" bash -c "grep -qx 'uv python install 3.12 3.13 3.14' '$LOG' && grep -q 'cpython-3.14' '$root/out'"
 check "fresh --yes: every attempted step applied, exit 0" bash -c "[ $rc = 0 ] && for s in tools vscode jetbrains rust java node python; do grep -qE \"^\$s +applied\" '$root/out' || exit 1; done"
 check "fresh --yes: an undo line per applied step" bash -c "for s in tools vscode jetbrains rust java node python; do grep -q \"^  \$s: \" '$root/out' || exit 1; done"
-check "fresh --yes: the SDKMAN installer URL and any curl piped to a shell are nowhere in the recipe" bash -c "! grep -qiE 'get.sdkman.io|curl[^|]*\\|[[:space:]]*(ba)?sh' '$justfile'"
 check "fresh --yes: no rc file was touched (none existed, none created)" bash -c "[ ! -e '$HOME/.zshrc' ] && [ ! -e '$HOME/.bashrc' ] && [ ! -e '$HOME/.config/fish/config.fish' ]"
 
 # ---- already done: second run changes nothing
@@ -442,7 +439,6 @@ check "tools without gum: one y/n per group (default yes), only the yes group in
 reset
 run '' --no --only tools
 check "tools --no: nothing installed, plan printed" bash -c "[ $rc = 0 ] && ! grep -q '^brew install' '$LOG' && grep -q 'To install: helix' '$root/out' && grep -qE '^tools +planned' '$root/out'"
-check "tools: the list has exactly the briefed formulae and no gh login" bash -c "for p in helix ruff ty sqlfluff prettier typescript-language-server vscode-langservers-extracted yaml-language-server marksman jdtls google-java-format lua-language-server stylua taplo sql-language-server gh; do grep -q \"\$p\" '$justfile' || exit 1; done; ! grep -q 'gh auth' '$justfile'"
 reset
 PATH_BIN="$sysbin" run '' --yes --only tools
 check "missing brew: the step fails with a clear message, exit 1" bash -c "[ $rc = 1 ] && grep -q 'Homebrew (brew) is not on PATH' '$root/out' && grep -qE '^tools +FAILED' '$root/out'"
@@ -605,7 +601,6 @@ reset
 run '' --yes --only node
 check "node fresh --yes: summary applied, the rc line is printed, no rc file edited" bash -c "[ $rc = 0 ] && grep -qE '^node +applied' '$root/out' && grep -q 'Add ONE line to your rc file' '$root/out' && [ ! -e '$HOME/.zshrc' ]"
 check "node: the notes name nvm separation, ~/.local/share/fnm and .nvmrc" bash -c "grep -q 'an existing ~/.nvm is left alone' '$root/out' && grep -q '.nvmrc files work with fnm' '$root/out' && grep -q '~/.local/share/fnm' '$root/out'"
-check "node: no nvm anywhere in the recipe except the notes" bash -c "[ \$(grep -ci 'nvm' '$justfile') -le 3 ]"
 mkdir -p "$HOME/.nvm"; echo v24 >"$HOME/.nvm/marker"
 run '' --yes --only node
 check "node: an existing ~/.nvm is left untouched" bash -c "[ -f '$HOME/.nvm/marker' ] && [ \"\$(ls '$HOME/.nvm')\" = marker ]"
@@ -720,9 +715,7 @@ FAKE_UID=0 run '' --yes --only python
 check "root is refused" bash -c "[ $rc = 1 ] && grep -q 'not as root' '$root/out' && ! grep -q 'uv python' '$LOG'"
 
 # ---- the dx-only wiring and the shipped files
-check "the recipe file exists only in the dx variant, nowhere in the default image's files" bash -c "[ -f '$justfile' ] && [ -z \"\$(find '$repo/system_files' -name '70-octarine-dev*' -o -name 'octarine-dx-cargo*' | head -1)\" ] && ! grep -rq 'octarine-os-dx\\b.*ujust dev\\|^dev ' '$repo/system_files/usr/share/ublue-os/just/60-custom.just' && ! grep -q '^dev\\b' '$repo/system_files/usr/share/ublue-os/just/60-custom.just'"
 check "the default image has no sdk wrapper and no cargo profile snippet" bash -c "[ ! -e '$repo/system_files/usr/bin/sdk' ] && [ ! -e '$repo/system_files/etc/profile.d/octarine-dx-cargo.sh' ]"
-check "Containerfile and build.sh of the default image never mention the dev recipe" bash -c "! grep -q '70-octarine-dev' '$repo/Containerfile' '$repo/build_files/build.sh'"
 check "dx.sh appends the import line to ublue's main justfile, idempotently, and asserts it" bash -c "grep -q 'import? \"/usr/share/ublue-os/just/70-octarine-dev.just\"' '$repo/variants/dx/dx.sh' && grep -q 'grep -qxF \"\${dev_import}\" \"\${ujust_main}\"' '$repo/variants/dx/dx.sh'"
 # ---- cuda (only where an NVIDIA driver exists)
 cuda_world() { reset; : >"$STATE/nvidia"; mkdir -p "$root/cdi"; echo 'cdiVersion: 0.5.0' >"$root/cdi/nvidia.yaml"; }

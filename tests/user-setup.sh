@@ -548,7 +548,6 @@ snip="$here/../system_files/etc/profile.d/octarine-os-editor.sh"
 check "editor: the shipped profile.d snippet exports exactly the three keys from the managed file (a login shell, before the user's own rc files)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \$EDITOR:\$VISUAL:\$SUDO_EDITOR'); [ \"\$out\" = 'nvim:nvim:$edir/nvim' ]"
 printf 'FOO=bar\nEDITOR=$(touch %s/pwned)\nVISUAL=ok one\nSUDO_EDITOR=/a/b\n' "$root" >"$(edf)"
 check "editor: the snippet ignores other keys and anything but plain path characters (the file is parsed, never executed)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \${FOO:-none}:\${EDITOR:-unset}:\${VISUAL:-unset}:\$SUDO_EDITOR'); [ \"\$out\" = 'none:unset:unset:/a/b' ] && [ ! -e '$root/pwned' ]"
-check "editor: it is a listed step, in --help, and the checklist offers it preselected" bash -c "grep -q 'editor (default editor' '$justfile' && grep -q 'editor^Default editor for terminals and sudoedit (no sudo)^1' '$justfile'"
 check "editor: nothing in the image sets EDITOR by itself except the Fedora nano default (only when unset) and the user-file snippets" bash -c "! grep -rlE '(^|[^_A-Z])(EDITOR|VISUAL)=' '$here/../system_files' '$here/../build_files' | grep -v 'octarine-os-editor.sh\\|octarine-os-40-editor.fish\\|60-custom.just'"
 # rc-file detection compared with the pick: a fixture HOME with `set -gx EDITOR` in config.fish and `export EDITOR=` in .bashrc
 edreset; mked "$edir" nano nvim

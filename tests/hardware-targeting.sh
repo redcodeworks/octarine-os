@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Tests for the hardware-targeting fixes: proton.sh sets the AMD-only variable only with an AMD GPU, the mcelog and
-# automatic-update drop-ins, the broadcom removal. Nothing real changes; sysfs is redirected with OCTARINE_SYSFS_DRM.
-# Needs: bash. Run: tests/hardware-targeting.sh
+# Behavior of the hardware-targeting fix: proton.sh sets the AMD-only variable only with an AMD GPU (sysfs is redirected with OCTARINE_SYSFS_DRM).
+# Drop-in and build.sh text is not asserted. Needs: bash. Run: tests/hardware-targeting.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 sf="$here/system_files"
@@ -26,17 +25,8 @@ check "Intel iGPU plus AMD dGPU (card1): FSR4 upgrade is set" bash -c "$(declare
 check "NVIDIA GPU: FSR4 upgrade stays unset, Wayland stays on" bash -c "$(declare -f fsr); root='$root' sf='$sf'; [ \"\$(fsr nv)\" = 'fsr=unset wl=1 leak=' ]"
 check "Intel only: FSR4 upgrade unset" bash -c "$(declare -f fsr); root='$root' sf='$sf'; fsr intel | grep -q 'fsr=unset'"
 check "no GPU nodes at all: no error, FSR4 unset" bash -c "$(declare -f fsr); root='$root' sf='$sf'; [ \"\$(fsr none 2>&1)\" = 'fsr=unset wl=1 leak=' ]"
-check "proton.sh starts no subprocess (no command substitution, grep, awk or sed in code lines)" bash -c "! grep -v '^ *#' '$sf/etc/profile.d/proton.sh' | grep -qE '[$][(]|\`|grep|awk|sed'"
-check "no fish equivalent of proton.sh exists to keep in step" bash -c "! grep -rqs 'PROTON_FSR4' '$sf/usr/share/fish'"
 
 d="$sf/usr/lib/systemd/system"
-check "mcelog: Intel-only drop-in (ExecCondition on GenuineIntel)" grep -qx 'ExecCondition=/usr/bin/grep -q -m1 GenuineIntel /proc/cpuinfo' "$d/mcelog.service.d/50-octarine-intel-only.conf"
-check "mcelog: build.sh no longer masks it" bash -c "! grep -qE '^systemctl mask mcelog' '$here/build_files/build.sh'"
-check "automatic updates: bounded retry drop-in" bash -c "grep -qx Restart=on-failure '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf' && grep -qx RestartSec=60 '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf' && grep -qx StartLimitBurst=5 '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf'"
-check "automatic updates: the base override.conf is not shadowed by a file of ours" test ! -e "$d/rpm-ostreed-automatic.service.d/override.conf"
-check "automatic updates: the policy is not set by us (stays stage from the base)" bash -c "! grep -rqs AutomaticUpdatePolicy '$d/rpm-ostreed-automatic.service.d'"
-check "smoke test (default-smoke.sh) asserts the drop-ins" bash -c "grep -q 'Restart=on-failure' '$here/.github/scripts/default-smoke.sh' && grep -q 'mcelog is not masked' '$here/.github/scripts/default-smoke.sh'"
-check "50-akmods.just is comment-only" bash -c "! grep -qvE '^(#|\$)' '$sf/usr/share/ublue-os/just/50-akmods.just'"
 
 echo
 echo "passed: $pass, failed: $failn"

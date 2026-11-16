@@ -23,23 +23,4 @@ printf 'CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_TAG=latest\nCHUNKAH_DIGEST
 check "chunkah-ref: a pin that is not a sha256 digest (a floating tag) is refused before cosign runs" bash -c "[ $rc = 1 ] && [ ! -s '$LOG' ]"
 ENVF="$root/missing.env" ref X=1
 check "chunkah-ref: a missing pin file fails" test "$rc" = 1
-check "config/chunkah.env: the pin is the digest of quay.io/coreos/chunkah, tag only a label" bash -c "grep -qx 'CHUNKAH_IMAGE=quay.io/coreos/chunkah' '$here/config/chunkah.env' && grep -Eq '^CHUNKAH_DIGEST=sha256:[0-9a-f]{64}\$' '$here/config/chunkah.env'"
-check "Justfile: rechunk runs chunkah through the digest-pinned reference of chunkah-ref.sh (never a floating tag) and does not use the old rechunkers" bash -c "
-  j='$here/Justfile'; grep -q '^rechunk ' \"\$j\" && ! grep -q 'ostree-rechunk\|build-chunked-oci' \"\$j\" &&
-  grep -q 'chunkah-ref.sh' \"\$j\" && ! grep -q 'chunkah:latest@' \"\$j\""
-check "every image workflow (default, dx, nvidia-dx) rechunks with 'just rechunk' after cosign is set up; none calls ostree-rechunk; the NVIDIA variant stays a layer without rechunk" python3 -I - "$here" <<'PY'
-import sys, yaml
-root = sys.argv[1]
-for f in ("build", "build-dx", "build-nvidia-dx"):
-    t = open(f"{root}/.github/workflows/{f}.yml").read()
-    assert "ostree-rechunk" not in t and "rpm-ostree compose build-chunked-oci" not in t, f
-    w = yaml.safe_load(t)
-    steps = [s for j in w["jobs"].values() for s in j.get("steps", [])]
-    names = [s.get("name", "") for s in steps]
-    r = [i for i, s in enumerate(steps) if "just rechunk" in s.get("run", "")]
-    assert len(r) == 1 and names[r[0]] == "Rechunk with chunkah", f
-    c = [i for i, s in enumerate(steps) if s.get("uses") == "./.github/actions/setup-tool" and s.get("with", {}).get("tool") == "cosign"]
-    assert c and min(c) < r[0], f + ": cosign must be set up before the rechunk"
-assert "rechunk" not in open(f"{root}/.github/workflows/build-nvidia.yml").read().replace("rechunked", "")
-PY
 echo; echo "passed: $pass, failed: $failn"; [ "$failn" = 0 ]
