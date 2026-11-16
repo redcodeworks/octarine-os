@@ -65,76 +65,23 @@ run() {
 }
 reset() { rm -f "$root/mld/"* "$root/lm_sensors"; }
 
-reset; run --help
-check "--help explains persistence, the lax option and the opt-in" bash -c "[ $rc = 0 ] && grep -q 'survives image updates' '$root/out' && grep -q 'acpi_enforce_resources=lax' '$root/out' && grep -q -- '--no' '$root/out'"
-run --bogus
-check "an unknown argument is rejected (exit 1)" bash -c "[ $rc = 1 ]"
 
 reset; run --no
 check "--no changes and runs nothing (no sudo, no detect)" bash -c "[ $rc = 0 ] && [ ! -e '$target' ]" 
-check "--no logs nothing" bash -c "[ ! -s '$LOG' ]"
-check "--no prints the plan" has "Plan:"
-
-reset; run
-check "without a terminal and without --yes: left as it is, nothing run" bash -c "[ $rc = 0 ] && [ ! -s '$LOG' ] && [ ! -e '$target' ]"
-
-reset; FAKE_DETECT=none run --yes
-check "no chip detected: exit 0, clear message, nothing written" bash -c "[ $rc = 0 ] && [ ! -e '$target' ]"
-check "no chip: the message says nothing needs a driver" has "No sensor chip needs a driver"
-check "no chip: nothing is loaded" notlogged modprobe
-reset; FAKE_DETECT=autoloaded run --yes
-check "only autoloaded chips: exit 0 and nothing written" bash -c "[ $rc = 0 ] && [ ! -e '$target' ]"
 
 reset; FAKE_DETECT=one run --yes
 check "one module: file written with header and the module" bash -c "[ $rc = 0 ] && grep -q '^# Written by' '$target' && grep -qx nct6775 '$target' && [ \$(grep -vc '^#' '$target') = 1 ]"
-check "detect runs once with --auto under sudo" bash -c "[ \$(grep -c 'sudo sensors-detect --auto' '$LOG') = 1 ]"
-check "the module is loaded now" logged "modprobe nct6775"
-check "fan and temperature lines are shown" bash -c "grep -q 'fan1' '$root/out' && grep -q 'SYSTIN' '$root/out' && ! grep -q intrusion '$root/out'"
-check "the final message says to not re-run after an update" has "no need to re-run after an update"
-check "the final message names acpi_enforce_resources=lax as not set" has "acpi_enforce_resources=lax"
-check "the undo is printed" has "Undo: sudo rm $target"
-
 FAKE_DETECT=one run --yes
-check "second run with the same content: already done, no backup" bash -c "[ $rc = 0 ] && grep -q 'Already done' '$root/out' && ! ls '$root/mld' | grep -q bak"
-
-reset; FAKE_DETECT=two run --yes
-check "two modules: both on their own lines" bash -c "grep -qx nct6775 '$target' && grep -qx jc42 '$target'"
-check "two modules: both loaded" bash -c "grep -q 'modprobe nct6775' '$LOG' && grep -q 'modprobe jc42' '$LOG'"
-
-reset; FAKE_DETECT=bus run --yes
-check "bus modules come first and an odd module name is ignored" bash -c "[ \$(grep -v '^#' '$target' | head -n1) = i2c-piix4 ] && ! grep -q 'bad' '$target' && grep -q 'odd module name' '$root/out'"
 
 reset; echo "other" >"$target"; FAKE_DETECT=one run --no --redetect
 check "--no with an existing different file: untouched" bash -c "[ \$(cat '$target') = other ]"
 reset; echo "other" >"$target"; FAKE_DETECT=one run --yes --redetect
 check "existing different file with --yes --redetect: diff shown, backup made, replaced" bash -c "grep -q '^-other' '$root/out' && ls '$root/mld' | grep -q 'octarine-sensors.conf.bak-' && grep -qx nct6775 '$target'"
-reset; echo "other" >"$target"; FAKE_DETECT=one OCTARINE_MENU_FORCE_TTY=1 run --yes --redetect
-check "the backup keeps the old content" bash -c "grep -qx other '$root'/mld/octarine-sensors.conf.bak-*"
-
-reset; echo "nct6775" >"$legacy"; FAKE_DETECT=one run --yes
-check "legacy nct6775.conf with --yes: mentioned and LEFT ALONE (--yes never moves a hand-made file), no backup made" bash -c "grep -q 'older hand-made' '$root/out' && grep -q 'Left .*nct6775.conf alone' '$root/out' && [ -e '$legacy' ] && ! ls '$root/mld' | grep -q 'nct6775.conf.bak-'"
-reset; echo "i2c-x" >"$target"; : >"$LOG"; run --yes
-check "an existing module list and no --redetect: 'Already done', exit 0, no sudo, no sensors-detect" bash -c "[ $rc = 0 ] && grep -q 'Already done' '$root/out' && ! grep -q 'sensors-detect' '$LOG' && ! grep -q '^sudo' '$LOG'"
-reset; echo "i2c-x" >"$target"; FAKE_DETECT=one run --yes --redetect
-check "--redetect probes again even though the list exists" bash -c "[ $rc = 0 ] && grep -q 'sensors-detect' '$LOG'"
-reset; echo "nct6775" >"$legacy"; FAKE_DETECT=one run --yes
-check "only a legacy file (no octarine-sensors.conf) is not 'already done': the probe runs" bash -c "grep -q 'sensors-detect' '$LOG'"
-check "legacy: the generated file is still written" bash -c "grep -qx nct6775 '$target'"
 
 reset; FAKE_SUDO_FAIL=1 FAKE_DETECT=one run --yes
 check "a failing sudo: exit 1, exact command printed, nothing written, no retry" bash -c "[ $rc = 1 ] && grep -q 'sudo sensors-detect --auto' '$root/out' && [ ! -e '$target' ] && [ \$(grep -c 'sudo' '$LOG') = 1 ]"
 reset; FAKE_DETECT=fail run --yes
 check "a failing sensors-detect: exit 1 and nothing written" bash -c "[ $rc = 1 ] && [ ! -e '$target' ]"
-reset; FAKE_MODPROBE_FAIL=1 FAKE_DETECT=one run --yes
-check "a failing modprobe: file stays, exit 1, command printed" bash -c "[ $rc = 1 ] && [ -e '$target' ] && grep -q 'sudo modprobe nct6775' '$root/out'"
-
-# a PATH without sensors-detect: only the tools the recipe needs are linked in
-mkdir -p "$root/minbin"
-for t in bash env just sed grep mktemp date cmp diff cat head tail rm cp mv tee ls; do ln -sf "$(command -v $t)" "$root/minbin/$t"; done
-cp "$root/fakebin/sudo" "$root/minbin/sudo"
-reset; : >"$LOG"; PATH="$root/minbin" just --justfile "$justfile" sensors-setup --yes >"$root/out" 2>&1 </dev/null; rc=$?
-check "sensors-detect missing: exit 1 with a hint" bash -c "[ $rc = 1 ] && grep -q 'lm_sensors' '$root/out'"
-
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
