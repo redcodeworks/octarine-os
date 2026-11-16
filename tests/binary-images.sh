@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the Containerfile wiring, the
 # lookup of the hash-tagged image (.github/scripts/binaries-lookup.sh: published and signed, missing, bad signature), the gate of
-# the image build (binaries-use.sh), the layout check of a built image (binaries-layout.sh), the installer
+# the image build (latest-ref.sh), the layout check of a built image (binaries-layout.sh), the installer
 # (build_files/install-binaries.sh). Workflow, Containerfile and Justfile text is not asserted: a build shows those errors itself.
 # All with fake skopeo and cosign; nothing is pulled, built or booted. The build side is tests/binaries-build.sh.
 # Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
@@ -30,6 +30,7 @@ case "$1" in
         [ "${SKOPEO_FAIL:-0}" = 1 ] && { echo "manifest unknown" >&2; exit 1; }
         [ "${SKOPEO_EMPTY:-0}" = 1 ] && exit 0
         printf 'manifest of %s' "${@: -1}" ;;
+    manifest-digest) printf 'sha256:%s\n' "$(sha256sum "$2" | sed 's/ .*//')" ;;
 esac
 F
 cat >"$bin/cosign" <<'F'
@@ -41,7 +42,7 @@ exit "${COSIGN_RC:-0}"
 F
 chmod +x "$bin"/*
 export LOG="$root/log"
-IMG=ghcr.io/redcodeworks/octarine-os-binaries
+IMG=ghcr.io/redcodeworks/octarine-binaries
 H40=$(printf 'a%.0s' {1..40})
 dg() { printf 'manifest of docker://%s:%s' "$1" "$2" | sha256sum | sed 's/ .*//'; }
 echo key >"$root/cosign.pub"
@@ -63,17 +64,17 @@ check "lookup: the tag exists but the signature does not verify: usable=false (r
 PATH="$bin:$PATH" bash "$here/.github/scripts/binaries-lookup.sh" "$IMG" 'Bad Tag!' >"$root/run" 2>&1
 check "lookup: a tag that is not a content tag is refused" test "$?" != 0
 
-# ---- binaries-use.sh: the gate of the image build
-use() { : >"$LOG"; : >"$root/genv"; env "$@" PATH="$bin:$PATH" COSIGN_KEY_FILE="$root/cosign.pub" GITHUB_ENV="$root/genv" bash "$here/.github/scripts/binaries-use.sh" "$IMG" "$DIGEST_ARG" >"$root/run" 2>&1; rc=$?; }
-D=sha256:$(printf 'b%.0s' {1..64})
-DIGEST_ARG=$D use X=1
-check "use: a verified digest is logged and exported as BINARIES_IMAGE=<image>@<digest>" bash -c "[ $rc = 0 ] && grep -qx 'BINARIES_IMAGE=$IMG@$D' '$root/genv' && grep -q 'Binaries image used: $IMG@$D (signature valid)' '$root/run'"
-DIGEST_ARG=$D use COSIGN_RC=1
+# ---- latest-ref.sh: the gate of the image build (octarine-binaries and dev-packages float at latest)
+use() { : >"$LOG"; : >"$root/genv"; env "$@" PATH="$bin:$PATH" GITHUB_ENV="$root/genv" bash "$here/.github/scripts/latest-ref.sh" "$IMG" "$root/cosign.pub" BINARIES_IMAGE >"$root/run" 2>&1; rc=$?; }
+D=sha256:$(dg "$IMG" latest)
+use X=1
+check "use: latest is resolved to a digest, verified with the key and exported as BINARIES_IMAGE=<image>@<digest>" bash -c "[ $rc = 0 ] && grep -qx 'BINARIES_IMAGE=$IMG@$D' '$root/genv' && grep -q 'cosign verify --key $root/cosign.pub $IMG@$D' '$LOG'"
+use COSIGN_RC=1
 check "use: a digest that does not verify fails the build and exports nothing" bash -c "[ $rc != 0 ] && [ ! -s '$root/genv' ]"
-DIGEST_ARG="" use X=1
-check "use: an empty digest (validation-only binaries) fails with the instruction to push through testing" bash -c "[ $rc != 0 ] && grep -q 'push the change to testing first' '$root/run' && ! grep -q cosign '$LOG'"
-DIGEST_ARG="sha256:short" use X=1
-check "use: a malformed digest fails" test "$rc" != 0
+use SKOPEO_FAIL=1
+check "use: a missing latest fails and exports nothing" bash -c "[ $rc != 0 ] && [ ! -s '$root/genv' ] && ! grep -q cosign '$LOG'"
+use SKOPEO_READ=1
+check "use: an unreadable registry fails and exports nothing" bash -c "[ $rc != 0 ] && [ ! -s '$root/genv' ]"
 
 # ---- binaries-layout.sh: the listing of a built image against the manifest, per component
 lay="$root/lay"; mkdir -p "$lay"
@@ -142,7 +143,7 @@ mk_images "$imgs"; inst
 check "install: schedulers in /usr/bin, executable" bash -c "[ $rc = 0 ] && test -x '$dest/usr/bin/scx_rusty' && test -x '$dest/usr/bin/scx_cake'"
 check "install: manifest at /usr/share/octarine-os/schedulers.tsv, unchanged" cmp "$imgs/scx/schedulers.tsv" "$dest/usr/share/octarine-os/schedulers.tsv"
 check "install: extest libraries under /usr/lib/extest/lib and lib64, executable, not swapped" bash -c "[ \"\$(cat '$dest/usr/lib/extest/lib/libextest.so')\" = 32 ] && [ \"\$(cat '$dest/usr/lib/extest/lib64/libextest.so')\" = 64 ] && test -x '$dest/usr/lib/extest/lib/libextest.so'"
-check "install: licenses, source and build info under /usr/share/licenses/octarine-os-binaries/<name>" bash -c "d='$dest/usr/share/licenses/octarine-os-binaries'; test -s \$d/scx/scx-LICENSE && test -s \$d/scx/SOURCE && test -s \$d/scx/BUILDINFO && test -s \$d/extest/extest-LICENSE && test -s \$d/extest/SOURCE && test -s \$d/extest/BUILDINFO"
+check "install: licenses, source and build info under /usr/share/licenses/octarine-binaries/<name>" bash -c "d='$dest/usr/share/licenses/octarine-binaries'; test -s \$d/scx/scx-LICENSE && test -s \$d/scx/SOURCE && test -s \$d/scx/BUILDINFO && test -s \$d/extest/extest-LICENSE && test -s \$d/extest/SOURCE && test -s \$d/extest/BUILDINFO"
 check "install: nothing under systemd paths" bash -c "! find '$dest' -path '*systemd*' | grep -q ."
 mk_images "$imgs"; rm "$imgs/scx/bin/scx_cake"; inst
 check "install: a scheduler listed but missing fails" bash -c "[ $rc != 0 ] && grep -q 'scx_cake is listed in schedulers.tsv but missing' '$root/run'"

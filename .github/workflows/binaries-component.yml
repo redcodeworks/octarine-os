@@ -1,7 +1,7 @@
 name: Prebuilt binaries component
-# ONE component of the prebuilt binaries (binaries/<component>), called once per component by binaries.yml (a matrix over
+# ONE component of the prebuilt binaries (binaries/<component>), called once per component by binaries.yml (on testing) (a matrix over
 # binaries/components.tsv). It builds the component into its own signed FROM scratch image, pushed to the SAME package as the assembled
-# image (ghcr.io/redcodeworks/octarine-os-binaries) under the content tag c-<component>-<key>, where the key is made by
+# image (ghcr.io/redcodeworks/octarine-binaries) under the content tag c-<component>-<key>, where the key is made by
 # .github/scripts/binaries-key.sh (the component's directory, lib/ and builder.env: a change to another component does not touch it).
 #
 # Jobs: check (key, lookup: published and signed under the tag means nothing to build), build (podman build in the pinned builder, layout
@@ -21,7 +21,7 @@ on:
         required: true
 
 env:
-  IMAGE_NAME: octarine-os-binaries
+  IMAGE_NAME: octarine-binaries
   COMPONENT: ${{ inputs.component }}
 
 jobs:
@@ -101,15 +101,13 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           publish=false
-          case "${REF}" in
-            refs/heads/main | refs/heads/testing) publish=true ;;
-          esac
+          [[ "${REF}" != refs/heads/testing ]] || publish=true
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
-          echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
+          echo "publish=${publish} (only testing publishes; any other ref builds for validation)"
 
       # Downloaded dependencies only (never dnf packages, never compiled output): the verified-on-use package cache of the Ghostty build (its fetch phase is
       # about 22 percent of the job). The cache is an optimisation: build.sh trusts nothing in it (every package is re-hashed and compared with the hash the
-      # pinned source expects, a mismatch is discarded and downloaded), and an empty cache builds as before. Saved only by runs that publish (push to testing or main).
+      # pinned source expects, a mismatch is discarded and downloaded), and an empty cache builds as before. Saved only by runs that publish (push to testing).
       - name: Key of the dependency cache
         id: depkey
         run: |

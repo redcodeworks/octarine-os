@@ -109,7 +109,7 @@ mkimg() { # dir: every component (unless WITH_GHOSTTY=0 for ghostty), with their
     fi
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
-dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-os-binaries"
+dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"
 mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/^extest/d' "$root/img/COMPONENTS"; inst X=1
 check "installer: a missing component fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component extest is not in the binaries image' '$root/run'"
 mkimg "$root/img"; mkdir -p "$root/img/stray"; inst X=1

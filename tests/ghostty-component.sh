@@ -95,7 +95,7 @@ mkimg() { # dir
     [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
-dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-os-binaries"
+dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"
 mkimg "$root/img"; inst X=1
 check "installer: the ghostty tree goes under /usr (binary, desktop file, data), its records under the licenses directory, " bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && [ -f '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ] && [ -s '$lic/ghostty/SOURCE' ] && [ -s '$lic/ghostty/ghostty-LICENSE' -o -s '$lic/ghostty/l' ]"
 NO_GHOSTTY=1 mkimg "$root/img"; inst X=1

@@ -1,5 +1,5 @@
 # Component extest of the prebuilt binaries (libextest.so, 64-bit and 32-bit): published as
-# ghcr.io/redcodeworks/octarine-os-binaries:c-extest-<key>, a FROM scratch image that holds only /extest (lib/, lib64/, LICENSES/, SOURCE,
+# ghcr.io/redcodeworks/octarine-binaries:c-extest-<key>, a FROM scratch image that holds only /extest (lib/, lib64/, LICENSES/, SOURCE,
 # BUILDINFO). Build context: binaries/. Built from OUR FORK at a pinned commit (extest/upstream.env), cargo --locked, in the builder of
 # builder.env (CI passes it as --build-arg BUILDER).
 ARG BUILDER
@@ -29,7 +29,7 @@ COPY --from=build /out /extest
 LABEL maintainer="redcodeworks/octarine-os" \
       org.opencontainers.image.authors="redcodeworks" \
       org.opencontainers.image.vendor="redcodeworks" \
-      org.opencontainers.image.title="octarine-os-binaries (component extest)" \
+      org.opencontainers.image.title="octarine-binaries (component extest)" \
       org.opencontainers.image.description="libextest.so (extest), 64-bit and 32-bit, built from a pinned commit of our fork" \
       org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
       org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \

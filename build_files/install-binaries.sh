@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Installs the prebuilt binaries into the image tree. Run by build.sh; the Containerfile bind-mounts the published
-# octarine-os-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
+# octarine-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
 # source, DESTDIR the target; both only for the tests).
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
 #   ghostty root/usr/... (the whole tree Ghostty's `zig build --prefix /usr` installed, listed in FILES), LICENSES/, SOURCE,
 #           BUILDINFO  ->  /usr (never over a file the image already has: a conflict fails the build)
-# The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<component>/ (the GPL-2.0 and MIT
+# The license texts, source and build records go to /usr/share/licenses/octarine-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
 # Which components are present is told by /binaries/COMPONENTS (name, key, origin built or reused, digest). Every component is required: the list
@@ -26,7 +26,7 @@ trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
 required="scx extest ghostty"
-lic=${dest}/usr/share/licenses/octarine-os-binaries
+lic=${dest}/usr/share/licenses/octarine-binaries
 err() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*"; echo "::warning::$*"; }
 
