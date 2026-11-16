@@ -137,7 +137,7 @@ check "vanilla-only: only the default image moves, no dx image is needed, the su
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-20261113-${c3:0:7}"
 SCOPE=vanilla-only VANILLA_TAG="latest-20261113-${c3:0:7}" run
 check "vanilla-only with a dated tag names it" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ]"
-for bad_tag in testing-abcdef1 beta beta-20261113-abcdef1 latest "latest-20261113" "../x" "latest-20261113-abcdef1;x" "candidate"; do
+for bad_tag in testing-abcdef1 latest "latest-20261113" "../x" "latest-20261113-abcdef1;x" "candidate"; do
     reset; SCOPE=vanilla-only VANILLA_TAG="$bad_tag" run
     check "vanilla-only refuses the tag '$bad_tag'" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 done
@@ -166,7 +166,7 @@ rb_setup; ALLOW_BACKWARDS=true DRY_RUN=true VANILLA_TAG="latest-20261110-${c1:0:
 check "ROLLBACK dry run: plans and reports, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 rb_setup; ALLOW_BACKWARDS=true WRITE=false VANILLA_TAG="latest-20261110-${c1:0:7}" run
 check "ROLLBACK on a ref that cannot write (WRITE=false): a dry run whatever the input says" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-for bt in latest testing-abcdef1 beta; do rb_setup; ALLOW_BACKWARDS=true VANILLA_TAG="$bt" run; check "ROLLBACK refuses the tag '$bt' (only dated tags of the default image)" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"; done
+for bt in latest testing-abcdef1; do rb_setup; ALLOW_BACKWARDS=true VANILLA_TAG="$bt" run; check "ROLLBACK refuses the tag '$bt' (only dated tags of the default image)" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"; done
 rb_setup; mk $V "$Vs" "$cs" 2026-11-09T00:00:00Z - "latest-20261109-${cs:0:7}"; ALLOW_BACKWARDS=true SCOPE=vanilla-only VANILLA_TAG="latest-20261109-${cs:0:7}" run
 check "ROLLBACK still refuses an image that was not built from main" bash -c "[ $rc = 1 ] && grep -q 'not on' '$root/out'"
 check "the script never signs, never logs in and never writes anything but the latest tag of the two images" bash -c "! grep -E 'cosign sign|docker login|skopeo login|--dest-creds' '$script' && [ \$(grep -c 'skopeo copy' '$script') = 1 ]"

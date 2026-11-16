@@ -35,10 +35,10 @@ sb FETCH_JUNK=1
 check "a download that is not a DER certificate fails (exit 1)" bash -c "[ $rc = 1 ] && grep -q 'not a DER certificate' '$root/run' && ! grep -q 'sbverify --cert' '$LOG'"
 check "the Fedora kernel-signer pin is gone from the repository (the Bluefin way uses the Universal Blue key only)" bash -c "[ ! -e '$here/keys/fedora-kernel-signer.pem' ] && ! grep -q 'fedora-kernel-signer' '$keys_doc'"
 check "docs/signing-keys.md documents the live fetch and what it trusts" bash -c "grep -q 'ublue-os/akmods' '$keys_doc' && grep -q '4E:5C:68:47' '$keys_doc'"
-check "build.yml and build-beta.yml run the check on the rechunked image before anything is pushed; the NVIDIA workflow after its smoke test; the check is part of the image workflows only" python3 -I - "$here" <<'PY'
+check "build.yml runs the check on the rechunked image before anything is pushed; the NVIDIA workflow after its smoke test; the check is part of the image workflows only" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]
-for f, img in (("build", '"${IMAGE_NAME}:${DEFAULT_TAG}"'), ("build-beta", '"${IMAGE_NAME}:${DEFAULT_TAG}"'), ("build-nvidia", "octarine-os-nvidia:build")):
+for f, img in (("build", '"${IMAGE_NAME}:${DEFAULT_TAG}"'), ("build-nvidia", "octarine-os-nvidia:build")):
     w = yaml.safe_load(open(f"{root}/.github/workflows/{f}.yml"))
     steps = [s for j in w["jobs"].values() for s in j.get("steps", [])]
     names = [s.get("name", "") for s in steps]

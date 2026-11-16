@@ -1,9 +1,8 @@
 name: Run the repository tests on the checked-out tree
 description: >-
-  The body of the required `test` check (and of the beta build's test job): install the tools the tests need that the container does not ship
+  The body of the required `test` check: install the tools the tests need that the container does not ship
   (with retries), print the version of every tool, run the quick checks and every tests/*.sh as an ordinary user. The caller checks the
-  repository out first and runs this inside a container job whose image is the base the images are built on (test.yml: the stable base,
-  build-beta.yml: the beta base), so the tests see the Fedora, niri, fish and shellcheck the image build sees.
+  repository out first and runs this inside a container job whose image is the base the images are built on (test.yml), so the tests see the Fedora, niri, fish and shellcheck the image build sees.
 runs:
   using: composite
   steps:

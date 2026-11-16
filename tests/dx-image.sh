@@ -35,18 +35,18 @@ inp = on["workflow_dispatch"]["inputs"]
 assert set(inp) == {"channel", "sha", "base_digest", "force", "dry_run"}, inp
 assert inp["base_digest"]["type"] == "string" and inp["base_digest"]["default"] == ""
 assert inp["dry_run"]["type"] == "boolean" and inp["dry_run"]["default"] is False
-assert inp["channel"]["options"] == ["testing", "latest", "beta"] and inp["channel"]["default"] == "latest"
+assert inp["channel"]["options"] == ["testing", "latest"] and inp["channel"]["default"] == "latest"
 assert inp["sha"]["type"] == "string" and inp["force"]["type"] == "boolean" and inp["force"]["default"] is False
 assert w["run-name"] == "dx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}", w["run-name"]
 assert "workflow_run" not in "".join(l for l in open(sys.argv[1]) if not l.lstrip().startswith("#"))
 PY
-check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml' && grep -qx 'name: Build beta image' '$here/.github/workflows/build-beta.yml'"
-check "workflow: the plan job runs only on testing (channel testing) or main (latest, beta), never another ref; the later jobs follow the plan" python3 - "$wf" <<'PY'
+check "workflow: the triggering workflow names are the real ones" bash -c "grep -qx 'name: Build container image' '$here/.github/workflows/build.yml'"
+check "workflow: the plan job runs only on testing (channel testing) or main (latest), never another ref; the later jobs follow the plan" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 cond = " ".join(w["jobs"]["plan"]["if"].split())
 assert "github.ref == 'refs/heads/testing' && inputs.channel == 'testing'" in cond, cond
-assert "github.ref == 'refs/heads/main' && contains(fromJSON('[\"latest\",\"beta\"]'), inputs.channel)" in cond, cond
+assert "github.ref == 'refs/heads/main' && inputs.channel == 'latest'" in cond, cond
 assert "pull_request" not in cond and "feat" not in cond
 assert w["jobs"]["build"]["needs"] == "plan" and w["jobs"]["build"]["if"] == "needs.plan.outputs.build == 'true' && !inputs.dry_run"
 assert w["jobs"]["promote"]["needs"] == "plan" and w["jobs"]["promote"]["if"] == "needs.plan.outputs.promote == 'true' && !inputs.dry_run"
@@ -117,7 +117,7 @@ check "workflow: the build is by digest and has explicit labels (base name and d
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.base-index-digest' '$wf'
   grep -q 'io.github.redcodeworks.octarine-os.dx-tree=' '$wf' && grep -q 'io.github.redcodeworks.octarine-os.dx-inputs=\${DX_INPUTS}' '$wf'
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs' '$wf'"
-check "build.yml and build-beta.yml only dispatch the dx workflow (no dx build steps, no uses:), the NVIDIA variant never mentions it" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml' && ! grep -q 'build-dx.yml$' <(grep 'uses:' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml')"
+check "build.yml only dispatches the dx workflow (no dx build steps, no uses:), the NVIDIA variant never mentions it" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' && ! grep -q 'build-dx.yml$' <(grep 'uses:' '$here/.github/workflows/build.yml')"
 
 # ---- the plan: the decision table is tested by tests/plan-dx.sh, which the runner runs on its own
 check "workflow: the aggregate job always runs, needs plan, build, promote and sign; it is named 'Build dx and push image' only when the built commit is the tip of the ref (else 'Build dx (older commit)', and never the required name in a dry run); the commit status of the same name is posted on the BUILT commit for channel testing only, never in a dry run" python3 - "$wf" <<'PY'
@@ -152,14 +152,6 @@ for n, j in w["jobs"].items():
     nd = j.get("needs") or []
     nd = [nd] if isinstance(nd, str) else nd
     assert n == "dispatch_dx" or "dispatch_dx" not in nd, n
-PY
-check "build-beta.yml: dispatch_dx follows the beta sign job, main only, channel beta, actions: write" python3 - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build-beta.yml"))
-d = w["jobs"]["dispatch_dx"]
-assert d["needs"] == "sign" and d["if"].startswith("always() && needs.sign.result == 'success'") and "refs/heads/main" in d["if"], d
-assert d["permissions"] == {"contents": "read", "actions": "write"}
-assert any('dispatch-dx.sh beta "${GITHUB_SHA}"' in s.get("run", "") for s in d["steps"])
 PY
 check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and, polling, after" bash -c "
   grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'registry-settled.sh \"\${IMAGE}\" \"\${tag}\" \"\${SOURCE_DIGEST}\"' '$wf'"
@@ -336,12 +328,9 @@ mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release";
 mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
 mk_world "$K"; sed -i '/^IMAGE_VERSION=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_VERSION fails" test $? -ne 0
 OS_IMAGE_VERSION=latest-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a channel word in a stable IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION fails on the latest channel" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: a beta- IMAGE_VERSION passes on the beta channel" test $? -eq 0
-mk_world "$K"; IMAGE_CHANNEL=beta smoke_run "$K"; check "smoke: an unprefixed IMAGE_VERSION fails on the beta channel" test $? -ne 0
-check "workflow: the dx build passes IMAGE_VERSION (beta- prefixed on beta), the smoke test gets the channel, the neutral check knows beta" bash -c "
-  grep -q 'os_version=\"beta-\${version}\"' '$wf' && grep -q 'IMAGE_VERSION=\${os_version}' '$wf'
-  grep -q 'IMAGE_CHANNEL=\"\${CHANNEL}\"' '$wf' && grep -q 'BETA=\$' '$wf'
+OS_IMAGE_VERSION=x-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a prefixed IMAGE_VERSION fails (the version is <date>-<sha> only)" test $? -ne 0
+check "workflow: the dx build passes IMAGE_VERSION and the neutral check runs" bash -c "
+  grep -q 'IMAGE_VERSION=\${version}' '$wf' && grep -q 'check-version-neutral.sh' '$wf'
   grep -q '^ARG IMAGE_VERSION' '$here/variants/dx/Containerfile' && grep -q 'set_os_release_field IMAGE_ID .*image_id' '$here/variants/dx/dx.sh' && grep -q '^ARG DX_IMAGE_ID=octarine-os-dx' '$here/variants/dx/Containerfile'"
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0

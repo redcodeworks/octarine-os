@@ -2,7 +2,7 @@
 # Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the Containerfile wiring, the
 # lookup of the hash-tagged image (.github/scripts/binaries-lookup.sh: published and signed, missing, bad signature), the gate of
 # the image build (binaries-use.sh), the layout check of a built image (binaries-layout.sh), the installer
-# (build_files/install-binaries.sh), the smoke assertions and the binaries workflow with its place in build.yml and build-beta.yml.
+# (build_files/install-binaries.sh), the smoke assertions and the binaries workflow with its place in build.yml.
 # All with fake skopeo and cosign; nothing is pulled, built or booted. The build side is tests/binaries-build.sh.
 # Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
 set -uo pipefail
@@ -164,8 +164,8 @@ check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text
 mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
 
-# ---- the smoke assertions are in default-smoke.sh (one copy; build.yml and build-beta.yml run it)
-check "smoke: ldd, ldd -r, --version and ELF class assertions are in default-smoke.sh, and both workflows run that script" python3 -I - "$here" <<'PY'
+# ---- the smoke assertions are in default-smoke.sh (one copy; build.yml runs it)
+check "smoke: ldd, ldd -r, --version and ELF class assertions are in default-smoke.sh, and build.yml runs that script" python3 -I - "$here" <<'PY'
 import sys
 root = sys.argv[1]
 s = open(f"{root}/.github/scripts/default-smoke.sh").read()
@@ -175,8 +175,7 @@ for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-
                "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
                "ldd -r /usr/bin/", "undefined symbol", "libraries the shipped binaries link", "BUILDINFO of the binaries image"):
     assert needle in t, needle
-for w in ("build.yml", "build-beta.yml"):
-    assert "default-smoke.sh" in open(f"{root}/.github/workflows/{w}").read(), w
+assert "default-smoke.sh" in open(f"{root}/.github/workflows/build.yml").read()
 PY
 
 
@@ -248,12 +247,12 @@ assert "refs/heads/main" in s and "last-good-${name}" in s
 assert "last-good\"" not in s.replace("last-good-", ""), "no assembled last-good pointer any more"
 PY
 check "the run summary says what each component and the assembled image did (reused, built and signed, validation only, fallback, omitted)" bash -c "grep -q 'Binaries image: reused' '$wfb' && grep -q 'Binaries image: assembled .*signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && grep -q 'Component \${comp}: reused' '$here/.github/scripts/binaries-decide.sh' && grep -q 'OMITTED' '$here/.github/scripts/binaries-decide.sh' && grep -q 'FALLBACK: component' '$here/.github/scripts/binaries-decide.sh'"
-check "build.yml and build-beta.yml say which path the binaries image took in their own summary, and still gate on binaries-use.sh" bash -c "for f in build.yml build-beta.yml; do grep -q 'Say which path the binaries image took' '$here/.github/workflows/'\$f && grep -q 'needs.binaries.outputs.action' '$here/.github/workflows/'\$f && grep -q 'binaries-use.sh' '$here/.github/workflows/'\$f || exit 1; done"
+check "build.yml says which path the binaries image took in its own summary, and still gates on binaries-use.sh" bash -c "for f in build.yml; do grep -q 'Say which path the binaries image took' '$here/.github/workflows/'\$f && grep -q 'needs.binaries.outputs.action' '$here/.github/workflows/'\$f && grep -q 'binaries-use.sh' '$here/.github/workflows/'\$f || exit 1; done"
 check "a signature that fails on an existing tag is not reused: the lookup reports usable=false (badsignature) and the build path rebuilds and signs; the reuse job needs usable=true" bash -c "grep -q 'badsignature' '$here/.github/scripts/binaries-lookup.sh' && grep -q 'usable false' '$here/.github/scripts/binaries-lookup.sh'"
-check "build.yml and build-beta.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
+check "build.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]
-for f, build in (("build.yml", "build_push"), ("build-beta.yml", "build")):
+for f, build in (("build.yml", "build_push"),):
     w = yaml.safe_load(open(f"{root}/.github/workflows/{f}"))
     j = w["jobs"]["binaries"]
     assert j["uses"] == "./.github/workflows/binaries.yml", f

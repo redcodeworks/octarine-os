@@ -4,7 +4,7 @@ name: Roll back latest
 # (publish-latest.yml) never moves `latest` backwards; this workflow does, on purpose, by hand: a dispatch on main with the dated tag of the default
 # image to roll back to. Modelled on Bazzite's retag workflow (a re-point of the tags from an old tag with a short cancel window).
 #
-#   vanilla_tag   the dated tag of the DEFAULT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-*, beta* and latest are refused
+#   vanilla_tag   the dated tag of the DEFAULT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused
 #   reason        free text (required), goes into the summary
 #   default_only  false (default): the dx image built on that default image moves with it; the run REFUSES when no dx image was built on it.
 #                 true: only the default image moves and dx `latest` stays behind (the summary says so), as publish-latest's vanilla-only

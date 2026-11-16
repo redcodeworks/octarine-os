@@ -168,8 +168,8 @@ mk_image "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$root/img/os-rel
 smoke present >"$root/out" 2>&1; check "smoke present: the default image's IMAGE_ID fails" test $? -ne 0
 mk_image "$K"; sed -i '/^IMAGE_VERSION=/d' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: a missing IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=beta-20261110-abc1234 mk_image "$K"
-smoke present >"$root/out" 2>&1; check "smoke present: a beta- IMAGE_VERSION fails (the variant is never beta)" test $? -ne 0
+OS_IMAGE_VERSION=x-20261110-abc1234 mk_image "$K"
+smoke present >"$root/out" 2>&1; check "smoke present: a prefixed IMAGE_VERSION fails" test $? -ne 0
 mk_image "$K"; sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="other"/' "$root/img/os-release"
 smoke present >"$root/out" 2>&1; check "smoke present: a changed PRETTY_NAME fails" test $? -ne 0
 check "variant: the Containerfile takes IMAGE_VERSION, the workflow passes it, nvidia.sh sets both fields" bash -c "

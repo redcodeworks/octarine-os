@@ -11,7 +11,7 @@ name: Bump pins
 #            binaries/builder.env; the same major, only once the digest has been the tag's value for 7 days; a builder bump rebuilds every binaries component)
 # Every pin goes through .github/scripts/bump-run.sh (the decision scripts per kind, then .github/scripts/bump-pr.sh for the branch, the commit, the PR and the dispatch
 # of the Test workflow); .github/scripts/bump-summary.sh writes the table. A registry that cannot be reached or a signature that does not verify fails that pin and changes
-# nothing. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), bootc-image-builder, the runner label, the repository variables and the signing key.
+# nothing. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), the runner label, the repository variables and the signing key.
 #
 # Token: only the default GITHUB_TOKEN. Its pushes and pull requests start no workflow except workflow_dispatch, so bump-pr.sh dispatches the Test workflow ON TESTING with
 # `ref=<bump commit>` (`actions: write`; it tests that commit). A run dispatched on the bump branch would not count (found 2026-11-15 on #137: a dispatched run is not part of a

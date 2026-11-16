@@ -2,8 +2,7 @@
 # The result of the dx aggregate job `Build dx and push image` from the results of the jobs before it.
 # Environment: PLAN, BUILD, PROMOTE, SIGN (job results: success, failure, cancelled, skipped), BUILD_WANTED and
 # PROMOTE_WANTED (plan outputs). Exit 0 = pass.
-#   plan skipped        the triggering run is not one dx builds for (a failed or cancelled vanilla run, the beta build on
-#                       testing): nothing to report, the job passes and posts no commit status (see build-dx.yml)
+#   plan skipped        the triggering run is not one dx builds for (a failed or cancelled vanilla run): nothing to report, the job passes and posts no commit status (see build-dx.yml)
 #   build wanted        build and sign must have succeeded
 #   promote wanted      promote and sign (which verifies the signature of the retagged digest) must have succeeded
 #   DRY_RUN=true        plan only: build, promote and sign must all be skipped, always passes then

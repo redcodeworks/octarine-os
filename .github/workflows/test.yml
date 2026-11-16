@@ -59,7 +59,7 @@ jobs:
 
   # The base the images are built on, resolved ONCE per run to a digest and signature-checked (base-pin.sh, the same script and the same BASE_IMAGE/FEDORA_VERSION
   # defaults and repository variables as build.yml): the test job runs inside that image, so the tests see the Fedora, the niri, fish and shellcheck the image build sees
-  # (and a Fedora update that breaks them shows here before the image build does). build-beta.yml runs the same tests (the test-suite action) on ITS base.
+  # (and a Fedora update that breaks them shows here before the image build does).
   base:
     name: base
     needs: [scope]

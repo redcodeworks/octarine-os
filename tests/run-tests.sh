@@ -35,7 +35,7 @@ run --jobs 2 "$root/t/missing.sh"
 check "a missing file is a failing test, not a crash" bash -c "[ $rc = 1 ] && grep -q 'FAIL $root/t/missing.sh' '$root/out'"
 (cd "$root" && mkdir -p tests && cp t/a.sh tests/x.sh && bash "$runner" > "$root/out" 2>&1; echo $? > "$root/rc"); rc=$(cat "$root/rc")
 check "without arguments it runs tests/*.sh of the current directory" bash -c "[ $rc = 0 ] && grep -q 'PASS tests/x.sh' '$root/out'"
-check "the test-suite action (run by test.yml and the beta build) runs it with four at a time" grep -q 'run-tests.sh --jobs 4' "$here/.github/actions/test-suite/action.yml"
+check "the test-suite action (run by test.yml) runs it with four at a time" grep -q 'run-tests.sh --jobs 4' "$here/.github/actions/test-suite/action.yml"
 
 # ---- test-scope.sh: documentation only?
 repo="$root/repo"; mkdir -p "$repo/docs" "$repo/tests" "$repo/system_files"

@@ -36,7 +36,7 @@ FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}
 # Passed in by `just build` from config/image.env; used to scope the signature policy to this image
 ARG IMAGE_ORG
 ARG IMAGE_NAME
-# The build's channel-neutral version (beta builds: `beta-` prefix), written to os-release IMAGE_VERSION by build.sh
+# The build's channel-neutral version written to os-release IMAGE_VERSION by build.sh
 ARG IMAGE_VERSION
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:stable

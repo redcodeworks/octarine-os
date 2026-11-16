@@ -92,7 +92,7 @@ echo "::endgroup::"
 echo "::group::dx: image identity and kernel check"
 
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
-# version of THIS build (<YYYYMMDD>-<short sha>, `beta-` prefixed on the beta channel), passed in by the workflow; a promoted tag keeps it.
+# version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
 set_os_release_field() { # key value: replace the line when it exists, append it otherwise
     local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
     if grep -q "^${key}=" "${file}"; then
