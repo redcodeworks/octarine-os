@@ -10,7 +10,7 @@ What each top-level directory is for:
 - [`build-scripts.md`](build-scripts.md): `build_files/`, the scripts that build the image.
 - [`system-files.md`](system-files.md): `system_files/`, the files copied into the image.
 - [`image-variants.md`](image-variants.md): `variants/`, the developer and NVIDIA images.
-- [`prebuilt-binaries.md`](prebuilt-binaries.md): `binaries/`, the programs built separately and shipped in the images.
+- [`prebuilt-binaries.md`](prebuilt-binaries.md): the programs built in the separate octarine-bins repository and shipped in the images.
 - [`config-files.md`](config-files.md): `config/`, shared build settings.
 - [`ci-workflows.md`](ci-workflows.md): `.github/`, the workflows and scripts, and how a change reaches `main`.
 - [`git-hooks.md`](git-hooks.md): `githooks/`, optional hooks for a local clone.

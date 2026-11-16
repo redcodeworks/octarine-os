@@ -4,7 +4,7 @@ Everything that builds, tests, signs and publishes the images runs from here.
 
 - `workflows/` has the GitHub Actions workflows. `test.yml` runs the fast sanity check and the behavior tests on every branch; `build.yml` builds the default
   image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml` (the two dx workflows are thin callers of the reusable `dx-image.yml`; only `build-dx.yml` posts the required check `Build dx and push image`)
-  build the variants; `binaries.yml` builds the prebuilt programs on `testing` (a push that changes `binaries/`) and, on `main`, retags the tested build to `latest`; the image build installs from `:testing` on testing and from that `latest` elsewhere (the promote job starts no image build: main promotes the tested testing image, which already carries those binaries; a main build that should use a later `latest` is started by hand, `gh workflow run build.yml --ref main`, or is the daily one); nothing rebuilds them on a timer, by hand: `gh workflow run binaries.yml --ref testing`; `publish-latest.yml` moves the
+  build the variants; the prebuilt programs (scx, extest, Ghostty) are built by the separate octarine-bins repository, and this image installs the octarine-bins image it pins by digest (the weekly bump proposes a new digest); `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens ONE weekly pull request that moves the pinned versions (one commit per pin that moved, so a pin you do not want is dropped with `git revert <its commit>`; a newer weekly pull request closes an unmerged older one; rerun by hand with `gh workflow run bump-pins.yml --ref testing`, add `-f dry_run=true` to only print what it would open); the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
 - `scripts/` has the shell and Python helpers the workflows call (planning which builds are needed, registry and signature
   checks, smoke tests, pin bumps). `actions/` has one small shared step (tool install).
@@ -26,14 +26,15 @@ images accumulate (public registry storage is free); delete old package versions
 
 ## What the build depends on, and how each part is held
 
-The rule: what the project owns floats at its promoted `latest`; what it does not own is pinned and moves only through a pull request (the weekly pin bump); the base image and the Fedora packages float.
+The rule: anything that comes from another repository is pinned by digest and moves only through a bump pull request (the weekly pin bump, approved by the owner); the base image and the Fedora packages float. `dev-packages` and `datastore-images` still float at their `latest` for now.
 
 | Dependency | Treatment |
 |---|---|
 | Base image `silverblue-main` | floats at the tag; resolved to a digest and signature-checked on every build |
 | Fedora packages, negativo17 multimedia packages | float (installed from the live repositories); a COPR or vendor repository would be pinned and optional only (none today) |
-| `octarine-binaries`, `dev-packages`, `datastore-images` (the owner's own images) | float at `latest`; the digest is checked and recorded in an image label. The one exception: the build on `testing` reads `octarine-binaries:testing` (and fails unless it is the build of that commit's `binaries/` tree); main, the daily build and dispatches never read `testing` |
-| Homebrew files image, chunkah, the builder image, the sources of scx, extest and Ghostty, Zig | pinned, moved by the weekly bump pull request |
+| `dev-packages`, `datastore-images` (the owner's octarine-images repository) | float at `latest`; the digest is checked and recorded in an image label |
+| `octarine-bins` (prebuilt scx, extest, Ghostty; the owner's octarine-bins repository) | pinned by digest in the `Containerfile`, verified on every build with its own key, moved by the weekly bump pull request |
+| Homebrew files image, chunkah | pinned, moved by the weekly bump pull request |
 | GitHub Actions | pinned by commit, moved by Dependabot pull requests |
 | CI tool versions, the runner label, the vendored public keys | changed by hand |
 | NVIDIA akmods image | the tag for the base image's exact kernel, resolved on every NVIDIA build |

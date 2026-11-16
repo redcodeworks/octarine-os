@@ -14,7 +14,9 @@ ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/     /' "$root/out"; [ -f "$root/run" ] && sed 's/^/     run: /' "$root/run"; echo "     rc=$rc"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 lib="$here/system_files/usr/libexec/octarine-os"
-tsv_src="$here/binaries/scx/schedulers.tsv"
+# the source list (octarine-bins keeps the real one in src/scx/schedulers.tsv; the installed manifest has four fields, see tests/install-binaries.sh): a fixture here
+tsv_src="$root/schedulers-src.tsv"
+printf 'scx_rusty\t\tHybrid scheduler\nscx_lavd\t\tLatency scheduler\nscx_cake\t\tGaming scheduler\nscx_bpfland\t\tInteractive scheduler\nscx_cosmos\t\tLocality scheduler\nscx_flash\t\tDeadline scheduler\nscx_p2dq\t\tPick-two scheduler\n' > "$tsv_src"
 # the instance names come from the manifest source (name without scx_), not from a literal list
 real_names=$(grep -vE '^[[:space:]]*(#|$)' "$tsv_src" | cut -f1 | sed 's/^scx_//' | tr '\n' ' '); real_names=${real_names% }
 alt=${real_names// /|}

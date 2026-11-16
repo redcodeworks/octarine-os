@@ -1,15 +1,13 @@
-# Prebuilt binaries (`binaries/`)
+# Prebuilt binaries (the octarine-bins image)
 
-Sources and build recipes for the few programs the images carry that Fedora does not package: the sched_ext
-schedulers (`scx`), the `extest` libraries for Steam Input on Wayland and Ghostty. Each component has its own
-folder with a `build.sh` and an `upstream.env` that pins the upstream version; one multi-stage `Containerfile` in this folder builds them all.
+The few programs the images carry that Fedora does not package (the sched_ext schedulers `scx_*`, the `extest` libraries for Steam Input on
+Wayland, and Ghostty) are built in the separate repository `redcodeworks/octarine-bins`, which publishes one small signed image,
+`ghcr.io/redcodeworks/octarine-bins`, with its own signing key.
 
-`.github/workflows/binaries.yml` builds all components in one build on `testing` and publishes them as one small image, `ghcr.io/redcodeworks/octarine-binaries:testing`.
-Merging `testing` into `main` retags that tested image to `latest` (no rebuild; it fails if `testing` does not hold the build of the same `binaries/` content), and the image build installs
-whatever `latest` is when it runs (`build_files/install-binaries.sh`). `components.tsv` lists the components (all required);
-`builder.env` pins the Fedora builder image they all compile in; `lib/` holds the shared fetch, stage and assemble scripts.
+This repository pins that image by digest (`BINS_DIGEST` in the `Containerfile`, next to the Homebrew pin) and verifies the pinned digest
+with `keys/octarine-bins.pub` on every build; `build_files/install-binaries.sh` installs the files under `/usr`. The pin changes only through a
+pull request: the weekly bump (`bump-pins.yml`) proposes the digest of `octarine-bins:latest`, or run `just bins-bump` by hand. The testing
+build of that pull request is the first image build with the new binaries.
 
-If a component (`scx`, `extest` or `ghostty`) cannot be built, the run fails and nothing is promoted: `latest` keeps the previous binaries. If Ghostty becomes a blocker, pin a Ghostty tag that builds in `ghostty/upstream.env`, or remove the component from the image (its line in `components.tsv`, its directory and its entries in `build_files/install-binaries.sh`).
-
-Before editing: the upstream pins here are moved by the weekly bump workflow (`bump-pins.yml`), and any change under `binaries/` rebuilds all components in one build.
-See the [main README](../README.md) for what the images ship.
+If the binaries cannot be installed, the build fails and nothing new is published. Changes to the programs, their upstream versions and the
+builder happen in the octarine-bins repository. See the [main README](../README.md) for what the images ship.

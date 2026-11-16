@@ -5,11 +5,11 @@
 # cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
 # Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
-#   bump-run.sh scx|extest|ghostty|chunkah|brew|builder
+#   bump-run.sh chunkah|brew|bins
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins together), the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
-# on every write) and the Fedora builder digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for
-# MIN_AGE_DAYS, default 7: the creation date of the image is the stand-in for "has not been replaced since", a registry has no tag history).
+# Kinds: the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
+# on every write) and the octarine-bins image (`just bins-bump` is the pin writer: it resolves octarine-bins:latest, verifies the digest with keys/octarine-bins.pub
+# and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository).
 set -uo pipefail
 pin=${1:?pin name}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -41,37 +41,6 @@ ${pin} | ${current} | ${proposed} | $2 | $3"
 git diff --quiet || fail "the working tree is not clean"
 
 case "${pin}" in
-    scx | extest)
-        files=("binaries/${pin}/upstream.env")
-        # shellcheck source=../../binaries/lib/upstream-env.sh
-        source binaries/lib/upstream-env.sh; upstream_env_load "${files[0]}" || fail "invalid ${files[0]}"
-        current=${UPSTREAM_TAG:-${UPSTREAM_COMMIT:0:7}}
-        decision=$("${here}/upstream-check.sh" "binaries/${pin}")
-        echo "${pin}: ${decision}"
-        read -r verb tag commit _ <<<"${decision}"
-        case "${verb}" in
-            bump)
-                proposed=${tag}; old=${UPSTREAM_TAG:-${UPSTREAM_COMMIT}}; upstream_env_set "${files[0]}" "${tag}" "${commit}" || fail "cannot write ${files[0]}"
-                commit_pin "Bump ${pin} to ${tag}" "https://github.com/${UPSTREAM_WATCH}/compare/${old}...${tag}" "$(commit_age "${UPSTREAM_WATCH}" "${commit}")" ;;
-            forkbehind) status="the fork is behind upstream (${tag}): run gh repo sync on it first" ;;
-            unreachable) fail "${decision#unreachable }" ;;
-            *) status="nothing to bump: ${decision}" ;;
-        esac ;;
-    ghostty)
-        files=(binaries/ghostty/upstream.env binaries/ghostty/zig.env)
-        source binaries/lib/upstream-env.sh; upstream_env_load "${files[0]}" || fail "invalid upstream.env"
-        current="${UPSTREAM_TAG}, zig $(sed -n 's/^ZIG_VERSION=//p' "${files[1]}")"
-        decision=$("${here}/ghostty-check.sh")
-        echo "ghostty: ${decision}"
-        read -r verb a1 a2 a3 a4 a5 a6 <<<"${decision}"
-        case "${verb}" in
-            bump) # a new Ghostty tag brings the Zig minor it needs: one commit for both, they cannot be applied apart
-                proposed="${a1}, zig ${a3}"; "${here}/bump-ghostty.sh" ghostty "${a1}" "${a2}" "${a3}" "${a4}" "${a5}" "${a6}" || fail "bump-ghostty.sh failed"
-                commit_pin "Bump ghostty to ${a1} (Zig ${a3})" "https://github.com/${UPSTREAM_WATCH}/compare/${UPSTREAM_TAG}...${a1}" "$(commit_age "${UPSTREAM_WATCH}" "${a2}")" ;;
-            wait) status="nothing to bump yet: ${decision#wait }" ;;
-            unreachable) fail "${decision#unreachable }" ;;
-            *) status="nothing to bump: ${decision}" ;;
-        esac ;;
     chunkah)
         files=(config/chunkah.env); ref=quay.io/coreos/chunkah:latest; src="${ref}, keyless cosign signature verified"
         go=$(mktemp)
@@ -94,27 +63,20 @@ case "${pin}" in
             just brew-bump "${latest}" || fail "just brew-bump ${latest} failed (digest or signature; nothing changed)"
             commit_pin "Bump the Homebrew files image to ${latest}" "ghcr.io/ublue-os/brew:${latest}, cosign signature verified" "$(image_age "ghcr.io/ublue-os/brew:${latest}")"
         fi ;;
-    builder)
-        files=(binaries/builder.env)
-        cur=$(sed -n 's/^BUILDER=//p' "${files[0]}")
-        [[ "${cur}" =~ ^(registry\.fedoraproject\.org/fedora):([0-9]+)@(sha256:[0-9a-f]{64})$ ]] || fail "binaries/builder.env has no digest-pinned BUILDER"
-        repo=${BASH_REMATCH[1]} major=${BASH_REMATCH[2]} curdigest=${BASH_REMATCH[3]}
-        current="${major}@${curdigest:0:19}"
-        manifest=$(skopeo inspect --raw "docker://${repo}:${major}" 2> /dev/null) || manifest=""
-        [[ -n "${manifest}" ]] || fail "cannot resolve ${repo}:${major}"
+    bins)
+        files=(Containerfile)
+        cur=$(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile); curtag=$(sed -n 's/^ARG BINS_TAG=//p' Containerfile)
+        [[ "${cur}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "BINS_DIGEST in the Containerfile is missing or malformed"
+        current="${curtag} ${cur:0:19}"
+        ref=ghcr.io/redcodeworks/octarine-bins
+        manifest=$(skopeo inspect --raw "docker://${ref}:latest" 2> /dev/null) || manifest=""
+        [[ -n "${manifest}" ]] || fail "cannot resolve ${ref}:latest"
         new="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
-        [[ "${new}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "cannot compute the digest of ${repo}:${major}"
-        if [[ "${new}" == "${curdigest}" ]]; then status="nothing to bump: the pin is the current digest of ${major}"
+        if [[ "${new}" == "${cur}" ]]; then status="nothing to bump: the pin equals ${ref}:latest (${curtag})"
         else
-            created=$(skopeo inspect --override-os linux --override-arch amd64 --config "docker://${repo}:${major}" 2> /dev/null | jq -r '.created // empty') || created=""
-            [[ -n "${created}" ]] || fail "cannot read the creation date of ${repo}:${major}"
-            age=$(days "${created}"); min=${MIN_AGE_DAYS:-7}
-            if [[ "${age}" -lt "${min}" ]]; then status="nothing to bump yet: ${new:0:19} was built ${age} days ago (${created}); a digest is proposed once it has been the tag's value for ${min} days"
-            else
-                proposed="${major}@${new:0:19}"
-                sed -i "s|^BUILDER=.*|BUILDER=${repo}:${major}@${new}|" "${files[0]}"
-                commit_pin "Bump the Fedora ${major} builder digest (built ${created%%T*})" "${repo}:${major}" "${age}"
-            fi
+            just bins-bump latest || fail "just bins-bump failed (digest, signature or version label; nothing changed)"
+            proposed="$(sed -n 's/^ARG BINS_TAG=//p' Containerfile) $(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile | cut -c1-19)"
+            commit_pin "Bump the octarine-bins image to ${proposed%% *}" "a new octarine-bins digest, ${ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries" "$(image_age "${ref}:latest")"
         fi ;;
     *) fail "unknown pin '${pin}'" ;;
 esac
