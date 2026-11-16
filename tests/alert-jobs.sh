@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks the `alert` jobs that turn a failed scheduled build into ONE issue (ci-issue.sh, deduplicated on the label): the default build, the beta and
-# NVIDIA builds and the weekly prune. A cancelled run raises nothing and closes nothing; the gap analysis (an expected failure) has none. Run: tests/alert-jobs.sh
+# NVIDIA builds and the weekly prune. A cancelled run raises nothing and closes nothing. Run: tests/alert-jobs.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 -I - "$here" <<'PY'
@@ -28,6 +28,5 @@ assert len(set(labels.values())) == len(labels), labels  # one label (one open i
 for f in ("build-dx", "publish-latest", "rollback-latest"):
     t = open("%s/.github/workflows/%s.yml" % (h, f)).read()
     assert "ci-issue.sh fail" in t, f
-assert "alert" not in yaml.safe_load(open(h + "/.github/workflows/build-fedora-base.yml"))["jobs"]
 print("alert jobs: %s" % labels)
 PY

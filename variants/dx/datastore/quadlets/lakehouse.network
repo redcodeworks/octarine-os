@@ -1,6 +1,0 @@
-[Unit]
-Description=Shared network of the datastore and kafka pods
-
-[Network]
-NetworkName=lakehouse
-Driver=bridge

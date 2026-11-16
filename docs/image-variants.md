@@ -2,8 +2,8 @@
 
 Build recipes for the images that sit on top of the default `octarine-os` image.
 
-- `dx/` is the developer image: the developer toolchain, the virtual machine hosting set and the opt-in datastore
-  Quadlets and their `ujust` recipes.
+- `dx/` is the developer image: the developer toolchain, the virtual machine hosting set and thin `ujust`
+  recipes that fetch the opt-in datastore bundle on demand (`ujust datastore-install`).
 - `nvidia/` adds the NVIDIA driver build.
 
 Each has its own `Containerfile` and a setup script (`dx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`
