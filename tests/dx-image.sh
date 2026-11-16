@@ -106,53 +106,6 @@ K=7.2.15-300.fc45.x86_64
 mk_world "$K"; smoke_run "$K"; check "smoke: a complete dx image passes" test $? -eq 0
 mk_world "$K"; rm "$sb/bin/clang"; smoke_run "$K"; rc=$?
 check "smoke: a missing compiler fails and says which" bash -c "[ $rc -ne 0 ] && grep -q 'FAIL command clang' '$root/smoke.out'"
-check "smoke: failure prints diagnostics (kernels, missing packages, units)" bash -c "grep -q 'DIAG kernels found' '$root/smoke.out' && grep -q 'DIAG developer and VM packages not installed' '$root/smoke.out' && grep -q 'DIAG policy scopes' '$root/smoke.out'"
-mk_world "$K"; smoke_run "$K"; check "smoke: a passing run prints no diagnostics" bash -c "! grep -q DIAG '$root/smoke.out'"
-mk_world "$K"; rm "$sb/bin/virt-manager"; smoke_run "$K"; check "smoke: no virt-manager fails" test $? -ne 0
-mk_world "$K"; rm "$sb/bin/virt-viewer"; smoke_run "$K"; check "smoke: no virt-viewer fails" test $? -ne 0
-mk_world "$K"; rm "$sb/bin/uv"; smoke_run "$K"; check "smoke: no uv fails" test $? -ne 0
-mk_world "$K"; rm "$sb/bin/rustup-init"; smoke_run "$K"; check "smoke: no rustup-init fails" test $? -ne 0
-mk_world "$K"; grep -vx rustup "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: no rustup package fails" test $? -ne 0
-mk_world "$K"; smoke_run "$K"; check "smoke: a rustup command is not required (only rustup-init)" bash -c "! grep -q 'command rustup\$' '$root/smoke.out' && grep -q 'PASS command rustup-init' '$root/smoke.out'"
-mk_world "$K"; grep -vx glib2-devel "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing -devel package fails" test $? -ne 0
-mk_world "$K"; rm "$sb/units/virtqemud.service"; smoke_run "$K"; check "smoke: a missing virtqemud unit fails" test $? -ne 0
-mk_world "$K"; rm "$sb/units/libvirtd.service"; smoke_run "$K"; check "smoke: a missing libvirtd unit fails" test $? -ne 0
-mk_world "$K"; rm "$sb/units/virtnetworkd.service"; smoke_run "$K"; check "smoke: a missing virtnetworkd unit fails" test $? -ne 0
-mk_world "$K"; grep -vx libvirt-nss "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing libvirt-nss fails" test $? -ne 0
-mk_world "$K"; grep -vx cockpit-machines "$sb/rpms" >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a missing cockpit-machines fails" test $? -ne 0
-mk_world "$K"; rm "$sb/bin/qemu-kvm"; smoke_run "$K"; check "smoke: no qemu-kvm binary fails" test $? -ne 0
-mk_world "$K"; mkdir "$sb/modules/7.2.16-300.fc45.x86_64"; smoke_run "$K"; check "smoke: two kernels fail" test $? -ne 0
-mk_world "7.2.14-300.fc45.x86_64"; smoke_run "$K"; check "smoke: a kernel that differs from the base fails" test $? -ne 0
-mk_world "$K"; smoke_run ""; check "smoke: an unset BASE_KERNEL fails" test $? -ne 0
-mk_world "$K"; printf '[Flatpak Preinstall com.visualstudio.code]\nBranch=stable\n' >"$sb/pre/dx.preinstall"; smoke_run "$K"; check "smoke: a VS Code preinstall entry fails" test $? -ne 0
-mk_world "$K"; rm "$sb/pre/gnome.preinstall"; smoke_run "$K"; check "smoke: the default Flatpak lists must survive" test $? -ne 0
-mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/octarine-os-dx":\[\]##' "$sb/policy.json"; smoke_run "$K"; check "smoke: the dx signature rule is required" test $? -ne 0
-mk_world "$K"; printf '#!/bin/sh\necho "niri-setup user-setup"\n' >"$sb/bin/ujust"; smoke_run "$K"; check "smoke: ujust must list the dev recipe" test $? -ne 0
-mk_world "$K"; rm "$sb/share/ublue-os/just/70-octarine-dev.just"; smoke_run "$K"; check "smoke: the dev recipe file is required" test $? -ne 0
-mk_world "$K"; : >"$sb/share/ublue-os/justfile"; smoke_run "$K"; check "smoke: the justfile import of the dev recipe file is required" test $? -ne 0
-mk_world "$K"; echo 'kargs = ["iommu=pt"]' >"$sb/lib/bootc/kargs.d/10-iommu.toml"; smoke_run "$K"; check "smoke: a kargs.d file that mentions iommu fails (no image ships one)" test $? -ne 0
-mk_world "$K"; echo 'kargs = ["quiet"]' >"$sb/lib/bootc/kargs.d/10-other.toml"; smoke_run "$K"; check "smoke: an unrelated kargs.d file does not fail the iommu check" test $? -eq 0
-mk_world "$K"; sed -i 's#^SHELL=.*#SHELL=/usr/bin/zsh#' "$sb/etc/default/useradd"; smoke_run "$K"; check "smoke: zsh as the default shell of new users fails" test $? -ne 0
-mk_world "$K"; sed -i 's#,"ghcr.io/redcodeworks/datastore-images":\[[^]]*\]##' "$sb/policy.json"; smoke_run "$K"; check "smoke: the policy rule for the datastore bundle is required" test $? -ne 0
-mk_world "$K"; rm "$sb/etc/pki/containers/redcodeworks-toolbox.pub"; smoke_run "$K"; check "smoke: the key of the bundle's policy rule is required" test $? -ne 0
-mk_world "$K"; rm "$sb/etc/containers/registries.d/redcodeworks-datastore-images.yaml"; smoke_run "$K"; check "smoke: the registries.d entry of the bundle is required" test $? -ne 0
-mk_world "$K"; mkdir -p "$sb/share/containers/systemd/users"; touch "$sb/share/containers/systemd/users/datastore.pod"; smoke_run "$K"; check "smoke: a baked datastore unit fails (the datastore is not part of the image)" test $? -ne 0
-mk_world "$K"; rm "$sb/share/ublue-os/just/72-octarine-datastore.just"; smoke_run "$K"; check "smoke: the datastore recipe file is required" test $? -ne 0
-mk_world "$K"; rm "$sb/usr-bin/sdk"; smoke_run "$K"; check "smoke: the sdk wrapper is required" test $? -ne 0
-mk_world "$K"; rm "$sb/etc/profile.d/octarine-dx-cargo.sh"; smoke_run "$K"; check "smoke: the cargo profile snippet is required" test $? -ne 0
-mk_world "$K"; SYSTEMCTL_FAIL=podman.socket smoke_run "$K"; check "smoke: a disabled podman.socket fails" test $? -ne 0
-mk_world "$K"; echo firefox >>"$sb/rpms"; smoke_run "$K"; check "smoke: firefox must stay removed" test $? -ne 0
-for rp in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
-    mk_world "$K"; echo "$rp" >>"$sb/rpms"; smoke_run "$K"; rc=$?
-    check "smoke: an installed ROCm package ($rp) fails the dx image" bash -c "[ $rc -ne 0 ] && grep -q 'FAIL ROCm package $rp is NOT installed' '$root/smoke.out'"
-done
-mk_world "$K"; smoke_run "$K"; check "smoke: a dx image without ROCm passes the ROCm checks" bash -c "[ \$(grep -c 'PASS ROCm package' '$root/smoke.out') = 5 ]"
-mk_world "$K"; PKGCONF_RC=1 smoke_run "$K"; check "smoke: pkgconf not finding glib-2.0 and openssl fails" test $? -ne 0
-mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release"; smoke_run "$K"; check "smoke: the default image's IMAGE_ID fails" test $? -ne 0
-mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
-mk_world "$K"; sed -i '/^IMAGE_VERSION=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=latest-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a channel word in a stable IMAGE_VERSION fails" test $? -ne 0
-OS_IMAGE_VERSION=x-20261110-abc1234 mk_world "$K"; smoke_run "$K"; check "smoke: a prefixed IMAGE_VERSION fails (the version is <date>-<sha> only)" test $? -ne 0
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0
 

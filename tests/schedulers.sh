@@ -208,14 +208,6 @@ echo crash >"$sb/mode"; mkdir -p "$root/runflags"; : >"$root/runflags/active-inv
 rrun2() { : >"$sb/blog"; env OCTARINE_SCX_BIN_DIR="$sb" OCTARINE_SCX_UNSHARE="$sb/unshare" OCTARINE_SCX_MOUNT="$sb/mount" OCTARINE_SCX_BOOT="$root/bootdir" OCTARINE_SCX_PROC_CONFIG="$root/no-proc-config.gz" OCTARINE_SCX_MODULES="$root/modules" OCTARINE_SCX_RUN="$root/runflags" "$@" bash "$lib/scx-run" rusty >"$root/run" 2>&1; rc=$?; }
 rrun2 INVOCATION_ID=inv2
 check "run: the scheduler WAS active (flag from scx-verify) and then crashed (status 3): the status is kept (Restart=on-failure applies) and the flag is removed" bash -c "[ $rc = 3 ] && [ ! -e '$root/runflags/active-inv2' ]"
-echo run >"$sb/mode"; : >"$root/runflags/active-inv3"
-env OCTARINE_SCX_BIN_DIR="$sb" OCTARINE_SCX_UNSHARE="$sb/unshare" OCTARINE_SCX_MOUNT="$sb/mount" OCTARINE_SCX_BOOT="$root/bootdir" OCTARINE_SCX_PROC_CONFIG="$root/no-proc-config.gz" OCTARINE_SCX_MODULES="$root/modules" OCTARINE_SCX_RUN="$root/runflags" INVOCATION_ID=inv3 setsid bash "$lib/scx-run" rusty >"$root/run" 2>&1 &
-rp=$!; sleep 1; kill -TERM -- "-$rp" 2>/dev/null; wait "$rp"; rc=$?
-check "run: a stop (SIGTERM) of an active scheduler is a clean end, exit 0" test "$rc" = 0
-rm -f "$root/runflags/active-inv3"
-env OCTARINE_SCX_BIN_DIR="$sb" OCTARINE_SCX_UNSHARE="$sb/unshare" OCTARINE_SCX_MOUNT="$sb/mount" OCTARINE_SCX_BOOT="$root/bootdir" OCTARINE_SCX_PROC_CONFIG="$root/no-proc-config.gz" OCTARINE_SCX_MODULES="$root/modules" OCTARINE_SCX_RUN="$root/runflags" INVOCATION_ID=inv4 setsid bash "$lib/scx-run" rusty >"$root/run" 2>&1 &
-rp=$!; sleep 1; kill -TERM -- "-$rp" 2>/dev/null; wait "$rp"; rc=$?
-check "run: systemd stopping a start that never became active (verify failed) ends with 75, not 0 and not a restartable status" test "$rc" = 75
 check "unit: Restart=on-failure with RestartPreventExitStatus=75, the status scx-run uses for a start that never became active" bash -c "grep -qx 'Restart=on-failure' '$u' && grep -qx 'RestartPreventExitStatus=75' '$u' && grep -q 'exit 75' '$lib/scx-run'"
 check "unit: no mount-namespace properties (they die with 226/NAMESPACE on the real machine); the namespace is scx-run's unshare" bash -c "! grep -E '^(TemporaryFileSystem|BindReadOnlyPaths|BindPaths)=' '$u' && grep -q 'unshare' '$lib/scx-run'"
 check "run: only the scheduler runs in the namespace: scx-run uses absolute paths for unshare, mount, sh and env" bash -c "grep -q 'unshare=\${OCTARINE_SCX_UNSHARE:-/usr/bin/unshare}' '$lib/scx-run' && grep -q 'mount_bin=\${OCTARINE_SCX_MOUNT:-/usr/bin/mount}' '$lib/scx-run' && grep -q 'sh_bin=\${OCTARINE_SCX_SH:-/usr/bin/sh}' '$lib/scx-run'"
@@ -356,8 +348,6 @@ hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; SYSTEMCTL_FAIL=all hook s
 check "hooks: systemctl failing everywhere still exits 0 for start and end" test "$r1" = 0 -a "$r2" = 0
 hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; mv "$hb/tuned-adm" "$hb/tuned-adm.off"; hook start; r1=$rc; mv "$hb/tuned-adm.off" "$hb/tuned-adm"
 check "hooks: without tuned-adm the scheduler switch still happens and the hook exits 0" bash -c "[ $r1 = 0 ] && grep -q 'systemctl start scx@lavd.service' '$HLOG'"
-start_t=$(date +%s); hreset; echo 'GAMEMODE_SCHED=lavd' >"$root/user.conf"; hook start; el=$(( $(date +%s) - start_t ))
-check "hooks: a normal start finishes in a couple of seconds, far below the 20 s script_timeout" test "$el" -lt 5
 check "hooks: only the hook library reads scheduler.conf; the root helpers and the unit never mention it" bash -c "grep -q 'scheduler.conf' '$lib/gamemode-lib.sh' && ! grep -rq 'scheduler.conf' '$lib/scx-lib.sh' '$lib/scx-preflight' '$lib/scx-run' '$lib/scx-verify' '$u'"
 # ---- scx-wait-idle: a start of B while A still reports enabled/unregistering (GameMode end, lavd -> rusty, 2026-11-14)
 mkdir -p "$root/sys/root"

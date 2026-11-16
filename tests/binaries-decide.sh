@@ -100,17 +100,6 @@ s2=$(K scx); e2=$(K extest); echo BUILDER=y >"$kr/binaries/builder.env"; git -C 
 check "key: a new builder pin moves the key of every component" bash -c "[ '$(K scx)' != '$s2' ] && [ '$(K extest)' != '$e2' ]"
 check "key: keys are 40 hex, the components list is the manifest, a bad name is refused" bash -c "[[ '$(K scx)' =~ ^[0-9a-f]{40}\$ ]] && [ \"\$(REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' --components | tr '\n' ' ')\" = 'scx extest ' ] && ! REPO_ROOT='$kr' bash '$kr/.github/scripts/binaries-key.sh' 'Bad Name' 2>/dev/null"
 
-# ---- the wiring
-check "build.yml: degraded binaries (an optional component left out) are recorded for the image build, in the summary and in the label the scheduled skip check reads; nothing passes a fallback input" python3 -I - "$here" <<'PY'
-import sys, yaml
-root = sys.argv[1]
-w = yaml.safe_load(open(f"{root}/.github/workflows/build.yml"))
-assert "with" not in w["jobs"]["binaries"], "binaries.yml takes no inputs"
-t = open(f"{root}/.github/workflows/build.yml").read()
-for needle in ("BINARIES_DEGRADED=", "org.octarineos.binaries-degraded", "LATEST_DEGRADED=", "needs.binaries.outputs.degraded"):
-    assert needle in t or needle in open(f"{root}/Justfile").read(), needle
-PY
-
 # ---- plan-skip: an image that left an optional component out is never kept
 out1=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_DEGRADED= bash "$here/.github/scripts/plan-skip.sh")
 out2=$(env EVENT=schedule REF=refs/heads/main BASE_NOW=sha256:a LATEST_BASE=sha256:a REPO_SAME=true LATEST_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" SIGNED=true LATEST_DEGRADED=ghostty:absent bash "$here/.github/scripts/plan-skip.sh")

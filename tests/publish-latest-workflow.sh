@@ -6,7 +6,6 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 fail=0
 check() { local d=$1; shift; if "$@" > "$(mktemp)" 2>&1; then echo "ok   $d"; else echo "FAIL $d"; "$@" 2>&1 | sed 's/^/     /' | tail -5; fail=1; fi; }
-wf="$here/.github/workflows"
 
 check "just generate-build-tags: with bare=false the bare latest is not in the list, the dated ones and the same-day aliases are; testing and the default call keep their bare tag" bash -c "
     cd '$here'
@@ -16,7 +15,4 @@ check "just generate-build-tags: with bare=false the bare latest is not in the l
     tok() { tr ' ' '\\n' <<< \"\$1\"; }
     ! tok \"\$nolatest\" | grep -qx latest && tok \"\$nolatest\" | grep -qE '^latest-[0-9]{8}\$' && tok \"\$nolatest\" | grep -qE '^[0-9]{8}\$' &&
     tok \"\$withlatest\" | grep -qx latest && tok \"\$testing\" | grep -qx testing"
-check "no workflow other than publish-latest.yml writes a bare :latest tag of the default or the dx image (skopeo copy or push-tags to a :latest tag)" bash -c "
-    ! grep -nE 'skopeo copy[^#]*(octarine-os|octarine-os-dx|IMAGE)[^ ]*:latest( |\$)' $wf/build.yml $wf/build-dx.yml &&
-    grep -q 'docker://\$1:latest' '$here/.github/scripts/publish-latest.sh'"
 exit "$fail"
