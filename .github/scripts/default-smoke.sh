@@ -123,6 +123,7 @@ check "dconf distro database holds the enabled extensions (dconf update ran over
 check "every extension enabled by default is shipped (directory in the image), or the build recorded a missing optional package" "for u in \$(grep ^enabled-extensions= /etc/dconf/db/distro.d/90-octarine-os | grep -o \"[A-Za-z0-9._-]*@[A-Za-z0-9._-]*\"); do test -d /usr/share/gnome-shell/extensions/\$u || test -s /usr/share/octarine-os/optional-packages-missing || exit 1; done"
 check "dconf distro database holds our hot corner default" "grep -aq enable-hot-corners /etc/dconf/db/distro"
 check "dconf distro database holds our button-layout default" "grep -aq button-layout /etc/dconf/db/distro"
+check "the fastfetch default configuration parses as JSON once the full-line // comments are removed" "grep -vE '^[[:space:]]*//' /etc/xdg/fastfetch/config.jsonc | jq -e ."
 for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
   check "fish accepts $f" "fish --no-execute $f"
 done

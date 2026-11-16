@@ -118,8 +118,7 @@ check "workflow: the build is by digest and has explicit labels (base name and d
   grep -q -- '--unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs' '$wf'"
 check "build.yml and build-beta.yml only dispatch the dx workflow (no dx build steps, no uses:), the NVIDIA variant never mentions it" bash -c "! grep -l 'build-dx\|octarine-os-dx' '$here/.github/workflows/build-nvidia.yml' && ! grep -q 'variants/dx/Containerfile' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml' && ! grep -q 'build-dx.yml$' <(grep 'uses:' '$here/.github/workflows/build.yml' '$here/.github/workflows/build-beta.yml')"
 
-# ---- the plan: the decision table is tested in tests/plan-dx.sh (stub skopeo and cosign, temporary repository)
-check "plan: tests/plan-dx.sh passes (skip, promote, build per channel and the aggregate result)" bash "$here/tests/plan-dx.sh"
+# ---- the plan: the decision table is tested by tests/plan-dx.sh, which the runner runs on its own
 check "workflow: the aggregate job always runs, needs plan, build, promote and sign; it is named 'Build dx and push image' only when the built commit is the tip of the ref (else 'Build dx (older commit)', and never the required name in a dry run); the commit status of the same name is posted on the BUILT commit for channel testing only, never in a dry run" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
