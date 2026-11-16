@@ -32,7 +32,7 @@ The rule: what the project owns floats at its promoted `latest`; what it does no
 |---|---|
 | Base image `silverblue-main` | floats at the tag; resolved to a digest and signature-checked on every build |
 | Fedora packages, negativo17 multimedia packages | float (installed from the live repositories); a COPR or vendor repository would be pinned and optional only (none today) |
-| `octarine-binaries`, `dev-packages`, `datastore-images` (the owner's own images) | float at `latest`; the digest is checked and recorded in an image label |
+| `octarine-binaries`, `dev-packages`, `datastore-images` (the owner's own images) | float at `latest`; the digest is checked and recorded in an image label. The one exception: the build on `testing` reads `octarine-binaries:testing` (and fails unless it is the build of that commit's `binaries/` tree); main, the daily build and dispatches never read `testing` |
 | Homebrew files image, chunkah, the builder image, the sources of scx, extest and Ghostty, Zig | pinned, moved by the weekly bump pull request |
 | GitHub Actions | pinned by commit, moved by Dependabot pull requests |
 | CI tool versions, the runner label, the vendored public keys | changed by hand |

@@ -345,7 +345,7 @@ jobs:
           .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
-      # The prebuilt binaries image (octarine-binaries, built and promoted by binaries.yml, a package this project owns) floats at latest: resolved to a digest once,
+      # The prebuilt binaries image (octarine-binaries, built and promoted by binaries.yml, a package this project owns) floats at its channel tag: resolved to a digest once,
       # verified with this repository's key, passed to the build as BINARIES_IMAGE and recorded in an image label (the exact binaries of this image)
       - name: Set up cosign (binaries image)
         uses: ./.github/actions/setup-tool
@@ -359,8 +359,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # testing builds read octarine-binaries:testing (the binaries this commit will promote), every other build (main, schedule, a dispatch) reads latest and never testing
       - name: Resolve and verify the binaries image
-        run: .github/scripts/latest-ref.sh "${IMAGE_REGISTRY}/octarine-binaries" cosign.pub BINARIES_IMAGE
+        env:
+          BINARIES_TAG: ${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}
+        run: .github/scripts/latest-ref.sh "${IMAGE_REGISTRY}/octarine-binaries" cosign.pub BINARIES_IMAGE "${BINARIES_TAG}"
+
+      # The testing binaries must be the build of THIS commit's binaries/ tree (the same rule the promotion applies); no fallback to an older image
+      - name: Check the testing binaries match this commit
+        if: github.ref == 'refs/heads/testing'
+        run: |
+          want=$(.github/scripts/binaries-key.sh)
+          have=$(.github/scripts/registry-read.sh config "${BINARIES_IMAGE}" | jq -r '.config.Labels["org.opencontainers.image.version"] // empty')
+          [[ "${have}" == "${want}" ]] || { echo "::error::octarine-binaries:testing is key ${have:-unknown}, this commit's binaries/ tree is ${want}: the binaries build on testing has not finished or failed; fix it, then re-run"; exit 1; }
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
