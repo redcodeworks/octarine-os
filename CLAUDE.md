@@ -19,7 +19,7 @@ step lists, the recipes explain themselves), then the closing block Contributing
 (personal project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs,
 forks encouraged; its `### Fork it` heading is linked from `AGENTS.md`), disclaimer last. No design rationale, process
 history, CI or branching internals, agent instructions or recipe step lists in it. American English throughout. Checked
-against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale sections); that test is the last one that reads README prose and goes once `tests/run-tests.sh` no longer needs it (see "What the tests may assert").
+by hand: no test reads the README (removed 2026-11-16, see "What the tests may assert").
 
 ## Layout
 
@@ -452,7 +452,6 @@ Jobs `test`, `suite` and `secrets`; `test` and `secrets` have these exact names 
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
 Run the same locally: `just check; .github/scripts/run-tests.sh` (or the loop `for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`).
-Test: `tests/test-workflow.sh`.
 
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
@@ -460,6 +459,8 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 ## What the tests may assert (Kevin, 2026-11-16: "many of the tests are over-sensitive to things that will not result in a failed build; we should be okay with the actual error revealing itself at build-time; the initial CI should be for just obvious sanity checks")
 
 The initial CI keeps only syntax, lint and parse checks, cheap obvious smoke checks, and behavior tests with stubs for logic that first executes on main, schedule or publish and could not otherwise be seen before it breaks production (promotion retag, publish-latest ordering and pairing, prune-daily deletion rules, sign and verify decisions, the luks-tpm-unlock SIGPIPE case, registry-read behavior). Tests must NOT assert workflow YAML text, README or doc prose, comment content, exact messages, file lists, or version, digest and count literals. When such an assertion fails, delete or loosen it (never move content to satisfy it, never add code to satisfy it); an error that a real build shows by itself needs no test.
+
+Cut in the combined batch of 2026-11-16 (accepted by Kevin, no replacement checks): `tests/readme-defaults.sh` and `tests/test-workflow.sh` are deleted; the workflow, Containerfile, Justfile and script-text assertions of `binary-images.sh`, `binaries-validate.sh`, `bump-pins.sh`, `bump-checks.sh`, `bump-run.sh` and `ghostty-component.sh` are gone (their stub behavior tests stay). Invariants that are now unguarded by any test: nothing that publishes has a `pull_request` trigger; login, push and sign steps are gated on publish; sign runs in the `signing` environment; the `daily-*` tag is written only by the scheduled run; the default image must not install libvirt or QEMU; the personal-names grep (gitleaks still scans for secrets). A wrong edit shows on the first real run.
 
 ## Keeping the tests fast (2026-11-16)
 
@@ -531,8 +532,6 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   base recipes absent, every public recipe has a description); `tests/switch-image.sh`, `tests/update-services.sh` and
   `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`
   (Esc, the single-call re-enroll, the image-off line).
-- `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
-  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (no image ships either; the iommu karg is opt-in).
 - The default image carries `gcc`, `gcc-c++`, `make` and `binutils` (critical tier of `build.sh`, the owner's decision of 2026-11-14, which reversed the earlier rule that the image has none; 221 MiB installed, dependencies glibc-devel, libstdc++-devel, libxcrypt-devel and kernel-headers) but no clang, cmake, ninja, meson or -devel libraries (the dx image has the full toolchain); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
@@ -1211,7 +1210,6 @@ also moves `binaries/builder.env` (see "Base image and Fedora major upgrade").
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
