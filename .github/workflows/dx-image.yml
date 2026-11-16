@@ -85,6 +85,9 @@ on:
       alias_tags:
         description: "the tags pushed or retagged (space separated)"
         value: ${{ jobs.build.outputs.alias_tags || jobs.promote.outputs.alias_tags }}
+      moving_tags:
+        description: "the tags the caller's sign job moves to the digest AFTER signing it (testing channel: `testing`); empty otherwise"
+        value: ${{ jobs.build.outputs.moving_tags }}
 
 env:
   CHANNEL: ${{ inputs.channel }}
@@ -164,6 +167,7 @@ jobs:
       image: ${{ steps.names.outputs.image }}
       digests: ${{ steps.push.outputs.digests }}
       alias_tags: ${{ steps.tags.outputs.alias_tags }}
+      moving_tags: ${{ steps.tags.outputs.moving_tags }}
 
     permissions:
       contents: read
@@ -345,8 +349,19 @@ jobs:
             seen=$(IMAGE="${BASE_IMAGE}" .github/scripts/registry-digest.sh "${today}" 2> /dev/null || true)
             if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
           fi
-          echo "Tags: ${alias_tags}"
+          # testing: the moving tag `testing` is NOT pushed here; the caller's sign job moves it to the digest once it is signed and verified, so a run cancelled
+          # earlier leaves `testing` on the previous signed image (only `testing-<sha>` exists before the signature does)
+          moving_tags=""
+          if [[ "${CHANNEL}" == testing ]]; then
+            immutable=""
+            for t in ${alias_tags}; do
+              if [[ "${t}" == testing ]]; then moving_tags="${t}"; else immutable="${immutable:+${immutable} }${t}"; fi
+            done
+            alias_tags="${immutable}"
+          fi
+          echo "Tags: ${alias_tags} (moving, after signing: ${moving_tags:-none})"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+          echo "moving_tags=${moving_tags}" >> "${GITHUB_OUTPUT}"
 
       - name: Push to GHCR
         id: push
