@@ -19,11 +19,15 @@ on = w.get(True) or w.get("on")
 assert "pull_request" not in on and "pull_request_target" not in on, set(on)
 assert "refs/heads/testing" in w["concurrency"]["cancel-in-progress"], w["concurrency"]
 PY
-check "test.yml: test and secrets keep their required names, secrets needs nothing, test always runs and runs inside the base the images are built on" python3 - "$here" <<'PY'
+check "test.yml: test and secrets keep their required names, secrets needs nothing, test runs inside the base the images are built on, and only a documentation scope skips base and test (never a failed scope)" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 assert "needs" not in w["jobs"]["secrets"], "secrets must not wait for anything"
-assert "always()" in w["jobs"]["test"]["if"]
+for k in ("base", "test"):
+    assert "always()" in w["jobs"][k]["if"] and "scope" in w["jobs"][k]["if"], k  # a failed scope job must not skip them
+assert "if" not in w["jobs"]["secrets"], "secrets always runs"
+assert "container" not in w["jobs"]["docs"], "the light docs job runs on the host runner"
+assert not w["jobs"]["docs"].get("needs", []) or w["jobs"]["docs"]["needs"] == ["scope"], "docs waits for scope only (no base image)"
 for k in ("test", "secrets"):
     assert w["jobs"][k]["name"] == k, k
 # the test job runs INSIDE the base the images are built on: its container is the digest the base job resolved (base-pin.sh), never a fixed image
@@ -55,7 +59,9 @@ check "test.yml: tests/*.sh run by a glob, no hard-coded test list" python3 - "$
 import re, sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 runs = "\n".join(s.get("run", "") for s in yaml.safe_load(open(sys.argv[1] + "/.github/actions/test-suite/action.yml"))["runs"]["steps"])
-assert ".github/scripts/run-tests.sh --jobs 4" in runs and "--doc-tests" in runs, runs
+assert ".github/scripts/run-tests.sh --jobs 4" in runs, runs
+druns = "\n".join(s.get("run", "") for s in w["jobs"]["docs"]["steps"])
+assert "--doc-tests" in druns and "run-tests.sh" in druns, druns
 assert not re.search(r"tests/[\w-]+\.sh", runs.replace("tests/*.sh", "")), "a test is named by hand"
 PY
 check "test.yml: the secrets job scans the full history with a pinned gitleaks and checksum" python3 - "$here" <<'PY'
