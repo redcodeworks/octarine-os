@@ -123,7 +123,6 @@ jobs:
           [[ "${base_now}" == sha256:???*  && "${base_now}" != "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" ]] || base_now=""
           cfg=$(skopeo inspect --config "docker://${IMAGE}:latest" 2>/dev/null)
           latest_base=$(label io.github.redcodeworks.octarine-os.base-index-digest)
-          latest_degraded=$(label org.octarineos.binaries-degraded)
           latest_missing=$(label org.octarineos.optional-packages-missing)
           revision=$(label org.opencontainers.image.revision)
           created=$(label org.opencontainers.image.created)
@@ -140,7 +139,7 @@ jobs:
           fi
           decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
             REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
-            LATEST_DEGRADED="${latest_degraded}" LATEST_MISSING="${latest_missing}" .github/scripts/plan-skip.sh)
+            LATEST_MISSING="${latest_missing}" .github/scripts/plan-skip.sh)
           echo "${decision}"
           echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
@@ -236,23 +235,9 @@ jobs:
           echo "promote=${promote}" >> "${GITHUB_OUTPUT}"
           echo "build=${build} promote=${promote}"
 
-  # The prebuilt binaries (sched_ext schedulers, libextest.so) from binaries/: built once per tree hash, signed, reused. The
-  # job gates the image build only; it has no required check name (see binaries.yml).
-  binaries:
-    name: Prebuilt binaries image
-    needs: plan
-    if: needs.plan.outputs.build == 'true'
-    uses: ./.github/workflows/binaries.yml
-    permissions:
-      contents: read
-      packages: write
-    # the signing secret is a repository secret, which a called workflow only gets when it is passed on
-    secrets:
-      SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
-
   build_push:
     name: Build image
-    needs: [plan, binaries]
+    needs: plan
     if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-26.04
 
@@ -360,8 +345,8 @@ jobs:
           .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
-      # The prebuilt binaries image (octarine-os-binaries, built from binaries/ by the binaries job): verify the digest it
-      # handed over with this repository's key, log it and pass it to the build as BINARIES_IMAGE
+      # The prebuilt binaries image (octarine-binaries, built and promoted by binaries.yml, a package this project owns) floats at its channel tag: resolved to a digest once,
+      # verified with this repository's key, passed to the build as BINARIES_IMAGE and recorded in an image label (the exact binaries of this image)
       - name: Set up cosign (binaries image)
         uses: ./.github/actions/setup-tool
         with:
@@ -374,25 +359,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify the binaries image
+      # testing builds read octarine-binaries:testing (the binaries this commit will promote), every other build (main, schedule, a dispatch) reads latest and never testing
+      - name: Resolve and verify the binaries image
         env:
-          BIN_IMAGE: ${{ needs.binaries.outputs.image }}
-          BIN_DIGEST: ${{ needs.binaries.outputs.digest }}
-        run: .github/scripts/binaries-use.sh "${BIN_IMAGE}" "${BIN_DIGEST}"
+          BINARIES_TAG: ${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}
+        run: .github/scripts/latest-ref.sh "${IMAGE_REGISTRY}/octarine-binaries" cosign.pub BINARIES_IMAGE "${BINARIES_TAG}"
 
-      - name: Say which path the binaries image took
-        env:
-          ACTION: ${{ needs.binaries.outputs.action }}
-          HASH: ${{ needs.binaries.outputs.hash }}
-          DEGRADED: ${{ needs.binaries.outputs.degraded }}
+      # The testing binaries must be the build of THIS commit's binaries/ tree (the same rule the promotion applies); no fallback to an older image
+      - name: Check the testing binaries match this commit
+        if: github.ref == 'refs/heads/testing'
         run: |
-          echo "Binaries image ${ACTION} (\`${HASH}\`, digest \`${BINARIES_IMAGE##*@}\`)" >> "${GITHUB_STEP_SUMMARY}"
-          if [[ -n "${DEGRADED}" ]]; then
-            echo "::warning::DEGRADED binaries: ${DEGRADED} (an optional component left out of the image)"
-            echo "## DEGRADED binaries: ${DEGRADED} (an optional component left out of the image)" >> "${GITHUB_STEP_SUMMARY}"
-            # the image build records it (Justfile: label org.octarineos.binaries-degraded)
-            echo "BINARIES_DEGRADED=${DEGRADED}" >> "${GITHUB_ENV}"
-          fi
+          want=$(.github/scripts/binaries-key.sh)
+          have=$(.github/scripts/registry-read.sh config "${BINARIES_IMAGE}" | jq -r '.config.Labels["org.opencontainers.image.version"] // empty')
+          [[ "${have}" == "${want}" ]] || { echo "::error::octarine-binaries:testing is key ${have:-unknown}, this commit's binaries/ tree is ${want}: the binaries build on testing has not finished or failed; fix it, then re-run"; exit 1; }
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled

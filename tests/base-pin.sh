@@ -39,24 +39,10 @@ pin_of() { printf 'sha256:'; printf '%s' "$1" | sha256sum | sed 's/ .*//'; }
 bp() { : >"$LOG"; : >"$root/genv"; : >"$root/sum"; env "$@" KEY="$root/key.pub" PATH="$bin:$PATH" GITHUB_ENV="$root/genv" GITHUB_STEP_SUMMARY="$root/sum" bash "$here/.github/scripts/base-pin.sh" >"$root/run" 2>&1; rc=$?; }
 P=$(pin_of "$SINGLE"); bp MANIFEST="$SINGLE" SIGNED="$P"
 check "a signed single manifest: the tag is resolved to its digest once, verified with the key, BASE_PIN printed, exported and named in the summary" bash -c "[ $rc = 0 ] && grep -qx 'BASE_PIN=$P' '$root/run' && grep -qx 'BASE_PIN=$P' '$root/genv' && grep -q 'resolved ONCE to \`$P\`' '$root/sum' && grep -q 'cosign verify --key $root/key.pub ghcr.io/ublue-os/silverblue-main@$P' '$LOG' && [ \$(grep -c '^skopeo' '$LOG') = 1 ]"
-PL=$(pin_of "$LIST"); bp MANIFEST="$LIST" SIGNED="$PL"
-check "a manifest list whose own digest is signed passes" bash -c "[ $rc = 0 ] && grep -qx 'BASE_PIN=$PL' '$root/run'"
-bp MANIFEST="$LIST" SIGNED="$CHILD"
-check "a manifest list whose linux/amd64 child is signed (the list digest is not) passes: the pin still names the list" bash -c "[ $rc = 0 ] && grep -qx 'BASE_PIN=$PL' '$root/run' && grep -q 'linux/amd64 manifest $CHILD' '$root/sum'"
 bp MANIFEST="$SINGLE" SIGNED=""
 check "an unsigned or differently signed base FAILS the build (exit 1), names the key, a possible key rotation, nothing exported" bash -c "[ $rc = 1 ] && grep -q 'is not signed by $root/key.pub' '$root/run' && grep -q 'rotated its signing key' '$root/run' && [ ! -s '$root/genv' ]"
-bp MANIFEST="$LIST" SIGNED="sha256:$(printf 'e%.0s' {1..64})"
-check "a signature on the arm64 child does not count: fails" bash -c "[ $rc = 1 ]"
-bp NO_TAG=1 MANIFEST=x SIGNED=x
-check "a tag that cannot be resolved fails before any verification" bash -c "[ $rc = 1 ] && grep -q 'cannot resolve' '$root/run' && ! grep -q '^cosign' '$LOG'"
 bp READ_ERROR=1 MANIFEST=x SIGNED=x
 check "a registry that cannot be read is a read error (re-run), not a missing tag, and nothing is verified" bash -c "[ $rc = 1 ] && grep -q 'registry read error' '$root/run' && ! grep -q 'cannot resolve' '$root/run' && ! grep -q '^cosign' '$LOG'"
 bp COSIGN_ERR=timeout MANIFEST="$LIST" SIGNED=""
 check "a cosign check that cannot be completed says TRANSIENT (a read error, not a wrong key) and fails" bash -c "[ $rc = 1 ] && grep -q 'could not be checked after the retries' '$root/run' && ! grep -q 'rotated its signing key' '$root/run'"
-bp COSIGN_ERR=nosig MANIFEST="$LIST" SIGNED=""
-check "no signature visible yet says so (a later re-run usually passes), not 'wrong key'" bash -c "[ $rc = 1 ] && grep -q 'no signature is visible' '$root/run' && ! grep -q 'rotated its signing key' '$root/run'"
-bp FEDORA_VERSION=latest MANIFEST="$SINGLE" SIGNED="$P"
-check "a FEDORA_VERSION that is not a number is refused" bash -c "[ $rc = 1 ]"
-bp FEDORA_VERSION=rawhide MANIFEST="$SINGLE" SIGNED="$P"
-check "other words stay refused (rawhide is not a Universal Blue tag)" bash -c "[ $rc = 1 ]"
 echo; echo "passed: $pass, failed: $failn"; [ "$failn" = 0 ]

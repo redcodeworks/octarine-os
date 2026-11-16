@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
 # The decision of ONE component of the prebuilt binaries (the `result` job of binaries-component.yml): what became of it, and the one
-# line the assemble job reads. Writes <RESULT_DIR>/<component>.tsv with the tab separated fields
-#   name  status  digest  key  reason
+# JSON object the assemble job reads. Writes <RESULT_DIR>/<component>.json, one object with the named fields
+#   name, status, digest, key, reason
 # status is one of
 #   reused      a signed image of this component's content key already existed (digest = that image)
 #   built       built, pushed and signed by this run (digest = the signed image)
 #   validated   built on a ref that cannot publish: nothing is pushed, there is no digest
-#   absent      OPTIONAL component whose build failed, or whose exact key failed before: left out of the image, loudly
 #   failed      anything else (the script exits 1 after writing the line, so the leg is red)
-# A REQUIRED component that is neither built nor reused fails the run; an optional one never does once the build job itself ran. There is
+# A component that is neither built nor reused fails the run (every component is required). There is
 # no fallback to an older image: a failed required build is a red run and the previous `latest` stays.
-# Environment: COMPONENT OPTIONAL CHECK USABLE CHECK_DIGEST KEY BUILD BUILD_OK PUBLISHED SIGN SIGN_DIGEST KNOWN_FAIL RESULT_DIR;
+# Environment: COMPONENT CHECK USABLE CHECK_DIGEST KEY BUILD BUILD_OK PUBLISHED SIGN SIGN_DIGEST RESULT_DIR;
 # GITHUB_OUTPUT and GITHUB_STEP_SUMMARY when set.
 set -euo pipefail
 comp=${COMPONENT:?component}
@@ -18,7 +17,7 @@ dir=${RESULT_DIR:-.}
 mkdir -p "${dir}"
 sum() { [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "$*" >> "${GITHUB_STEP_SUMMARY}"; echo "$*"; }
 finish() { # status digest key reason
-    printf '%s\t%s\t%s\t%s\t%s\n' "${comp}" "$1" "$2" "$3" "$4" > "${dir}/${comp}.tsv"
+    jq -n --arg name "${comp}" --arg status "$1" --arg digest "$2" --arg key "$3" --arg reason "$4" '$ARGS.named' > "${dir}/${comp}.json"
     if [[ -n "${GITHUB_OUTPUT:-}" ]]; then { echo "status=$1"; echo "digest=$2"; echo "key=$3"; } >> "${GITHUB_OUTPUT}"; fi
     echo "status=$1 digest=$2 key=$3"
 }
@@ -28,13 +27,6 @@ fail() { echo "::error::component ${comp}: $*"; finish failed "" "${KEY:-}" "$*"
 if [[ "${USABLE:-}" == true ]]; then
     sum "Component ${comp}: reused \`${KEY}\` (digest \`${CHECK_DIGEST}\`, signature verified, no build)"
     finish reused "${CHECK_DIGEST}" "${KEY}" "signed image of this key exists"
-    exit 0
-fi
-if [[ "${KNOWN_FAIL:-}" == true ]]; then
-    msg="OMITTED: optional component ${comp} is left out: this exact content key (${KEY}) failed to build before, so it was not built again (the daily run on main and any change of the component try again)"
-    echo "::warning::${msg}"
-    sum "## ${msg}"
-    finish absent "" "${KEY}" "known failure of this key"
     exit 0
 fi
 [[ "${BUILD:-}" == success ]] || fail "the build job did not run to its end (${BUILD:-unset})"
@@ -49,13 +41,4 @@ if [[ "${BUILD_OK:-}" == true ]]; then
     fi
     exit 0
 fi
-# the build failed: a REQUIRED component fails the run; an OPTIONAL one is left out, loudly (annotation and summary), so a broken optional
-# build can never keep the assemble job, the image build or the promotion PR red
-if [[ "${OPTIONAL:-}" == true ]]; then
-    msg="OMITTED: optional component ${comp} is left out of the image: its build failed"
-    echo "::warning::${msg}"
-    sum "## ${msg}"
-    finish absent "" "" "build failed"
-    exit 0
-fi
-fail "the build failed and the component is required"
+fail "the build failed"

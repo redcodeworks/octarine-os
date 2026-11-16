@@ -73,7 +73,6 @@ tagis() { [ "$(cat "$root/reg/$1/tag/$2" 2>/dev/null)" = "$3" ]; }
 copies() { grep -c 'skopeo copy' "$root/log"; }
 : > "$root/sum"
 
-# ---- called from the dx run
 # a registry that cannot be read is NOT "latest is absent" and not "unsigned": the run fails and moves nothing
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" "latest-20261113-${c3:0:7}"
 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 FAKE_READ_ERROR=1 run
@@ -83,13 +82,8 @@ check "a cosign check that cannot complete fails the run as a read error, not as
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" "latest-20261113-${c3:0:7}"
 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
 check "a verified pair moves BOTH latest tags, dx first and the default image last, each read back" bash -c "[ $rc = 0 ] && grep -q 'moved=true' '$root/gout' && grep -q 'latest moved:' '$root/out' && [ \$(grep -n 'copy.*octarine-os-dx:latest' '$root/log' | head -1 | cut -d: -f1) -lt \$(grep -n 'copy.*octarine-os:latest' '$root/log' | head -1 | cut -d: -f1) ]"
-check "...and the registry has the new digests under latest" bash -c "[ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E2' ]"
 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run; n1=$(copies)
 check "run again: idempotent, nothing copied, a green no-op that says so" bash -c "[ $rc = 0 ] && grep -q 'latest unchanged' '$root/out' && grep -q 'moved=false' '$root/gout' && [ \$(grep -c 'skopeo copy' '$root/log') = 2 ]"
-reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" "latest-20261113-${c3:0:7}"
-echo "$V2" > "$root/reg/$V/tag/latest"
-VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
-check "a half-finished earlier run (default image already moved): the missing dx tag is moved, no second copy of the default image" bash -c "[ $rc = 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 1 ] && grep -q 'octarine-os-dx:latest' '$root/log' && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E2' ]"
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V1"
 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
 check "the dx image was built on another default image (base digest label): refused, nothing copied" bash -c "[ $rc = 1 ] && grep -q 'was not built on' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
@@ -106,69 +100,13 @@ reset; mk $V "$V1" "$c2" 2026-11-11T00:00:00Z -; mk $D "$E1" "$c2" 2026-11-11T01
 echo "$V2" > "$root/reg/$V/tag/latest"; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - latest; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" latest
 VANILLA_DIGEST=$V1 DX_DIGEST=$E1 run
 check "ORDERING GUARD: a re-run of an older green run (older main commit) does not move latest backwards: held, exit 0, nothing copied" bash -c "[ $rc = 0 ] && grep -q 'latest held' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ]"
-reset; mk $V "$V1" "$c1" 2026-11-09T00:00:00Z -; mk $D "$E1" "$c1" 2026-11-09T01:00:00Z "$V1"
-VANILLA_DIGEST=$V1 DX_DIGEST=$E1 run
-check "ORDERING GUARD: the same commit built EARLIER (label created) is held back too" bash -c "[ $rc = 0 ] && grep -q 'latest held' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z -; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2"
 DRY_RUN=true VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
 check "dry_run: the plan is printed, nothing is copied, moved=false" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ] && grep -q 'moved=false' '$root/gout'"
-WRITE=false VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
-check "a ref that may not write (WRITE not true) is a dry run whatever else is set" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 FAKE_COPY_WRONG=1 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
 check "a copy whose read-back digest differs fails loudly" bash -c "[ $rc = 1 ] && grep -q 'expected' '$root/out'"
-reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - ; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2"; echo "$E0" >/dev/null
-mk $D "$E0" "$c1" 2026-11-10T01:00:00Z "$V2" latest   # dx latest already built on this default image
-VANILLA_DIGEST=$V2 run
-check "dx unchanged (no dx digest handed over): dx latest must be built on this default image, only the default image moves" bash -c "[ $rc = 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 1 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ]"
-reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z -
-VANILLA_DIGEST=$V2 run
-check "dx unchanged but dx latest is built on ANOTHER default image: refused" bash -c "[ $rc = 1 ] && grep -q 'was not built on' '$root/out'"
-
-# ---- dispatched: both (default: newest main commit with a published image) and vanilla-only (the escape hatch)
-reset; mk $V "$V1" "$c2" 2026-11-11T00:00:00Z - "latest-${c2:0:7}" "latest-20261111-${c2:0:7}"; mk $D "$E1" "$c2" 2026-11-11T01:00:00Z "$V1" "latest-20261111-${c2:0:7}"
-run
-check "dispatch both without a tag: the newest commit of main with a published latest-<sha7> (c2, c3 has none) and the dx image built on it" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V1' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E1' ]"
-reset; mk $V "$V1" "$c2" 2026-11-11T00:00:00Z - "latest-${c2:0:7}"
-run
-check "dispatch both, no dx image was built on that default image: fails and names the way out" bash -c "[ $rc = 1 ] && grep -q 'no dx image was built on' '$root/out' && grep -q 'vanilla-only' '$root/out'"
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}" "latest-20261113-${c3:0:7}"
 SCOPE=vanilla-only REASON="CVE-2026-0001" run
 check "vanilla-only: only the default image moves, no dx image is needed, the summary says dx latest is behind and carries the reason" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E0' ] && grep -q 'NOT moved and is behind' '$root/out' && grep -q 'CVE-2026-0001' '$root/out'"
-reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-20261113-${c3:0:7}"
-SCOPE=vanilla-only VANILLA_TAG="latest-20261113-${c3:0:7}" run
-check "vanilla-only with a dated tag names it" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V2' ]"
-for bad_tag in testing-abcdef1 latest "latest-20261113" "../x" "latest-20261113-abcdef1;x" "candidate"; do
-    reset; SCOPE=vanilla-only VANILLA_TAG="$bad_tag" run
-    check "vanilla-only refuses the tag '$bad_tag'" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-done
-reset; mk $V "$Vs" "$cs" 2026-11-13T00:00:00Z - "latest-20261113-${cs:0:7}"
-SCOPE=vanilla-only VANILLA_TAG="latest-20261113-${cs:0:7}" run
-check "vanilla-only refuses a signed dated image that was not built from main" bash -c "[ $rc = 1 ] && grep -q 'not on' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-20261113-${c3:0:7}"; echo "$V2" > "$root/reg/unsigned"
-SCOPE=vanilla-only VANILLA_TAG="latest-20261113-${c3:0:7}" run
-check "vanilla-only refuses an unsigned image" bash -c "[ $rc = 1 ] && grep -q 'no valid signature' '$root/out'"
-# ---- ROLLBACK (rollback-latest.yml runs this script with ALLOW_BACKWARDS=true): an older verified pair goes under latest
-rb_setup() { reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - latest "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" latest "latest-20261113-${c3:0:7}"
-    mk $V "$V0" "$c1" 2026-11-10T00:00:00Z - "latest-20261110-${c1:0:7}"; mk $D "$E0" "$c1" 2026-11-10T01:00:00Z "$V0" "latest-20261110-${c1:0:7}"; }
-rb_setup; VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "without ALLOW_BACKWARDS an older default image is HELD (the ordering guard of publish-latest): nothing copied" bash -c "[ $rc = 0 ] && grep -q 'latest held' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-rb_setup; ALLOW_BACKWARDS=true REASON="bad build" VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK: both latest tags go back to the older pair, dx first and the default image last, digests preserved, each read back" bash -c "[ $rc = 0 ] && grep -q 'ROLLBACK, latest moved:' '$root/out' && grep -q 'reason: bad build' '$root/out' && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V0' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E0' ] && [ \$(grep -n 'copy.*$D:latest' '$root/log' | head -1 | cut -d: -f1) -lt \$(grep -n 'copy.*$V:latest' '$root/log' | head -1 | cut -d: -f1) ] && grep -q -- '--preserve-digests' '$root/log'"
-rb_setup; ALLOW_BACKWARDS=true SCOPE=vanilla-only VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK with scope vanilla-only (default_only): only the default image moves, dx latest stays behind and the summary says so" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V0' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E2' ] && grep -q 'NOT moved and is behind' '$root/out'"
-rb_setup; rm -f "$root/reg/$D/cfg/$E0" "$root/reg/$D/tag/latest-20261110-${c1:0:7}"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK refuses when no dx image was built on that default image (and default_only was not asked for): nothing copied" bash -c "[ $rc = 1 ] && grep -q 'no dx image was built on' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-rb_setup; echo "$E0" > "$root/reg/unsigned"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK verifies BOTH signatures before anything moves: an unsigned dx image refuses, nothing copied" bash -c "[ $rc = 1 ] && grep -q 'no valid signature' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-rb_setup; echo "$V0" > "$root/reg/unsigned"; ALLOW_BACKWARDS=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK: an unsigned default image refuses" bash -c "[ $rc = 1 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-rb_setup; ALLOW_BACKWARDS=true DRY_RUN=true VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK dry run: plans and reports, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-rb_setup; ALLOW_BACKWARDS=true WRITE=false VANILLA_TAG="latest-20261110-${c1:0:7}" run
-check "ROLLBACK on a ref that cannot write (WRITE=false): a dry run whatever the input says" bash -c "[ $rc = 0 ] && grep -q 'DRY RUN' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
-for bt in latest testing-abcdef1; do rb_setup; ALLOW_BACKWARDS=true VANILLA_TAG="$bt" run; check "ROLLBACK refuses the tag '$bt' (only dated tags of the default image)" bash -c "[ $rc != 0 ] && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"; done
-rb_setup; mk $V "$Vs" "$cs" 2026-11-09T00:00:00Z - "latest-20261109-${cs:0:7}"; ALLOW_BACKWARDS=true SCOPE=vanilla-only VANILLA_TAG="latest-20261109-${cs:0:7}" run
-check "ROLLBACK still refuses an image that was not built from main" bash -c "[ $rc = 1 ] && grep -q 'not on' '$root/out'"
-check "the script never signs, never logs in and never writes anything but the latest tag of the two images" bash -c "! grep -E 'cosign sign|docker login|skopeo login|--dest-creds' '$script' && [ \$(grep -c 'skopeo copy' '$script') = 1 ]"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

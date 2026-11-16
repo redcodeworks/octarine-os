@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # Installs the prebuilt binaries into the image tree. Run by build.sh; the Containerfile bind-mounts the published
-# octarine-os-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
+# octarine-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
 # source, DESTDIR the target; both only for the tests).
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
-#   ghostty (OPTIONAL) root/usr/... (the whole tree Ghostty's `zig build --prefix /usr` installed, listed in FILES), LICENSES/, SOURCE,
-#           BUILDINFO  ->  /usr (never over a file the image already has: a conflict leaves the component out, see below)
-# The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<component>/ (the GPL-2.0 and MIT
+#   ghostty root/usr/... (the whole tree Ghostty's `zig build --prefix /usr` installed, listed in FILES), LICENSES/, SOURCE,
+#           BUILDINFO  ->  /usr (never over a file the image already has: a conflict fails the build)
+# The license texts, source and build records go to /usr/share/licenses/octarine-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
-# Which components are present is told by /binaries/COMPONENTS (name, required|optional, key, origin built or reused, digest). The REQUIRED list below must match binaries/components.tsv (a test checks it): a required component that is
-# missing fails the build. An OPTIONAL one that is missing is NEVER skipped silently: a WARNING line and annotation, and the file
-# /usr/share/licenses/octarine-os-binaries/MISSING name it.
+# Which components are present is told by /binaries/COMPONENTS (one JSON object per line with name and digest, read with jq by name). Every component is required: the list
+# below must match binaries/components.tsv (a test checks it), and a component that is missing or cannot be installed fails the build.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
 # find its shared libraries in THIS image: a 64-bit file must resolve with ldd (no "not found"), a 32-bit one (extest, loaded into
-# 32-bit Steam processes that bring their own libraries) may need only the libraries every process brings. A required component that
-# fails this check FAILS the build; an optional one is REMOVED again with a WARNING and the file REMOVED (the build goes on). Only a real
+# 32-bit Steam processes that bring their own libraries) may need only the libraries every process brings. A component that
+# fails this check FAILS the build. Only a real
 # image build checks (DESTDIR empty); BINARIES_CHECK_NEEDED=1 forces it (tests; BINARIES_LDD replaces ldd).
 set -euo pipefail
 # Log group (folded in the GitHub Actions build log, plain text elsewhere); the trap closes it however the script ends and prints an
@@ -26,9 +25,8 @@ echo "::group::install-binaries.sh"
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-binaries.sh failed (exit ${rc})"; fi' EXIT
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
-required="scx extest"
-optional="ghostty"
-lic=${dest}/usr/share/licenses/octarine-os-binaries
+required="scx extest ghostty"
+lic=${dest}/usr/share/licenses/octarine-binaries
 err() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*"; echo "::warning::$*"; }
 
@@ -90,12 +88,11 @@ declare -A installed_note
 # ---- which components
 want=()
 test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
-while IFS=$'\t' read -r name _; do
-    [[ -n "${name}" && "${name}" != \#* ]] || continue
-    [[ " ${required} ${optional} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
+while read -r name; do
+    [[ " ${required} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
     test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
     want+=("${name}")
-done < "${root}/COMPONENTS"
+done < <(jq -r .name "${root}/COMPONENTS")
 for d in "${root}"/*/; do
     # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
     [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
@@ -103,24 +100,8 @@ done
 for c in ${required}; do [[ " ${want[*]} " == *" ${c} "* ]] || err "the required component ${c} is not in the binaries image"; done
 
 # ---- install
-for c in ${required} ${optional}; do
-    if [[ " ${want[*]:-} " != *" ${c} "* ]]; then
-        # an optional component that is not there: said loudly, recorded, never skipped silently
-        warn "optional component ${c} is not in the binaries image: it is NOT installed"
-        install -d "${lic}"
-        echo "${c}: not in the binaries image (its build failed or was skipped)" >> "${lic}/MISSING"
-        continue
-    fi
-    if ! "install_${c}"; then
-        if [[ " ${required} " == *" ${c} "* ]]; then err "the required component ${c} could not be installed (see above)"; fi
-        warn "optional component ${c} could not be installed (see above): it is LEFT OUT"
-        rm -rf ${tracked[${c}]:-}
-        install -d "${lic}"
-        echo "${c}: could not be installed, see the build log" >> "${lic}/MISSING"
-        rest=(); for w in ${want[@]+"${want[@]}"}; do [[ "${w}" == "${c}" ]] || rest+=("${w}"); done
-        want=(${rest[@]+"${rest[@]}"})
-        continue
-    fi
+for c in ${required}; do
+    "install_${c}" || err "the component ${c} could not be installed (see above)"
     d=${lic}/${c}
     install -d "${d}"
     cp -a "${root}/${c}/LICENSES/." "${d}/"
@@ -154,15 +135,7 @@ if [[ -z "${dest}" || -n "${BINARIES_CHECK_NEEDED:-}" ]]; then
         probs=$(needed_problems "${c}")
         [[ -n "${probs}" ]] || { echo "runtime libraries of ${c}: all found in this image"; continue; }
         echo "${probs}" >&2
-        if [[ " ${required} " == *" ${c} "* ]]; then
-            err "the required component ${c} needs shared libraries this image does not have (see above): add the package to build.sh"
-        fi
-        warn "optional component ${c} needs shared libraries this image does not have: it is REMOVED again (see above)"
-        # shellcheck disable=SC2086
-        rm -rf ${tracked[$c]:-}
-        install -d "${lic}"
-        echo "${c}: removed, its shared libraries are missing from this image: $(tr '\n' ';' <<<"${probs}")" >> "${lic}/REMOVED"
-        installed_note[${c}]="REMOVED"
+        err "the component ${c} needs shared libraries this image does not have (see above): add the package to build.sh"
     done
 fi
 # Files copied into /usr by hand run no package trigger: refresh the icon and desktop caches for what a component installed (ghostty: hicolor icons and a desktop file).
