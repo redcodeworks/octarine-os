@@ -17,14 +17,14 @@ systemctl --global list-unit-files --state=enabled --no-legend --no-pager || tru
 echo "== checks"
 
 check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
-# prebuilt binaries (binaries/: scx, extest): installed only; whether a scheduler loads is for a real machine to say
+# prebuilt binaries (binaries/: scx, extest, ghostty): installed only; whether a scheduler loads is for a real machine to say
 check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
 for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
     check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
     check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
     check "scheduler $n has no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/$n 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
 done
-check "optional ghostty, when installed: no undefined symbol against this image (ldd -r)" "! test -x /usr/bin/ghostty || { out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\"; }"
+check "ghostty: no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
 echo "== libraries the shipped binaries link: the builder (BUILDINFO of the binaries image) next to this image"
 for p in glibc gtk4 libadwaita gtk4-layer-shell; do echo "  image: $p $(rpm -q --qf %{VERSION}-%{RELEASE} $p 2>/dev/null || echo not installed)"; done
 grep -hiE "^(glibc|gtk4|libadwaita|gtk4-layer-shell)" /usr/share/licenses/octarine-os-binaries/*/BUILDINFO 2>/dev/null | sed "s/^/  builder: /" || true
@@ -37,8 +37,8 @@ check "scheduler units: the template and the polkit rule ship, the helpers and t
 check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
 check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
 check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
-check "optional ghostty: installed with its desktop file, an icon the hicolor cache lists, a working --version and its libraries resolved, or recorded as left out (MISSING or REMOVED)" "if test -x /usr/bin/ghostty; then test -f /usr/share/applications/com.mitchellh.ghostty.desktop && test -f /usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache && /usr/bin/ghostty --version >/dev/null && out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\"; else test -s /usr/share/licenses/octarine-os-binaries/MISSING || test -s /usr/share/licenses/octarine-os-binaries/REMOVED; fi"
-check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
+check "ghostty: installed with its desktop file, an icon the hicolor cache lists, a working --version and its libraries resolved" "test -x /usr/bin/ghostty && test -f /usr/share/applications/com.mitchellh.ghostty.desktop && test -f /usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache && /usr/bin/ghostty --version >/dev/null && out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\""
+check "source and build records ship for every binary component" "for i in scx extest ghostty; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
 # pcp is an optional package: its units are enabled only when it is installed
 check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"

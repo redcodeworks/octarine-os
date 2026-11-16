@@ -132,7 +132,9 @@ mk_images() { # dir
     printf 'MIT License\n' >"$1/extest/LICENSES/extest-LICENSE"
     echo 32 >"$1/extest/lib/libextest.so"; echo 64 >"$1/extest/lib64/libextest.so"
     for i in scx extest; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
-    printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\trequired\t%s\treused\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
+    mkdir -p "$1/ghostty/root/usr/bin" "$1/ghostty/LICENSES"; printf '#!/bin/sh\n' >"$1/ghostty/root/usr/bin/ghostty"; chmod +x "$1/ghostty/root/usr/bin/ghostty"
+    echo usr/bin/ghostty >"$1/ghostty/FILES"; echo MIT >"$1/ghostty/LICENSES/ghostty-LICENSE"; echo src >"$1/ghostty/SOURCE"; echo build >"$1/ghostty/BUILDINFO"
+    printf 'scx\t%s\tbuilt\t\tsha256:%s\nextest\t%s\treused\t\tsha256:%s\nghostty\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" "$H40" "$(printf 'c%.0s' {1..64})" >"$1/COMPONENTS"
 }
 imgs="$root/imgs"; dest="$root/dest"
 inst() { rm -rf "$dest"; (BINARIES_ROOT="$imgs" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") >"$root/run" 2>&1; rc=$?; }

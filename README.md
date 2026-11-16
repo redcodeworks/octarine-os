@@ -16,9 +16,8 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 | dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Atesting) |
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
-| binaries | [![binaries, main](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Amain) | [![binaries, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Atesting) |
 
-The NVIDIA dx and binaries badges show "no status" until their first run. The binaries row is the prebuilt programs the images carry (sched_ext schedulers, extest): it runs when they change and every Friday, and the Friday run only checks that they still build against the pinned sources and today's Fedora 45 packages, it publishes nothing. The `latest` tag of the default and the dx image moves together, shortly after the daily build, only once both exist and have passed their checks.
+The NVIDIA dx badge shows "no status" until its first run. The `latest` tag of the default and the dx image moves together, shortly after the daily build, only once both exist and have passed their checks.
 
 ## Requirements
 
@@ -157,7 +156,7 @@ The shipped niri key bindings and defaults follow niri's own default configurati
 
 The image ships prebuilt [extest](https://github.com/Supreeeme/extest) libraries (by Supreeeme and contributors, MIT license, built
 from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sched_ext schedulers](https://github.com/sched-ext/scx)
-(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`. If the daily build cannot rebuild scx or extest it fails (nothing new is published, the previous image stays); if it cannot rebuild Ghostty it leaves Ghostty out of that day's image and says so in the build log.
+(scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-os-binaries/`. If a build cannot produce scx, extest or Ghostty it fails (nothing new is published, the previous image stays).
 
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 

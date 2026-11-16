@@ -6,11 +6,10 @@
 #   reused      a signed image of this component's content key already existed (digest = that image)
 #   built       built, pushed and signed by this run (digest = the signed image)
 #   validated   built on a ref that cannot publish: nothing is pushed, there is no digest
-#   absent      OPTIONAL component whose build failed, or whose exact key failed before: left out of the image, loudly
 #   failed      anything else (the script exits 1 after writing the line, so the leg is red)
-# A REQUIRED component that is neither built nor reused fails the run; an optional one never does once the build job itself ran. There is
+# A component that is neither built nor reused fails the run (every component is required). There is
 # no fallback to an older image: a failed required build is a red run and the previous `latest` stays.
-# Environment: COMPONENT OPTIONAL CHECK USABLE CHECK_DIGEST KEY BUILD BUILD_OK PUBLISHED SIGN SIGN_DIGEST KNOWN_FAIL RESULT_DIR;
+# Environment: COMPONENT CHECK USABLE CHECK_DIGEST KEY BUILD BUILD_OK PUBLISHED SIGN SIGN_DIGEST RESULT_DIR;
 # GITHUB_OUTPUT and GITHUB_STEP_SUMMARY when set.
 set -euo pipefail
 comp=${COMPONENT:?component}
@@ -30,13 +29,6 @@ if [[ "${USABLE:-}" == true ]]; then
     finish reused "${CHECK_DIGEST}" "${KEY}" "signed image of this key exists"
     exit 0
 fi
-if [[ "${KNOWN_FAIL:-}" == true ]]; then
-    msg="OMITTED: optional component ${comp} is left out: this exact content key (${KEY}) failed to build before, so it was not built again (the daily run on main and any change of the component try again)"
-    echo "::warning::${msg}"
-    sum "## ${msg}"
-    finish absent "" "${KEY}" "known failure of this key"
-    exit 0
-fi
 [[ "${BUILD:-}" == success ]] || fail "the build job did not run to its end (${BUILD:-unset})"
 if [[ "${BUILD_OK:-}" == true ]]; then
     if [[ "${PUBLISHED:-}" == true ]]; then
@@ -49,13 +41,4 @@ if [[ "${BUILD_OK:-}" == true ]]; then
     fi
     exit 0
 fi
-# the build failed: a REQUIRED component fails the run; an OPTIONAL one is left out, loudly (annotation and summary), so a broken optional
-# build can never keep the assemble job, the image build or the promotion PR red
-if [[ "${OPTIONAL:-}" == true ]]; then
-    msg="OMITTED: optional component ${comp} is left out of the image: its build failed"
-    echo "::warning::${msg}"
-    sum "## ${msg}"
-    finish absent "" "" "build failed"
-    exit 0
-fi
-fail "the build failed and the component is required"
+fail "the build failed"

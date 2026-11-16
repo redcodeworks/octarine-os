@@ -7,8 +7,7 @@ name: Prebuilt binaries component
 # Jobs: check (key, lookup: published and signed under the tag means nothing to build), build (podman build in the pinned builder, layout
 # check, push; its steps never fail the job, they record `ok`), sign (environment `signing`), result (binaries-decide.sh: what became of the
 # component, uploaded as the artifact binres-<component> for the assemble job). There is no fallback to an older image: a REQUIRED
-# component whose build failed fails the run (decided in binaries-decide.sh, with the table in its header); an OPTIONAL component whose
-# build failed is left out of the image (status absent) and never blocks an image build.
+# component whose build failed fails the run (decided in binaries-decide.sh, with the table in its header). Every component is required.
 on:
   workflow_call:
     secrets:
@@ -20,10 +19,6 @@ on:
         description: "the component name (a directory of binaries/ and a line of binaries/components.tsv)"
         type: string
         required: true
-      optional:
-        description: "true for an optional component (binaries/components.tsv)"
-        type: boolean
-        default: false
 
 env:
   IMAGE_NAME: octarine-os-binaries
@@ -40,9 +35,7 @@ jobs:
       key: ${{ steps.key.outputs.key }}
       tag: ${{ steps.key.outputs.tag }}
       image: ${{ steps.key.outputs.image }}
-      usable: ${{ steps.final.outputs.usable }}
-      nopublish: ${{ steps.final.outputs.nopublish }}
-      knownfail: ${{ steps.final.outputs.knownfail }}
+      usable: ${{ steps.lookup.outputs.usable }}
       digest: ${{ steps.lookup.outputs.digest }}
     steps:
       - name: Checkout
@@ -78,53 +71,10 @@ jobs:
           TAG: ${{ steps.key.outputs.tag }}
         run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${TAG}"
 
-      # A failed BUILD of an OPTIONAL component is remembered per content key AND ISO week (an Actions cache entry that only has to exist, nothing in it is
-      # used): a later push with the SAME key in the same week does not build it again (about 3.5 minutes of the critical path of every run while the component
-      # is broken); the daily scheduled run, any change of the component (a new key) and the next week (the week is in the key: a time limit) try again. Only a failure
-      # of the build step itself is remembered, never a push or network failure of the run (so one hiccup cannot make testing ship without the component).
-      - name: Week of the failure marker
-        id: week
-        if: inputs.optional
-        run: echo "w=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
-
-      - name: Did this exact key fail before (this week)?
-        id: knownfail
-        if: inputs.optional
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/known-fail
-          key: known-fail-${{ inputs.component }}-${{ steps.key.outputs.key }}-${{ steps.week.outputs.w }}
-          lookup-only: true
-
-      - name: Usable (not for the weekly validation)
-        id: final
-        env:
-          LOOKUP: ${{ steps.lookup.outputs.usable }}
-          # github.workflow is the top-level workflow's name, also in a nested call: true only for binaries.yml's own runs
-          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
-          EVENT: ${{ github.event_name }}
-          OPTIONAL: ${{ inputs.optional }}
-          KNOWN_FAIL_HIT: ${{ steps.knownfail.outputs.cache-hit }}
-        run: |
-          usable=${LOOKUP}
-          [[ "${KNOWN_FAIL_HIT}" != true ]] || echo "::warning::${COMPONENT}: this exact key failed to BUILD earlier this week and is not built again on a push (the daily run, a change of the component or the next week retry): an image built from this commit leaves ${COMPONENT} out"
-          # own push and schedule runs never publish; the own schedule run also ignores the reuse shortcut
-          nopublish=false force=false
-          if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
-          if [[ "${OWN}" == true && "${EVENT}" == schedule ]]; then force=true; fi
-          [[ "${force}" != true ]] || { usable=false; echo "weekly validation: the reuse is skipped"; }
-          echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
-          echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
-          # skip a build that failed before with this same key: optional components only, never the daily schedule
-          knownfail=false
-          if [[ "${OPTIONAL}" == true && "${KNOWN_FAIL_HIT}" == true && "${usable}" != true && "${EVENT}" != schedule ]]; then knownfail=true; fi
-          echo "knownfail=${knownfail}" >> "${GITHUB_OUTPUT}"
-          echo "usable=${usable} nopublish=${nopublish} force=${force} knownfail=${knownfail}"
-
   build:
     name: Build the ${{ inputs.component }} image
     needs: check
-    if: needs.check.outputs.usable != 'true' && needs.check.outputs.knownfail != 'true'
+    if: needs.check.outputs.usable != 'true'
     runs-on: ubuntu-26.04
     timeout-minutes: 90
     permissions:
@@ -149,13 +99,11 @@ jobs:
         id: channel
         env:
           REF: ${{ github.ref }}
-          NOPUBLISH: ${{ needs.check.outputs.nopublish }}
         run: |
           publish=false
           case "${REF}" in
             refs/heads/main | refs/heads/testing) publish=true ;;
           esac
-          [[ "${NOPUBLISH}" != true ]] || publish=false
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
 
@@ -240,23 +188,6 @@ jobs:
           echo "ok=${ok}" >> "${GITHUB_OUTPUT}"
           [[ "${ok}" == true ]] || echo "::warning::the ${COMPONENT} build did not succeed (build ${BUILD_OUTCOME}, push ${PUSH_OUTCOME}): binaries-decide.sh decides what that means"
 
-      # only when the BUILD STEP failed (a push or network failure after a good build is not a verdict on the component), and the key carries the week
-      - name: Remember the failure of this key (optional components, not on pull requests)
-        if: always() && steps.build.outcome == 'failure' && inputs.optional && github.event_name != 'pull_request'
-        run: mkdir -p "${RUNNER_TEMP}/known-fail" && date -u +%Y-%m-%dT%H:%M:%SZ > "${RUNNER_TEMP}/known-fail/failed"
-
-      - name: Week of the failure marker
-        id: week
-        if: always() && steps.build.outcome == 'failure' && inputs.optional && github.event_name != 'pull_request'
-        run: echo "w=$(date -u +%G-W%V)" >> "${GITHUB_OUTPUT}"
-
-      - name: Save the failure marker
-        if: always() && steps.build.outcome == 'failure' && inputs.optional && github.event_name != 'pull_request'
-        continue-on-error: true
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ runner.temp }}/known-fail
-          key: known-fail-${{ inputs.component }}-${{ needs.check.outputs.key }}-${{ steps.week.outputs.w }}
 
   sign:
     name: Sign the ${{ inputs.component }} image
@@ -321,7 +252,6 @@ jobs:
       - name: Decide
         id: decide
         env:
-          OPTIONAL: ${{ inputs.optional }}
           CHECK: ${{ needs.check.result }}
           USABLE: ${{ needs.check.outputs.usable }}
           CHECK_DIGEST: ${{ needs.check.outputs.digest }}
@@ -331,7 +261,6 @@ jobs:
           PUBLISHED: ${{ needs.build.outputs.published }}
           SIGN: ${{ needs.sign.result }}
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
-          KNOWN_FAIL: ${{ needs.check.outputs.knownfail }}
           RESULT_DIR: ${{ runner.temp }}/binres
         run: .github/scripts/binaries-decide.sh
 

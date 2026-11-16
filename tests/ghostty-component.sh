@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for the optional Ghostty component of the prebuilt binaries and its update path: the pins and the build recipe, the Zig fetch
-# (fetch-zig.sh with a stub curl, minisign and a fake tarball), the installer's handling of the component (installed, conflict, absent), the
+# Tests for the Ghostty component of the prebuilt binaries and its update path: the pins and the build recipe, the Zig fetch
+# (fetch-zig.sh with a stub curl, minisign and a fake tarball), the installer's handling of the component (installed, conflict, missing), the
 # version selection of the weekly check (ghostty-check.sh with stubbed gh and index.json data) and the pin writer (bump-ghostty.sh). No network. Needs: bash, git, jq, python3 with PyYAML, tar with xz. Run: tests/ghostty-component.sh
 # shellcheck disable=SC2016,SC2034
 set -uo pipefail
@@ -90,25 +90,25 @@ mkimg() { # dir
     printf 'MIT License\n' >"$1/ghostty/LICENSES/l"
     (cd "$1/ghostty/root" && find . -type f | sed 's#^\./##' | sort) >"$1/ghostty/FILES"
     for c in scx extest ghostty; do echo src >"$1/$c/SOURCE"; echo build >"$1/$c/BUILDINFO"; done
-    printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\trequired\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
+    printf 'scx\t%s\tbuilt\t\tsha256:%s\nextest\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
     [ "${NO_GHOSTTY:-0}" != 1 ] || rm -rf "$1/ghostty"
-    [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\toptional\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
+    [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\t%s\tbuilt\t\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-os-binaries"
 mkimg "$root/img"; inst X=1
-check "installer: the ghostty tree goes under /usr (binary, desktop file, data), its records under the licenses directory, nothing is reported missing" bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && [ -f '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ] && [ -s '$lic/ghostty/SOURCE' ] && [ -s '$lic/ghostty/ghostty-LICENSE' -o -s '$lic/ghostty/l' ] && [ ! -e '$lic/MISSING' ]"
+check "installer: the ghostty tree goes under /usr (binary, desktop file, data), its records under the licenses directory, " bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && [ -f '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ] && [ -s '$lic/ghostty/SOURCE' ] && [ -s '$lic/ghostty/ghostty-LICENSE' -o -s '$lic/ghostty/l' ]"
 NO_GHOSTTY=1 mkimg "$root/img"; inst X=1
-check "installer: ghostty not in the image: a WARNING, an annotation and MISSING say it is NOT installed; the build goes on" bash -c "[ $rc = 0 ] && grep -q 'WARNING: optional component ghostty is not in the binaries image: it is NOT installed' '$root/run' && grep -q '^::warning::' '$root/run' && grep -q '^ghostty: not in the binaries image' '$lic/MISSING' && [ ! -e '$dest/usr/bin/ghostty' ] && [ -x '$dest/usr/bin/scx_rusty' ]"
+check "installer: ghostty is required: not in the image fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component ghostty is not in the binaries image' '$root/run'"
 mkimg "$root/img"; rm -rf "$dest"; mkdir -p "$dest/usr/bin"; echo mine >"$dest/usr/bin/ghostty"
 env BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?
-check "installer: a file the image already has is never overwritten: ghostty is LEFT OUT with a warning and MISSING (an optional component never blocks the build), the existing file is untouched" bash -c "[ $rc = 0 ] && grep -q 'would overwrite usr/bin/ghostty' '$root/run' && grep -q 'LEFT OUT' '$root/run' && [ \"\$(cat '$dest/usr/bin/ghostty')\" = mine ] && grep -q '^ghostty: could not be installed' '$lic/MISSING' && [ ! -e '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ]"
+check "installer: a file the image already has is never overwritten: the build fails and the existing file is untouched" bash -c "[ $rc != 0 ] && grep -q 'would overwrite usr/bin/ghostty' '$root/run' && [ \"\$(cat '$dest/usr/bin/ghostty')\" = mine ]"
 mkimg "$root/img"; mkdir -p "$root/img/ghostty/root/usr/share/terminfo/g"; echo ti >"$root/img/ghostty/root/usr/share/terminfo/g/ghostty"; (cd "$root/img/ghostty/root" && find . -type f | sed 's#^\./##' | sort) >"$root/img/ghostty/FILES"
 rm -rf "$dest"; mkdir -p "$dest/usr/share/terminfo/g"; echo base >"$dest/usr/share/terminfo/g/ghostty"
 env BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?
-check "installer: a terminfo file the image already has (ncurses-term ships ghostty) is KEPT and skipped, everything else of ghostty is installed, no conflict" bash -c "[ $rc = 0 ] && grep -q 'kept the image.s own terminfo: usr/share/terminfo/g/ghostty' '$root/run' && [ \"\$(cat '$dest/usr/share/terminfo/g/ghostty')\" = base ] && [ -x '$dest/usr/bin/ghostty' ] && [ ! -e '$lic/MISSING' ]"
+check "installer: a terminfo file the image already has (ncurses-term ships ghostty) is KEPT and skipped, everything else of ghostty is installed, no conflict" bash -c "[ $rc = 0 ] && grep -q 'kept the image.s own terminfo: usr/share/terminfo/g/ghostty' '$root/run' && [ \"\$(cat '$dest/usr/share/terminfo/g/ghostty')\" = base ] && [ -x '$dest/usr/bin/ghostty' ]"
 mkimg "$root/img"; echo '../../etc/passwd' >>"$root/img/ghostty/FILES"; inst X=1
-check "installer: a FILES entry outside usr/ leaves ghostty out (nothing is written outside /usr)" bash -c "[ $rc = 0 ] && grep -q 'outside usr/' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ]"
+check "installer: a FILES entry outside usr/ fails the build (nothing is written outside /usr)" bash -c "[ $rc != 0 ] && grep -q 'outside usr/' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ]"
 printf '#!/usr/bin/env bash\necho "\tlibgtk4-layer-shell.so.0 => not found"\n' >"$bin/ldd-missing"; chmod +x "$bin/ldd-missing"
 printf '#!/usr/bin/env bash\necho "\tlibc.so.6 => ok"\n' >"$bin/ldd-ok"; chmod +x "$bin/ldd-ok"
 elf64() { python3 -I - "$1" <<'PY'
@@ -125,9 +125,9 @@ PY
 # a stub ldd that only fails for ghostty
 printf '#!/usr/bin/env bash\ncase "$1" in *ghostty*) echo "\tlibgtk4-layer-shell.so.0 => not found" ;; *) echo "\tlibc.so.6 => ok" ;; esac\n' >"$bin/ldd-ghostty"; chmod +x "$bin/ldd-ghostty"
 inst BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ghostty"
-check "installer: ghostty needs a library the image lacks (gtk4-layer-shell): ghostty is REMOVED again with a WARNING, a REMOVED record and the missing library named; scx and extest stay, the build succeeds" bash -c "[ $rc = 0 ] && grep -q 'libgtk4-layer-shell.so.0 => not found' '$root/run' && grep -q 'WARNING: optional component ghostty needs shared libraries' '$root/run' && [ ! -e '$dest/usr/bin/ghostty' ] && [ ! -e '$dest/usr/share/applications/com.mitchellh.ghostty.desktop' ] && grep -q '^ghostty: removed' '$lic/REMOVED' && [ -x '$dest/usr/bin/scx_rusty' ]"
+check "installer: ghostty needs a library the image lacks (gtk4-layer-shell): the build fails and names the missing library" bash -c "[ $rc != 0 ] && grep -q 'libgtk4-layer-shell.so.0 => not found' '$root/run' && grep -q 'component ghostty needs shared libraries' '$root/run'"
 inst BINARIES_CHECK_NEEDED=1 BINARIES_LDD="$bin/ldd-ok"
-check "installer: with every library present ghostty stays installed" bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && grep -q 'runtime libraries of ghostty: all found' '$root/run' && [ ! -e '$lic/REMOVED' ]"
+check "installer: with every library present ghostty stays installed" bash -c "[ $rc = 0 ] && [ -x '$dest/usr/bin/ghostty' ] && grep -q 'runtime libraries of ghostty: all found' '$root/run'"
 
 # ---- build.sh itself with a stub zig (the Zig 0.17 fetch layout) and a stub stage.sh: fetch, unpack, flatten, build arguments, pruning
 zb="$root/zbin"; mkdir -p "$zb"
@@ -250,9 +250,6 @@ check "check: the pinned tag is the newest stable tag and Zig the newest publish
 setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0 v1.5.0 v1.5.0-rc1 tip vt-1.0.1 v1.3.1; zi 0.17.0 0.17.1 0.17.2; newc v1.5.0 0.17.0; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: a new tag with an unchanged Zig minor: bump with the tag, its peeled commit and the NEWEST published patch of that minor (0.17.2), with URL, sha256 and size from index.json" bash -c "[ \"$out\" = \"bump v1.5.0 $(sha c) 0.17.2 https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz $zsh2 123\" ]"
-setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0 v1.5.0-rc1 v1.5.0-rc2 tip vt-1.0.2 vt-1.1.0; zi 0.17.0 0.17.1 0.17.2; newc v1.4.0 0.17.0
-out=$(chk)
-check "check: pre-releases, tip and vt-* tags are ignored (and the same-tag run still finds the newer Zig patch: zigbump)" bash -c "[ \"$out\" = \"zigbump 0.17.2 https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz $zsh2 123\" ]"
 setpin v1.4.0 0.17.1; reply; tagsfile v1.9.0 v1.10.0 v1.4.0; zi 0.17.0 0.17.1; newc v1.10.0 0.17.0; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: tags are compared as versions (v1.10.0 is newer than v1.9.0 and v1.4.0)" bash -c "[[ \"$out\" == 'bump v1.10.0 '* ]]"
@@ -271,12 +268,6 @@ check "check: the new tag needs Zig 0.17.3 or newer and only 0.17.1 is published
 setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0; printf '{"0.17.1":{"x86_64-linux":{"tarball":"https://ziglang.org/download/0.17.1/zig-x86_64-linux-0.17.1.tar.xz","shasum":"%s","size":"1"}},"0.17.2":{"aarch64-linux":{"tarball":"x","shasum":"y","size":"1"}}}\n' "$zsh1" >"$root/idx.json"; newc v1.4.0 0.17.0
 out=$(chk)
 check "check: a newer patch that has no x86_64-linux tarball is not offered" bash -c "[[ \"$out\" == current* ]]"
-setpin v1.4.0 0.17.1; reply; tagsfile v1.4.0; zi 0.17.0 0.17.1; newc v1.4.0 0.17.2
-out=$(chk)
-check "check: the pinned Zig is below the minimum of the pinned tag: no zigbump is offered below it" bash -c "[[ \"$out\" == current* ]]"
-setpin v1.4.0 0.16.0; reply; tagsfile v1.4.0; zi 0.17.0 0.17.1; newc v1.4.0 0.17.0
-out=$(chk)
-check "check: a pinned Zig of another minor than the tag requires is reported unreachable (fix by hand), not auto-bumped" bash -c "[[ \"$out\" == unreachable* ]]"
 setpin v1.4.0 0.17.1; reply; zi 0.17.1
 check "check: the tags API failing is unreachable (fail soft, exit 0)" bash -c "[[ \"\$(PATH='$bin:$PATH' REPO_ROOT='$cr' ZIG_INDEX_FILE='$root/idx.json' bash '$cr/.github/scripts/ghostty-check.sh'; echo rc=\$?)\" == *unreachable*rc=0 ]]"
 reply; tagsfile v1.4.0 v1.5.0; newc v1.5.0 0.17.0; echo 'not json' >"$root/idx.json"
@@ -296,13 +287,8 @@ check "bump ghostty: upstream.env AND zig.env change together (tag, peeled commi
   [ $rc = 0 ] && z=\$(cat '$wc/binaries/ghostty/zig.env') && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
   grep -qx 'ZIG_SIGNATURE_URL=$Z3.minisig' <<<\"\$z\" && grep -qx 'ZIG_MINISIGN_KEY=$key' <<<\"\$z\" && grep -q '^# ' <<<\"\$z\" &&
   u=\$(cat '$wc/binaries/ghostty/upstream.env') && grep -qx 'UPSTREAM_TAG=v1.5.0' <<<\"\$u\" && grep -qx 'UPSTREAM_COMMIT=$(sha d)' <<<\"\$u\""
-cp "$root/up.orig" "$wc/binaries/ghostty/upstream.env"; cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"
-bump zig 0.17.2 "$Z2" "$(printf 'd%.0s' {1..64})" 555
-check "bump zig: only zig.env changes (upstream.env is untouched)" bash -c "[ $rc = 0 ] && cmp -s '$root/up.orig' '$wc/binaries/ghostty/upstream.env' && grep -qx 'ZIG_VERSION=0.17.2' '$wc/binaries/ghostty/zig.env'"
-cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"; bump zig 0.17.2 "https://example.org/zig.tar.xz" "$(printf 'd%.0s' {1..64})" 555
-check "bump: Zig arguments that are not an official ziglang.org x86_64-linux entry are refused before anything is touched" bash -c "[ $rc = 2 ] && cmp -s '$g/zig.env' '$wc/binaries/ghostty/zig.env'"
-bump other 1 2 3 4
-check "bump: an unknown mode is refused" test "$rc" = 2
+bump zig 0.17.2 1 2 3
+check "bump: a standalone Zig bump is refused (mode zig no longer exists)" test "$rc" = 2
 
 echo
 echo "passed: $pass, failed: $failn"

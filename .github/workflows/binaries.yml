@@ -1,28 +1,21 @@
 name: Prebuilt binaries
-# Builds ghcr.io/redcodeworks/octarine-os-binaries from the components of binaries/ (binaries/components.tsv: scx and extest, required;
-# more may be optional) and hands its digest to the image build. Called by build.yml before its image build (the dx
+# Builds ghcr.io/redcodeworks/octarine-os-binaries from the components of binaries/ (binaries/components.tsv: scx, extest and ghostty, all
+# required) and hands its digest to the image build. Called by build.yml before its image build (the dx
 # and NVIDIA variants inherit the binaries from the default image); it can also be dispatched by hand to validate a change on a branch.
 #
 # One build job per component (binaries-component.yml, a matrix over components.tsv): each has its own content key (binaries-key.sh) and
 # its own signed component image (tag c-<component>-<key>, same package); a change to one component does not rebuild the others (a change
-# to lib/ or the builder pin rebuilds all). The assemble job then puts whatever each component produced into ONE image, tagged with the
+# to lib/ or the builder pin rebuilds all). The assemble job then puts what each component produced into ONE image, tagged with the
 # assembled key (sha1 over the included "name key" lines; binaries-key.sh), which the image build copies from by digest. There is no
-# fallback to an older image: a REQUIRED component that cannot be built fails the run (the previous `latest` stays, nothing is published);
-# an OPTIONAL component whose build fails is left out of the image (binaries-decide.sh and binaries-assemble.sh hold the rules,
-# install-binaries.sh says loudly what is missing).
+# fallback to an older image: a component that cannot be built fails the run (the previous `latest` stays, nothing is published;
+# binaries-decide.sh and binaries-assemble.sh hold the rules).
 #
 # Only testing and main publish; on any other ref (a validation dispatch) components are built and checked but never pushed or signed,
 # no digest is handed over, and the image build then stops with an instruction (binaries-use.sh).
 #
-# Own runs (Kevin, 2026-11-14; the README badge): a WEEKLY `schedule` on main (no `push` trigger since 2026-11-16: build.yml calls this workflow
-# on every push, and a second run of the same content could race it on the same `c-<component>-<key>` tag) (Friday 08:00 UTC) runs it under its own name; a called run belongs to the
-# caller. An own `schedule` (or any `push`) run NEVER publishes or signs: the push run only proves that this content builds (it reuses already
-# signed images when the caller published them first), and the schedule run ignores the reuse shortcut and builds again against the
-# pinned sources and today's Fedora 45 packages, failing visibly when a required component fails. Nothing of it gets the signing secret
-# (the sign jobs are skipped).
+# Nothing rebuilds the binaries on a timer: they and their pins (Zig and the builder included) change only through a pull request that is
+# approved and merged, and then build.yml's call here builds them. To rebuild by hand: `gh workflow run binaries.yml --ref <branch>`.
 on:
-  schedule:
-    - cron: "0 8 * * 5"  # Fridays 08:00 UTC: validate that the binaries still build (nothing is published)
   workflow_call:
     secrets:
       SIGNING_SECRET:
@@ -41,9 +34,6 @@ on:
       hash:
         description: the assembled key (the image tag)
         value: ${{ jobs.result.outputs.hash }}
-      degraded:
-        description: "the optional components that were left out, e.g. ghostty:absent (empty when none)"
-        value: ${{ jobs.result.outputs.degraded }}
   workflow_dispatch:
 
 env:
@@ -67,7 +57,7 @@ jobs:
         id: matrix
         run: |
           set -euo pipefail
-          m=$(grep -vE '^[[:space:]]*(#|$)' binaries/components.tsv | jq -Rsc '{include: [split("\n")[] | select(length > 0) | split("\t") | {name: .[0], optional: (.[1] == "optional")}]}')
+          m=$(grep -vE '^[[:space:]]*(#|$)' binaries/components.tsv | jq -Rsc '{include: [split("\n")[] | select(length > 0) | split("\t") | {name: .[0]}]}')
           echo "matrix=${m}" >> "${GITHUB_OUTPUT}"
           echo "${m}"
 
@@ -80,7 +70,6 @@ jobs:
     uses: ./.github/workflows/binaries-component.yml
     with:
       component: ${{ matrix.name }}
-      optional: ${{ matrix.optional }}
     permissions:
       contents: read
       packages: write
@@ -99,11 +88,9 @@ jobs:
     outputs:
       action: ${{ steps.decide.outputs.action }}
       key: ${{ steps.decide.outputs.key }}
-      degraded: ${{ steps.decide.outputs.degraded }}
       components: ${{ steps.decide.outputs.components }}
       image: ${{ steps.names.outputs.image }}
       usable: ${{ steps.final.outputs.usable }}
-      nopublish: ${{ steps.final.outputs.nopublish }}
       published: ${{ steps.channel.outputs.publish }}
       ok: ${{ steps.record.outputs.ok }}
       digest: ${{ steps.final.outputs.digest }}
@@ -130,7 +117,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # a missing artifact is a component that did not finish: binaries-assemble.sh counts it (optional: absent, required: failed). A FAILED DOWNLOAD is
+      # a missing artifact is a component that did not finish: binaries-assemble.sh counts it (counted as failed). A FAILED DOWNLOAD is
       # different: it is retried twice, and when all three tries fail the job fails with "could not read the results" (a workflow problem), never as "a required component failed"
       - name: Fetch the results of the components
         id: fetch1
@@ -175,19 +162,13 @@ jobs:
         id: channel
         env:
           REF: ${{ github.ref }}
-          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
-          EVENT: ${{ github.event_name }}
         run: |
           publish=false
           case "${REF}" in
             refs/heads/main | refs/heads/testing) publish=true ;;
           esac
-          nopublish=false
-          if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
-          [[ "${nopublish}" != true ]] || publish=false
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
-          echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
-          echo "publish=${publish} nopublish=${nopublish} (only testing and main publish; any other ref builds for validation)"
+          echo "publish=${publish} (only testing and main publish; any other ref builds for validation)"
 
       - name: Published and signed already?
         id: lookup
@@ -197,24 +178,17 @@ jobs:
           KEY: ${{ steps.decide.outputs.key }}
         run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${KEY}"
 
-      # the assembled image of this key is reused when it exists and verifies, except for the weekly validation run (it builds again)
-      - name: Usable (not for the weekly validation)
+      # the assembled image of this key is reused when it exists and verifies
+      - name: Usable
         id: final
         env:
           LOOKUP: ${{ steps.lookup.outputs.usable }}
           LOOKUP_DIGEST: ${{ steps.lookup.outputs.digest }}
-          OWN: ${{ github.workflow == 'Prebuilt binaries' }}
-          EVENT: ${{ github.event_name }}
-          NOPUBLISH: ${{ steps.channel.outputs.nopublish }}
         run: |
           usable=${LOOKUP:-false}
-          force=false
-          if [[ "${OWN}" == true && "${EVENT}" == schedule ]]; then force=true; fi
-          [[ "${force}" != true ]] || usable=false
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
-          echo "nopublish=${NOPUBLISH}" >> "${GITHUB_OUTPUT}"
           [[ "${usable}" != true ]] || echo "digest=${LOOKUP_DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "usable=${usable} nopublish=${NOPUBLISH} force=${force}"
+          echo "usable=${usable}"
 
       # Assemble from the component images by digest (each verified again), layout check, push. A failure does not fail the job:
       # the record step says, the result job decides.
@@ -226,7 +200,6 @@ jobs:
           IMAGE: ${{ steps.names.outputs.image }}
           KEY: ${{ steps.decide.outputs.key }}
           COMPONENTS: ${{ steps.decide.outputs.components }}
-          DEGRADED: ${{ steps.decide.outputs.degraded }}
         run: |
           set -euo pipefail
           content="${RUNNER_TEMP}/image"
@@ -246,7 +219,6 @@ jobs:
             --build-arg "IMAGE_REVISION=${GITHUB_SHA}" \
             --build-arg "IMAGE_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --build-arg "IMAGE_COMPONENTS=${COMPONENTS}" \
-            --build-arg "IMAGE_DEGRADED=${DEGRADED}" \
             --tag "${IMAGE_NAME}:${KEY}" \
             --file binaries/lib/assemble.Containerfile "${content}"
           id=$(podman create "${IMAGE_NAME}:${KEY}" /nonexistent)
@@ -336,8 +308,6 @@ jobs:
       action: ${{ steps.pick.outputs.action }}
       hash: ${{ needs.assemble.outputs.key }}
       image: ${{ needs.assemble.outputs.image }}
-      degraded: ${{ needs.assemble.outputs.degraded }}
-      nopublish: ${{ needs.assemble.outputs.nopublish }}
     steps:
       - name: Pick the digest
         id: pick
@@ -349,17 +319,12 @@ jobs:
           REUSE_DIGEST: ${{ needs.assemble.outputs.digest }}
           PUBLISHED: ${{ needs.assemble.outputs.published }}
           KEY: ${{ needs.assemble.outputs.key }}
-          DEGRADED: ${{ needs.assemble.outputs.degraded }}
           SIGN: ${{ needs.sign.result }}
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
         run: |
           set -euo pipefail
           err() { echo "::error::$*"; exit 1; }
-          [[ "${ASSEMBLE}" == success ]] || err "The binaries could not be put together (${ASSEMBLE}): a required component failed or has no result, see the component jobs"
-          if [[ -n "${DEGRADED}" ]]; then
-            echo "::warning::DEGRADED binaries: ${DEGRADED}"
-            echo "## DEGRADED binaries: ${DEGRADED} (an optional component left out of the image)" >> "${GITHUB_STEP_SUMMARY}"
-          fi
+          [[ "${ASSEMBLE}" == success ]] || err "The binaries could not be put together (${ASSEMBLE}): a component failed or has no result, see the component jobs"
           if [[ "${ACTION}" == validated ]]; then
             echo "Binaries image: components built for validation only (a ref that cannot publish), nothing is assembled, pushed or signed" >> "${GITHUB_STEP_SUMMARY}"
             { echo "digest="; echo "action=validated"; } >> "${GITHUB_OUTPUT}"

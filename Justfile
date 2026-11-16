@@ -100,7 +100,7 @@ build $target_image=image_name $tag=default_tag:
     # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
     # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the assembled key of binaries/
-    # (binaries-key.sh; published by the binaries workflow when that content reached testing or main, with no component degraded)
+    # (binaries-key.sh; published by the binaries workflow when that content reached testing or main,)
     BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:$(.github/scripts/binaries-key.sh)}")
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
@@ -134,11 +134,6 @@ build $target_image=image_name $tag=default_tag:
 
     # The prebuilt binaries image this build installed from (digest reference in CI, assembled-key tag locally)
     LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-key-$(.github/scripts/binaries-key.sh)}")
-
-    # Machine-readable: a build that left an optional binaries component out (the scheduled skip check never keeps such an image)
-    if [[ -n "${BINARIES_DEGRADED:-}" ]]; then
-        LABELS+=("--label" "org.octarineos.binaries-degraded=${BINARIES_DEGRADED}")
-    fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
     # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.
