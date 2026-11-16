@@ -51,13 +51,13 @@ env:
   SHA: ${{ inputs.sha || github.sha }}
   DRY_RUN: ${{ inputs.dry_run || false }}
 
-# testing: one group per channel, a running build is never cancelled (a newer trigger waits, only one can wait: the last writer of a
-# floating tag must be the newest). latest on main: one group per COMMIT, because with one group a third run would cancel the PENDING second
-# one, silently dropping a default image that then never gets its dx pair; runs of different commits build side by side and Publish latest
-# serializes the moves
+# testing: one group per channel and a newer run CANCELS the older one (a superseded tip needs no dx image; the newest tip's run is the one that
+# counts, and a cancelled run posts no commit status, see the status step). latest on main: one group per COMMIT and never cancelled, because with
+# one group a third run would cancel the PENDING second one, silently dropping a default image that then never gets its dx pair; runs of different
+# commits build side by side and Publish latest serializes the moves
 concurrency:
   group: build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ inputs.channel == 'testing' }}
 
 permissions:
   contents: read
@@ -501,7 +501,8 @@ jobs:
         run: .github/scripts/aggregate-dx.sh
 
       - name: Post the result as a commit status on the built commit
-        if: always() && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
+        # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
+        if: always() && !contains(needs.*.result, 'cancelled') && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUTCOME: ${{ steps.result.outcome }}
