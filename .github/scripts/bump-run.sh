@@ -5,10 +5,9 @@
 # cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
 # Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
-#   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|brew|builder
+#   bump-run.sh scx|extest|ghostty|chunkah|brew|builder
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins together), image digest pins (bump-pin.sh: the dev-packages
-# list image of the fedora-toolbox repository, chunkah), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
+# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins together), the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
 # on every write) and the Fedora builder digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for
 # MIN_AGE_DAYS, default 7: the creation date of the image is the stand-in for "has not been replaced since", a registry has no tag history).
 set -uo pipefail
@@ -73,11 +72,8 @@ case "${pin}" in
             unreachable) fail "${decision#unreachable }" ;;
             *) status="nothing to bump: ${decision}" ;;
         esac ;;
-    dev-packages | chunkah)
-        case "${pin}" in
-            dev-packages) files=(variants/dx/Containerfile); ref=ghcr.io/redcodeworks/dev-packages:latest; src="the dev-packages list image of the fedora-toolbox repository (${ref}), cosign signature verified" ;;
-            chunkah) files=(config/chunkah.env); ref=quay.io/coreos/chunkah:latest; src="${ref}, keyless cosign signature verified" ;;
-        esac
+    chunkah)
+        files=(config/chunkah.env); ref=quay.io/coreos/chunkah:latest; src="${ref}, keyless cosign signature verified"
         go=$(mktemp)
         GITHUB_OUTPUT="${go}" "${here}/bump-pin.sh" "${pin}"; rc=$?
         read_out() { sed -n "s/^$1=//p" "${go}" | tail -n1; }

@@ -188,18 +188,10 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/octarine-os-dx" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/octarine-os-dx" >> "${GITHUB_OUTPUT}"
 
-      # The shared developer package list is pinned by digest in the Containerfile: format check, then the signature
-      - name: Check the dev-packages pin
-        run: |
-          set -euo pipefail
-          tag=$(sed -n 's/^ARG DEV_PACKAGES_TAG=//p' variants/dx/Containerfile)
-          digest=$(sed -n 's/^ARG DEV_PACKAGES_DIGEST=//p' variants/dx/Containerfile)
-          [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "::error::DEV_PACKAGES_TAG missing or not latest or latest-YYYYMMDD-<sha> in variants/dx/Containerfile"; exit 1; }
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::DEV_PACKAGES_DIGEST missing or not sha256:<64 hex> in variants/dx/Containerfile"; exit 1; }
-          ref="ghcr.io/redcodeworks/dev-packages@${digest}"
-          cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null
-          echo "dev-packages pinned: ${tag} ${ref} (signature valid)"
-          echo "DEV_PACKAGES_REF=${ref}" >> "${GITHUB_ENV}"
+      # The shared developer package list (dev-packages, built and signed by the fedora-toolbox repository, a package this project owns) floats at latest: resolved to a digest once,
+      # verified with the toolbox key, passed to the build as DEV_PACKAGES_REF and recorded in the dev-packages image label
+      - name: Resolve and verify the dev-packages image
+        run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF
 
       # The digest comes from the plan job; verify it again here, then pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
@@ -225,6 +217,7 @@ jobs:
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
+            --build-arg "DEV_PACKAGES_REF=${DEV_PACKAGES_REF}" \
             --build-arg "IMAGE_VERSION=${version}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
             --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \

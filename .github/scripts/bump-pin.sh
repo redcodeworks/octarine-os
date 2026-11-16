@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Decides whether the digest pin of an external image (dev-packages, built by the fedora-toolbox repository) has to move to its
-# `latest` tag, and rewrites the pin when it has. Used by the weekly workflow bump-pins.yml; tested with fake skopeo and
-# cosign by tests/bump-pins.sh. Run from the repository root.
+# Decides whether the digest pin of an EXTERNAL image (chunkah, which this repository does not own) has to move to its `latest` tag, and rewrites the pin
+# when it has. Used by the weekly workflow bump-pins.yml; tested with fake skopeo and cosign by tests/bump-pins.sh. Run from the repository root.
+# (The images this project owns, octarine-binaries and dev-packages, are not pinned: the build takes their promoted `latest`, see latest-ref.sh.)
 #
-#   bump-pin.sh dev-packages|chunkah
+#   bump-pin.sh chunkah
 #
 # chunkah (quay.io/coreos/chunkah, pinned in config/chunkah.env as KEY=VALUE lines) is verified KEYLESS (the GitHub Actions OIDC issuer and an identity
-# under https://github.com/coreos/chunkah/) instead of with a key file; everything else is the same decision table.
+# under https://github.com/coreos/chunkah/).
 #
 # Steps: resolve the digest of <image>:latest (skopeo inspect --raw, sha256 of the manifest, the way the pins are made),
-# verify its cosign signature with keys/redcodeworks-toolbox-cosign.pub, compare it with the pin, and when it differs
+# verify its cosign signature, compare it with the pin, and when it differs
 # rewrite the pin's digest line and its tag line (the dated tag with the same digest, else `latest`; the tag is only
 # a label for humans). Nothing else in the file changes. With GITHUB_OUTPUT set it writes result, digest, tag and previous.
 #
@@ -22,11 +22,9 @@
 set -uo pipefail
 image=${1:-}
 case "${image}" in
-    dev-packages) file=variants/dx/Containerfile; prefix=DEV_PACKAGES; argp="ARG "; repo=ghcr.io/redcodeworks/${image} ;;
     chunkah) file=${CHUNKAH_ENV:-config/chunkah.env}; prefix=CHUNKAH; argp=""; repo=quay.io/coreos/chunkah ;;
-    *) echo "::error::unknown image '${image}' (dev-packages or chunkah)"; exit 3 ;;
+    *) echo "::error::unknown image '${image}' (chunkah)"; exit 3 ;;
 esac
-key=${COSIGN_KEY_FILE:-keys/redcodeworks-toolbox-cosign.pub}
 out() { [[ -z "${GITHUB_OUTPUT:-}" ]] || echo "$1=$2" >> "${GITHUB_OUTPUT}"; }
 
 current=$(sed -n "s/^${argp}${prefix}_DIGEST=//p" "${file}")
@@ -46,11 +44,7 @@ hex=$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')
 latest="sha256:${hex}"
 out digest "${latest}"
 
-if [[ "${image}" == chunkah ]]; then
-    verify=(cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github.com/coreos/chunkah/' "${repo}@${latest}")
-else
-    verify=(cosign verify --key "${key}" "${repo}@${latest}")
-fi
+verify=(cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp '^https://github.com/coreos/chunkah/' "${repo}@${latest}")
 if ! "${verify[@]}" > /dev/null; then
     echo "::error::cosign verification failed for ${repo}@${latest} (${file} is unchanged)"
     out result badsignature; exit 2

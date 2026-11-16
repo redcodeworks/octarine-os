@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Behavior checks of the developer image (octarine-os-dx) that no build shows early: the signature policy of all three repositories, the dx.sh bundle
-# policy block, the in-image smoke script (stub tools) and `just dev-packages-bump` with fake skopeo and cosign. Workflow shape, Containerfile text and
+# policy block, the in-image smoke script. Workflow shape, Containerfile text and
 # package lists are not asserted: a wrong one fails the build itself. Nothing here builds an image. Run: tests/dx-image.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -16,8 +16,6 @@ check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "
 
 # ---- Containerfile, scripts and package lists
 cf="$here/variants/dx/Containerfile"
-tag=$(sed -n 's/^ARG DEV_PACKAGES_TAG=//p' "$cf")
-dig=$(sed -n 's/^ARG DEV_PACKAGES_DIGEST=//p' "$cf")
 
 # ---- signature policy: all three repositories, from any image name
 policy_run() { # image name
@@ -108,53 +106,6 @@ mk_world "$K"; rm "$sb/bin/clang"; smoke_run "$K"; rc=$?
 check "smoke: a missing compiler fails and says which" bash -c "[ $rc -ne 0 ] && grep -q 'FAIL command clang' '$root/smoke.out'"
 # a long package list with the match first: grep -q on a pipe must not turn SIGPIPE into a failure
 mk_world "$K"; { cat "$sb/rpms"; for i in $(seq 1 20000); do echo "pkg-$i"; done; } >"$sb/r2"; mv "$sb/r2" "$sb/rpms"; smoke_run "$K"; check "smoke: a very long package list still passes" test $? -eq 0
-
-# ---- just dev-packages-bump with fake skopeo and cosign
-work="$root/work"; bin="$root/bin"
-mkdir -p "$bin" "$work/keys" "$work/variants/dx"
-cp "$here/Justfile" "$work/Justfile"; cp "$cf" "$work/variants/dx/Containerfile"
-echo key >"$work/keys/redcodeworks-toolbox-cosign.pub"
-mkdir -p "$work/config"; cp "$here/config/image.env" "$work/config/image.env"
-[ -d "$here/githooks" ] && cp -r "$here/githooks" "$work/githooks"
-cat >"$bin/skopeo" <<'F'
-#!/usr/bin/env bash
-echo "skopeo $*" >>"$LOG"
-case "$1" in
-    inspect) printf 'manifest of %s' "${@: -1}" ;;
-    list-tags) echo '{"Tags":["latest","testing","latest-20261105-aaaaaaa","latest-20261109-0969783","latest-20261112-bbbbbbb","testing-20261112-ccccccc"]}' ;;
-esac
-F
-cat >"$bin/cosign" <<'F'
-#!/usr/bin/env bash
-echo "cosign $*" >>"$LOG"
-exit "${COSIGN_RC:-0}"
-F
-chmod +x "$bin"/*
-export LOG="$root/log"
-REAL_JUST=$(command -v just)
-bump() { (cd "$work" && PATH="$bin:$PATH" "$REAL_JUST" --justfile Justfile --working-directory . dev-packages-bump "$@") >"$root/out" 2>&1; rc=$?; }
-expect_digest() { printf 'manifest of docker://ghcr.io/redcodeworks/dev-packages:%s' "$1" | sha256sum | sed 's/ .*//'; }
-: >"$LOG"; bump latest-20261105-aaaaaaa
-check "bump with a dated tag: exit 0, digest from the raw manifest, tag written" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_DIGEST=sha256:$(expect_digest latest-20261105-aaaaaaa)' '$work/variants/dx/Containerfile' && grep -qx 'ARG DEV_PACKAGES_TAG=latest-20261105-aaaaaaa' '$work/variants/dx/Containerfile'"
-check "bump: cosign verified the digest reference with the toolbox key first" grep -qF "cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/dev-packages@sha256:$(expect_digest latest-20261105-aaaaaaa)" "$LOG"
-check "bump: the rest of the Containerfile is untouched" bash -c "diff <(grep -vE '^ARG DEV_PACKAGES_(TAG|DIGEST)=' '$cf') <(grep -vE '^ARG DEV_PACKAGES_(TAG|DIGEST)=' '$work/variants/dx/Containerfile')"
-cp "$cf" "$work/variants/dx/Containerfile"; COSIGN_RC=1 bump latest-20261109-0969783
-check "bump: a verification failure exits 1 and leaves the Containerfile unchanged" bash -c "[ $rc = 1 ] && cmp -s '$cf' '$work/variants/dx/Containerfile'"
-bump 'latest;rm'
-check "bump: a bad tag is refused and changes nothing" bash -c "[ $rc = 1 ] && cmp -s '$cf' '$work/variants/dx/Containerfile'"
-bump
-check "bump with no tag resolves latest and records the dated tag that has the same digest" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_TAG=latest' '$work/variants/dx/Containerfile' && grep -qx 'ARG DEV_PACKAGES_DIGEST=sha256:$(expect_digest latest)' '$work/variants/dx/Containerfile'"
-# with this fake registry every tag has its own manifest, so no dated tag matches latest and the tag stays latest (above);
-# make latest-20261109-0969783 identical to latest to see the alias found
-cat >"$bin/skopeo" <<'F'
-#!/usr/bin/env bash
-case "$1" in
-    inspect) ref="${@: -1}"; [[ "${ref}" == *:latest-20261109-0969783 ]] && ref="${ref%:*}:latest"; printf 'manifest of %s' "${ref}" ;;
-    list-tags) echo '{"Tags":["latest","testing","latest-20261105-aaaaaaa","latest-20261109-0969783","testing-20261112-ccccccc"]}' ;;
-esac
-F
-cp "$cf" "$work/variants/dx/Containerfile"; bump
-check "bump latest: the matching dated tag is written for humans, testing tags are ignored" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_TAG=latest-20261109-0969783' '$work/variants/dx/Containerfile'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
