@@ -2781,28 +2781,37 @@ hardware-setup *args:
     list=0
     only_list=""
     export_flag=""
+    solaar_want=""
     args=("$@")
     i=0
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan), solaar (opt-in: start Solaar at login by copying its autostart entry into ~/.config/autostart; no sudo; hidden when solaar is not installed). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan), solaar (a toggle for Solaar at login: it shows enabled or disabled and switches it by creating or deleting ~/.config/autostart/solaar.desktop; `--only solaar` flips it, `--solaar on|off` sets it; no sudo; hidden when solaar is not installed). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
             --export) export_flag=export ;;
             --unexport) export_flag=unexport ;;
+            --solaar)
+                i=$((i + 1))
+                solaar_want=${args[$i]:-}
+                case "$solaar_want" in on | off) ;; *) echo "--solaar needs on or off" >&2; exit 2 ;; esac
+                ;;
+            --solaar=*) solaar_want=${a#--solaar=}; case "$solaar_want" in on | off) ;; *) echo "--solaar needs on or off" >&2; exit 2 ;; esac ;;
             --only)
                 i=$((i + 1))
                 only_list=${args[$i]:-}
                 [ -n "$only_list" ] || { echo "--only needs a step list" >&2; exit 2; }
                 ;;
             --only=*) only_list=${a#--only=} ;;
-            -*) echo "Unknown option: $a (use --yes, --no, --list, --export, --unexport or --only STEP[,STEP...])" >&2; exit 2 ;;
+            -*) echo "Unknown option: $a (use --yes, --no, --list, --export, --unexport, --solaar on|off or --only STEP[,STEP...])" >&2; exit 2 ;;
             *) echo "Unexpected argument: $a (steps are given with --only STEP[,STEP...])" >&2; exit 2 ;;
         esac
         i=$((i + 1))
     done
+    # --solaar on|off alone: just that step, no menu
+    if [ -n "$solaar_want" ] && [ -z "$only_list" ]; then only_list=solaar; fi
     if [ -n "$only_list" ]; then
         for s in ${only_list//,/ }; do
             case "$valid_steps" in *" $s "*) ;; *) echo "Unknown step: $s (steps:${valid_steps% })" >&2; exit 2 ;; esac
@@ -2853,7 +2862,7 @@ hardware-setup *args:
         [fido-key]="Security key: register it for sudo and polkit (touch)"
         [iommu]="Passthrough: kernel argument iommu=pt (optional; sudo, reboot)"
         [wake-on-lan]="Wake-on-LAN for the wired NIC (sudo)"
-        [solaar]="Logitech: start Solaar (tray icon and background service) at login (no sudo)"
+        [solaar]="Logitech: Solaar (tray icon and background service) at login, a toggle (no sudo)"
     )
     solaar_tpl=${HW_SOLAAR_TEMPLATE:-/usr/share/octarine-os/solaar-autostart.desktop}
     solaar_auto="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/solaar.desktop"
@@ -2996,7 +3005,7 @@ hardware-setup *args:
             fido-key) echo "rm $u2f_file" ;;
             iommu) echo "sudo rpm-ostree kargs --delete-if-present=iommu=pt (and --delete-if-present=intel_iommu=on on Intel) and reboot" ;;
             wake-on-lan) echo "ujust wake-on-lan --off" ;;
-            solaar) echo "rm $solaar_auto" ;;
+            solaar) echo "ujust hardware-setup --solaar off (or rm $solaar_auto)" ;;
         esac
     }
     ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
@@ -3071,7 +3080,7 @@ hardware-setup *args:
             iommu) "$ujust_cmd" virthost-setup --only iommu "${yes[@]}" ;;
             wake-on-lan) "$ujust_cmd" wake-on-lan "${yes[@]}" ;;
             solaar)
-                echo "Copies the image's Solaar autostart entry ($solaar_tpl, the entry the package ships) to $solaar_auto. No sudo; it starts at your next login."
+                echo "Enables Solaar at login: copies the image's autostart entry ($solaar_tpl, the entry the package ships) to $solaar_auto. No sudo; it starts at your next login."
                 mkdir -p "$(dirname "$solaar_auto")" || return 1
                 install -m 0644 "$solaar_tpl" "$solaar_auto" || return 1
                 echo "The tray icon on GNOME needs an AppIndicator extension; the image ships and enables gnome-shell-extension-appindicator. Start it now with: solaar --window=hide &"
@@ -3100,6 +3109,7 @@ hardware-setup *args:
     }
     state_of() {
         if [ -n "${why[$1]}" ]; then echo "not applicable (${why[$1]})"
+        elif [ "$1" = solaar ]; then if [ "${isdone[solaar]}" = 1 ]; then echo "enabled (selecting it turns it off)"; else echo "disabled (selecting it turns it on)"; fi
         elif [ "${isdone[$1]}" = 1 ]; then
             if pending_reboot "$1"; then echo "pending reboot (applied, not booted yet: do not update the image before rebooting)"; else echo done; fi
         elif [ "$1" = rocm ] && [ "$rocm_unchecked" = 1 ]; then echo "available ($unchecked_note)"
@@ -3142,7 +3152,8 @@ hardware-setup *args:
         for s in "${avail[@]}"; do
             sel=$(default_of "$s")
             label=${text[$s]}
-            if [ "${isdone[$s]}" = 1 ]; then sel=0; label+=" (done)"; fi
+            if [ "$s" = solaar ]; then sel=0; if [ "${isdone[$s]}" = 1 ]; then label+=" (enabled: selecting it turns it off)"; else label+=" (disabled: selecting it turns it on)"; fi
+            elif [ "${isdone[$s]}" = 1 ]; then sel=0; label+=" (done)"; fi
             items+=("$s^$label^$sel")
         done
         menu_title "octarineOS hardware setup"
@@ -3155,10 +3166,10 @@ hardware-setup *args:
     else
         # no terminal menu: ask one question per available step
         for s in "${avail[@]}"; do
-            [ "${isdone[$s]}" = 1 ] && continue
+            [ "${isdone[$s]}" = 1 ] && [ "$s" != solaar ] && continue
             def=$(default_of "$s")
             hint="[y/N]"; [ "$def" = 1 ] && hint="[Y/n]"
-            printf '%s %s ' "${text[$s]}?" "$hint"
+            if [ "$s" = solaar ] && [ "${isdone[$s]}" = 1 ]; then printf '%s %s ' "Solaar at login is enabled; turn it off?" "$hint"; else printf '%s %s ' "${text[$s]}?" "$hint"; fi
             read -r reply || reply=""
             case "$reply" in [Yy]*) chosen+=("$s") ;; [Nn]*) ;; *) [ "$def" = 1 ] && chosen+=("$s") ;; esac
         done
@@ -3181,6 +3192,20 @@ hardware-setup *args:
     for s in "${chosen[@]}"; do
         echo
         echo "== $s: ${text[$s]}"
+        if [ "$s" = solaar ]; then
+            # a toggle: no argument flips the current state, --solaar on|off names the wanted one (already there: nothing to do)
+            cur=off; [ "${isdone[solaar]:-0}" = 1 ] && cur=on
+            want=${solaar_want:-$([ "$cur" = on ] && echo off || echo on)}
+            if [ "$want" = "$cur" ]; then echo "Solaar at login is already $([ "$cur" = on ] && echo enabled || echo disabled)."; record "$s" "already $cur"; continue; fi
+            if [ "$mode" = no ]; then echo "Plan: would turn Solaar at login $want. Undo: ujust hardware-setup --solaar $cur"; record "$s" "planned ($want)"; continue; fi
+            if [ "$want" = on ]; then
+                if run_of solaar; then record "$s" "enabled" "ujust hardware-setup --solaar off (or rm $solaar_auto)"; else echo "Failed: $s. Re-run: ujust hardware-setup --solaar on" >&2; failed=1; record "$s" FAILED; fi
+            else
+                echo "Disables Solaar at login: removes $solaar_auto. No sudo; a running Solaar keeps running until you quit it."
+                if rm -f -- "$solaar_auto"; then record "$s" "disabled" "ujust hardware-setup --solaar on"; else echo "Failed: $s. Re-run: ujust hardware-setup --solaar off" >&2; failed=1; record "$s" FAILED; fi
+            fi
+            continue
+        fi
         if [ "$export_flag" = unexport ] && [[ "$s" == *-export ]]; then isdone[$s]=0; fi
         if [ "${isdone[$s]:-0}" = 1 ]; then
             echo "Already done."
