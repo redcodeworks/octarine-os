@@ -18,6 +18,10 @@ inputs:
   mode:
     description: "sign (a build: sign each digest, then verify the tags) or verify (a promotion: the digest was signed when the testing image was published; check it, never sign again)"
     required: true
+  moving-tags:
+    description: "Space separated moving tags (`testing`) to move to the digest AFTER it is signed and verified, then verify; mode sign only; empty: none"
+    required: false
+    default: ""
   private-key:
     description: "The cosign private key (the SIGNING_SECRET of the caller's environment); only used in mode sign"
     required: false
@@ -68,6 +72,22 @@ runs:
       run: |
         set -euo pipefail
         for tag in ${TAGS}; do
+          cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+          echo "signed: ${tag}"
+        done
+
+    # a cancel before this step leaves the moving tags on the previous signed image
+    - name: Move the moving tags to the signed digest
+      if: inputs.mode == 'sign' && inputs.moving-tags != ''
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DIGESTS: ${{ inputs.digests }}
+        MOVING_TAGS: ${{ inputs.moving-tags }}
+      run: |
+        set -euo pipefail
+        .github/scripts/move-tags.sh "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
+        for tag in ${MOVING_TAGS}; do
           cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
           echo "signed: ${tag}"
         done

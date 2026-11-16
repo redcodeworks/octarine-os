@@ -1,6 +1,6 @@
 ---
 name: Build container image
-# Branch model: pushes to `testing` publish the `testing` image; `main` is protected and only changes
+# Branch model: pushes to `testing` publish the `testing` image (immutable tags first, `testing` moved after signing; a newer push cancels an older run); `main` is protected and only changes
 # through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
 # path filter) so the required "Build and push image" check always exists for the commit being promoted:
 # the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
@@ -37,9 +37,11 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Never cancel a started build (2026-11-16): a cancelled testing build left `testing`/`testing-<sha>` on an unsigned digest. GitHub keeps one
-  # run going and only the newest pending one, so a burst of merges builds the first and the last.
-  cancel-in-progress: false
+  # `testing`: a newer push cancels the older run (2026-11-16, Kevin). Safe because a testing build pushes only its immutable tags (`testing-<sha>`,
+  # `testing-<date>-<sha>`), the sign job signs and verifies that digest, and only THEN moves the moving tags (`testing`, `testing-<date>`): a cancel at any
+  # point leaves `testing` on the previous SIGNED image. Every other ref never cancels: the group is per ref, so a schedule run and a push run on main
+  # queue behind each other (one running, the newest pending), and a dispatch from another branch has its own group.
+  cancel-in-progress: ${{ github.ref == 'refs/heads/testing' }}
 
 jobs:
   plan:
@@ -239,6 +241,7 @@ jobs:
       image: ${{ steps.names.outputs.image }}
       digests: ${{ steps.push-image.outputs.digests }}
       alias_tags: ${{ steps.gen-build-tags.outputs.alias_tags }}
+      moving_tags: ${{ steps.gen-build-tags.outputs.moving_tags }}
 
     permissions:
       contents: read
@@ -484,9 +487,22 @@ jobs:
           # the scheduled daily build (not a push, a promotion or a dispatch) also gets daily-YYYYMMDD (UTC), which prune-daily.yml counts
           if [[ "${EVENT}" == schedule ]]; then alias_tags="${alias_tags} daily-$(date -u +%Y%m%d)"; fi
 
+          # testing: the moving tags (`testing`, `testing-<date>`) are NOT pushed here; the sign job moves them to the digest after it is signed and verified,
+          # so only the immutable per-commit tags exist before the signature does
+          moving_tags=""
+          if [[ "${DEFAULT_TAG}" == testing ]]; then
+            immutable=""
+            for t in ${alias_tags}; do
+              if [[ "${t}" =~ ^testing(-[0-9]{8})?$ ]]; then moving_tags="${moving_tags:+${moving_tags} }${t}"; else immutable="${immutable:+${immutable} }${t}"; fi
+            done
+            alias_tags="${immutable}"
+          fi
+
           echo "Tags for this Action..."
           echo "${alias_tags}"
+          echo "Moving tags (after signing): ${moving_tags:-none}"
           echo "alias_tags=${alias_tags}" >> $GITHUB_OUTPUT
+          echo "moving_tags=${moving_tags}" >> $GITHUB_OUTPUT
 
       - name: Tag Image
         id: tag-images
@@ -577,13 +593,13 @@ jobs:
             echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 
-  # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
-  # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
-  # or was cancelled.
+  # The required check, last in the graph (plan -> build or promote -> sign -> this). It runs unless the whole run was cancelled, and passes when the build passed (or the tested image was
+  # promoted) or was skipped as docs-only, and fails when the plan, the build, the promotion or the signing failed.
   build_result:
     name: Build and push image
     needs: [plan, build_push, promote, sign]
-    if: always()
+    # not when the run was cancelled (a newer push to testing superseded it): a superseded run is not a failure and must not look like one
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -674,6 +690,22 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done
+
+      # testing only (moving_tags is empty elsewhere): AFTER the digest is signed and verified, `testing` (and `testing-<date>`) move to it: a registry-side
+      # copy that keeps the digest, a read-back, and a verification of the moved tags
+      - name: Move the testing tags to the signed digest
+        if: needs.build_push.outputs.moving_tags != ''
+        env:
+          IMAGE: ${{ needs.build_push.outputs.image }}
+          DIGESTS: ${{ needs.build_push.outputs.digests }}
+          MOVING_TAGS: ${{ needs.build_push.outputs.moving_tags }}
+        run: |
+          set -euo pipefail
+          .github/scripts/move-tags.sh "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
+          for tag in ${MOVING_TAGS}; do
             .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done

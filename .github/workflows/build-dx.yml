@@ -123,6 +123,7 @@ jobs:
           image: ${{ needs.dx.outputs.image }}
           digests: ${{ needs.dx.outputs.digests }}
           tags: ${{ needs.dx.outputs.alias_tags }}
+          moving-tags: ${{ needs.dx.outputs.moving_tags }}
           mode: ${{ needs.dx.outputs.build == 'success' && 'sign' || 'verify' }}
           private-key: ${{ secrets.SIGNING_SECRET }}
 
