@@ -17,7 +17,7 @@ image=${1:?image}
 url=${UBLUE_KEY_URL:-https://github.com/ublue-os/akmods/raw/main/certs/public_key.der}
 
 # Download helper: one place to stub in tests (the test puts its own fetch_key in a file named by FETCH_KEY_OVERRIDE).
-fetch_key() { curl --fail --silent --show-error --retry 3 -L -o "$2" "$1"; }
+fetch_key() { "$(dirname "${BASH_SOURCE[0]}")/retry.sh" curl --fail --silent --show-error --retry 3 -L -o "$2" "$1"; }  # curl's own --retry covers only some errors; retry.sh (3 tries, backoff) covers the rest of a transient failure of github.com
 if [[ -n "${FETCH_KEY_OVERRIDE:-}" ]]; then
     # shellcheck disable=SC1090
     source "${FETCH_KEY_OVERRIDE}"

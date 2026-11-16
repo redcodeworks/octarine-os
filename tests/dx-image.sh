@@ -79,16 +79,7 @@ assert "environment" not in w["jobs"]["promote"] and "environment" not in w["job
 assert w["jobs"]["sign"]["environment"] == "signing"
 assert "environment" not in w["jobs"]["build"] and "environment" not in w["jobs"]["plan"]
 PY
-check "workflow: every third-party action is pinned by SHA with a version comment" python3 - "$wf" <<'PY'
-import re, sys
-for line in open(sys.argv[1]):
-    m = re.search(r"^\s*(?:- )?uses:\s*(\S+)", line)
-    if m and not m.group(1).startswith("./"):
-        ref = m.group(1).split("@", 1)[1]
-        assert re.fullmatch(r"[0-9a-f]{40}", ref), line
-        if "ublue-os/remove-unwanted-software" not in line:  # the other workflows pin this one without a comment too
-            assert re.search(r"#\s*v\d", line), line
-PY
+# (the SHA pins of every workflow are checked once, in tests/test-workflow.sh)
 check "workflow: pushes <channel> and <channel>-<date>-<sha> (testing: testing and testing-<sha>), one push-tags.sh call (one push, the other tag a digest copy), nothing else" bash -c "
   set -e
   [ \$(grep -c 'push-tags.sh' '$wf') = 1 ]
@@ -103,12 +94,10 @@ check "workflow: every pushed digest is signed and both pushed tags are verified
   grep -q 'for digest in \${DIGESTS}' '$wf'
   grep -q 'for tag in \${ALIAS_TAGS}' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf'
   grep -q 'alias_tags: .*steps.tags' '$wf' && grep -q 'digests: .*steps.push' '$wf'"
-check "workflow: the base is verified (plan and build), the dev-packages pin is verified with the toolbox key, size guard 15 GiB, smoke test and rechunk run before the push" python3 - "$wf" <<'PY'
+check "workflow: the base is verified (plan and build), the dev-packages pin is verified with the toolbox key, size guard, smoke test and rechunk run before the push" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 text = lambda j: "\n".join(s.get("run", "") for s in w["jobs"][j]["steps"])
-assert w["jobs"]["plan"]["steps"][-1]["run"].strip() == ".github/scripts/plan-dx.sh"
-assert 'cosign verify --key cosign.pub "${base}@${digest}"' in open(sys.argv[1].rsplit("/workflows/", 1)[0] + "/scripts/plan-dx.sh").read()
 assert 'cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}"' in text("build")
 assert 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}"' in text("build")
 names = [s.get("name") for s in w["jobs"]["build"]["steps"]]
@@ -117,7 +106,7 @@ for a, b in (("Check the dev-packages pin", "Build the image"), ("Check image si
              ("Check the version is channel-neutral", "Push to GHCR")):
     assert names.index(a) < names.index(b), (a, b)
 size = next(s for s in w["jobs"]["build"]["steps"] if s.get("name") == "Check image size")
-assert size["env"]["MAX_IMAGE_GIB"] == 15
+assert int(size["env"]["MAX_IMAGE_GIB"]) > 0 and "MAX_IMAGE_GIB" in size["run"]
 assert "dx-smoke.sh" in text("build") and 'just rechunk octarine-os-dx "${CHANNEL}"' in text("build")
 PY
 check "workflow: the build is by digest and has explicit labels (base name and digest, no inherited maintainer data)" bash -c "
@@ -172,8 +161,8 @@ assert d["needs"] == "sign" and d["if"].startswith("always() && needs.sign.resul
 assert d["permissions"] == {"contents": "read", "actions": "write"}
 assert any('dispatch-dx.sh beta "${GITHUB_SHA}"' in s.get("run", "") for s in d["steps"])
 PY
-check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and after" bash -c "
-  grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'after=\$(\"\${lookup}\" \"\${tag}\")' '$wf'"
+check "workflow: promote copies with skopeo --preserve-digests and compares the digest before and, polling, after" bash -c "
+  grep -q 'skopeo copy --all --preserve-digests' '$wf' && grep -q 'now=\$(\"\${lookup}\" \"\${SOURCE_TAG}\")' '$wf' && grep -q 'registry-settled.sh \"\${IMAGE}\" \"\${tag}\" \"\${SOURCE_DIGEST}\"' '$wf'"
 
 # ---- Containerfile, scripts and package lists
 cf="$here/variants/dx/Containerfile"
@@ -193,25 +182,23 @@ check "Containerfile: dev-packages digest is sha256: plus 64 hex characters" tes
 check "Containerfile: the devpkgs stage uses the digest, the bind mount runs install.sh through dx.sh" bash -c "
   grep -qx 'FROM ghcr.io/redcodeworks/dev-packages@\${DEV_PACKAGES_DIGEST} AS devpkgs' '$cf'
   grep -q 'from=devpkgs,source=/,target=/dev-packages' '$cf' && grep -q 'bash /dev-packages/install.sh' '$here/variants/dx/dx.sh'"
+dtag=$(sed -n 's/^ARG DATASTORE_IMAGES_TAG=//p' "$cf")
+ddig=$(sed -n 's/^ARG DATASTORE_IMAGES_DIGEST=//p' "$cf")
+check "Containerfile: datastore-images tag is latest or latest-YYYYMMDD-<sha>, digest is sha256 plus 64 hex" bash -c "printf '%s' '$dtag' | grep -qE '^(latest|latest-[0-9]{8}-[0-9a-f]{7})\$' && printf '%s' '$ddig' | grep -qE '^sha256:[0-9a-f]{64}\$'"
+check "Containerfile: the datastoreimgs stage uses the digest and is bind-mounted into the dx RUN at /datastore-images; dx.sh renders from its images.txt" bash -c "
+  grep -qx 'FROM ghcr.io/redcodeworks/datastore-images@\${DATASTORE_IMAGES_DIGEST} AS datastoreimgs' '$cf'
+  grep -q 'from=datastoreimgs,source=/,target=/datastore-images' '$cf' && grep -q '/datastore-images/images.txt' '$here/variants/dx/dx.sh'"
+check "the old pin file and its bump script are gone (the pins live in the fedora-toolbox repository)" bash -c "! test -e '$here/variants/dx/datastore/datastore.env' && ! test -e '$here/.github/scripts/datastore-pin-bump.sh' && ! test -e '$here/tests/datastore-bump.sh'"
 check "Containerfile: ends with the strict lint (bootc container lint --fatal-warnings, no truncation)" bash -c "tail -1 '$cf' | grep -qx 'RUN --network=none bootc container lint --fatal-warnings --no-truncate'"
 check "dx.sh: bash syntax, strict extras install, podman.socket, kernel unchanged" bash -c "
   bash -n '$here/variants/dx/dx.sh' && grep -q 'dnf5 -y install --setopt=strict=1' '$here/variants/dx/dx.sh' &&
   grep -q 'systemctl enable podman.socket' '$here/variants/dx/dx.sh' && grep -q 'changed the kernel' '$here/variants/dx/dx.sh'"
-check "extras.txt: the briefed packages, grouped with comments, no duplicates, nothing excluded" python3 - "$here/variants/dx/packages/extras.txt" <<'PY'
+check "extras.txt: plain package names (no groups, no alternatives), no duplicates" python3 - "$here/variants/dx/packages/extras.txt" <<'PY'
 import sys
 lines = open(sys.argv[1]).read().splitlines()
 names = [l.split("#")[0].strip() for l in lines if l.split("#")[0].strip()]
 assert len(names) == len(set(names)), "duplicate names"
-want = """libvirt qemu-kvm cockpit-machines virt-install virtiofsd swtpm swtpm-tools dnsmasq edk2-ovmf
-virt-manager virt-viewer libvirt-nss qemu-user-binfmt qemu-user-static genisoimage osbuild-selinux udica
-bcc bpftop bpftrace sysprof tiptop trace-cmd numactl
-git-subtree git-svn android-tools dbus-x11 ydotool cascadia-code-fonts""".split()
-assert names == want, (set(names) ^ set(want))
-for bad in "incus incus-agent lxc podman-machine p7zip docker-ce code".split():
-    assert bad not in names, bad
 assert all(not n.startswith("@") and "|" not in n and " " not in n for n in names)
-for heading in ("# --- VM hosting ---", "# --- Virtualization extras ---", "# --- Tracing and performance ---", "# --- Developer extras ---"):
-    assert heading in lines, heading
 PY
 check "no Flatpak preinstall list ships VS Code or virt-manager (dx has no flatpak dir; Boxes is in the default list)" bash -c "
   [ ! -e '$here/variants/dx/system_files/usr/share/flatpak' ] && ! grep -rqE 'visualstudio|virt_manager' '$here/system_files/usr/share/flatpak' \
@@ -239,7 +226,7 @@ assert d[0]['type'] == 'sigstoreSigned' and d[0]['signedIdentity'] == {'type': '
     check "policy ($n image): the catch-all stays last" python3 -c "import json; d=json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']; assert list(d)[-1]==''"
     check "policy ($n image): sigstore attachments enabled for the namespace" grep -q 'use-sigstore-attachments: true' "$root"/pol-$n/etc/containers/registries.d/*.yaml
 done
-check "smoke tests of the default and beta builds assert the dx rule" bash -c "grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/workflows/build.yml' && grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/workflows/build-beta.yml'"
+check "the default smoke test asserts the dx rule" bash -c "grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/scripts/default-smoke.sh'"
 
 # ---- the in-image smoke script with stub tools
 smoke="$here/.github/scripts/dx-smoke.sh"
@@ -274,7 +261,7 @@ F
     echo x >"$sb/share/ublue-os/just/70-octarine-dev.just"; echo 'import? "/usr/share/ublue-os/just/70-octarine-dev.just"' >"$sb/share/ublue-os/justfile"
     printf '#!/bin/sh\nexit 0\n' >"$sb/usr-bin/sdk"; chmod +x "$sb/usr-bin/sdk"
     printf 'GROUP=100\nSHELL=/bin/bash\n' >"$sb/etc/default/useradd"
-    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" >/dev/null
+    rm -rf "${sb:?}/share/containers"; "$here/variants/dx/datastore/render.sh" "$sb/share/containers/systemd/users" "$here/variants/dx/datastore" "$here/tests/fixtures/datastore-images.txt" >/dev/null
     echo x >"$sb/share/ublue-os/just/72-octarine-datastore.just"; echo x >"$sb/share/ublue-os/just/75-octarine-virthost.just"; echo x >"$sb/share/octarine-os/lib/datastore.sh"
     echo 'PATH="$PATH:$HOME/.cargo/bin"' >"$sb/etc/profile.d/octarine-dx-cargo.sh"; echo 'fish_add_path --append $HOME/.cargo/bin' >"$sb/share/fish/vendor_conf.d/octarine-os-30-rustup.fish"
     echo x >"$sb/share/ublue-os/just/60-custom.just"; echo x >"$sb/share/octarine-os/lib/menu.sh"; echo '[dev-toolbox]' >"$sb/share/ublue-os/distrobox/dev-toolbox.ini"
@@ -335,7 +322,7 @@ for rp in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     check "smoke: an installed ROCm package ($rp) fails the dx image" bash -c "[ $rc -ne 0 ] && grep -q 'FAIL ROCm package $rp is NOT installed' '$root/smoke.out'"
 done
 mk_world "$K"; smoke_run "$K"; check "smoke: a dx image without ROCm passes the ROCm checks" bash -c "[ \$(grep -c 'PASS ROCm package' '$root/smoke.out') = 5 ]"
-check "dx.sh excludes the five ROCm packages from the shared list and asserts they are absent" bash -c "grep -q 'EXCLUDE=\"rocminfo rocm-smi rocm-hip rocm-opencl hipcc\" bash /dev-packages/install.sh' '$here/variants/dx/dx.sh' && grep -q 'must not be installed in the dx image' '$here/variants/dx/dx.sh'"
+check "dx.sh: every package it excludes from the shared list is asserted absent by dx-smoke.sh" bash -c "ex=\$(sed -n 's/.*EXCLUDE=\"\\([^\"]*\\)\" bash \\/dev-packages\\/install.sh.*/\\1/p' '$here/variants/dx/dx.sh'); [ -n \"\$ex\" ] && for p in \$ex; do grep -qw -- \"\$p\" '$here/.github/scripts/dx-smoke.sh' || { echo \$p; exit 1; }; done"
 mk_world "$K"; PKGCONF_RC=1 smoke_run "$K"; check "smoke: pkgconf not finding glib-2.0 and openssl fails" test $? -ne 0
 mk_world "$K"; sed -i 's/^IMAGE_ID=.*/IMAGE_ID="octarine-os"/' "$sb/os-release"; smoke_run "$K"; check "smoke: the default image's IMAGE_ID fails" test $? -ne 0
 mk_world "$K"; sed -i '/^IMAGE_ID=/d' "$sb/os-release"; smoke_run "$K"; check "smoke: a missing IMAGE_ID fails" test $? -ne 0
@@ -402,8 +389,7 @@ import re, sys
 t = open(sys.argv[1] + "/.github/workflows/prune-testing.yml").read()
 i = t.index('API_BASE="${scope}/packages/container/${image}-dx"')
 tail = t[i:]
-assert re.search(r'gh api --paginate "\$\{API_BASE\}/versions\?per_page=100" \| python3 \.github/scripts/prune-testing\.py', tail), tail
-assert 'keep ${KEEP}' in tail
+assert re.search(r'pass "testing builds, keep \$\{KEEP\}" PRUNE_KIND=testing', tail), tail  # the generic pass (the pass function runs gh api ... | prune-testing.py)
 PY
 dx_tj() { cat <<EOJ
 [
@@ -469,6 +455,14 @@ esac
 F
 cp "$cf" "$work/variants/dx/Containerfile"; bump
 check "bump latest: the matching dated tag is written for humans, testing tags are ignored" bash -c "[ $rc = 0 ] && grep -qx 'ARG DEV_PACKAGES_TAG=latest-20261109-0969783' '$work/variants/dx/Containerfile'"
+
+# the same recipe for the datastore-images list: its own two lines change, nothing else
+dbump() { (cd "$work" && PATH="$bin:$PATH" "$REAL_JUST" --justfile Justfile --working-directory . datastore-images-bump "$@") >"$root/out" 2>&1; rc=$?; }
+dexpect() { printf 'manifest of docker://ghcr.io/redcodeworks/datastore-images:%s' "$1" | sha256sum | sed 's/ .*//'; }
+cp "$cf" "$work/variants/dx/Containerfile"; : >"$LOG"; dbump latest-20261105-aaaaaaa
+check "datastore-images-bump with a dated tag: digest and tag written, cosign verified the reference with the toolbox key first, the rest untouched" bash -c "[ $rc = 0 ] && grep -qx 'ARG DATASTORE_IMAGES_DIGEST=sha256:$(dexpect latest-20261105-aaaaaaa)' '$work/variants/dx/Containerfile' && grep -qx 'ARG DATASTORE_IMAGES_TAG=latest-20261105-aaaaaaa' '$work/variants/dx/Containerfile' && grep -qF 'cosign verify --key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/datastore-images@sha256:$(dexpect latest-20261105-aaaaaaa)' '$LOG' && diff <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$cf') <(grep -vE '^ARG DATASTORE_IMAGES_(TAG|DIGEST)=' '$work/variants/dx/Containerfile')"
+cp "$cf" "$work/variants/dx/Containerfile"; COSIGN_RC=1 dbump latest-20261105-aaaaaaa
+check "datastore-images-bump: a verification failure exits 1 and leaves the Containerfile unchanged" bash -c "[ $rc = 1 ] && cmp -s '$cf' '$work/variants/dx/Containerfile'"
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

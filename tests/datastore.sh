@@ -24,16 +24,17 @@ notlogged() { ! grep -qF -- "$1" "$root/log" 2>/dev/null; }
 
 # ---- the pin file and the rendered Quadlets
 rq="$root/quadlets"
-"$dsdir/render.sh" "$rq" >"$root/out" 2>&1; rc=$?
-check "render: runs on the real pin file" test "$rc" = 0
+list="$here/tests/fixtures/datastore-images.txt"  # a copy of datastore-images/images.txt of the fedora-toolbox repository (the pins live there)
+"$dsdir/render.sh" "$rq" "$dsdir" "$list" >"$root/out" 2>&1; rc=$?
+check "render: runs on the list of the datastore-images image" test "$rc" = 0
 expected="datastore.pod kafka-data.volume kafka.container kafka.pod lakehouse.network postgresql-data.volume postgresql.container seaweed-data.volume seaweedfs.container valkey-data.volume valkey.container"  # C locale order
 check "render: exactly the pods, containers, network and volumes of the brief (no airflow, connect, superset, trino, lakekeeper, dvdrental)" test "$(LC_ALL=C ls "$rq" | tr '\n' ' ')" = "$expected "
 for svc in postgresql valkey seaweedfs kafka; do
     upper=$(echo "$svc" | tr a-z A-Z)
-    image=$(sed -n "s/^${upper}_IMAGE=//p" "$dsdir/datastore.env"); tag=$(sed -n "s/^${upper}_TAG=//p" "$dsdir/datastore.env")
-    digest=$(sed -n "s/^${upper}_DIGEST=//p" "$dsdir/datastore.env"); major=$(sed -n "s/^${upper}_MAJOR=//p" "$dsdir/datastore.env")
-    check "pins: $svc Image= in the Quadlet is exactly <image>:<tag>@<digest> of datastore.env" grep -qx "Image=${image}:${tag}@${digest}" "$rq/$svc.container"
-    check "pins: $svc tag '$tag' is exact (digits, dots, an optional -suffix), not latest, in major $major" bash -c "[[ '$tag' =~ ^[0-9]+(\\.[0-9]+)+(-[a-z0-9.]+)?\$ ]] && [ '$tag' != latest ] && [ \"\${tag%%.*}\" = '$major' ] || [ '${tag%%.*}' = '$major' ]"
+    ref=$(awk -v n="$svc" '$1 == n {print $2}' "$list")
+    tag=${ref#*:}; tag=${tag%%@*}; digest=${ref##*@}
+    check "pins: $svc Image= in the Quadlet is exactly the reference of images.txt" grep -qx "Image=${ref}" "$rq/$svc.container"
+    check "pins: $svc tag '$tag' is exact (digits, dots, an optional -suffix) and not latest" bash -c "[[ '$tag' =~ ^[0-9]+(\\.[0-9]+)+(-[a-z0-9.]+)?\$ ]] && [ '$tag' != latest ]"
     check "pins: $svc digest is sha256 plus 64 hex" bash -c "[[ '$digest' =~ ^sha256:[0-9a-f]{64}\$ ]]"
     check "pins: the shipped $svc.container has one Image= line and no other image reference" bash -c "[ \$(grep -c '^Image=' '$rq/$svc.container') = 1 ]"
 done
@@ -49,22 +50,30 @@ check "kafka accepts SIGTERM's exit status 143 as a clean stop (a stopped broker
 check "seaweedfs: StopTimeout is set (30 to 60 s) and systemd's TimeoutStopSec is longer, so systemd never kills podman before the container's own limit" bash -c "st=\$(sed -n 's/^StopTimeout=//p' '$rq/seaweedfs.container'); ts=\$(sed -n 's/^TimeoutStopSec=//p' '$rq/seaweedfs.container'); [ -n \"\$st\" ] && [ \"\$st\" -ge 30 ] && [ \"\$st\" -le 60 ] && [ \"\$ts\" -gt \"\$st\" ]"
 check "seaweedfs 4.x drops privileges itself: the unit sets no User=, UserNS= or :U volume option, and the S3 secret keeps a readable default mode (no mode=0400 or 0600)" bash -c "! grep -qE '^(User|UserNS)=|:U( |,|\$)' '$rq/seaweedfs.container' && ! grep -qE 'Secret=.*mode=0?[46]00' '$rq/seaweedfs.container'"
 check "volumes are named podman volumes with the local driver" bash -c "for v in postgresql seaweed valkey kafka; do grep -qx \"VolumeName=\$v-data\" '$rq'/\$v-data.volume && grep -qx 'Driver=local' '$rq'/\$v-data.volume || exit 1; done"
-check "no sudo, pkexec or run0 in any Quadlet, recipe file, helper, render script or in the CLAUDE.md datastore section" bash -c "! grep -E '(sudo|pkexec|run0)' '$rq'/* '$rjust' '$dslib' '$dsdir/render.sh' '$dsdir/datastore.env' && ! awk '/^## Datastore containers/{f=1;next} /^## /{f=0} f' '$here/CLAUDE.md' | grep -E '(sudo|pkexec|run0)'"
-# render must refuse bad pins
+check "no sudo, pkexec or run0 in any Quadlet, recipe file, helper, render script or in the CLAUDE.md datastore section" bash -c "! grep -E '(sudo|pkexec|run0)' '$rq'/* '$rjust' '$dslib' '$dsdir/render.sh' && ! awk '/^## Datastore containers/{f=1;next} /^## /{f=0} f' '$here/CLAUDE.md' | grep -E '(sudo|pkexec|run0)'"
+# render must refuse bad lines
 mkdir -p "$root/bad"
 bad_render() { # description, sed expression
     local d=$1 e=$2
-    rm -rf "${root:?}/bad"; mkdir -p "$root/bad"; cp -r "$dsdir/quadlets" "$root/bad/quadlets"; sed "$e" "$dsdir/datastore.env" >"$root/bad/datastore.env"
-    "$dsdir/render.sh" "$root/bad-out" "$root/bad" >"$root/out" 2>&1; rc=$?
+    rm -rf "${root:?}/bad"; mkdir -p "$root/bad"; sed "$e" "$list" >"$root/bad/images.txt"
+    "$dsdir/render.sh" "$root/bad-out" "$dsdir" "$root/bad/images.txt" >"$root/out" 2>&1; rc=$?
     check "render refuses $d" test "$rc" != 0
 }
-bad_render "a latest tag" 's/^VALKEY_TAG=.*/VALKEY_TAG=latest/'
-bad_render "a floating major tag" 's/^POSTGRESQL_TAG=.*/POSTGRESQL_TAG=17-alpine/'
-bad_render "a bad digest" 's/^KAFKA_DIGEST=.*/KAFKA_DIGEST=sha256:abc/'
-bad_render "a tag outside its major" 's/^SEAWEEDFS_TAG=.*/SEAWEEDFS_TAG=3.99/'
-bad_render "a missing pin" '/^KAFKA_DIGEST=/d'
-check "the dx image tree ships no kargs.d file (iommu=pt is opt-in now)" test ! -e "$here/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "dx.sh renders the Quadlets into /usr/share/containers/systemd/users, checks there is no [Install], imports the recipe file; the Containerfile copies the datastore directory" bash -c "grep -q 'render.sh /usr/share/containers/systemd/users /ctx/datastore' '$here/variants/dx/dx.sh' && grep -q 'grep -rq .^.\\[Install' '$here/variants/dx/dx.sh' && grep -q '72-octarine-datastore.just' '$here/variants/dx/dx.sh' && grep -q 'COPY variants/dx/datastore /datastore' '$here/variants/dx/Containerfile'"
+bad_render "a latest tag" 's/^\(valkey .*valkey\):9.1.3-alpine/\1:latest/'
+bad_render "a floating major tag" 's/postgres:17.12-alpine/postgres:17-alpine/'
+bad_render "a bad digest" 's/^\([a-z][a-z-]* .*@sha256:\)[0-9a-f]*/\1abc/'
+bad_render "a line without a digest" 's/^\(seaweedfs .*\)@sha256:[0-9a-f]*/\1/'
+bad_render "a missing image" '/^kafka /d'
+bad_render "an unknown name" 's/^kafka /airflow /'
+bad_render "a name listed twice" 's/^valkey /kafka /'
+check "render equals the old datastore.env render: each Quadlet is the template with only the placeholder replaced (independent sed)" bash -c "
+  rm -rf '$root/ind'; mkdir -p '$root/ind'; cp '$dsdir'/quadlets/* '$root/ind/'
+  for svc in postgresql valkey seaweedfs kafka; do
+    ref=\$(awk -v n=\$svc '\$1 == n {print \$2}' '$list'); up=\$(echo \$svc | tr a-z A-Z)
+    sed -i \"s|@\${up}_IMAGE@|\$ref|g\" '$root/ind'/*.container
+  done
+  diff -r '$root/ind' '$rq'"
+check "dx.sh renders the Quadlets into /usr/share/containers/systemd/users, checks there is no [Install], imports the recipe file; the Containerfile copies the datastore directory" bash -c "grep -q 'render.sh /usr/share/containers/systemd/users /ctx/datastore /datastore-images/images.txt' '$here/variants/dx/dx.sh' && grep -q 'grep -rq .^.\\[Install' '$here/variants/dx/dx.sh' && grep -q '72-octarine-datastore.just' '$here/variants/dx/dx.sh' && grep -q 'COPY variants/dx/datastore /datastore' '$here/variants/dx/Containerfile'"
 check "the datastore recipes exist only in the dx tree: the default image's recipe files define neither" bash -c "! grep -E '^datastore' '$here/system_files/usr/share/ublue-os/just/'*.just"
 
 # ---- stubs for the recipes

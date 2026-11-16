@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# (retry marker 2026-11-15: the layout check is fixed; a failed key is not rebuilt on push, so this comment changes the component key)
 # Build Ghostty from the checked-out tag (lib/fetch-source.sh) with the pinned Zig (fetch-zig.sh, on PATH or in ZIG_DIR) and stage the image content:
 #
 #   build.sh <upstream.env> <source dir> <out dir>

@@ -13,6 +13,7 @@ alias auto-update := toggle-updates
 # Boot into this device's BIOS/UEFI screen
 bios:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     if [ -d /sys/firmware/efi ]; then
       systemctl reboot --firmware-setup
     else
@@ -22,6 +23,7 @@ bios:
 # Show BIOS info
 bios-info:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     echo "Manufacturer: $(sudo dmidecode -s baseboard-manufacturer)"
     echo "Product Name: $(sudo dmidecode -s baseboard-product-name)"
     echo "Version: $(sudo dmidecode -s bios-version)"
@@ -38,6 +40,7 @@ logs-last-boot:
 # Enroll Nvidia driver & KMOD signing key for secure boot - Enter password "universalblue" if prompted
 enroll-secure-boot-key:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     ENROLLMENT_PASSWORD="universalblue"
     SECUREBOOT_KEY=/etc/pki/akmods/certs/akmods-ublue.der
     sudo mokutil --timeout -1
@@ -47,6 +50,7 @@ enroll-secure-boot-key:
 # Check for local overrides
 check-local-overrides:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     diff -r \
       --suppress-common-lines \
       --color="always" \
@@ -80,6 +84,7 @@ check-local-overrides:
 # Gather device info to a pastebin
 device-info:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     fpaste <(rpm-ostree status) <(fpaste --sysinfo --printonly) <(flatpak list --columns=application,version,options)
 
 # Show the changelog
@@ -96,6 +101,7 @@ update-firmware:
 # Clean up old and unused podman images, volumes, flatpak packages and rpm-ostree content
 clean-system:
     #!/usr/bin/bash
+    [ -r /usr/share/octarine-os/lib/emoji.sh ] && . /usr/share/octarine-os/lib/emoji.sh
     podman image prune -af
     flatpak uninstall --unused
     rpm-ostree cleanup -bm

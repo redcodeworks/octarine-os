@@ -128,12 +128,12 @@ conf="$SCHEDULER_USER_CONF"
 # ---- shape
 reset; run '' --help
 check "help: usage text, exit 0, names every flag" bash -c "[ $rc = 0 ] && grep -q -- '--boot' '$root/out' && grep -q -- '--gamemode' '$root/out' && grep -q -- '--status' '$root/out' && grep -q -- '--list' '$root/out' && grep -q -- '--yes' '$root/out' && grep -q -- '--no' '$root/out'"
-check "recipe: group Setup, a single comment line, placed above the toolbox recipe" bash -c "awk '/^# Choose a sched_ext CPU scheduler/{c=NR} /^\\[group\\(.Setup.\\)\\]/ && c && NR==c+1 {g=1} /^scheduler \\*args:/{s=NR} /^toolbox \\*args:/{t=NR} END{exit !(g && s && t && s<t)}' '$justfile' && [ \$(grep -n '^# Choose a sched_ext CPU scheduler' '$justfile' | head -1 | cut -d: -f2 | wc -c) -lt 90 ]"
+check "recipe: just lists scheduler with a description" bash -c "just --justfile '$justfile' --list 2>&1 | grep -qE '^ +scheduler .*# ?.+'"
 check "recipe: no sudo outside the one boot step, none after the toolbox recipe from this change" bash -c "! sed -n '/^toolbox \\*args:/,\$p' '$justfile' | grep -q 'scx@'"
 reset; run '' --bogus
 check "unknown option: exit 2 with usage" test "$rc" = 2
 reset; run '' --boot nosuch
-check "unknown scheduler name for --boot: exit 2, lists the known ones, nothing run" bash -c "[ $rc = 2 ] && grep -q 'Known: none flash lavd rusty' '$root/out' && ! grep -q sudo '$LOG'"
+check "unknown scheduler name for --boot: exit 2, lists the known ones, nothing run" bash -c "[ $rc = 2 ] && for n in none flash lavd rusty; do grep -q \"Known:.*\\b\$n\\b\" '$root/out' || exit 1; done && ! grep -q sudo '$LOG'"
 reset; run '' --gamemode ../x
 check "unknown name for --gamemode: exit 2, nothing written" bash -c "[ $rc = 2 ] && [ ! -e '$conf' ]"
 reset; FAKE_UID=0 run '' --boot rusty

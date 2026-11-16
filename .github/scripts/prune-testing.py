@@ -11,7 +11,7 @@ Rules:
   * Delete the cosign signature version (`sha256-<digest>.sig`) of every deleted image, and any
     signature whose image no longer exists.
   * Delete untagged image versions older than UNTAGGED_DAYS.
-  * Refuse to delete more than MAX_DELETES versions in one run (a safety net against a bug; 400 because a week of testing builds
+  * Refuse to delete more than MAX_DELETES versions in one run (a safety net against a bug, live runs only: a dry run prints the plan and warns; 400 because a week of testing builds
     plus their signatures is over 200 versions, and 60 made every weekly run refuse once the backlog had grown).
 
 PRUNE_KIND=released prunes a repository that has no `testing` tags (the NVIDIA variant, which publishes only
@@ -146,14 +146,19 @@ def prune_dx(versions, sigs, images):
 
 
 def finish(plan):
-    if len(plan) > MAX_DELETES:
-        sys.exit(f"Refusing to delete {len(plan)} versions (limit {MAX_DELETES})")
+    over = len(plan) > MAX_DELETES
     if not plan:
         print("Nothing to prune.")
         return
     if DRY_RUN:
+        # a dry run prints the plan and ends green, also above the limit: it deletes nothing, so the safety net has nothing to refuse (it would only turn the
+        # run red and stop the passes after it); the warning says what a live run would do
         print(f"Dry run: {len(plan)} versions would be deleted.")
+        if over:
+            print(f"::warning::the plan has {len(plan)} versions, over the limit of {MAX_DELETES}: a live run would refuse to delete them")
         return
+    if over:
+        sys.exit(f"Refusing to delete {len(plan)} versions (limit {MAX_DELETES})")
     if not API_BASE:
         sys.exit("API_BASE is required to delete")
     for v in plan:

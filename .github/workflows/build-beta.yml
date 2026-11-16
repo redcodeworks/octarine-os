@@ -44,9 +44,53 @@ jobs:
     secrets:
       SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
 
+  # The repository's own tests, run INSIDE the beta base the image is built on (the same test-suite action as the required `test` check, which runs on the stable base): a
+  # change that only a coming Fedora or a new Universal Blue beta breaks fails here, in that Fedora, BEFORE the expensive build, and blocks the beta publish (the build job
+  # needs this job). The base is resolved by the same base-pin.sh as the build step below (one beta base per run except in the rare race of a base published between the two).
+  base:
+    name: Beta base for the tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the beta base to a digest and verify it
+        id: pin
+        run: |
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          echo "image=${BASE_IMAGE}@${BASE_PIN}" >> "${GITHUB_OUTPUT}"
+          echo "Tests run on ${BASE_IMAGE}:${FEDORA_VERSION} = ${BASE_PIN}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  tests:
+    name: Tests on the beta base
+    needs: base
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    container: ${{ needs.base.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run the tests
+        uses: ./.github/actions/test-suite
+
   build:
     name: Build beta image
-    needs: binaries
+    needs: [binaries, tests]
     runs-on: ubuntu-26.04
 
     outputs:
@@ -121,7 +165,7 @@ jobs:
 
       - name: Verify the brew image signature
         run: |
-          cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
       # The prebuilt binaries image (octarine-os-binaries, built from binaries/ by the binaries job): verify the digest it
@@ -160,7 +204,7 @@ jobs:
           pin_line=$(.github/scripts/base-pin.sh)
           BASE_PIN=${pin_line#BASE_PIN=}
           [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
-          if ! podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
+          if ! .github/scripts/retry.sh podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
@@ -193,174 +237,7 @@ jobs:
       # Fail the build before anything is pushed if the image is missing what it should have
       - name: Smoke test image
         run: |
-          podman run --rm -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" -e VERSION_RE='beta-[0-9]{8}-[0-9a-f]{7,}' "${IMAGE_NAME}:${DEFAULT_TAG}" bash -c '
-            fail=0
-            check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
-
-            echo "== os-release (the Fedora release the base tag resolved to)"
-            cat /etc/os-release
-            echo "== enabled system units"
-            systemctl list-unit-files --state=enabled --no-legend --no-pager || true
-            echo "== enabled user units (global)"
-            systemctl --global list-unit-files --state=enabled --no-legend --no-pager || true
-            echo "== checks"
-
-            check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
-            check "menu helper library shipped" "test -s /usr/share/octarine-os/lib/menu.sh"
-            # prebuilt binaries (binaries/: scx, extest): installed only; whether a scheduler loads is for a real machine to say
-            check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
-            for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
-                check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
-                check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
-            done
-            check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
-            check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
-            check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
-            check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
-            check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
-            check "scheduler units: the template and the polkit rule ship, the helpers and the GameMode hooks are executable" "test -f /usr/lib/systemd/system/scx@.service && test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for f in scx-preflight scx-wait-idle scx-run scx-verify gamemode-start gamemode-end; do test -x /usr/libexec/octarine-os/\$f || exit 1; done"
-            check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
-            check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
-            check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
-            check "optional ghostty: installed with its desktop file, an icon the hicolor cache lists, a working --version and its libraries resolved, or recorded as left out (MISSING or REMOVED)" "if test -x /usr/bin/ghostty; then test -f /usr/share/applications/com.mitchellh.ghostty.desktop && test -f /usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache && /usr/bin/ghostty --version >/dev/null && out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\"; else test -s /usr/share/licenses/octarine-os-binaries/MISSING || test -s /usr/share/licenses/octarine-os-binaries/REMOVED; fi"
-            check "source and build records ship for both binary images" "for i in scx extest; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
-            check "flatpak-preinstall recipe exists" "grep -q ^flatpak-preinstall /usr/share/ublue-os/just/60-custom.just"
-            # pcp is an optional package: its units are enabled only when it is installed
-            check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
-            check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
-            check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
-            check "brew-upgrade.timer stays disabled" "! systemctl is-enabled brew-upgrade.timer"
-            check "brew tarball present" "test -s /usr/share/homebrew.tar.zst"
-            check "brew profile script present" "test -f /etc/profile.d/brew.sh"
-            check "our brew preset present" "grep -qx \"disable brew-upgrade.timer\" /usr/lib/systemd/system-preset/00-octarine-brew.preset"
-            check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
-
-            # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-            CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev gcc gcc-c++ make binutils"
-            for p in $CRITICAL; do
-              check "package $p" "rpm -q $p"
-              # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
-              check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
-            done
-            # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
-            for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
-              check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
-            done
-            check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
-            # OPTIONAL packages: informational only, never fail (the missing list is reported below)
-            for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-                     gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
-                     nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
-                     cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
-                     pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
-                     restic rclone guestfs-tools libguestfs \
-                     libguestfs-xfs virt-v2v; do
-              if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
-            done
-            # GPaste (optional, shipped but not enabled): when installed, the extension directory, its UUID and the compiled schema must be there
-            if rpm -q gnome-shell-extension-gpaste >/dev/null 2>&1; then
-              check "GPaste extension directory and UUID" "grep -qF GPaste@gnome-shell-extensions.gnome.org /usr/share/gnome-shell/extensions/GPaste@gnome-shell-extensions.gnome.org/metadata.json"
-              check "GPaste schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.GPaste show-history | grep -q Alt"
-              check "GPaste daemon is D-Bus activated" "test -f /usr/share/dbus-1/services/org.gnome.GPaste.service"
-              check "GPaste is not enabled by default" "! grep -q GPaste /etc/dconf/db/distro.d/90-octarine-os"
-            else
-              echo "INFO GPaste not installed (listed in optional-packages-missing)"
-            fi
-            # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
-            check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
-            check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
-            check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
-            check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
-            check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
-            check "zsh login files source /etc/profile (brew.sh relies on it)" "grep -q /etc/profile /etc/zprofile"
-            check "skel zshrc" "test -s /etc/skel/.zshrc"
-            check "sudo keeps a wheel rule" "grep -qE \"^%wheel[[:space:]]\" /etc/sudoers"
-            check "sudo PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/sudo"
-            check "polkit PAM keeps the password fallback" "grep -qE \"^auth[[:space:]]+include[[:space:]]+system-auth\" /etc/pam.d/polkit-1"
-            check "pam_u2f module present" "test -e /usr/lib64/security/pam_u2f.so"
-            check "firefox removed" "! rpm -q firefox"
-            check "toolbox removed" "! rpm -q toolbox"
-            check "distrobox present" "rpm -q distrobox"
-            check "gnome-software removed" "! rpm -q gnome-software"
-            for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
-            check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
-            check "pretty name" "grep -qx \"PRETTY_NAME=\\\"octarineOS\\\"\" /etc/os-release"
-            check "image id" "grep -qx \"IMAGE_ID=\\\"octarine-os\\\"\" /etc/os-release"
-            check "image version format" "grep -qE \"^IMAGE_VERSION=\\\"\$VERSION_RE\\\"\\\$\" /etc/os-release"
-
-            check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
-            check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
-            check "signature policy also covers the NVIDIA variant repository" "grep -q $REF-nvidia /etc/containers/policy.json"
-            check "signature policy also covers the dx variant repository" "grep -q $REF-dx /etc/containers/policy.json"
-            check "signature policy also covers the NVIDIA dx repository" "grep -q $REF-nvidia-dx /etc/containers/policy.json"
-            check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
-            check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
-            check "sudoers valid" "visudo -c"
-            check "sudo timestamp_timeout is 30 (minutes, not seconds)" "grep -qx \"Defaults timestamp_timeout=30\" /etc/sudoers.d/10-timestamp-timeout"
-            check "sudoers fragment valid" "visudo -c -f /etc/sudoers.d/10-timestamp-timeout"
-            check "firewalld config valid" "firewall-offline-cmd --check-config"
-            check "no iommu karg file (no image ships one; it is opt-in)" "! test -e /usr/lib/bootc/kargs.d/10-iommu.toml"
-            check "ujust custom recipes" "test -f /usr/share/ublue-os/just/60-custom.just"
-            check "dev-toolbox definition" "grep -q \"^\\[dev-toolbox\\]\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
-            check "dev-toolbox definition has no per-user keys" "! grep -qE \"^(exported_bins|home)\" /usr/share/ublue-os/distrobox/dev-toolbox.ini"
-            check "rocm toolbox definition and the box-export helper" "grep -q \"^\\[rocm\\]\" /usr/share/ublue-os/distrobox/rocm.ini && grep -q additional_packages /usr/share/ublue-os/distrobox/rocm.ini && test -s /usr/share/octarine-os/lib/box-export.sh"
-            check "gaming toolbox definition" "grep -q \"^\\[gaming\\]\" /usr/share/ublue-os/distrobox/gaming.ini"
-            check "gaming toolbox isolates its home" "grep -qx ISOLATED_HOME=true /usr/share/ublue-os/distrobox/gaming.conf"
-            check "dev-toolbox settings" "grep -q ^TOOLS= /usr/share/ublue-os/distrobox/dev-toolbox.conf"
-            check "logo files" "test -s /usr/share/octarine-os/logo/octarine-logo.png && test -s /usr/share/octarine-os/logo/octarine-logo-neutral-512.png"
-            check "GDM logo override file" "grep -qF octarine-logo.png /usr/share/glib-2.0/schemas/zz-octarine-login-screen.gschema.override"
-            check "GDM logo override compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.login-screen logo | grep -qF octarine-logo.png"
-            check "plymouth theme file" "grep -qx ModuleName=two-step /usr/share/plymouth/themes/octarine/octarine.plymouth"
-            check "plymouth watermark is ours" "cmp /usr/share/plymouth/themes/octarine/watermark.png /usr/share/octarine-os/logo/octarine-logo.png"
-            check "plymouth theme selected" "grep -qx Theme=octarine /etc/plymouth/plymouthd.conf"
-            check "initramfs holds the watermark" "lsinitrd /usr/lib/modules/*/initramfs.img | grep -qF usr/share/plymouth/themes/octarine/watermark.png"
-            check "dconf profile lists the distro database" "grep -qx system-db:distro /etc/dconf/profile/user"
-            check "dconf keyfile of the image shipped" "grep -q ^enabled-extensions= /etc/dconf/db/distro.d/90-octarine-os"
-            check "dconf distro database is newer than our keyfile (dconf update ran)" "test /etc/dconf/db/distro -nt /etc/dconf/db/distro.d/90-octarine-os"
-            check "dconf distro database holds our hot corner default" "grep -aq enable-hot-corners /etc/dconf/db/distro"
-            check "dconf distro database holds our button-layout default" "grep -aq button-layout /etc/dconf/db/distro"
-            for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
-              check "fish accepts $f" "fish --no-execute $f"
-            done
-            check "gamemode defaults file shipped" "grep -qx renice=10 /etc/gamemode.ini"
-            check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl && test -s /etc/niri/35-gestures.kdl && test -s /etc/niri/45-workspaces.kdl && test -s /etc/niri/60-window-rules.kdl"
-            check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml && test -s /usr/share/octarine-os/niri-setup/keybinds/standard.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/compact.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/hhkb.kdl.in"
-            check "niri accepts the shipped config when niri is installed" "! command -v niri || niri validate -c /etc/niri/config.kdl"
-            check "niri-setup recipe exists" "grep -q ^niri-setup /usr/share/ublue-os/just/60-custom.just"
-
-            # ujust recipes added with switch-image, toggle-updates, update and luks-tpm-unlock (jq and skopeo are in CRITICAL above)
-            for f in 10-update 10-update-base 30-distrobox 30-distrobox-base 15-luks 40-nvidia 50-akmods 60-custom; do
-              check "just file $f.just exists" "test -f /usr/share/ublue-os/just/$f.just"
-            done
-            check "update helper library shipped" "test -s /usr/share/octarine-os/lib/update-services.sh"
-            for u in rpm-ostreed-automatic.timer flatpak-system-update.timer brew-update.timer brew-upgrade.timer; do
-              check "update unit $u exists" "systemctl cat $u"
-            done
-            for u in flatpak-user-update.timer octarine-distrobox-upgrade.timer octarine-distrobox-upgrade.service; do
-              check "user update unit $u exists" "test -f /usr/lib/systemd/user/$u"
-            done
-            check "jq and skopeo run" "jq --version && skopeo --version"
-            check "staged automatic image updates are on by default (ujust toggle-updates is the user switch)" "systemctl is-enabled rpm-ostreed-automatic.timer && grep -qx AutomaticUpdatePolicy=stage /etc/rpm-ostreed.conf"
-            check "mcelog is not masked and has the Intel-only drop-in" "! systemctl is-enabled mcelog.service 2>&1 | grep -qx masked && grep -q GenuineIntel /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf"
-            check "automatic update retry drop-in: bounded on-failure restart" "grep -qx Restart=on-failure /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx RestartSec=60 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf && grep -qx StartLimitBurst=5 /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/50-octarine-retry.conf"
-            check "automatic update service waits for the network (base drop-in) and NetworkManager-wait-online is enabled" "grep -q After=network-online.target /usr/lib/systemd/system/rpm-ostreed-automatic.service.d/override.conf && systemctl is-enabled NetworkManager-wait-online.service"
-            summary=$(just --justfile /usr/share/ublue-os/justfile --summary 2>&1)
-            check "the assembled justfile parses (just --summary)" "just --justfile /usr/share/ublue-os/justfile --summary"
-            check "the experimental second launcher runs and lists the image own recipes without a base file import" "test -x /usr/bin/ojust && /usr/bin/ojust --list | grep -q toggle-motd && /usr/bin/ojust --list | grep -q niri-setup && ! grep -E ^import /usr/share/octarine-os/justfile | grep -q -- -base.just"
-            has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
-            for r in switch-image toggle-updates update luks-tpm-unlock toggle-motd toggle-user-motd; do
-              check "assembled justfile lists $r" "has_recipe $r"
-            done
-            count_recipe() { printf "%s\n" $summary | grep -cx -- "$1"; }
-            check "toggle-user-motd is listed exactly once (our wrapper of the base recipe)" "test \$(count_recipe toggle-user-motd) = 1"
-            check "the base 00-default.just is kept as 00-default-base.just and ours imports it" "test -s /usr/share/ublue-os/just/00-default-base.just && grep -qF 00-default-base.just /usr/share/ublue-os/just/00-default.just"
-            check "one motd script (executable) and the profile.d hook that calls it, interactive shells only" "test -x /usr/libexec/octarine-os/motd && grep -qF /usr/libexec/octarine-os/motd /etc/profile.d/user-motd.sh && grep -qF \"*i*)\" /etc/profile.d/user-motd.sh"
-            for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
-              check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
-            done
-            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
-            exit $fail
-          '
+          podman run --rm -v "${PWD}/.github/scripts/default-smoke.sh:/default-smoke.sh:ro" -e REF="${IMAGE_REGISTRY}/${IMAGE_NAME}" -e BASE_TAG="${BASE_REF##*:}" -e VERSION_RE='beta-[0-9]{8}-[0-9a-f]{7,}' "${IMAGE_NAME}:${DEFAULT_TAG}" bash /default-smoke.sh
 
       # The compilers and the linker the image ships (gcc, gcc-c++, make, binutils) must work: compile, link and run a C and a C++ program
       - name: Compiler smoke test
@@ -388,8 +265,8 @@ jobs:
       # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
       - name: Secure Boot check of the kernel
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/retry.sh sudo apt-get update -qq
+          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
           .github/scripts/secureboot-check.sh "${IMAGE_NAME}:${DEFAULT_TAG}"
 
       - name: Check the version is channel-neutral
@@ -474,7 +351,7 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
 
@@ -499,3 +376,41 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: .github/scripts/dispatch-dx.sh beta "${GITHUB_SHA}"
+
+  # A failed weekly beta image build: ONE issue (label ci-failure-beta, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly beta image build
+    needs: [binaries, tests, build, sign]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-beta
+          LABEL_DESC: the weekly beta image build failed (one open issue at a time)
+          ISSUE_TITLE: "The beta image build failed"
+          ISSUE_BODY: "The weekly build of octarine-os:beta failed: a coming Fedora release or a new Universal Blue beta base may break the image. See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, Beta channel."
+          FAIL_COMMENT: "weekly beta image build failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.sign.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-beta
+          RECOVER_COMMENT: "the next weekly beta image build succeeded"
+        run: .github/scripts/ci-issue.sh recover

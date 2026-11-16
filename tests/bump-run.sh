@@ -14,6 +14,7 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/   
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 bin="$root/bin"; mkdir -p "$bin"
 export GH_LOG="$root/gh.log"
+export GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0
 cat >"$bin/gh" <<'F'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
@@ -21,8 +22,9 @@ case "$1 $2" in
     "pr list") cat "${PR_LIST:-/dev/null}" ;;
     "pr create") echo "https://github.com/o/r/pull/${NEW_PR:-77}" ;;
     "pr edit") exit 0 ;;
-    "pr view") echo "https://github.com/o/r/pull/$3" ;;
+    "pr view") if [[ "$*" == *statusCheckRollup* ]]; then echo "${ROLLUP_N:-}"; else echo "https://github.com/o/r/pull/$3"; fi ;;
     "workflow run") [ -z "${GH_WF_FAIL:-}" ] ;;
+    "api repos/o/r/commits/"*) echo "${SUITES_N:-}" ;;
     *) exit 99 ;;
 esac
 F
@@ -32,7 +34,7 @@ mkrepo() { # dir: a working copy with a bare origin, the scripts, a builder.env 
     local wc=$1
     rm -rf "$wc" "$root/origin.git"; git init -q --bare -b testing "$root/origin.git"
     mkdir -p "$wc/.github/scripts" "$wc/binaries/lib" "$wc/keys"
-    cp "$here"/.github/scripts/bump-pr.sh "$here"/.github/scripts/bump-run.sh "$wc/.github/scripts/"
+    cp "$here"/.github/scripts/bump-pr.sh "$here"/.github/scripts/bump-checks.sh "$here"/.github/scripts/bump-run.sh "$wc/.github/scripts/"
     printf 'BUILDER=registry.fedoraproject.org/fedora:45@sha256:%s\n' "$(printf 'a%.0s' {1..64})" >"$wc/binaries/builder.env"
     printf 'ARG BREW_TAG=20261108\nARG BREW_DIGEST=sha256:%s\nFROM x\n' "$(printf 'b%.0s' {1..64})" >"$wc/Containerfile"
     git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$root/origin.git"; git -C "$wc" push -q origin testing
@@ -43,10 +45,20 @@ mkrepo "$wc"; : >"$GH_LOG"; printf 'body text\n' >"$root/body.md"; : >"$root/prl
 pr() { (cd "$wc" && PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash .github/scripts/bump-pr.sh "$@") >"$root/run" 2>&1; rc=$?; }
 w1="sed -i s/^BUILDER=.*/BUILDER=new1/ binaries/builder.env"
 pr --branch bump/builder --title "Bump the builder to one" --body-file "$root/body.md" --message "m1" --file binaries/builder.env -- $w1
-check "helper, new PR: the branch is pushed with ONE commit that changes only the listed pin file, the PR is created into testing with the body and the by-hand note, Test is dispatched on the branch, action=opened" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/builder)\" = binaries/builder.env ] && [ \$(git -C '$root/origin.git' log --format=%s testing..bump/builder | wc -l) = 1 ] && grep -q '^gh pr create --base testing --head bump/builder --title Bump the builder to one' '$GH_LOG' && grep -q 'body text' '$GH_LOG' && grep -q 'gh workflow run test.yml --ref bump/builder' '$GH_LOG' && grep -qx 'action=opened' '$root/run'"
+check "helper, new PR: the branch is pushed with ONE commit that changes only the listed pin file, the PR is created into testing with the body and the by-hand note, Test is dispatched on the branch, action=opened" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/builder)\" = binaries/builder.env ] && [ \$(git -C '$root/origin.git' log --format=%s testing..bump/builder | wc -l) = 1 ] && grep -q '^gh pr create --base testing --head bump/builder --title Bump the builder to one' '$GH_LOG' && grep -q 'body text' '$GH_LOG' && grep -qE 'gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}' '$GH_LOG' && grep -qx 'action=opened' '$root/run'"
 printf '{"number":5,"title":"Bump the builder to one"}\n' >"$root/prlist"; : >"$GH_LOG"
 pr --branch bump/builder --title "Bump the builder to one" --body-file "$root/body.md" --message "m1" --file binaries/builder.env -- $w1
 check "helper, same title already open: nothing happens (no commit, no PR call, no dispatch), action=noop" bash -c "[ $rc = 0 ] && ! grep -qE '^gh (pr (create|edit)|workflow run)' '$GH_LOG' && grep -qx 'action=noop' '$root/run' && grep -qx 'pr_number=5' '$root/run'"
+wr="sed -i s/^BUILDER=.*/BUILDER=repair1/ binaries/builder.env"
+: >"$root/prlist"; pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
+before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
+printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
+ROLLUP_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
+check "helper, same title open but the PR has no test check (its commit already had a check suite): one EMPTY commit on the branch (no force-push, pin unchanged) and the checks are dispatched for the new commit" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $((before + 1)) ] && [ -z \"\$(git -C '$root/origin.git' diff --name-only bump/repair~1 bump/repair)\" ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG' && ! grep -qE '^gh pr (create|edit)' '$GH_LOG'"
+before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
+printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
+ROLLUP_N=0 SUITES_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
+check "helper, same title open, no test check and the tip has no Actions suite (an earlier repair commit): NO new commit, the checks are dispatched for the existing tip" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $before ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG'"
 w2="sed -i s/^BUILDER=.*/BUILDER=new2/ binaries/builder.env"
 printf '{"number":5,"title":"Bump the builder to one"}\n' >"$root/prlist"; : >"$GH_LOG"
 pr --branch bump/builder --title "Bump the builder to two" --body-file "$root/body.md" --message "m2" --file binaries/builder.env -- $w2

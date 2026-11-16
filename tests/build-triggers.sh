@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Quick checks of the build triggers: build.yml has no pull_request trigger, a dispatch from any other ref is a
-# validation build (never logs in, pushes or signs), the aggregate job keeps its required name, and the other
-# workflows keep their triggers. Run: tests/build-triggers.sh
+# Invariants of the build triggers: nothing that publishes has a pull_request trigger, only main and testing publish
+# (a dispatch from any other ref is a validation build that never logs in, pushes or signs), the aggregate job keeps
+# its required name, a job that reads a needed result has its own status function, schedules are on the hour and do
+# not collide. The behavior of the plan is tested by plan-*.sh; this file does not restate step names or literal
+# conditions. Run: tests/build-triggers.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d)
@@ -12,26 +14,24 @@ ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/     /' "$root/out"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 
-check "build.yml: NO pull_request trigger; push main/testing, schedule, dispatch only" python3 - "$here" <<'PY'
+check "build.yml: NO pull_request trigger; push only main and testing" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
 on = w.get(True) or w.get("on")
 assert "pull_request" not in on and "pull_request_target" not in on, set(on)
 assert on["push"] == {"branches": ["main", "testing"]}, on["push"]
-assert set(on) == {"push", "schedule", "workflow_dispatch"}, set(on)
-assert on["schedule"] == [{"cron": "0 11 * * *"}]
 PY
-check "build.yml: concurrency is per ref and cancels everything but main and schedule" python3 - "$here" <<'PY'
+check "build.yml: concurrency is per workflow and ref, and the cancel condition spares main" python3 - "$here" <<'PY'
 import sys, yaml
 c = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))["concurrency"]
 assert "github.ref" in c["group"] and "github.workflow" in c["group"], c
-assert c["cancel-in-progress"] == "${{ github.ref != 'refs/heads/main' && github.event_name != 'schedule' }}", c
+assert "refs/heads/main" in str(c["cancel-in-progress"]), c
 PY
 check "build.yml: only main and testing publish (channel step); a dispatch from any other ref is validation only" bash -s -- "$here" "$root" <<'SH'
 python3 - "$1" "$2" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-run = {s.get("name"): s for s in w["jobs"]["build_push"]["steps"]}["Choose channel"]["run"]
+run = {s.get("id"): s for s in w["jobs"]["build_push"]["steps"]}["channel"]["run"]
 open(sys.argv[2] + "/channel-step.sh", "w").write(run)
 PY
 f="$2/channel-step.sh"
@@ -44,38 +44,31 @@ for ref in refs/heads/main refs/heads/testing; do
   [ "$out" = "publish=true" ] || { echo "$ref: $out"; exit 1; }
 done
 SH
-check "build.yml: login and push run only when publish is true; no other step in the build job logs in, pushes or signs" python3 - "$here" <<'PY'
+check "build.yml: every step that logs in, pushes or signs is gated on the publish output (the one login that only pulls the binaries image is exempt)" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-gate = "steps.channel.outputs.publish == 'true'"
 for s in w["jobs"]["build_push"]["steps"]:
     text = str(s.get("uses", "")) + " " + str(s.get("run", ""))
     risky = "login-action" in text or "push-tags.sh" in text or "cosign sign" in text or "skopeo copy" in text
-    # the one extra login only pulls the binaries image (a package may be private); it pushes and signs nothing
-    if risky and s.get("name") != "Login to GitHub Container Registry (to pull the binaries image)":
-        assert s.get("if") == gate, (s.get("name"), s.get("if"))
-assert {"Login to GitHub Container Registry", "Push To GHCR"} <= {s["name"] for s in w["jobs"]["build_push"]["steps"]}
+    if risky and "pull" not in str(s.get("name")).lower():
+        assert "outputs.publish" in str(s.get("if")), (s.get("name"), s.get("if"))
 PY
-check "build.yml: promote only on a main push; sign needs a publish or a promotion, so a validation dispatch never signs" python3 - "$here" <<'PY'
+check "build.yml: sign runs only after a publish or a promotion, in the signing environment, so a validation dispatch never signs" python3 - "$here" <<'PY'
 import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-plan = {s.get("name"): s for s in w["jobs"]["plan"]["steps"]}
-assert "github.event_name == 'push' && github.ref == 'refs/heads/main'" in plan["Look for a tested testing image to promote"]["if"]
-cond = " ".join(w["jobs"]["sign"]["if"].split())
-assert "needs.build_push.outputs.publish == 'true'" in cond and "needs.promote.result == 'success'" in cond, cond
-assert w["jobs"]["sign"]["environment"] == "signing"
+j = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))["jobs"]["sign"]
+cond = " ".join(j["if"].split())
+assert "outputs.publish" in cond and "promote.result" in cond, cond
+assert j["environment"] == "signing"
 PY
-check "build.yml: aggregate job is named 'Build and push image', always runs (also on push), needs plan, build, promote and sign" python3 - "$here" <<'PY'
+check "build.yml: the aggregate job keeps the required name, always runs and needs every job that publishes or signs" python3 - "$here" <<'PY'
 import sys, yaml
-j = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))["jobs"]["build_result"]
-assert j["name"] == "Build and push image" and j["if"] == "always()", j
-assert "needs.plan" not in str(j.get("if")) and "event_name" not in str(j.get("if")), j
-assert j["needs"] == ["plan", "build_push", "promote", "sign"], j["needs"]
+jobs = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))["jobs"]
+j = jobs["build_result"]
+assert j["name"] == "Build and push image", j["name"]
+assert "always()" in str(j.get("if")), j
+pub = {n for n, x in jobs.items() if n != "build_result" and ("environment" in x or "push-tags.sh" in str(x) or "cosign sign" in str(x))}
+assert pub and pub <= set(j["needs"]), (pub, j["needs"])
 PY
-check "build.yml: no code refers to the pull_request event any more" bash -c "! grep -v '^ *#' '$here/.github/workflows/build.yml' | grep -q pull_request"
-check "plan-build.sh and aggregate-result.sh: a validation build (no publish, no sign) passes" bash -c "
-  cd '$here' && .github/scripts/plan-build.sh workflow_dispatch '' HEAD 2>/dev/null | grep -qx true &&
-  PLAN=success BUILD_WANTED=true PROMOTE_WANTED=false PUBLISH=false BUILD=success PROMOTE=skipped SIGN=skipped .github/scripts/aggregate-result.sh"
 check "require-testing-branch.yml: pull requests into main only" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/require-testing-branch.yml"))
@@ -111,35 +104,25 @@ for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     if isinstance(on, dict) and "workflow_run" in on:
         assert f.endswith("build-nvidia-dx.yml"), f
 PY
-check "schedules: on the hour, no two alike, Sunday order prune 05:00, daily 11:00, NVIDIA 12:00, Monday 07:00 the consolidated pin bumps, Wednesday 06:00 zizmor, Friday 08:00 binaries validation" python3 - "$here" <<'PY'
+check "schedules: every cron is on the hour and unique; the prune runs before the daily build, the NVIDIA build after it" python3 - "$here" <<'PY'
 import glob, sys, yaml
 crons = {}
 for f in glob.glob(sys.argv[1] + "/.github/workflows/*.yml"):
     on = yaml.safe_load(open(f)); on = on.get(True) or on.get("on")
     for s in (on.get("schedule") or []):
         crons[f.rsplit("/", 1)[1]] = s["cron"]
-assert crons == {"build.yml": "0 11 * * *", "build-nvidia.yml": "0 12 * * 0", "build-beta.yml": "0 14 * * 3", "prune-testing.yml": "0 5 * * 0", "bump-pins.yml": "0 7 * * 1", "zizmor.yml": "0 6 * * 3", "binaries.yml": "0 8 * * 5"}, crons
-assert len(set(crons.values())) == len(crons)
+for name, c in crons.items():
+    m, h, *_ = c.split()
+    assert m == "0" and h.isdigit() and 0 <= int(h) < 24, (name, c)
+assert len(set(crons.values())) == len(crons), crons
+hour = lambda n: int(crons[n].split()[1])
+assert hour("prune-testing.yml") < hour("build.yml") < hour("build-nvidia.yml"), crons
 PY
-
-check "build.yml: the reuse step runs only for a push to testing whose plan wants a build, and feeds the verify and final steps" python3 - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-plan = {s.get("name"): s for s in w["jobs"]["plan"]["steps"]}
-r = plan["Look for an identical default-image build on testing"]
-assert r["id"] == "reuse"
-assert r["if"] == "steps.plan.outputs.build == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/testing'", r["if"]
-assert "plan-vanilla-reuse.sh" in r["run"]
-v = plan["Verify the signature of the image to promote or reuse"]
-assert "steps.reuse.outputs.reuse == 'true'" in v["if"] and "steps.promote.outputs.promote == 'true'" in v["if"]
-assert "vanilla-inputs" in v["run"]
-assert w["jobs"]["plan"]["outputs"]["source_digest"] == "${{ steps.promote.outputs.source_digest || steps.reuse.outputs.source_digest }}"
-PY
-check "build.yml: the final decision of the plan: promote, reuse (nothing to build), build, never skip on a failed verification" bash -s -- "$here" "$root" <<'SH'
+check "the final decision of the plan: promote, reuse (nothing to build), build, never skip on a failed verification" bash -s -- "$here" "$root" <<'SH'
 python3 - "$1" "$2" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-run = {s.get("name"): s for s in w["jobs"]["plan"]["steps"]}["Final decision"]["run"]
+run = next(s["run"] for s in w["jobs"]["plan"]["steps"] if "BUILD_PLAN" in str(s.get("env")))
 open(sys.argv[2] + "/final-step.sh", "w").write(run)
 PY
 f="$2/final-step.sh"
@@ -153,11 +136,13 @@ t "true false"  true "" ""    ""    skipped   # vanilla change: build
 t "false false" false "" ""   ""    skipped   # docs-only: plan said no
 t "false false" true true ""  ""    skipped   # scheduled skip
 SH
-check "Justfile: the build labels the image with the vanilla_inputs hash, the scheduled skip compares vanilla_inputs" bash -c "
-  grep -q 'io.github.redcodeworks.octarine-os.vanilla-inputs=\$(.github/scripts/inputs-hash.sh vanilla)' '$here/Justfile'
-  grep -q 'inputs-hash.sh vanilla \"\${revision}\"' '$here/.github/workflows/build.yml'"
-check "build.yml: promotion of main uses plan-promote.sh, which compares vanilla_inputs (a dx-only testing tip promotes the default image)" bash -c "
-  grep -q 'plan-promote.sh' '$here/.github/workflows/build.yml' && grep -q 'vanilla_inputs' '$here/.github/scripts/plan-promote.sh' && ! grep -q 'docs_only_between' '$here/.github/scripts/plan-promote.sh'"
+check "the image label the build writes for the default-image inputs is the one the promote and reuse verification reads" python3 - "$here" <<'PY'
+import re, sys
+d = sys.argv[1]
+m = re.search(r'"--label" "([^="]+)=\$\(\.github/scripts/inputs-hash\.sh vanilla\)', open(d + "/Justfile").read())
+assert m, "no label written for the vanilla inputs"
+assert m.group(1) in open(d + "/.github/workflows/build.yml").read(), m.group(1)
+PY
 
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

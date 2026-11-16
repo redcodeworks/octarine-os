@@ -63,7 +63,7 @@ dx_inputs() { _inputs dx "$@"; }
 # stops, without a match, at the first commit whose vanilla_inputs differ from <tip>'s (a default-image change lies
 # between). Prints `<tag> <digest>` and returns 0, or prints the reason on stderr and returns 1.
 nearest_image_for_inputs() {
-    local tip=$1 want c n=0 sha digest
+    local tip=$1 want c n=0 sha digest rc
     local max=${MAX_WALK:-50}
     want=$(vanilla_inputs "${tip}")
     for c in $(git rev-list --first-parent "${tip}"); do
@@ -73,9 +73,16 @@ nearest_image_for_inputs() {
             return 1
         fi
         for sha in "$(git rev-parse --short "${c}")" "$(git rev-parse --short=7 "${c}")"; do
-            if digest=$("${REGISTRY_LOOKUP:?REGISTRY_LOOKUP}" "testing-${sha}" 2> /dev/null) && [[ -n "${digest}" ]]; then
+            rc=0
+            digest=$("${REGISTRY_LOOKUP:?REGISTRY_LOOKUP}" "testing-${sha}" 2> /dev/null) || rc=$?
+            if [[ "${rc}" == 0 && -n "${digest}" ]]; then
                 echo "testing-${sha} ${digest}"
                 return 0
+            fi
+            # the lookup contract: 3 = the tag does not exist (keep walking), anything else = the registry could not be read: that is an ERROR (return 2), never "no image"
+            if [[ "${rc}" != 0 && "${rc}" != 3 ]]; then
+                echo "could not read the registry while looking for testing-${sha} (lookup exit ${rc}): not treating that as a missing image" >&2
+                return 2
             fi
         done
     done

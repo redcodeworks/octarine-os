@@ -35,6 +35,7 @@ case "$1 $2" in
             if (( n < STALE_READS )); then echo $((n + 1)) > "${REG}/${tag}.reads"; cat "${REG}/${tag}.old"; exit 0; fi
         fi
         [[ -f "${REG}/${tag}" ]] && cat "${REG}/${tag}" || exit 1 ;;
+    "manifest-digest "*) echo "sha256:$(sha256sum < "$2" | sed 's/ .*//')" ;;
     "copy --all")
         [[ "$3" == --preserve-digests ]] || exit 1
         src="${4#docker://}"; dst="${5#docker://}"; want="${src##*@}"
@@ -73,7 +74,7 @@ STALE_READS=2 run local:build ghcr.io/o/img a b
 STALE_READS=9 READBACK_TRIES=3 run local:build ghcr.io/o/img a b
 [[ $? -ne 0 ]] && grep -q 'after 3 reads' "$root/log" && pass "a registry that stays stale beyond the tries still fails, naming the tries" || bad "persistently stale"
 BREAK_COPY=1 run local:build ghcr.io/o/img a b
-[[ $? -ne 0 ]] && grep -q '::error::b is' "$root/log" && pass "a copy that changes the digest fails the step" || bad "broken copy"
+[[ $? -ne 0 ]] && grep -q '::error::.*img:b is' "$root/log" && pass "a copy that changes the digest fails the step" || bad "broken copy"
 run local:build ghcr.io/o/img
 [[ $? -ne 0 ]] && pass "no tag: fails" || bad "no tag"
 

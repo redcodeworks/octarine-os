@@ -13,7 +13,7 @@ check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 
 # ---- the git repository: main has c1 c2 c3, a side branch has an extra commit (not on main)
 mkdir -p "$root/repo/.github/scripts" "$root/bin" "$root/reg"
-cp "$here/.github/scripts/registry-digest.sh" "$root/repo/.github/scripts/"
+cp "$here/.github/scripts/registry-digest.sh" "$here/.github/scripts/registry-read.sh" "$here/.github/scripts/registry-settled.sh" "$here/.github/scripts/cosign-check.sh" "$here/.github/scripts/retry.sh" "$root/repo/.github/scripts/"
 cp "$script" "$root/repo/.github/scripts/"
 cd "$root/repo"
 git init -q -b main . && git config user.email t@example.invalid && git config user.name t
@@ -39,9 +39,9 @@ echo "skopeo $*" >>"$FAKE_LOG"
 split() { ref=${1#docker://}; img=${ref%%[:@]*}; img=${img##*/}; rest=${ref#*[:@]}; case "$ref" in *@sha256:*) kind=digest ;; *) kind=tag ;; esac; }
 resolve() { split "$1"; if [ "$kind" = digest ]; then d=$rest; [ -e "$reg/$img/cfg/$d" ] || return 1; else d=$(cat "$reg/$img/tag/$rest" 2>/dev/null) || return 1; fi; echo "$d"; }
 case "$1 $2" in
-    "inspect --raw") d=$(resolve "$3") || exit 1; printf 'MANIFEST:%s' "$d" ;;
+    "inspect --raw") [ -z "${FAKE_READ_ERROR:-}" ] || { echo "dial tcp: i/o timeout" >&2; exit 1; }; d=$(resolve "$3") || { echo "manifest unknown" >&2; exit 1; }; printf 'MANIFEST:%s' "$d" ;;
     "manifest-digest "*) sed 's/^MANIFEST://' "$2" ;;
-    "inspect --config") d=$(resolve "$3") || exit 1; split "$3"; cat "$reg/$img/cfg/$d" ;;
+    "inspect --config") [ -z "${FAKE_READ_ERROR:-}" ] || { echo "dial tcp: i/o timeout" >&2; exit 1; }; d=$(resolve "$3") || { echo "manifest unknown" >&2; exit 1; }; split "$3"; cat "$reg/$img/cfg/$d" ;;
     "list-tags "*) split "$2"; printf '{"Tags":['; ls "$reg/$img/tag" 2>/dev/null | sed 's/.*/"&"/' | paste -sd, ; printf ']}' ;;
     "copy --all")
         shift 3; src=$1; dst=$2; d=$(resolve "$src") || exit 1; split "$dst"
@@ -53,12 +53,13 @@ cat >"$root/bin/cosign" <<'F'
 #!/usr/bin/env bash
 ref="${@: -1}"; ref=${ref#docker://}
 img=${ref%%[:@]*}; img=${img##*/}
-case "$ref" in *@sha256:*) d=${ref#*@} ;; *) d=$(cat "$FAKE_REG/$img/tag/${ref#*:}" 2>/dev/null) || exit 1 ;; esac
-! grep -qxF "$d" "$FAKE_REG/unsigned" 2>/dev/null
+case "$ref" in *@sha256:*) d=${ref#*@} ;; *) d=$(cat "$FAKE_REG/$img/tag/${ref#*:}" 2>/dev/null) || { echo "MANIFEST_UNKNOWN" >&2; exit 1; } ;; esac
+[ -z "${FAKE_COSIGN_READ_ERROR:-}" ] || { echo "TLS handshake timeout" >&2; exit 1; }
+! grep -qxF "$d" "$FAKE_REG/unsigned" 2>/dev/null || { echo "Error: no signatures found" >&2; exit 1; }
 F
 chmod +x "$root/bin"/*
-for c in bash env cat grep sed jq git sort head tr ls paste dirname mktemp rm sha256sum awk date mkdir; do p=$(command -v "$c") && ln -sf "$p" "$root/bin/$c"; done
-export FAKE_REG="$root/reg" FAKE_LOG="$root/log" OWNER=RedCodeWorks MAIN_REF=refs/remotes/origin/main WRITE=true
+for c in bash env cat grep sed jq git sort head tr ls paste dirname mktemp rm sha256sum awk date mkdir sleep; do p=$(command -v "$c") && ln -sf "$p" "$root/bin/$c"; done
+export RETRY_DELAY=0 READBACK_WAIT=0 FAKE_REG="$root/reg" FAKE_LOG="$root/log" OWNER=RedCodeWorks MAIN_REF=refs/remotes/origin/main WRITE=true
 V=octarine-os; D=octarine-os-dx
 reset() {
     rm -rf "${root:?}/reg"; mkdir -p "$root/reg"; : > "$root/log"; unset FAKE_COPY_WRONG DRY_RUN SCOPE VANILLA_DIGEST DX_DIGEST VANILLA_TAG REASON; export WRITE=true
@@ -73,6 +74,12 @@ copies() { grep -c 'skopeo copy' "$root/log"; }
 : > "$root/sum"
 
 # ---- called from the dx run
+# a registry that cannot be read is NOT "latest is absent" and not "unsigned": the run fails and moves nothing
+reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" "latest-20261113-${c3:0:7}"
+VANILLA_DIGEST=$V2 DX_DIGEST=$E2 FAKE_READ_ERROR=1 run
+check "a registry read error (no digest or label can be read) fails the run, nothing is copied (it is not read as 'no latest yet')" bash -c "[ $rc != 0 ] && grep -q 'could not read the registry' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ] && ! grep -q 'moved=true' '$root/gout'"
+VANILLA_DIGEST=$V2 DX_DIGEST=$E2 FAKE_COSIGN_READ_ERROR=1 run
+check "a cosign check that cannot complete fails the run as a read error, not as 'no valid signature'; nothing is copied" bash -c "[ $rc != 0 ] && grep -q 'could not read the registry (signature of' '$root/out' && ! grep -q 'has no valid signature' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 reset; mk $V "$V2" "$c3" 2026-11-13T00:00:00Z - "latest-${c3:0:7}"; mk $D "$E2" "$c3" 2026-11-13T01:00:00Z "$V2" "latest-20261113-${c3:0:7}"
 VANILLA_DIGEST=$V2 DX_DIGEST=$E2 run
 check "a verified pair moves BOTH latest tags, dx first and the default image last, each read back" bash -c "[ $rc = 0 ] && grep -q 'moved=true' '$root/gout' && grep -q 'latest moved:' '$root/out' && [ \$(grep -n 'copy.*octarine-os-dx:latest' '$root/log' | head -1 | cut -d: -f1) -lt \$(grep -n 'copy.*octarine-os:latest' '$root/log' | head -1 | cut -d: -f1) ]"

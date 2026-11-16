@@ -16,6 +16,6 @@ if [[ -z "${digest}" ]]; then
 fi
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad binaries digest '${digest}'" >&2; exit 1; }
 ref="${image}@${digest}"
-cosign verify --key "${key}" "${ref}" > /dev/null || { echo "::error::cosign verification failed for ${ref}" >&2; exit 1; }
+"$(dirname "${BASH_SOURCE[0]}")/retry.sh" cosign verify --key "${key}" "${ref}" > /dev/null || { echo "::error::cosign verification failed for ${ref}" >&2; exit 1; }
 echo "Binaries image used: ${ref} (signature valid)"
 [[ -z "${GITHUB_ENV:-}" ]] || echo "BINARIES_IMAGE=${ref}" >> "${GITHUB_ENV}"

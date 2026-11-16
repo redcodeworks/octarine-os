@@ -1,0 +1,22 @@
+# Container images of the lakehouse datastore, edited BY HAND (no bump automation).
+#
+# Format, one line per image (comments and blank lines are ignored; no trailing text on a line):
+#   <name> <image>:<tag>@sha256:<digest>
+# - name: lower case, one of the four below (the whitelist is in validate.sh).
+# - tag: exact (major.minor or major.minor.patch, as the upstream project publishes it), never
+#   latest and never a floating major tag such as "17" or "9-alpine".
+# - digest: the manifest sha256 of the tag, the digest the registry serves for it. Check with:
+#     skopeo inspect --raw docker://<image>:<tag> | sha256sum
+# To change a version: edit the tag and the digest together on a feature branch, run tests/datastore-images.sh,
+# open a pull request. A merge publishes a new datastore-images image; octarine-os bumps its pointer to it.
+#
+# Values copied from octarine-os variants/dx/datastore/datastore.env on 2026-11-15 (digests not re-checked here).
+
+# major 17: a database major needs dump and restore
+postgresql docker.io/library/postgres:17.12-alpine@sha256:34261f594522cf41dfcb76aefd42b9d201098b0e6b23c9c68733f169e4218b6f
+# major 9
+valkey docker.io/valkey/valkey:9.1.3-alpine@sha256:bf09d58e96d6b4524a15396b65b242bbe18beebbcc15a04d8ee75ddac62fae0b
+# major 4
+seaweedfs docker.io/chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
+# major 4
+kafka docker.io/apache/kafka:4.3.2@sha256:852a0d49fc4e656b022e7f23785411802c9a088c78a7c5e39f33969de9c227a7

@@ -186,6 +186,14 @@ rechunk $target_image=image_name $tag=default_tag:
     trap 'rm -f "${CHUNKAH_CONFIG_FILE}"; rm -rf "${CHUNKAH_OUTPUT_DIR}"' EXIT
     podman inspect "${target_image}:${tag}" > "${CHUNKAH_CONFIG_FILE}"
 
+    # The optional packages that did not install (build.sh writes the list into the image) become a LABEL, so the daily's skip check can see a degraded latest and
+    # rebuild it instead of keeping it for up to a week (plan-skip.sh): "none" or a comma separated list; no label when the image has no such file
+    MISSING_LABEL=()
+    if missing="$(podman run --rm --network none "${target_image}:${tag}" cat /usr/share/octarine-os/optional-packages-missing 2> /dev/null)"; then
+      csv="$(printf '%s\n' "${missing}" | grep -v '^$' | paste -sd, - || true)"
+      MISSING_LABEL=(--label "org.octarineos.optional-packages-missing=${csv:-none}")
+    fi
+
     podman run --rm \
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
@@ -197,6 +205,7 @@ rechunk $target_image=image_name $tag=default_tag:
       --max-layers 256 \
       --prune /sysroot/ \
       --label ostree.commit- --label ostree.final-diffid- \
+      "${MISSING_LABEL[@]}" \
       --config /chunkah-config.json \
       --output oci:/run/out/chunked
 
@@ -633,12 +642,21 @@ brew-bump tag="":
 
 # Bump the pinned dev-packages digest in the dx Containerfile (verified)
 [group('Image')]
-dev-packages-bump tag="latest":
+dev-packages-bump tag="latest": (_list-image-bump "dev-packages" "DEV_PACKAGES" tag)
+
+# Bump the pinned datastore-images digest (the list of the datastore container images) in the dx Containerfile (verified)
+[group('Image')]
+datastore-images-bump tag="latest": (_list-image-bump "datastore-images" "DATASTORE_IMAGES" tag)
+
+# The shared body of the two list image bumps: resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
+[private]
+_list-image-bump name prefix tag:
     #!/usr/bin/env bash
     set -euo pipefail
     tag="{{ tag }}"
     [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "tag must be latest or latest-YYYYMMDD-<short sha>, got '${tag}'" >&2; exit 1; }
-    repo=ghcr.io/redcodeworks/dev-packages
+    repo=ghcr.io/redcodeworks/{{ name }}
+    prefix={{ prefix }}
     file=variants/dx/Containerfile
     digest=$(skopeo inspect --raw "docker://${repo}:${tag}" | sha256sum | sed 's/ .*//')
     [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ${repo}:${tag}" >&2; exit 1; }
@@ -651,7 +669,7 @@ dev-packages-bump tag="latest":
             if [[ "${d}" == "${digest}" ]]; then tag="${t}"; break; fi
         done
     fi
-    sed -i -e "s/^ARG DEV_PACKAGES_TAG=.*/ARG DEV_PACKAGES_TAG=${tag}/" -e "s/^ARG DEV_PACKAGES_DIGEST=.*/ARG DEV_PACKAGES_DIGEST=sha256:${digest}/" "${file}"
+    sed -i -e "s/^ARG ${prefix}_TAG=.*/ARG ${prefix}_TAG=${tag}/" -e "s/^ARG ${prefix}_DIGEST=.*/ARG ${prefix}_DIGEST=sha256:${digest}/" "${file}"
     echo "${file} now pins ${repo}:${tag}@sha256:${digest} (signature valid)"
 
 # Use this repository's git hooks (a gitleaks scan of what you push)
