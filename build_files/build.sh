@@ -160,25 +160,28 @@ if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh mus
 grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
 echo "::endgroup::"
 
-# OPTIONAL: one group per transaction. Format: "<group name>:<space separated packages>".
+# OPTIONAL packages, in separate dnf5 transactions BY SOURCE, each in its own log group (policy; the owner, 2026-11-16):
+#   (a) Fedora critical: above, one transaction, a missing name fails the build.
+#   (b) Fedora optional groups: one transaction per group, from Fedora's own repositories.
+#   (c) trusted third party (negativo17, RPM Fusion): optional groups of their own, one transaction per group.
+#   (d) COPR: one transaction per COPR, `dnf5 -y copr enable <owner/project>` right before and `copr disable` right after, the package pinned to an exact
+#       version-release (a COPR is not ours and floats nothing into the image), optional only. Empty today: no pin machinery until one is used.
+# Fedora and trusted third party float; any other COPR or vendor repository is pinned and optional only (validate-repos.sh fails the build on an
+# enabled repository it does not know).
 mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
-optional_groups=(
-    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone gtk4-layer-shell"
-    "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
-    "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
-    "pcp:pcp python3-pcp"
-    "containers:podman-compose kind podman-docker podman-tui"
-    "libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v"
-)
-for entry in "${optional_groups[@]}"; do
-    group="${entry%%:*}"
-    read -r -a pkgs <<< "${entry#*:}"
-    echo "::group::Packages: optional group ${group}"
+
+# --- optional install functions (tests/optional-packages.sh cuts this block out of the script) ---
+# <label> <group> <package>...: one transaction for the group. When it fails, once more as a whole, then its packages one by one;
+# what still cannot be installed is listed in the missing file. Never fails the build.
+install_optional() {
+    local label=$1 group=$2; shift 2
+    local pkgs=("$@") pkg
+    echo "::group::Packages: ${label} ${group}"
     if dnf5 install -y "${pkgs[@]}"; then
         echo "::endgroup::"
-        continue
+        return 0
     fi
     # one more try of the WHOLE group first: a mirror hiccup should not leave the image without its packages for up to a week (SCHEDULED_REBUILD_MAX_AGE_DAYS)
     echo "WARNING: optional group ${group} failed, retrying it once as a whole"
@@ -186,7 +189,7 @@ for entry in "${optional_groups[@]}"; do
     dnf5 clean expire-cache > /dev/null 2>&1 || true
     if dnf5 install -y "${pkgs[@]}"; then
         echo "::endgroup::"
-        continue
+        return 0
     fi
     echo "WARNING: optional group ${group} failed as a whole twice, retrying its packages one by one"
     for pkg in "${pkgs[@]}"; do
@@ -196,14 +199,59 @@ for entry in "${optional_groups[@]}"; do
         fi
     done
     echo "::endgroup::"
-done
-echo "== optional packages missing:"
-cat "${missing_file}"
+}
+# <label> "<group>:<space separated packages>"...: one install_optional transaction per entry
+install_optional_groups() {
+    local label=$1 entry pkgs; shift
+    for entry in "$@"; do
+        read -r -a pkgs <<< "${entry#*:}"
+        install_optional "${label}" "${entry%%:*}" "${pkgs[@]}"
+    done
+}
 # The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a coming Fedora that no longer has
 # them fails here too, which is what it is for). The rest of the list stays soft.
-for pkg in niri noctalia; do
-    if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
+check_session_packages() {
+    local pkg
+    for pkg in niri noctalia; do
+        if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
+    done
+}
+# --- end optional install functions ---
+
+# (b) Fedora optional groups
+fedora_optional_groups=(
+    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone gtk4-layer-shell"
+    "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
+    "pcp:pcp python3-pcp"
+    "containers:podman-compose kind podman-docker podman-tui"
+    "libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v"
+)
+install_optional_groups "Fedora optional group" "${fedora_optional_groups[@]}"
+
+# (c) trusted third party. Today: the negativo17 multimedia stack (fedora-multimedia, enabled by the base), whose GStreamer plugins replace the -free variants
+third_party_optional_groups=(
+    "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
+)
+install_optional_groups "Trusted third party optional group" "${third_party_optional_groups[@]}"
+
+# (d) COPR, pinned to an exact version-release, optional only: "<owner/project>:<name>-<version>-<release>". Empty today.
+#   Example: "ublue-os/staging:somepackage-1.2.3-1.fc45"
+copr_optional=()
+for entry in "${copr_optional[@]}"; do
+    repo=${entry%%:*}
+    pkg=${entry#*:}
+    if dnf5 -y copr enable "${repo}"; then
+        install_optional "COPR ${repo}" pinned "${pkg}"
+    else
+        echo "${pkg}" >> "${missing_file}"
+        echo "OPTIONAL PACKAGE MISSING: ${pkg} (COPR ${repo} could not be enabled)"
+    fi
+    dnf5 -y copr disable "${repo}" || true
 done
+
+echo "== optional packages missing:"
+cat "${missing_file}"
+check_session_packages
 
 # Beyond the compilers and linker above (critical list) there are no build tools here (cmake, ninja, meson, the development-tools
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
@@ -313,13 +361,6 @@ echo "::endgroup::"
 
 ### Themes and icons are NOT part of the image: install them per user from their own repos with
 # `ujust gnome-candy install-theme` / `install-icon` (github.com/redcodeworks/candy-for-gnome).
-
-# Use a COPR Example:
-#
-# dnf5 -y copr enable ublue-os/staging
-# dnf5 -y install package
-# Disable COPRs so they don't end up enabled on the final image:
-# dnf5 -y copr disable ublue-os/staging
 
 #### Example for enabling a System Unit File
 
