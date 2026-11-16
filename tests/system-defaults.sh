@@ -39,7 +39,7 @@ check "enabled-extensions keeps the packaged default (background-logo) first" gr
 check "extensions enabled are only ones the image ships (appindicator, gsconnect)" bash -c "grep '^enabled-extensions=' '$keyfile' | grep -o '[A-Za-z0-9.-]*@[a-zA-Z0-9.-]*' | sort | tr '\n' ' ' | grep -qx 'appindicatorsupport@rgcjonas.gmail.com background-logo@fedorahosted.org gsconnect@andyholmes.github.io '"
 check "GPaste is shipped but not enabled by default" bash -c "! grep -qiE \"gpaste|just-perfection|ddterm|freon\" '$keyfile'"
 check "GPaste is in the misc optional group of build.sh" grep -q "^    \"misc:.* gpaste gnome-shell-extension-gpaste " "$here/build_files/build.sh"
-check "Just Perfection, ddterm and Freon are not installed by build.sh and the smoke tests assert they are not shipped" bash -c "! grep -q 'gnome-shell-extension-\(just-perfection\|ddterm\|freon\) ' '$here/build_files/build.sh' && grep -q 'are not shipped (packages and extension directories)' '$here/.github/workflows/build.yml' && grep -q 'are not shipped (packages and extension directories)' '$here/.github/workflows/build-beta.yml'"
+check "Just Perfection, ddterm and Freon are not installed by build.sh (default-smoke.sh asserts in the image that they are not shipped)" bash -c "! grep -q 'gnome-shell-extension-\(just-perfection\|ddterm\|freon\) ' '$here/build_files/build.sh'"
 
 # fish syntax and behavior
 if command -v fish >/dev/null; then
@@ -67,9 +67,6 @@ check "gamemode.ini sets nothing hardware specific (no governor, tuned or GPU ke
 
 # build step and smoke test
 check "build.sh runs dconf update after copying system_files" bash -c "a=\$(grep -n 'cp -avf' '$here/build_files/build.sh' | head -1 | cut -d: -f1); b=\$(grep -n '^dconf update' '$here/build_files/build.sh' | cut -d: -f1); [ -n \"\$b\" ] && [ \"\$b\" -gt \"\$a\" ]"
-for wf in build.yml build-beta.yml; do
-  check "$wf smoke test checks the dconf database, fish files and gamemode defaults" bash -c "w='$here/.github/workflows/$wf'; grep -q 'dconf distro database is newer' \$w && grep -q 'fish --no-execute' \$w && grep -q 'gamemode defaults file shipped' \$w"
-done
 
 # nothing personal
 check "no excluded category in the shipped files (theme names, key model, editor, personal names and paths)" bash -c "! grep -nEi 'gruvbox|papirus|helix|\\bhx\\b|/home/kevin|/var/home/|nox|asgard|kevin|riley' $keyfile $gm ${fish_files[*]} && ! grep -nE '\\bMEH\\b|\\bHYPR\\b' $keyfile $gm ${fish_files[*]}"
@@ -78,6 +75,5 @@ check "no keybinding group in the keyfile" bash -c "! grep -Ei 'keybindings|\\[o
 # VM hosting is a dx-only feature: the default image installs none of the hosting meta packages but keeps the libguestfs tools
 check "build.sh does not install libvirt, qemu-kvm or cockpit-machines (dx only)" bash -c "! grep -vE '^[[:space:]]*#' '$here/build_files/build.sh' | grep -qE '(^|[ \"])(libvirt|qemu-kvm|cockpit-machines)([ \"]|\\\\|\$)'"
 check "build.sh keeps the libguestfs group" grep -q 'libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v' "$here/build_files/build.sh"
-check "the default smoke steps (build.yml and build-beta.yml) assert the hosting packages are absent" bash -c "for w in build build-beta; do grep -q 'VM-hosting package \$p is NOT installed' '$here/.github/workflows/'\$w.yml || exit 1; done"
 check "dx extras.txt lists the full VM-hosting set" bash -c "for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer swtpm edk2-ovmf libvirt-nss; do grep -qx \$p '$here/variants/dx/packages/extras.txt' || exit 1; done"
 exit "$fail"
