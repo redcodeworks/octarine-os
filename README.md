@@ -11,7 +11,7 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 ## Build status
 
 | Image | main | testing |
-|---|---|---|
+|---:|---:|---:|
 | default | [![default, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![default, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
 | dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Atesting) |
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
