@@ -18,7 +18,8 @@ run-name: dx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}
 # check `Build dx and push image` ONLY when the built commit is the tip of the ref (otherwise it is named `Build dx (older
 # commit)`, so a green check can never appear on a commit whose own dx build has not run); the commit status of the same
 # name is always posted on the built commit and is what a pull request into main can rely on. Design in CLAUDE.md ("dx image").
-# This file is the THIN CALLER: plan, build, promote and sign are the reusable dx-image.yml (shared with build-nvidia-dx.yml); the triggers, the
+# This file is the THIN CALLER: plan, build and promote are the reusable dx-image.yml (shared with build-nvidia-dx.yml); the triggers, the SIGN job (the
+# `signing` environment secret did not reach a job of a reusable workflow, so signing is here, via .github/actions/sign-images), the
 # concurrency group, the run-name (dispatch-dx.sh finds the run by it), the result job with its required name and commit status, `publish` and
 # `alert` stay here, because only this workflow may post the context `Build dx and push image`.
 on:
@@ -63,8 +64,8 @@ permissions:
   contents: read
 
 jobs:
-  # plan, build, promote and sign: the reusable workflow (see its header). Only `testing` (channel testing) or `main` (channel latest) run it: never a
-  # feature branch; a dispatch is the only trigger. The signing key is the `signing` environment secret of its sign job.
+  # plan, build and promote: the reusable workflow (see its header). Only `testing` (channel testing) or `main` (channel latest) run it: never a
+  # feature branch; a dispatch is the only trigger. Signing is the `sign` job below.
   dx:
     name: dx
     if: >-
@@ -86,6 +87,45 @@ jobs:
       tags: ${{ inputs.channel == 'testing' && 'testing-{sha} testing' || 'latest-{date}-{sha}' }}
       description: octarineOS with the developer toolchain of dev-toolbox, VM tooling and tracing tools (developer image, ${{ inputs.channel }} channel)
 
+  # Signing lives here, not in the reusable workflow: an environment secret did not reach a job inside dx-image.yml (observed 2026-11-16 on two runs).
+  # A build signs every pushed digest, a promotion only verifies the digest that was signed when the testing image was published; both then
+  # verify every tag. Skipped when nothing was built or promoted (plan skipped, nothing to do, dry run, failures before it).
+  sign:
+    name: Sign and verify dx image
+    needs: dx
+    if: >-
+      always() && needs.dx.result == 'success' &&
+      (needs.dx.outputs.build == 'success' || needs.dx.outputs.promote == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign and verify
+        uses: ./.github/actions/sign-images
+        with:
+          image: ${{ needs.dx.outputs.image }}
+          digests: ${{ needs.dx.outputs.digests }}
+          tags: ${{ needs.dx.outputs.alias_tags }}
+          mode: ${{ needs.dx.outputs.build == 'success' && 'sign' || 'verify' }}
+          private-key: ${{ secrets.SIGNING_SECRET }}
+
   # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the dx
   # image was built, promoted or legitimately skipped (base and dx inputs unchanged). It is the required check
   # `Build dx and push image` only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
@@ -96,7 +136,7 @@ jobs:
   dx_result:
     # a dry run never carries the required name (it must not satisfy the check on the tip)
     name: ${{ inputs.dry_run && 'Build dx (dry run)' || ((inputs.sha || github.sha) == github.sha && 'Build dx and push image' || 'Build dx (older commit)') }}
-    needs: dx
+    needs: [dx, sign]
     if: always()
     runs-on: ubuntu-26.04
 
@@ -119,7 +159,7 @@ jobs:
           PROMOTE_WANTED: ${{ needs.dx.outputs.promote_wanted }}
           BUILD: ${{ needs.dx.result == 'skipped' && 'skipped' || needs.dx.outputs.build || 'failure' }}
           PROMOTE: ${{ needs.dx.result == 'skipped' && 'skipped' || needs.dx.outputs.promote || 'failure' }}
-          SIGN: ${{ needs.dx.result == 'skipped' && 'skipped' || needs.dx.outputs.sign || 'failure' }}
+          SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
         run: .github/scripts/aggregate-dx.sh
 
@@ -143,7 +183,7 @@ jobs:
   # the digests are handed over, the job is re-run with "re-run failed jobs" and lives in this run.
   publish:
     name: Publish latest
-    needs: [dx, dx_result]
+    needs: [dx, sign, dx_result]
     if: >-
       always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run &&
       needs.dx.result == 'success' && needs.dx_result.result == 'success'
@@ -161,7 +201,7 @@ jobs:
   # dispatch with the default token probably e-mails nobody). A failed publish is reported by publish-latest.yml itself.
   alert:
     name: Report a failed dx run
-    needs: [dx, dx_result]
+    needs: [dx, sign, dx_result]
     if: always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run && contains(needs.*.result, 'failure')
     runs-on: ubuntu-26.04
     permissions:

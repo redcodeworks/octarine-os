@@ -7,7 +7,7 @@ name: Build NVIDIA dx image
 # the default branch) or by manual dispatch on `main`; it never runs on pushes, pull requests or `testing`. The plan job
 # (.github/scripts/plan-dx.sh, promote_from_testing off) skips
 # when the NVIDIA base digest and the dx inputs are unchanged. A THIN CALLER of the reusable dx-image.yml, which build-dx.yml calls too: the
-# plan, build and sign jobs are shared, the triggers, the concurrency group and the result job stay here. build-dx.yml posts the required check `Build dx and push image`
+# plan, build and promote jobs are shared, signing is this file's own `sign` job (an environment secret did not reach a reusable-workflow job), the triggers, the concurrency group and the result job stay here. build-dx.yml posts the required check `Build dx and push image`
 # and its commit status; THIS workflow never posts that context (its result job has another name and posts no commit status), so it can neither
 # satisfy nor block a promotion pull request. Design in CLAUDE.md ("NVIDIA dx image").
 on:
@@ -31,8 +31,8 @@ permissions:
   contents: read
 
 jobs:
-  # plan, build and sign: the reusable workflow. The workflow file of `main` only: a dispatch, or a successful scheduled or dispatched NVIDIA
-  # build of `main`. The signing key is the `signing` environment secret of its sign job.
+  # plan and build: the reusable workflow. The workflow file of `main` only: a dispatch, or a successful scheduled or dispatched NVIDIA
+  # build of `main`. Signing is the `sign` job below.
   nvidia_dx:
     name: nvidia-dx
     if: >-
@@ -58,11 +58,50 @@ jobs:
       # the driver, the kernel module, the initramfs, and no CUDA toolkit anywhere in the image
       extra_smoke: .github/scripts/nvidia-smoke.sh present
 
+  # Signing lives here, not in the reusable workflow: an environment secret did not reach a job inside dx-image.yml (observed 2026-11-16 on two runs).
+  # A build signs every pushed digest, a promotion only verifies the digest that was signed when the testing image was published; both then
+  # verify every tag. Skipped when nothing was built or promoted (plan skipped, nothing to do, dry run, failures before it).
+  sign:
+    name: Sign and verify dx image
+    needs: nvidia_dx
+    if: >-
+      always() && needs.nvidia_dx.result == 'success' &&
+      (needs.nvidia_dx.outputs.build == 'success' || needs.nvidia_dx.outputs.promote == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign and verify
+        uses: ./.github/actions/sign-images
+        with:
+          image: ${{ needs.nvidia_dx.outputs.image }}
+          digests: ${{ needs.nvidia_dx.outputs.digests }}
+          tags: ${{ needs.nvidia_dx.outputs.alias_tags }}
+          mode: ${{ needs.nvidia_dx.outputs.build == 'success' && 'sign' || 'verify' }}
+          private-key: ${{ secrets.SIGNING_SECRET }}
+
   # The one result of a run; always runs. Green when the image was built and signed or legitimately skipped (NVIDIA base digest and dx inputs
   # unchanged). It is NOT named `Build dx and push image` and posts no commit status: that context belongs to build-dx.yml and is a required check on main.
   nvidia_dx_result:
     name: NVIDIA dx build result
-    needs: nvidia_dx
+    needs: [nvidia_dx, sign]
     if: always()
     runs-on: ubuntu-26.04
 
@@ -82,5 +121,5 @@ jobs:
           PROMOTE_WANTED: "false"
           BUILD: ${{ needs.nvidia_dx.result == 'skipped' && 'skipped' || needs.nvidia_dx.outputs.build || 'failure' }}
           PROMOTE: skipped
-          SIGN: ${{ needs.nvidia_dx.result == 'skipped' && 'skipped' || needs.nvidia_dx.outputs.sign || 'failure' }}
+          SIGN: ${{ needs.sign.result }}
         run: .github/scripts/aggregate-dx.sh
