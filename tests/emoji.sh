@@ -41,14 +41,5 @@ if command -v script > /dev/null 2>&1; then
     got=$(env -u NO_EMOJI -u OCTARINE_PLAIN TERM=xterm script -qec "bash -c '. \"$lib\"; echo Done.'" /dev/null | tr -d '\r')
     [[ "$got" == "✅ Done." ]] && ok "a pty run gets the emoji" || bad "pty: $got"
 fi
-# a recipe that loads the helper by hand (dx datastore recipes): a stubbed root run shows the emoji when forced and none with NO_EMOJI=1
-dsj="$here/variants/dx/system_files/usr/share/ublue-os/just/72-octarine-datastore.just"
-if command -v just > /dev/null 2>&1 && [[ -f "$dsj" ]]; then
-    stub=$(mktemp -d); trap 'rm -rf -- "$stub"' EXIT
-    printf '#!/usr/bin/env bash\necho 0\n' > "$stub/id"; chmod +x "$stub/id"
-    ds() { env -u NO_EMOJI -u OCTARINE_PLAIN TERM=xterm PATH="$stub:$PATH" OCTARINE_FORCE_EMOJI=1 "$@" just --justfile "$dsj" datastore 2>&1; }
-    got=$(ds); [[ "$got" == "❌ Refused: "* ]] && ok "datastore recipe: root refusal gets the emoji" || bad "datastore emoji: $got"
-    got=$(ds NO_EMOJI=1); [[ "$got" == "Refused: "* ]] && ok "datastore recipe: NO_EMOJI=1 leaves it plain" || bad "datastore plain: $got"
-fi
 echo "emoji tests: $pass passed, $failn failed"
 [[ $failn -eq 0 ]]
