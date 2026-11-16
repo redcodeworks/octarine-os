@@ -87,6 +87,32 @@ check "report, build failed: exits 0, names the first error and the STEP it happ
   grep -q 'failed' '$r/report.md' && grep -qF 'Error: Unable to find a match: ublue-os-just' '$r/report.md' && grep -qF 'STEP 7/20: RUN /ctx/build.sh' '$r/report.md' &&
   grep -qx -- '- ublue-os-just' '$r/diffs/ublue-to-official-packages.diff' && grep -qx -- '- /usr/share/ublue-os/just/00-default.just' '$r/diffs/ublue-to-official-ublue-paths.diff' &&
   ! ls '$r/diffs' | grep -q reference-to-built && grep -q 'Official base: x' '$r/report.md'"
+# a build.sh log as the real first run printed it: set -x everywhere, the EXIT trap definition (which contains the words error and failed), then the failing step
+cat > "$root/log2" <<'L'
+[4/4] STEP 6/8: RUN --mount=type=bind,from=ctx,source=/,target=/ctx /ctx/build.sh
++ trap 'rc=$?; if (( rc != 0 )); then echo "::endgroup::"; echo "::error::build.sh failed (exit ${rc})"; fi' EXIT
+::group::Base image
++ echo '::group::Base image'
+NAME="Fedora Linux"
+::endgroup::
++ echo ::endgroup::
+::group::System files
++ echo '::group::System files'
++ for f in 00-default 10-update 30-distrobox
++ mv /usr/share/ublue-os/just/00-default.just /usr/share/ublue-os/just/00-default-base.just
+mv: cannot stat '/usr/share/ublue-os/just/00-default.just': No such file or directory
++ rc=1
++ echo '::error::build.sh failed (exit 1)'
+::endgroup::
+::error::build.sh failed (exit 1)
+Error: building at STEP "RUN ... /ctx/build.sh": while running runtime: exit status 1
+error: recipe `build` failed with exit code 1
+L
+r="$root/rep1b"
+check "report, xtrace-heavy build.sh log: the first error line is the real failure (not the trap definition or the wrapper's last line) and the build.sh step is named" bash -c "
+  bash '$here/.github/scripts/gap-report.sh' --out '$r' --ublue '$root/ublue' --official '$root/official' --reference '$root/reference' --outcome failed --log '$root/log2' &&
+  grep -qF 'First error line: \`mv: cannot stat' '$r/report.md' && ! grep -F 'First error line' '$r/report.md' | grep -q 'trap' &&
+  grep -qF 'build.sh step it happened in: \`System files' '$r/report.md' && grep -qF 'STEP 6/8' '$r/report.md'"
 r="$root/rep2"
 check "report, build succeeded: adds the comparison of the result with the published default image (what the result lacks and has extra)" bash -c "
   bash '$here/.github/scripts/gap-report.sh' --out '$r' --ublue '$root/ublue' --official '$root/official' --reference '$root/reference' --built '$root/built' --outcome built &&

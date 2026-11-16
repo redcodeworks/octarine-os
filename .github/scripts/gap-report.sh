@@ -86,12 +86,23 @@ done
         echo "**The build on the official base failed (a gap found, the expected result of an early run).**"
         if [[ -n "${log}" && -r "${log}" ]]; then
             echo
+            # build.sh runs with set -x, so most lines start with `+` (xtrace; the EXIT trap definition among them): those never count. The failure is the last
+            # real output line of the build.sh step (`::group::`) that ends with the `::error::build.sh failed` marker; without that marker, the first
+            # non-xtrace line that says error, fatal, failed or cannot.
             awk '
+                /^\+/ { next }
                 /STEP [0-9]+\/[0-9]+:/ { step = $0 }
-                !done && tolower($0) ~ /(^|[^a-z])(error|fatal|failed)([^a-z]|$)/ { err = $0; errstep = step; done = 1 }
+                /^::group::/ { grp = substr($0, 10); last = ""; next }
+                /^::endgroup::/ { next }
+                /^::error::build\.sh failed/ { if (!marked && last != "") { merr = last; mgrp = grp; mstep = step; marked = 1 }; next }
+                /^$/ { next }
+                { last = $0 }
+                !done && tolower($0) ~ /(^|[^a-z])(error|fatal|failed|cannot)([^a-z]|$)/ { err = $0; errstep = step; done = 1 }
                 END {
+                    if (marked) { err = merr; errstep = mstep }
                     printf "- First error line: `%s`\n", (err == "" ? "(none found, see the log tail)" : err)
                     printf "- Containerfile step it happened in: `%s`\n", (errstep == "" ? "(no STEP line before it)" : errstep)
+                    if (marked && mgrp != "") printf "- build.sh step it happened in: `%s`\n", mgrp
                 }' "${log}"
             echo
             echo "<details><summary>Last 40 lines of the build log</summary>"
