@@ -899,6 +899,8 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   emoji first. Only on a terminal (stdout `-t 1`); off for a non-empty `NO_EMOJI` (an empty one does nothing, like NO_COLOR), non-empty `OCTARINE_PLAIN` other than 0,
   and TERM empty or dumb. Never touches menus, pickers, data lines, indented lines, `--help` (printf) or captured output. `OCTARINE_FORCE_EMOJI=1` skips only
   the terminal test (tests/emoji.sh). It is launcher-neutral: any launcher that runs the recipes gets it.
+  Without it by design (2026-11-16): `logs-this-boot`, `logs-last-boot`, `changelogs`, `update-firmware` (pass-through of journalctl and tools), the empty or wrapper-only
+  `15-luks`, `40-nvidia`, `50-akmods`, `00-default`, `10-update`, `30-distrobox` files (no message lines of ours), and the output of the datastore bundle (fedora-toolbox repo); `72-octarine-datastore.just` loads it for its own lines.
 - Menus come from the shared helper `system_files/usr/share/octarine-os/lib/menu.sh`, sourced at the top of a recipe
   with `menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"` plus inline no-op fallbacks if the file is
   missing. Items are `id^text^selected` strings; an empty id is a section heading, never returned; commas in text show
