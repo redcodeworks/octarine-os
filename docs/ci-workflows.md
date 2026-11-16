@@ -3,11 +3,11 @@
 Everything that builds, tests, signs and publishes the images runs from here.
 
 - `workflows/` has the GitHub Actions workflows. `test.yml` runs the fast sanity check and the behavior tests on every branch; `build.yml` builds the default
-  image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml` (the two dx workflows are thin callers of the reusable `dx-image.yml`; only `build-dx.yml` posts the required check `Build dx and push image`)
+  image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml` (the two dx workflows are thin callers of the reusable `dx-image.yml` for plan, build and promote and sign in their own `sign` job through the shared action `actions/sign-images`, because the signing environment secret did not reach a job inside a reusable workflow; only `build-dx.yml` posts the required check `Build dx and push image`)
   build the variants; the prebuilt programs (scx, extest, Ghostty) are built by the separate octarine-bins repository, and this image installs the octarine-bins image it pins by digest (the weekly bump proposes a new digest); `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens ONE weekly pull request that moves the pinned versions (one commit per pin that moved, so a pin you do not want is dropped with `git revert <its commit>`; a newer weekly pull request closes an unmerged older one; rerun by hand with `gh workflow run bump-pins.yml --ref testing`, add `-f dry_run=true` to only print what it would open); the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
 - `scripts/` has the shell and Python helpers the workflows call (planning which builds are needed, registry and signature
-  checks, smoke tests, pin bumps). `actions/` has one small shared step (tool install).
+  checks, smoke tests, pin bumps). `actions/` has two small shared steps (tool install, and signing of the dx images).
 - `dependabot.yml` and `zizmor.yml` configure dependency updates and the workflow audit.
 
 How a change flows: work on a feature branch, where `test.yml` runs a fast sanity check (the required `test`, only the obvious: shell syntax and workflow files that parse) and the behavior tests (`suite`, not required, cancelable); open a pull request into `testing`; merging

@@ -1,0 +1,73 @@
+name: Sign and verify the dx images
+description: >-
+  Signs every pushed digest of a dx image with the repository key and verifies that every tag of it is signed, or (promote path) only verifies
+  the digest that was promoted. STEPS ONLY: the caller job carries `environment: signing`, logs in to ghcr.io and checks out the repository
+  (cosign.pub, and this action, come from the checkout); the private key arrives as an input and goes to cosign through the environment (env://), never
+  into a shell string and never printed. Used by the `sign` jobs of build-dx.yml and build-nvidia-dx.yml (an environment secret did not reach a job
+  inside the reusable dx-image.yml: observed 2026-11-16 on two runs).
+inputs:
+  image:
+    description: "Image name without tag, ghcr.io/<owner>/<name>"
+    required: true
+  digests:
+    description: "Space separated digests that were pushed or promoted"
+    required: true
+  tags:
+    description: "Space separated tags that must verify as signed"
+    required: true
+  mode:
+    description: "sign (a build: sign each digest, then verify the tags) or verify (a promotion: the digest was signed when the testing image was published; check it, never sign again)"
+    required: true
+  private-key:
+    description: "The cosign private key (the SIGNING_SECRET of the caller's environment); only used in mode sign"
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Set up cosign
+      uses: ./.github/actions/setup-tool
+      with:
+        tool: cosign
+
+    - name: Sign every pushed digest
+      if: inputs.mode == 'sign'
+      shell: bash
+      env:
+        COSIGN_EXPERIMENTAL: "false"
+        COSIGN_PRIVATE_KEY: ${{ inputs.private-key }}
+        IMAGE: ${{ inputs.image }}
+        DIGESTS: ${{ inputs.digests }}
+      run: |
+        set -euo pipefail
+        [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+        [[ -n "${COSIGN_PRIVATE_KEY}" ]] || { echo "::error::The signing key is empty: the caller job needs environment: signing and must pass secrets.SIGNING_SECRET"; exit 1; }
+        # old bundle format, as in build.yml (https://github.com/containers/container-libs/issues/388)
+        for digest in ${DIGESTS}; do
+          cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+        done
+
+    - name: Verify the digest that was promoted is signed
+      if: inputs.mode == 'verify'
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        DIGESTS: ${{ inputs.digests }}
+      run: |
+        set -euo pipefail
+        for digest in ${DIGESTS}; do
+          cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+          echo "signed: ${digest}"
+        done
+
+    - name: Verify every pushed tag is signed
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAGS: ${{ inputs.tags }}
+      run: |
+        set -euo pipefail
+        for tag in ${TAGS}; do
+          cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+          echo "signed: ${tag}"
+        done
