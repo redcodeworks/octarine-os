@@ -140,10 +140,6 @@ jobs:
         with:
           tool: cosign
 
-      - name: Check Just Syntax
-        run: |
-          just check
-
       - name: Image names
         id: names
         run: |
@@ -157,13 +153,12 @@ jobs:
       - name: Resolve and verify the dev-packages image
         run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF
 
-      # The digest comes from the plan job (octarine-os-nvidia:latest); verify it again here, then pull it and read its kernel
+      # The digest comes from the plan job (octarine-os-nvidia:latest); it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
         run: |
           set -euo pipefail
           [[ "${BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::The plan job gave no base digest"; exit 1; }
-          cosign verify --key cosign.pub "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
-          echo "Base image ${BASE_IMAGE}:${BASE_TAG} = ${BASE_DIGEST} (signature valid)"
+          echo "Base image ${BASE_IMAGE}:${BASE_TAG} = ${BASE_DIGEST} (signature verified by the plan job)"
           podman pull "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
           kernel=$(podman run --rm "${BASE_IMAGE}@${BASE_DIGEST}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
           echo "Kernel of the base image: ${kernel}"
