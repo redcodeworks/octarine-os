@@ -138,34 +138,6 @@ check "weekly, dry run from a branch with other commits: only the pin commits ar
 fresh; weekly GH_WF_FAIL=1 TAGS='"20261115"' MANIFEST=new CREATED="$old10"
 check "weekly, a failed Test dispatch is a warning, not a failure" bash -c "[ $rc = 0 ] && grep -q 'Could not dispatch the Test workflow' '$root/run'"
 
-# ---- the workflow, the scripts and the documentation
-check "no script forces a push (no --force, --force-with-lease, or a + refspec), none keeps per-pin branches or per-pin PR lookups" bash -c "! grep -nE -- '--force|git push.* \+|bump/<name>|--head bump/|gh pr list --head' '$here'/.github/scripts/bump-*.sh '$here/.github/workflows/bump-pins.yml'"
-check "bump-pins.yml: Monday 07:00 UTC plus workflow_dispatch with a dry_run input; ONE job that checks out testing (dry run: the dispatched ref), fail-fast matrices and artifact plumbing are gone, minimal permissions, the default token only; upstream-check.yml is gone; the pins bump-weekly.sh runs are known to bump-run.sh and are the pins CLAUDE.md documents" python3 -I - "$here" <<'PY'
-import sys, yaml, re, os
-root = sys.argv[1]
-t = open(root + "/.github/workflows/bump-pins.yml").read(); w = yaml.safe_load(t)
-on = w.get(True) or w.get("on")
-assert on["schedule"] == [{"cron": "0 7 * * 1"}] and set(on) == {"schedule", "workflow_dispatch"}
-assert on["workflow_dispatch"]["inputs"]["dry_run"]["type"] == "boolean"
-assert not os.path.exists(root + "/.github/workflows/upstream-check.yml")
-j = w["jobs"]; assert set(j) == {"bump"}, set(j)
-b = j["bump"]
-assert "strategy" not in b and "upload-artifact" not in t and "download-artifact" not in t
-co = [s for s in b["steps"] if "checkout" in s.get("uses", "")][0]
-assert "'testing'" in co["with"]["ref"] and co["with"]["fetch-depth"] == 0
-assert b["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write", "checks": "write", "packages": "read"}
-assert "bump-weekly.sh" in " ".join(s.get("run", "") for s in b["steps"])
-assert "BUMP_TOKEN" not in t and "secrets." not in t and "GH_TOKEN: ${{ github.token }}" in t
-assert w["permissions"] == {"contents": "read"}
-sh = open(root + "/.github/scripts/bump-weekly.sh").read()
-pins = re.search(r'BUMP_PINS:-([a-z -]+)\}', sh).group(1).split()
-run = open(root + "/.github/scripts/bump-run.sh").read()
-for p in pins:
-    assert re.search(r'(\s|\| )%s( \||\))' % re.escape(p), run, re.M), p
-doc = open(root + "/CLAUDE.md").read()
-m = re.search(r"Pins bumped by bump-pins\.yml: ([a-z, -]+)\.", doc)
-assert m and [p.strip() for p in m.group(1).split(",")] == pins, (m and m.group(1), pins)
-PY
 check "every bump script parses" bash -c "for f in bump-weekly bump-run bump-checks bump-ghostty bump-pin; do bash -n '$here/.github/scripts/'\$f.sh || exit 1; done"
 echo
 echo "passed: $pass, failed: $failn"

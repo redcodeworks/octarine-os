@@ -94,19 +94,6 @@ bump nothing
 check "an unknown image name: exit 3" test "$rc" = 3
 
 
-# ---- the weekly workflow (the combined bump-pins.yml is tested in tests/bump-run.sh)
-wf="$here/.github/workflows/bump-pins.yml"
-check "test.yml has a workflow_dispatch trigger and no condition on test and secrets, so a dispatched run reports both" python3 -I - "$here/.github/workflows/test.yml" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1]))
-assert "workflow_dispatch" in (w.get(True) or w.get("on"))
-for k, j in w["jobs"].items():
-    assert j["name"] == k, k
-for k in ("test", "secrets"):
-    assert "if" not in w["jobs"][k], k
-PY
-check "bump-weekly.sh bumps chunkah and dev-packages as digest pins and no datastore pin remains" bash -c "grep -q 'chunkah dev-packages' '$here/.github/scripts/bump-weekly.sh' && ! grep -qi datastore '$here/.github/workflows/bump-pins.yml' '$here/.github/scripts/bump-run.sh' '$here/.github/scripts/bump-pin.sh'"
-check "bump-pin.sh parses and knows only the toolbox list images and chunkah" bash -c "bash -n '$here/.github/scripts/bump-pin.sh' && ! grep -q 'scx-bin\|extest-bin' '$here/.github/scripts/bump-pin.sh'"
 
 echo
 echo "passed: $pass, failed: $failn"

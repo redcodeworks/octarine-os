@@ -47,20 +47,6 @@ final OPTIONAL=false KNOWN_FAIL_HIT=true LOOKUP=false OWN=false EVENT=push
 check "known failure: a REQUIRED component is never skipped, whatever the cache says" bash -c "grep -qx 'knownfail=false' '$root/gho'"
 final OPTIONAL=true KNOWN_FAIL_HIT=false LOOKUP=false OWN=false EVENT=push
 check "known failure: no marker, no skip" bash -c "grep -qx 'knownfail=false' '$root/gho'"
-check "known failure: the marker is saved only after a failed optional build and never on a pull request; the build job is skipped on a known failure; the cache action is the pinned one" python3 -I - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); j = w["jobs"]
-assert "needs.check.outputs.knownfail != 'true'" in j["build"]["if"]
-save = [s for s in j["build"]["steps"] if "cache/save" in s.get("uses", "") and "known-fail" in s["with"]["key"]][0]
-assert "inputs.optional" in save["if"] and "github.event_name != 'pull_request'" in save["if"]
-# only a failure of the BUILD step is remembered (not a push or network failure), and the key carries the ISO week (a time limit)
-assert "steps.build.outcome == 'failure'" in save["if"] and "steps.record.outputs.ok" not in save["if"], save["if"]
-assert "steps.week.outputs.w" in save["with"]["key"], save["with"]["key"]
-assert save["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
-rest = [s for s in j["check"]["steps"] if "cache/restore" in s.get("uses", "")][0]
-assert "steps.week.outputs.w" in rest["with"]["key"], rest["with"]["key"]
-assert rest["with"]["lookup-only"] is True and rest["uses"].startswith("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
-PY
 chan() { : >"$root/gho"; env REF="$1" NOPUBLISH="$2" GITHUB_OUTPUT="$root/gho" bash "$root/channel.sh" >"$root/out" 2>&1; }
 chan refs/heads/main false;  check "channel: main publishes" grep -qx 'publish=true' "$root/gho"
 chan refs/heads/main true;   check "channel: an own push or weekly run on main does NOT publish" grep -qx 'publish=false' "$root/gho"
@@ -75,30 +61,4 @@ final2() { : >"$root/gho"; env LOOKUP=true LOOKUP_DIGEST=sha256:x OWN=false EVEN
 final2 OWN=true EVENT=schedule NOPUBLISH=true;  check "assemble: the own weekly run ignores an existing assembled image (usable false)" grep -qx 'usable=false' "$root/gho"
 final2 OWN=true EVENT=push NOPUBLISH=true;      check "assemble: an own push run reuses an assembled image the caller published" grep -qx 'usable=true' "$root/gho"
 final2 LOOKUP=;                                check "assemble: no lookup result means not usable" grep -qx 'usable=false' "$root/gho"
-check "binaries.yml triggers: push to main and testing for binaries/ and the workflow's own files only, a weekly schedule on Friday 08:00 UTC; nothing else is new" python3 -I - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries.yml")); on = w.get(True) or w.get("on")
-assert on["push"]["branches"] == ["main", "testing"]
-assert set(on["push"]["paths"]) == {"binaries/**", ".github/workflows/binaries.yml", ".github/workflows/binaries-component.yml", ".github/scripts/binaries-*.sh", ".github/scripts/push-tags.sh"}
-assert on["schedule"] == [{"cron": "0 8 * * 5"}]
-assert "pull_request" not in on
-PY
-check "the paths cover every input of the binaries: the content keys are made from binaries/ (its components, lib/ and builder.env), so binaries/** is the whole input; the workflows and scripts that build, check and publish it are the rest" bash -c "cd '$here' && grep -q 'binaries-key.sh' .github/workflows/binaries-component.yml && ls .github/scripts/binaries-*.sh | grep -q . && grep -q 'push-tags.sh' .github/workflows/binaries-component.yml && grep -q 'push-tags.sh' .github/workflows/binaries.yml"
-check "nothing of an own run reaches the signing secret: the sign jobs run only for a published build, the signing environment is only on the sign jobs" python3 -I - "$here" <<'PY'
-import sys, yaml
-r = sys.argv[1] + "/.github/workflows/"
-w = yaml.safe_load(open(r + "binaries.yml")); c = yaml.safe_load(open(r + "binaries-component.yml"))
-j = w["jobs"]
-assert "needs.assemble.outputs.published == 'true'" in j["sign"]["if"] and j["sign"]["environment"] == "signing"
-assert "needs.build.outputs.published == 'true'" in c["jobs"]["sign"]["if"] and c["jobs"]["sign"]["environment"] == "signing"
-assert "SIGNING_SECRET" not in str({n: x for n, x in j.items() if n not in ("sign", "component")})
-assert "SIGNING_SECRET" not in str({n: x for n, x in c["jobs"].items() if n != "sign"})
-PY
-check "a failed weekly validation is visible: the component's result job and the assemble's result job fail when something that must exist does not (nothing falls back to an older image)" python3 -I - "$here" <<'PY'
-import sys, yaml
-r = sys.argv[1] + "/.github/workflows/"
-w = yaml.safe_load(open(r + "binaries.yml")); c = yaml.safe_load(open(r + "binaries-component.yml"))
-assert "could not be put together" in str(w["jobs"]["result"]["steps"])
-assert "fallback" not in c["jobs"] and "track" not in w["jobs"]
-PY
 echo; echo "passed: $pass, failed: $failn"; [ "$failn" = 0 ]

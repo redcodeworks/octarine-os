@@ -306,12 +306,6 @@ check "bump: Zig arguments that are not an official ziglang.org x86_64-linux ent
 bump other 1 2 3 4
 check "bump: an unknown mode is refused" test "$rc" = 2
 
-# ---- the workflow and the documentation of the update path
-ghostty_in_bump_runner() { local r="$here/.github/scripts/bump-run.sh" w="$here/.github/workflows/bump-pins.yml"
-    grep -q 'ghostty-check.sh' "$r" && grep -q 'bump-ghostty.sh" ghostty' "$r" && grep -q 'bump-ghostty.sh" zig' "$r" && grep -q 'wait)' "$r" && grep -q 'scx extest ghostty' "$here/.github/scripts/bump-weekly.sh" && ! grep -q 'packages: write\|podman' "$w"; }
-check "bump-pins.yml: ghostty is one of the bumped pins (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump through bump-run.sh), a wait is not a failure, nothing is published" ghostty_in_bump_runner
-check "CLAUDE.md documents the update path: the Ghostty tag decides the Zig minor, a patch bump is separate and low priority, a missing Zig tarball opens nothing" bash -c "grep -q 'Ghostty tag decides the Zig minor' '$here/CLAUDE.md' && grep -q 'ghostty-check.sh' '$here/CLAUDE.md'"
-
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

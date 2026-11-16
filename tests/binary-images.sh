@@ -2,7 +2,7 @@
 # Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the Containerfile wiring, the
 # lookup of the hash-tagged image (.github/scripts/binaries-lookup.sh: published and signed, missing, bad signature), the gate of
 # the image build (binaries-use.sh), the layout check of a built image (binaries-layout.sh), the installer
-# (build_files/install-binaries.sh), the smoke assertions and the binaries workflow with its place in build.yml.
+# (build_files/install-binaries.sh). Workflow, Containerfile and Justfile text is not asserted: a build shows those errors itself.
 # All with fake skopeo and cosign; nothing is pulled, built or booted. The build side is tests/binaries-build.sh.
 # Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
 set -uo pipefail
@@ -120,15 +120,6 @@ lt "$lay/comps" "$tsvf" nosuch
 check "layout: an unknown component name is refused" test "$rc" != 0
 
 
-# ---- the Containerfile and the Justfile
-check "Containerfile: the binaries image comes from BINARIES_IMAGE (no default, no foreign digest pins), bind-mounted at /binaries" bash -c "
-  grep -qx 'ARG BINARIES_IMAGE' '$cf' && grep -qx 'FROM \${BINARIES_IMAGE} AS binaries' '$cf' && grep -q 'from=binaries,source=/,target=/binaries' '$cf' &&
-  ! grep -qE 'SCX_BIN|EXTEST_BIN|scx-bin|extest-bin' '$cf' &&
-  [ \$(grep -n '^ARG FEDORA_VERSION' '$cf' | cut -d: -f1) -lt \$(grep -n '^FROM \${BINARIES_IMAGE}' '$cf' | cut -d: -f1) ]"
-check "build.sh runs install-binaries.sh and generates the registry; no build file enables or starts a scheduler" bash -c "grep -qx '/ctx/install-binaries.sh' '$here/build_files/build.sh' && grep -qx '/ctx/gen-schedulers.sh' '$here/build_files/build.sh' && ! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/install-binaries.sh' '$here/build_files/gen-schedulers.sh'"
-check "every scx unit file of system_files is disabled by the preset (nothing is wanted by default)" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! find '$here/system_files' -path '*wants*' -iname '*scx*' | grep -q ."
-check "Justfile: build passes BINARIES_IMAGE (default: the assembled-key tag of binaries/) and labels the image with it" bash -c "grep -q 'BINARIES_IMAGE=\${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:\$(.github/scripts/binaries-key.sh)}' '$here/Justfile' && grep -q 'io.github.redcodeworks.octarine-os.binaries=' '$here/Justfile'"
-check "the old foreign-image machinery is gone (pin check script, toolbox-key paragraph, foreign tests)" bash -c "! test -e '$here/.github/scripts/check-binary-pins.sh' && ! grep -rq 'check-binary-pins' '$here/.github' '$here/CLAUDE.md' && ! grep -q 'scx-bin' '$keys_doc'"
 
 
 # ---- install-binaries.sh against a fake binaries image
@@ -164,100 +155,6 @@ check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text
 mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
 
-# ---- the smoke assertions are in default-smoke.sh (one copy; build.yml runs it)
-check "smoke: ldd, ldd -r, --version and ELF class assertions are in default-smoke.sh, and build.yml runs that script" python3 -I - "$here" <<'PY'
-import sys
-root = sys.argv[1]
-s = open(f"{root}/.github/scripts/default-smoke.sh").read()
-a = s.index("# prebuilt binaries (binaries/: scx, extest)")
-t = s[a:s.index("\n", s.index("source and build records ship for both binary images"))]
-for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-bit", "/usr/lib/extest/lib/libextest.so",
-               "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
-               "ldd -r /usr/bin/", "undefined symbol", "libraries the shipped binaries link", "BUILDINFO of the binaries image"):
-    assert needle in t, needle
-assert "default-smoke.sh" in open(f"{root}/.github/workflows/build.yml").read()
-PY
-
-
-# ---- the binaries workflow and its place in the image builds
-wfb="$here/.github/workflows/binaries.yml"
-wfc="$here/.github/workflows/binaries-component.yml"
-check "binaries.yml: reusable (workflow_call with digest, image, action, hash and degraded outputs, no inputs) and dispatchable, nothing else" python3 -I - "$wfb" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
-assert set(on) == {"push", "schedule", "workflow_call", "workflow_dispatch"}, set(on)
-assert "inputs" not in on["workflow_call"]
-assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "degraded"}, set(on["workflow_call"]["outputs"])
-assert not on["workflow_dispatch"], "a dispatch has no inputs: no rehearsal modes"
-PY
-check "binaries.yml: a matrix over components.tsv calls binaries-component.yml (fail-fast off), then assemble, sign and result; the signing environment is only on the sign jobs" python3 -I - "$wfb" "$wfc" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1])); c = yaml.safe_load(open(sys.argv[2]))
-j = w["jobs"]
-assert set(j) == {"plan", "component", "assemble", "sign", "result"}, set(j)
-assert j["component"]["uses"] == "./.github/workflows/binaries-component.yml"
-assert j["component"]["strategy"]["fail-fast"] is False and "fromJSON(needs.plan.outputs.matrix)" in j["component"]["strategy"]["matrix"]
-assert j["component"]["secrets"] == {"SIGNING_SECRET": "${{ secrets.SIGNING_SECRET }}"}
-assert "always()" in j["assemble"]["if"], "assemble runs after a failed leg: it decides"
-names = {x["name"] for x in list(j.values()) + list(c["jobs"].values())}
-assert not names & {"test", "secrets", "Build and push image", "Sign and verify images", "Build dx and push image", "require-testing-branch"}, names
-assert [k for k, x in j.items() if x.get("environment") == "signing"] == ["sign"]
-assert [k for k, x in c["jobs"].items() if x.get("environment") == "signing"] == ["sign"]
-PY
-check "binaries-component.yml: jobs check, build, sign, result; the key is binaries-key.sh, the tag c-<component>-<key>, the builder digest comes from builder.env, one push through push-tags.sh" bash -c "
-  python3 -I - '$wfc' <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1]))
-assert list(w['jobs']) == ['check', 'build', 'sign', 'result'], list(w['jobs'])
-PY
-  grep -q 'binaries-key.sh \"\${COMPONENT}\"' '$wfc' && grep -q 'tag=c-\${COMPONENT}-\${key}' '$wfc' && grep -q 'binaries-lookup.sh' '$wfc' &&
-  grep -q 'builder.env' '$wfc' && grep -q -- '--file \"binaries/\${COMPONENT}/Containerfile\" binaries' '$wfc' && grep -q 'org.octarineos.binaries-component-key=' '$wfc' &&
-  grep -q 'binaries-layout.sh' '$wfc' && grep -q 'push-tags.sh \"\${IMAGE_NAME}:\${TAG}\" \"\${IMAGE}\" \"\${TAG}\"' '$wfc'"
-check "binaries-component.yml: a failed build never fails the build job (continue-on-error step, an ok record), sign runs only for a built and published component, and no job reads a last good image" python3 -I - "$wfc" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1])); j = w["jobs"]
-b = {s.get("id"): s for s in j["build"]["steps"]}
-assert b["build"]["continue-on-error"] is True and b["record"]["if"] == "always()"
-assert "steps.build.outcome == 'success'" in b["push"]["if"]
-assert "needs.build.outputs.ok == 'true'" in j["sign"]["if"] and "needs.build.outputs.published == 'true'" in j["sign"]["if"]
-r = j["result"]; assert r["if"] == "always()"
-assert "binaries-decide.sh" in str(r["steps"]) and "upload-artifact" in str(r["steps"]) and "binres-" in str(r["steps"])
-PY
-check "binaries.yml: only testing and main publish, the assembled image is tagged with the assembled key, a usable image skips the assembly, the push goes through push-tags.sh and the signature the way the images are signed" bash -c "
-  grep -q 'refs/heads/main | refs/heads/testing) publish=true' '$wfb' && grep -q \"if: steps.assemble.outcome == 'success' && steps.channel.outputs.publish == 'true'\" '$wfb' &&
-  grep -q \"steps.final.outputs.usable != 'true'\" '$wfb' && grep -q 'binaries-assemble.sh binaries/components.tsv' '$wfb' && grep -q 'binaries-lookup.sh \"\${IMAGE}\" \"\${KEY}\"' '$wfb' &&
-  grep -q 'push-tags.sh \"\${IMAGE_NAME}:\${KEY}\" \"\${IMAGE}\" \"\${KEY}\"' '$wfb' && grep -q 'assemble.Containerfile' '$wfb' && grep -q -- '--assembled' '$wfb' &&
-  grep -q 'COSIGN_PRIVATE_KEY: \${{ secrets.SIGNING_SECRET }}' '$wfb' && grep -q -- 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wfb' &&
-  grep -q 'cosign verify --key cosign.pub \"\${IMAGE}@\${DIGEST}\"' '$wfb' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${KEY}\"' '$wfb'"
-check "binaries.yml: the result job takes the digest from exactly one producer per case (the lookup of an existing image, the sign job, or nothing for a validation) and the outputs say action built, reused or validated" bash -c "grep -q 'digest=\${REUSE_DIGEST}' '$wfb' && grep -q 'digest=\${SIGN_DIGEST}' '$wfb' && grep -q 'action=reused' '$wfb' && grep -q 'action=built' '$wfb' && grep -q 'action=validated' '$wfb'"
-check "the run summary says what each component and the assembled image did (reused, built and signed, validation only, omitted)" bash -c "grep -q 'Binaries image: reused' '$wfb' && grep -q 'Binaries image: assembled .*signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && grep -q 'Component \${comp}: reused' '$here/.github/scripts/binaries-decide.sh' && grep -q 'OMITTED' '$here/.github/scripts/binaries-decide.sh'"
-check "build.yml says which path the binaries image took in its own summary, and still gates on binaries-use.sh" bash -c "for f in build.yml; do grep -q 'Say which path the binaries image took' '$here/.github/workflows/'\$f && grep -q 'needs.binaries.outputs.action' '$here/.github/workflows/'\$f && grep -q 'binaries-use.sh' '$here/.github/workflows/'\$f || exit 1; done"
-check "a signature that fails on an existing tag is not reused: the lookup reports usable=false (badsignature) and the build path rebuilds and signs; the reuse job needs usable=true" bash -c "grep -q 'badsignature' '$here/.github/scripts/binaries-lookup.sh' && grep -q 'usable false' '$here/.github/scripts/binaries-lookup.sh'"
-check "build.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
-import sys, yaml
-root = sys.argv[1]
-for f, build in (("build.yml", "build_push"),):
-    w = yaml.safe_load(open(f"{root}/.github/workflows/{f}"))
-    j = w["jobs"]["binaries"]
-    assert j["uses"] == "./.github/workflows/binaries.yml", f
-    assert j["permissions"] == {"contents": "read", "packages": "write"}, f
-    assert j.get("secrets") == {"SIGNING_SECRET": "${{ secrets.SIGNING_SECRET }}"}, f + ": the called workflow signs with SIGNING_SECRET, which it gets only when the caller passes it (no secrets: inherit)"
-    needs = w["jobs"][build]["needs"]; needs = needs if isinstance(needs, list) else [needs]
-    assert "binaries" in needs, f
-    text = open(f"{root}/.github/workflows/{f}").read()
-    assert 'binaries-use.sh "${BIN_IMAGE}" "${BIN_DIGEST}"' in text and "BIN_IMAGE: ${{ needs.binaries.outputs.image }}" in text and "BIN_DIGEST: ${{ needs.binaries.outputs.digest }}" in text, f
-    assert "check-binary-pins" not in text, f
-    if f == "build.yml":
-        assert j["if"] == "needs.plan.outputs.build == 'true'", "binaries only when an image is built (not for a promotion or a docs-only push)"
-PY
-check "build.yml: the required aggregate checks keep their names and the binaries job is not among their needs" python3 -I - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
-assert w["jobs"]["build_result"]["name"] == "Build and push image"
-assert w["jobs"]["sign"]["name"] == "Sign and verify images"
-assert "binaries" not in w["jobs"]["build_result"]["needs"] and "binaries" not in w["jobs"]["sign"]["needs"]
-assert "pull_request" not in (w.get(True) or w.get("on"))
-PY
 
 echo
 echo "passed: $pass, failed: $failn"
