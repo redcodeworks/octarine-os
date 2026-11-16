@@ -41,7 +41,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
-- Solaar, the manager for Logitech receivers and devices (battery, pairing, settings)
+- The udev rules of Solaar (`solaar-udev`), so Logitech receivers and devices work with the Solaar Flatpak if you install it yourself (Flathub `io.github.pwr_solaar.solaar`, community-packaged and unverified, with no autostart: add your own autostart entry if you want it at login); the Solaar application itself is not in the image
 - Prebuilt sched_ext schedulers (`scx_*`, off until you pick one with `ujust scheduler`) and the extest libraries for Steam Input on Wayland
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
