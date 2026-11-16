@@ -11,10 +11,13 @@ ARG BASE_TAG=latest
 ARG BASE_DIGEST=
 
 # The shared developer package list: a tiny signed FROM scratch image (/dev.txt, /install.sh, /README) built from the
-# octarine-images repository (renamed from fedora-toolbox). It floats at its promoted `latest`: CI resolves ghcr.io/redcodeworks/dev-packages:latest to a digest once,
-# verifies it with keys/redcodeworks-toolbox-cosign.pub (.github/scripts/latest-ref.sh) and passes <image>@<digest> as DEV_PACKAGES_REF, which the
-# image records in its dev-packages label. There is no default: a build without it fails.
-ARG DEV_PACKAGES_REF
+# octarine-images repository (renamed from fedora-toolbox). It is PINNED by digest, like the octarine-bins image in the default Containerfile: DEV_PACKAGES_DIGEST
+# changes only through the weekly bump pull request (bump-run.sh, kind dev-packages), the dx build verifies the pinned digest with
+# keys/redcodeworks-toolbox-cosign.pub on every build (dx-image.yml) and records it in the dev-packages label. DEV_PACKAGES_TAG is only for humans.
+# The pin covers the LIST image only (the package names and the installer); the packages themselves still float through dnf.
+ARG DEV_PACKAGES_TAG=latest-20261116-4c81782
+ARG DEV_PACKAGES_DIGEST=sha256:58fea8693da3845a19e2bcd217ae105c708fed946b6a1f284ff3ea80bfc48585
+ARG DEV_PACKAGES_REF=ghcr.io/redcodeworks/dev-packages:${DEV_PACKAGES_TAG}@${DEV_PACKAGES_DIGEST}
 
 FROM ${DEV_PACKAGES_REF} AS devpkgs
 # (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
