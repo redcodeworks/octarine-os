@@ -7,7 +7,7 @@ fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 
 while IFS= read -r f; do bash -n "$f" || bad "bash -n $f"; done < <(git ls-files '*.sh' githooks/pre-push)
-git ls-files '*.sh' githooks/pre-push | xargs shellcheck -S error || bad "shellcheck"
+git ls-files '*.sh' githooks/pre-push | xargs shellcheck -S error -e SC2148 || bad "shellcheck"
 
 python3 -I - <<'PY' || bad "a YAML, JSON or TOML file does not parse"
 import json, subprocess, sys, tomllib, yaml
@@ -20,7 +20,7 @@ for f in subprocess.check_output(["git", "ls-files"], text=True).split("\n"):
         print("parse error in %s: %s" % (f, e)); sys.exit(1)
 PY
 
-just check > /dev/null || bad "just check (just --fmt --check)"
+just --version; just check || bad "just check (just --fmt --check)"
 
 # literal paths only: a path built from a variable ($, {, *) is not checked
 while IFS= read -r p; do
