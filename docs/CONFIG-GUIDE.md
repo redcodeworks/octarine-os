@@ -27,7 +27,7 @@ skip any step:
 - `ujust flatpak-preinstall`: installs the Flatpak apps the image lists.
 - `ujust user-setup`: checklist for a new user (groups, login shell, Flatpak access, fonts, terminal profile).
 - `ujust niri-setup`: sets up the niri session in your home directory.
-- `ujust hardware-setup`: vendor and hardware steps; steps for hardware your machine lacks are hidden. It also has a toggle for starting Solaar (Logitech devices) at login.
+- `ujust hardware-setup`: vendor and hardware steps; steps for hardware your machine lacks are hidden.
 - `ujust gaming-setup`: checklist for Steam, Lutris, gamescope, MangoHud and GameMode tuning.
 - `ujust toggle-updates`, then `ujust update`: choose which sources update automatically, and update them.
 - `ujust dev` (dx image only): developer setup checklist.

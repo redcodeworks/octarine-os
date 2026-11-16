@@ -41,7 +41,7 @@ Added by this image:
 - Tailscale and `usbip` (off by default)
 - Podman extras: podman-compose, podman-tui, podman-docker, kind; rootless Podman socket on for every user
 - steam-devices, GSConnect, GameMode config, a Proton environment snippet
-- Solaar, the manager for Logitech receivers and devices (battery, pairing, settings); it starts at login only after you switch that on with `ujust hardware-setup --only solaar` (the same command switches it off again)
+- The udev rules of Solaar (`solaar-udev`), so Logitech receivers and devices work with the Solaar Flatpak if you install it yourself (Flathub `io.github.pwr_solaar.solaar`, community-packaged and unverified, with no autostart: add your own autostart entry if you want it at login); the Solaar application itself is not in the image
 - Prebuilt sched_ext schedulers (`scx_*`, off until you pick one with `ujust scheduler`) and the extest libraries for Steam Input on Wayland
 - Flatpak apps preinstalled: GNOME apps, Firefox, Thunderbird, GNOME Boxes, Vorta, Flatseal, Bazaar
 
@@ -127,7 +127,7 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust toggle-motd` | Turns the message of the day (a fastfetch summary, or a tip when fastfetch is not installed) on or off for every shell; `toggle-user-motd` is the same switch |
 | `ujust luks-tpm-unlock [enroll\|remove]` | Checklist of the LUKS devices: enrolls or removes TPM2 auto-unlock |
-| `ujust hardware-setup [--list]` | Checklist of vendor and hardware specific setup; every step is hidden when your machine lacks that hardware (AMD or NVIDIA GPU, ROCm in a container, Secure Boot, TPM unlock, security key, fan sensors, Wake-on-LAN, IOMMU for passthrough; Solaar at login is a toggle there) |
+| `ujust hardware-setup [--list]` | Checklist of vendor and hardware specific setup; every step is hidden when your machine lacks that hardware (AMD or NVIDIA GPU, ROCm in a container, Secure Boot, TPM unlock, security key, fan sensors, Wake-on-LAN, IOMMU for passthrough) |
 | `ujust scheduler [--boot NAME\|none] [--gamemode skip\|none\|NAME] [--restore] [--status]` | Choose a sched_ext CPU scheduler at boot and, separately, for the time GameMode is active; everything is off until you choose |
 | `ujust wake-on-lan [--status\|--off]` | Turn on Wake-on-LAN for the wired network card through NetworkManager (the BIOS or UEFI setting is yours) |
 | `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |

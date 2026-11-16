@@ -49,16 +49,15 @@ check "brew profile script present" "test -f /etc/profile.d/brew.sh"
 check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
 # CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
-CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev gcc gcc-c++ make binutils"
+CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev gcc gcc-c++ make binutils"
 for p in $CRITICAL; do
   check "package $p" "rpm -q $p"
   # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
   check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
 done
-# Solaar is opt-in (ujust hardware-setup --only solaar): no system-wide autostart entry, the template and the application's menu entry stay
-check "Solaar has no system-wide autostart entry" "! test -e /etc/xdg/autostart/solaar.desktop"
-check "the Solaar autostart template ships" "grep -q '^Exec=' /usr/share/octarine-os/solaar-autostart.desktop"
-check "the Solaar menu entry stays" "test -f /usr/share/applications/solaar.desktop"
+# Solaar is not in the image; solaar-udev keeps the Logitech device permissions (including uinput) for a Solaar Flatpak the user installs
+check "the Solaar GUI package is NOT installed" "! rpm -q solaar"
+check "solaar-udev rules are present and carry the uinput line" "grep -q uinput /usr/lib/udev/rules.d/42-logitech-unify-permissions.rules"
 # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
 for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
   check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"

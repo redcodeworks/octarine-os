@@ -43,7 +43,6 @@ mk pamu2fcfg 'echo "pamu2fcfg $*" >>"$LOG"; [ "${FAKE_PAM_FAIL:-}" = 1 ] && exit
 mk systemd-detect-virt '[ "${FAKE_VM:-}" = 1 ]'
 mk sensors-detect 'exit 0'
 mk distrobox 'exit 0'
-mk solaar 'exit 0'
 export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
 export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
@@ -97,32 +96,5 @@ echo 'IMAGE_ID="octarine-os-nvidia"' >"$root/os-release-nv"
 card card1 0x10de
 OCTARINE_OS_RELEASE="$root/os-release-nv" run --yes
 check "NVIDIA image: --yes enrolls the Secure Boot key when it is not enrolled" logged "ujust enroll-secure-boot-key"
-# the Solaar toggle at login: enabled = ~/.config/autostart/solaar.desktop exists (a copy of the template), disabled = it does not; no sudo
-tpl="$root/m/solaar-autostart.desktop"
-printf '[Desktop Entry]\nName=Solaar\nExec=solaar --window=hide --battery-icon=regular\nType=Application\n' >"$tpl"
-export HW_SOLAAR_TEMPLATE="$tpl"
-sf="$root/home/.config/autostart/solaar.desktop"; rm -f "$sf"
-run --yes
-check "--yes never changes Solaar" bash -c "[ ! -e '$sf' ]"
-run --list
-check "--list shows Solaar disabled" bash -c "grep -q '^solaar .*disabled' '$root/out'"
-run --only solaar
-check "--only solaar (disabled) enables it: a copy of the template, no sudo, the way back is printed" bash -c "cmp -s '$tpl' '$sf' && ! grep -q '^sudo' '$LOG' && grep -q 'solaar --off\\|--solaar off' '$root/out'"
-run --list
-check "--list shows Solaar enabled" bash -c "grep -q '^solaar .*enabled' '$root/out'"
-run --only solaar --no
-check "--no plans the flip (turn off) and changes nothing" bash -c "grep -q 'would turn Solaar at login off' '$root/out' && [ -e '$sf' ]"
-run --solaar on
-check "--solaar on when enabled: already enabled, nothing changes" bash -c "grep -q 'already enabled' '$root/out' && [ -e '$sf' ] && [ $rc = 0 ]"
-run --only solaar
-check "--only solaar (enabled) disables it: the file is deleted by the step" bash -c "[ ! -e '$sf' ] && grep -q 'disabled' '$root/out'"
-run --solaar off
-check "--solaar off when disabled: already disabled, nothing created" bash -c "grep -q 'already disabled' '$root/out' && [ ! -e '$sf' ]"
-run --solaar on
-check "--solaar on alone runs only that step (no menu) and enables it" bash -c "[ -e '$sf' ] && ! grep -q '== sensors' '$root/out'"
-run --solaar maybe
-check "--solaar with another value is refused (exit 2)" test "$rc" = 2
-rm -f "$sf"; HW_SOLAAR_CMD=solaar-not-here run --only solaar
-check "solaar not installed: the step is hidden (not applicable), exit 0, nothing created" bash -c "[ $rc = 0 ] && grep -q 'not applicable: solaar' '$root/out' && [ ! -e '$sf' ]"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

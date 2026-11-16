@@ -134,7 +134,7 @@ echo "::endgroup::"
 # https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/<release>/x86_64/repoview/index.html&protocol=https&redirect=1
 
 # distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips them; solaar-udev is listed anyway so it stays
-# if the base drops it). solaar (the Logitech device manager, GTK, Python) is the new one: 5.7 MiB plus three small Python dependencies.
+# if the base drops it). solaar-udev (the Logitech udev rules) stays for the Solaar Flatpak and any host-side Solaar; the Solaar GUI package is NOT in the image.
 # Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
 # packages from the host are not used: gstreamer1-plugins-bad/-ugly (group `codecs`, optional because they
 # come from negativo17) are the negativo17 equivalents and replace the base's -free variants. They are
@@ -151,16 +151,8 @@ echo "::endgroup::"
 echo "::group::Packages: critical"
 dnf5 install -y \
     pam-u2f snapper fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev \
+    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev \
     gcc gcc-c++ make binutils
-
-# Solaar must not start for every user: the RPM ships /etc/xdg/autostart/solaar.desktop (the tray and background service at login). The image keeps the
-# file as a TEMPLATE that `ujust hardware-setup --only solaar` copies into the user's ~/.config/autostart (opt-in), and removes the autostart entry; the
-# application's menu entry /usr/share/applications/solaar.desktop stays. A missing file fails the build: the recipe has nothing to copy without it.
-solaar_autostart=/etc/xdg/autostart/solaar.desktop
-[[ -f "${solaar_autostart}" ]] || { echo "ERROR: ${solaar_autostart} is not in the solaar package any more: update build.sh and the hardware-setup solaar step"; exit 1; }
-install -Dm0644 "${solaar_autostart}" /usr/share/octarine-os/solaar-autostart.desktop
-rm -f "${solaar_autostart}"
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
