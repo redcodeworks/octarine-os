@@ -1,0 +1,508 @@
+---
+name: dx image (reusable)
+# The shared plan, build, promote and sign jobs of the developer images, called by build-dx.yml (octarine-os-dx) and build-nvidia-dx.yml
+# (octarine-os-nvidia-dx). Each caller keeps its own triggers, concurrency group, run-name, guards and RESULT job: the required check
+# `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry that name), the
+# NVIDIA caller never posts them. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
+# or builds by comparing the labels of the published image; build -> sign as before; promote only when the plan finds a tested testing image
+# (promote_from_testing). The `summary` job hands the results of the jobs to the caller (a caller sees only one job result for a called
+# workflow, and .github/scripts/aggregate-dx.sh needs each). The signing key is the `signing` ENVIRONMENT secret of the `sign` job: nothing
+# is passed in. Design in CLAUDE.md ("dx image").
+on:
+  workflow_call:
+    secrets:
+      SIGNING_SECRET:
+        description: "not passed by the callers: the sign job reads it from its `signing` environment"
+        required: false
+    inputs:
+      base_name:
+        description: "Base image name under ghcr.io/<owner>/ (octarine-os or octarine-os-nvidia)"
+        type: string
+        required: true
+      dx_name:
+        description: "Name of the image built on it (octarine-os-dx or octarine-os-nvidia-dx)"
+        type: string
+        required: true
+      channel:
+        description: "latest or testing"
+        type: string
+        required: true
+      sha:
+        description: "The commit to build (full sha, on the branch the caller ran on)"
+        type: string
+        required: true
+      base_digest:
+        description: "Channel latest: the digest of the base image this run is built on (empty: whatever :latest is now)"
+        type: string
+        default: ""
+      force:
+        description: "Build even when the base digest and dx inputs are unchanged"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan only: nothing is built, pushed or signed"
+        type: boolean
+        default: false
+      promote_from_testing:
+        description: "Look for a tested testing image to promote instead of building (channel latest)"
+        type: boolean
+        default: true
+      tags:
+        description: "Space separated tags to push, with {sha} (7 characters) and {date} (YYYYMMDD) filled in; the promote job retags the same names"
+        type: string
+        required: true
+      description:
+        description: "The org.opencontainers.image.description label"
+        type: string
+        required: true
+      extra_smoke:
+        description: "Optional second smoke test: a script in the repository, then its arguments (it runs inside the image like dx-smoke.sh)"
+        type: string
+        default: ""
+    outputs:
+      plan:
+        description: "result of the plan job"
+        value: ${{ jobs.summary.outputs.plan }}
+      build:
+        description: "result of the build job"
+        value: ${{ jobs.summary.outputs.build }}
+      promote:
+        description: "result of the promote job"
+        value: ${{ jobs.summary.outputs.promote }}
+      sign:
+        description: "result of the sign job"
+        value: ${{ jobs.summary.outputs.sign }}
+      build_wanted:
+        description: "plan output build"
+        value: ${{ jobs.plan.outputs.build }}
+      promote_wanted:
+        description: "plan output promote"
+        value: ${{ jobs.plan.outputs.promote }}
+      base_digest:
+        description: "the base digest the run was planned on"
+        value: ${{ jobs.plan.outputs.base_digest }}
+      digests:
+        description: "the digest built or promoted"
+        value: ${{ jobs.build.outputs.digests || jobs.promote.outputs.digests }}
+
+env:
+  CHANNEL: ${{ inputs.channel }}
+  SHA: ${{ inputs.sha }}
+  BASE_NAME: ${{ inputs.base_name }}
+  DX_NAME: ${{ inputs.dx_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan the dx build
+    runs-on: ubuntu-26.04
+
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      promote: ${{ steps.plan.outputs.promote }}
+      channel: ${{ steps.plan.outputs.channel }}
+      base_tag: ${{ steps.plan.outputs.base_tag }}
+      base_digest: ${{ steps.plan.outputs.base_digest }}
+      dx_inputs: ${{ steps.plan.outputs.dx_inputs }}
+      source_tag: ${{ steps.plan.outputs.source_tag }}
+      source_digest: ${{ steps.plan.outputs.source_digest }}
+
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      # The commit the triggering build ran for (for a dispatch: main's tip); history for the promotion search
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      # The commit must be a full sha that is the ref's tip or one of its ancestors (the ref may have moved on): nothing off the branch is ever built
+      - name: Check the commit belongs to the branch
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha '${SHA}' is not a full commit sha"; exit 1; }
+          git fetch --no-tags origin "${GITHUB_REF}"
+          git merge-base --is-ancestor "${SHA}" FETCH_HEAD || { echo "::error::${SHA} is not on ${GITHUB_REF_NAME}"; exit 1; }
+          echo "Building ${SHA} (tip of ${GITHUB_REF_NAME}: $([[ "$(git rev-parse FETCH_HEAD)" == "${SHA}" ]] && echo yes || echo no))"
+
+      # Reads of a package that is not public yet need the token; harmless when it is public
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the base, verify it, compare with the published dx image, look for a tested one
+        id: plan
+        env:
+          # channel latest on main: the default image the pipeline just published (latest is not moved before this run has passed)
+          BASE_DIGEST_PIN: ${{ inputs.channel == 'latest' && inputs.base_digest || '' }}
+          FORCE: ${{ inputs.force }}
+          PROMOTE_FROM_TESTING: ${{ inputs.promote_from_testing }}
+        run: .github/scripts/plan-dx.sh
+
+  build:
+    name: Build dx image
+    needs: plan
+    if: needs.plan.outputs.build == 'true' && !inputs.dry_run
+    runs-on: ubuntu-26.04
+
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digests: ${{ steps.push.outputs.digests }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      BASE_DIGEST: ${{ needs.plan.outputs.base_digest }}
+      BASE_TAG: ${{ needs.plan.outputs.base_tag }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      DX_INPUTS: ${{ needs.plan.outputs.dx_inputs }}
+      DESCRIPTION: ${{ inputs.description }}
+      EXTRA_SMOKE: ${{ inputs.extra_smoke }}
+      TAGS: ${{ inputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      # The runner has a 145 GB root disk with about 88 GB free before anything is removed (measured 2026-11-14 on ubuntu-26.04: the default
+      # image build peaks at 44 GB used, 18 GB more than the 26 GB left after the cleanup action), so the cleanup action (38 to 85 s) is
+      # only the FALLBACK now: it runs when less than 60 GiB is free at the start.
+      - name: Check disk space
+        id: disk
+        run: |
+          free=$(df --output=avail -BG / | tail -n1 | tr -dc 0-9)
+          df -h /
+          echo "Free at the start: ${free} GiB"
+          echo "low=$([ "${free}" -lt 60 ] && echo true || echo false)" >> "${GITHUB_OUTPUT}"
+
+      - name: Maximize build space (fallback, only when the disk is low)
+        if: steps.disk.outputs.low == 'true'
+        uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
+
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Image names
+        id: names
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "BASE_IMAGE=ghcr.io/${owner}/${BASE_NAME}" >> "${GITHUB_ENV}"
+          echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
+          echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
+
+      # The shared developer package list (dev-packages, built and signed by the fedora-toolbox repository, a package this project owns) floats at latest: resolved to a digest once,
+      # verified with the toolbox key, passed to the build as DEV_PACKAGES_REF and recorded in the dev-packages image label
+      - name: Resolve and verify the dev-packages image
+        run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF
+
+      # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
+      - name: Verify and pull the base image, read its kernel
+        run: |
+          set -euo pipefail
+          [[ "${BASE_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::The plan job gave no base digest"; exit 1; }
+          echo "Base image ${BASE_IMAGE}:${BASE_TAG} = ${BASE_DIGEST} (signature verified by the plan job)"
+          podman pull "${BASE_IMAGE}@${BASE_DIGEST}" > /dev/null
+          kernel=$(podman run --rm "${BASE_IMAGE}@${BASE_DIGEST}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
+          echo "Kernel of the base image: ${kernel}"
+          echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
+
+      # The same label set as `just build`, set explicitly (nothing about the base's maintainers is inherited); the labels
+      # that describe the base image's own build are unset, the rechunk step passes the rest on
+      - name: Build the image
+        run: |
+          set -euo pipefail
+          set -a; . ./config/image.env; set +a
+          version=$(.github/scripts/image-version.sh)
+          sha=$(git rev-parse HEAD)
+          podman build -f variants/dx/Containerfile \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            --build-arg "BASE_TAG=${BASE_TAG}" \
+            --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
+            --build-arg "DEV_PACKAGES_REF=${DEV_PACKAGES_REF}" \
+            --build-arg "IMAGE_VERSION=${version}" \
+            --build-arg "DX_IMAGE_ID=${DX_NAME}" \
+            --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
+            --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \
+            --unsetlabel org.opencontainers.image.maintainer \
+            --unsetlabel org.opencontainers.image.authors \
+            --unsetlabel io.artifacthub.package.maintainers \
+            --label "org.opencontainers.image.title=${DX_NAME}" \
+            --label "org.opencontainers.image.description=${DESCRIPTION}" \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.licenses=Apache-2.0" \
+            --label "org.opencontainers.image.vendor=${REPO_ORGANIZATION}" \
+            --label "org.opencontainers.image.revision=${sha}" \
+            --label "org.opencontainers.image.version=${version}" \
+            --label "org.opencontainers.image.created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.url=https://github.com/${GITHUB_REPOSITORY}/tree/${sha:0:7}" \
+            --label "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${BASE_TAG}" \
+            --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
+            --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
+            --label "io.github.redcodeworks.octarine-os.dx-inputs=${DX_INPUTS}" \
+            --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
+            --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
+            --label "io.artifacthub.package.deprecated=false" \
+            --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},developer" \
+            --label "io.artifacthub.package.license=Apache-2.0" \
+            --label "io.artifacthub.package.logo-url=${IMAGE_LOGO_URL}" \
+            --label "io.artifacthub.package.prerelease=false" \
+            --tag "${DX_NAME}:${CHANNEL}" .
+          echo "Built ${DX_NAME}:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST} (${BASE_TAG}), dx inputs ${DX_INPUTS}"
+
+      - name: Check image size
+        env:
+          MAX_IMAGE_GIB: 15
+        run: |
+          size=$(podman image inspect "${DX_NAME}:${CHANNEL}" --format '{{.Size}}')
+          echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"
+          if (( size > MAX_IMAGE_GIB * 1024 * 1024 * 1024 )); then
+            echo "::error::The image is larger than ${MAX_IMAGE_GIB} GiB; check what was added"
+            exit 1
+          fi
+
+      # Anything missing fails the build before anything is pushed
+      - name: Smoke test the image
+        run: |
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
+            "${DX_NAME}:${CHANNEL}" bash /smoke.sh
+
+      # The caller's own checks (the NVIDIA caller: driver, kernel module, initramfs, no CUDA toolkit): a script of the repository and its arguments
+      - name: Smoke test the image (extra checks)
+        if: inputs.extra_smoke != ''
+        run: |
+          read -r script args <<< "${EXTRA_SMOKE}"
+          # shellcheck disable=SC2086
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/${script}:/smoke.sh:ro" \
+            "${DX_NAME}:${CHANNEL}" bash /smoke.sh ${args}
+
+      - name: Rechunk with chunkah
+        run: |
+          just rechunk "${DX_NAME}" "${CHANNEL}"
+
+      - name: Disk after the build
+        run: |
+          free=$(df --output=avail -BG / | tail -n1 | tr -dc 0-9)
+          df -h /
+          echo "Free after the build and rechunk: ${free} GiB" | tee -a "${GITHUB_STEP_SUMMARY}"
+          if [ "${free}" -lt 15 ]; then echo "::warning::Only ${free} GiB free after the build: the cleanup of the runner may be needed again (see Check disk space)"; fi
+
+      - name: Check the version is channel-neutral
+        run: |
+          # the labels plus os-release IMAGE_VERSION of the rechunked image
+          {
+            podman image inspect "${DX_NAME}:${CHANNEL}" \
+              | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
+            podman run --rm "${DX_NAME}:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
+          } | .github/scripts/check-version-neutral.sh
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tags come from the caller's template ({sha}, {date}); a dx image built on a default image that carries today's daily-<date> tag gets that tag too
+      - name: Tags
+        id: tags
+        run: |
+          sha=$(git rev-parse --short=7 HEAD)
+          date=$(date +%Y%m%d)
+          alias_tags="${TAGS//\{sha\}/${sha}}"
+          alias_tags="${alias_tags//\{date\}/${date}}"
+          if [[ "${CHANNEL}" == latest ]]; then
+            # same tag as the daily run of the base (set by build.yml's scheduled run, which dispatches the dx workflow right after), so prune-daily.yml counts both packages alike
+            today="daily-$(date -u +%Y%m%d)"
+            seen=$(IMAGE="${BASE_IMAGE}" .github/scripts/registry-digest.sh "${today}" 2> /dev/null || true)
+            if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
+          fi
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Push to GHCR
+        id: push
+        env:
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euox pipefail
+          # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
+          .github/scripts/push-tags.sh "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
+
+  # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
+  # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
+  promote:
+    name: Promote tested dx image
+    needs: plan
+    if: needs.plan.outputs.promote == 'true' && !inputs.dry_run
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      image: ${{ steps.tags.outputs.image }}
+      digests: ${{ needs.plan.outputs.source_digest }}
+      alias_tags: ${{ steps.tags.outputs.alias_tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image name and tags
+        id: tags
+        env:
+          TAGS: ${{ inputs.tags }}
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
+          # the same tag names as the build job
+          sha=$(git rev-parse --short=7 HEAD)
+          alias_tags="${TAGS//\{sha\}/${sha}}"
+          alias_tags="${alias_tags//\{date\}/$(date +%Y%m%d)}"
+          echo "Tags: ${alias_tags}"
+          echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
+
+      - name: Retag the tested digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ inputs.dx_name }}
+          SOURCE_TAG: ${{ needs.plan.outputs.source_tag }}
+          SOURCE_DIGEST: ${{ needs.plan.outputs.source_digest }}
+          ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          IMAGE="${IMAGE,,}"
+          export IMAGE
+          lookup=.github/scripts/registry-digest.sh
+          now=$("${lookup}" "${SOURCE_TAG}")
+          [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
+          for tag in ${ALIAS_TAGS}; do
+            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
+            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            echo "promoted ${tag} -> ${SOURCE_DIGEST}"
+          done
+
+  sign:
+    name: Sign and verify dx image
+    needs: [build, promote]
+    if: always() && (needs.build.result == 'success' || needs.promote.result == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      # Promote path: the digest was signed when the testing image was published; check it, never sign it again
+      - name: Verify the digest that was promoted is signed
+        if: needs.promote.result == 'success'
+        env:
+          IMAGE: ${{ needs.promote.outputs.image }}
+          DIGESTS: ${{ needs.promote.outputs.digests }}
+        run: |
+          set -euo pipefail
+          for digest in ${DIGESTS}; do
+            cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            echo "signed: ${digest}"
+          done
+
+      - name: Sign every pushed digest
+        if: needs.build.result == 'success'
+        env:
+          COSIGN_EXPERIMENTAL: false
+          COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGESTS: ${{ needs.build.outputs.digests }}
+        run: |
+          set -euo pipefail
+          [[ -n "${DIGESTS// /}" ]] || { echo "::error::No pushed digests to sign"; exit 1; }
+          # old bundle format, as in build.yml (https://github.com/containers/container-libs/issues/388)
+          for digest in ${DIGESTS}; do
+            cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${digest}"
+          done
+
+      - name: Verify every pushed tag is signed
+        env:
+          IMAGE: ${{ needs.build.outputs.image || needs.promote.outputs.image }}
+          ALIAS_TAGS: ${{ needs.build.outputs.alias_tags || needs.promote.outputs.alias_tags }}
+        run: |
+          set -euo pipefail
+          for tag in ${ALIAS_TAGS}; do
+            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            echo "signed: ${tag}"
+          done
+
+  # The results of the jobs above, for the caller's result job (always runs)
+  summary:
+    name: Results
+    needs: [plan, build, promote, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+    outputs:
+      plan: ${{ needs.plan.result }}
+      build: ${{ needs.build.result }}
+      promote: ${{ needs.promote.result }}
+      sign: ${{ needs.sign.result }}
+    steps:
+      - name: Results
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: echo "${RESULTS}"
