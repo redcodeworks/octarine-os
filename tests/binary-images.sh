@@ -64,6 +64,10 @@ D=sha256:$(dg "$IMG" latest)
 use X=1
 use X=1
 check "use: latest is resolved to a digest, verified with the key and exported as BINARIES_IMAGE=<image>@<digest>" bash -c "[ $rc = 0 ] && grep -qx 'BINARIES_IMAGE=$IMG@$D' '$root/genv' && grep -q 'cosign verify --key $root/cosign.pub $IMG@$D' '$LOG'"
+use_tag() { : >"$LOG"; : >"$root/genv"; env PATH="$bin:$PATH" GITHUB_ENV="$root/genv" bash "$here/.github/scripts/latest-ref.sh" "$IMG" "$root/cosign.pub" BINARIES_IMAGE testing >"$root/run" 2>&1; rc=$?; }
+use_tag
+DT=sha256:$(dg "$IMG" testing)
+check "use: a fourth argument names the tag (testing), the digest of THAT tag is verified and exported" bash -c "[ $rc = 0 ] && grep -qx 'BINARIES_IMAGE=$IMG@$DT' '$root/genv' && grep -q 'cosign verify --key $root/cosign.pub $IMG@$DT' '$LOG'"
 use COSIGN_RC=1
 check "use: a digest that does not verify fails the build and exports nothing" bash -c "[ $rc != 0 ] && [ ! -s '$root/genv' ]"
 use SKOPEO_READ=1
