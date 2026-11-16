@@ -29,8 +29,9 @@ permissions:
 
 jobs:
   # How much of the test job a push needs (.github/scripts/test-scope.sh): `docs` when every changed file is documentation text, else `full`
-  # (a first push of a branch, a dispatch, a mixed push, a failing detection). The job `test` below always runs and keeps its name: it is a
-  # required check, and a path filter on the workflow would leave it missing.
+  # (a dispatch, a mixed push, a failing detection). For `docs` the jobs `base` and `test` are SKIPPED by a job-level `if` (a skipped job
+  # reports "Skipped", which satisfies the required check; a path filter on the workflow would leave it missing) and the light job `docs`
+  # runs the documentation tests on the host runner: no base image pull, no dnf install.
   scope:
     name: scope
     runs-on: ubuntu-26.04
@@ -61,6 +62,9 @@ jobs:
   # (and a Fedora update that breaks them shows here before the image build does). build-beta.yml runs the same tests (the test-suite action) on ITS base.
   base:
     name: base
+    needs: [scope]
+    # always(): a failed scope job means the full run; only a documentation-only scope skips
+    if: always() && needs.scope.outputs.scope != 'docs'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     env:
@@ -92,13 +96,11 @@ jobs:
   test:
     name: test
     needs: [scope, base]
-    # always: a failed scope job means the full run, never a missing required check
-    if: always()
+    # always(): a failed scope job means the full run; only a documentation-only scope skips (the `docs` job below runs instead)
+    if: always() && needs.scope.outputs.scope != 'docs'
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     container: ${{ needs.base.outputs.image }}
-    env:
-      DOCS_ONLY: ${{ needs.scope.outputs.scope == 'docs' }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -108,6 +110,30 @@ jobs:
 
       - name: Run the tests
         uses: ./.github/actions/test-suite
+
+  # Documentation-only push: the tests that read the documentation (derived by grep in test-scope.sh --doc-tests, never a fixed list) and a sanity
+  # check of the text, straight on the runner (no container, no installs beyond the cached pinned just).
+  docs:
+    name: docs
+    needs: [scope]
+    if: needs.scope.outputs.scope == 'docs'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Run the tests that read the documentation
+        run: |
+          mapfile -t doc_tests < <(.github/scripts/test-scope.sh --doc-tests)
+          echo "Documentation only: running ${#doc_tests[@]} tests that read the documentation"
+          .github/scripts/run-tests.sh --jobs 4 "${doc_tests[@]}"
+
+      - name: Sanity check of the documentation text
+        run: .github/scripts/docs-sanity.sh
 
   secrets:
     name: secrets

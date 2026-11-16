@@ -6,8 +6,10 @@
 #
 # `docs` only when the event is a push, the commit range is known, and EVERY changed file is documentation text: a top-level *.md,
 # anything under docs/, LICENSE, .gitignore. The test suite itself is NOT documentation here (a changed test must run), unlike in
-# docs-only.sh, which decides what needs an image build. Everything else is `full`: a first push of a branch (before is all zeros or
-# unknown), a manual dispatch, an empty diff, a failing git. The job keeps its name and its required check either way.
+# docs-only.sh, which decides what needs an image build. Everything else is `full`: a manual dispatch (bump PRs: their checks come from a
+# dispatched run), an empty diff, a failing git, an unknown before commit. The FIRST push of a branch (before is all zeros) is compared with
+# the merge base with origin/testing (the checkout has the full history), so a new docs-only branch is documentation too; without
+# origin/testing it is `full`. The workflow skips the heavy `base` and `test` jobs for `docs` and runs the light `docs` job instead.
 set -uo pipefail
 
 doc_tests() { grep -lE 'README\.md|CLAUDE\.md|docs/' tests/*.sh 2> /dev/null || true; }
@@ -27,7 +29,11 @@ after="${3:-HEAD}"
 full() { echo "full: $*" >&2; echo full; exit 0; }
 
 [[ "${event}" == push ]] || full "not a push (${event})"
-[[ -n "${before}" && ! "${before}" =~ ^0+$ ]] || full "no usable before commit"
+if [[ "${before}" =~ ^0+$ ]]; then
+    # a new branch: what it adds on top of testing
+    before=$(git merge-base origin/testing "${after}" 2> /dev/null) || full "first push of a branch and no merge base with origin/testing"
+fi
+[[ -n "${before}" ]] || full "no usable before commit"
 git cat-file -e "${before}^{commit}" 2> /dev/null || full "the before commit is not available"
 git cat-file -e "${after}^{commit}" 2> /dev/null || full "the after commit is not available"
 mapfile -t changed < <(git diff --name-only "${before}" "${after}" 2> /dev/null) || full "git diff failed"
