@@ -47,13 +47,23 @@ jobs:
           if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi
           if [[ "${EVENT}" == "workflow_dispatch" ]]; then export DRY_RUN="${INPUT_DRY_RUN}"; else export DRY_RUN=false; fi
 
-          # Images that must survive: the default image behind `latest` and the base of the dx image behind `latest` (a label of the dx image).
-          # A lookup that fails stops the run: never prune without knowing the pair.
-          default="ghcr.io/${owner}/octarine-os"
-          latest=$(skopeo inspect --raw "docker://${default}:latest" | sha256sum | sed 's/ .*//')
-          dx_base=$(skopeo inspect --config "docker://${default}-dx:latest" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
-          [[ "${latest}" =~ ^[0-9a-f]{64}$ && "${dx_base}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read the latest pair (default ${latest}, dx base ${dx_base})"; exit 1; }
-          export PROTECT="sha256:${latest} ${dx_base}"
+          # Images that must survive: the digest behind each image's own `latest`, and the default images that the variants' `latest` stand on (the base digest
+          # is a label of the variant). The images publish independently, so these are different digests. An image that has no `latest` yet (gx before it is
+          # published) is skipped; any other failed lookup stops the run: never prune without knowing what is live.
+          protect=""
+          for name in octarine-os octarine-os-dx octarine-os-gx; do
+            image="ghcr.io/${owner}/${name}"
+            rc=0; digest=$(IMAGE="${image}" .github/scripts/registry-digest.sh latest) || rc=$?
+            if [[ "${rc}" == 3 && "${name}" == octarine-os-gx ]]; then echo "${name}: no latest yet, nothing to protect"; continue; fi
+            [[ "${rc}" == 0 && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read ${image}:latest (status ${rc})"; exit 1; }
+            protect="${protect} ${digest}"
+            if [[ "${name}" != octarine-os ]]; then
+              base=$(.github/scripts/registry-read.sh config "${image}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
+              [[ "${base}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${image}@${digest} has no readable base digest label"; exit 1; }
+              protect="${protect} ${base}"
+            fi
+          done
+          export PROTECT="${protect# }"
           echo "Protected: ${PROTECT}"
 
           failed=0

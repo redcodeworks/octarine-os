@@ -222,10 +222,19 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
 
-      # The shared developer package list (dev-packages, built and signed by the octarine-images repository (renamed from fedora-toolbox), a package this project owns) floats at latest: resolved to a digest once,
-      # verified with the toolbox key, passed to the build as DEV_PACKAGES_REF and recorded in the dev-packages image label
-      - name: Resolve and verify the dev-packages image
-        run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF
+      # The shared developer package list (dev-packages, built and signed by the octarine-images repository, a package this project owns) is PINNED by digest in
+      # variants/dx/Containerfile (ARG DEV_PACKAGES_DIGEST, changed only by a bump PR). Every build verifies the PINNED digest with the toolbox key and records it in the
+      # dev-packages image label: a hand-edited digest cannot ship unverified. No `latest` is read here. The Containerfile reads the pin itself.
+      - name: Verify the pinned dev-packages image
+        run: |
+          set -euo pipefail
+          tag=$(sed -n 's/^ARG DEV_PACKAGES_TAG=//p' variants/dx/Containerfile)
+          digest=$(sed -n 's/^ARG DEV_PACKAGES_DIGEST=//p' variants/dx/Containerfile)
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::DEV_PACKAGES_DIGEST in variants/dx/Containerfile is missing or malformed"; exit 1; }
+          ref="ghcr.io/redcodeworks/dev-packages@${digest}"
+          .github/scripts/retry.sh cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/redcodeworks-toolbox-cosign.pub"; exit 1; }
+          echo "dev-packages image pinned: ghcr.io/redcodeworks/dev-packages:${tag}@${digest} (signature valid)"
+          echo "DEV_PACKAGES_REF=${ref}" >> "${GITHUB_ENV}"
 
       # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
@@ -250,7 +259,6 @@ jobs:
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
-            --build-arg "DEV_PACKAGES_REF=${DEV_PACKAGES_REF}" \
             --build-arg "IMAGE_VERSION=${version}" \
             --build-arg "DX_IMAGE_ID=${DX_NAME}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \

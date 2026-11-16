@@ -55,7 +55,7 @@ env:
 # testing: one group per channel and a newer run CANCELS the older one (a superseded tip needs no dx image; the newest tip's run is the one that
 # counts, and a cancelled run posts no commit status, see the status step). latest on main: one group per COMMIT and never cancelled, because with
 # one group a third run would cancel the PENDING second one, silently dropping a default image that then never gets its dx pair; runs of different
-# commits build side by side and Publish latest serializes the moves
+# commits build side by side and Publish latest serializes the moves of dx `latest`
 concurrency:
   group: build-dx-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
   cancel-in-progress: ${{ inputs.channel == 'testing' }}
@@ -179,31 +179,29 @@ jobs:
             -f state="${state}" -f context="Build dx and push image" -f description="${text}" \
             -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
-  # Channel latest on main: the pair (default image digest the run was built on, dx digest built or promoted here, or empty when dx was
-  # unchanged) is verified and BOTH `latest` tags move in one step; a green run that built nothing new is a no-op. Called, not dispatched:
-  # the digests are handed over, the job is re-run with "re-run failed jobs" and lives in this run.
+  # Channel latest on main: dx's OWN `latest` moves to the dx digest built or promoted here, once it is signed and its base is a signed default image from main.
+  # Independent of the default image (2026-11-16): it neither waits for the default image's `latest` nor gates it. Nothing new (dx unchanged) means no digest
+  # and no publish. Called, not dispatched: the digest is handed over, the job is re-run with "re-run failed jobs" and lives in this run.
   publish:
     name: Publish latest
     needs: [dx, sign, dx_result]
     if: >-
       always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run &&
-      needs.dx.result == 'success' && needs.dx_result.result == 'success'
+      needs.dx.result == 'success' && needs.dx_result.result == 'success' && needs.dx.outputs.digests != ''
     uses: ./.github/workflows/publish-latest.yml
     permissions:
       contents: read
       packages: write
-      issues: write
     with:
-      vanilla_digest: ${{ needs.dx.outputs.base_digest }}
-      dx_digest: ${{ needs.dx.outputs.digests }}
-      main_sha: ${{ inputs.sha || github.sha }}
+      image: dx
+      digest: ${{ needs.dx.outputs.digests }}
 
   # A failed dx run for latest on main: one issue with the label ci-failure-dx, a comment per further failure (a run started by a
-  # dispatch with the default token probably e-mails nobody). A failed publish is reported by publish-latest.yml itself.
+  # dispatch with the default token probably e-mails nobody), or a failed publish of dx `latest`; a green run closes it.
   alert:
     name: Report a failed dx run
-    needs: [dx, sign, dx_result]
-    if: always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run && contains(needs.*.result, 'failure')
+    needs: [dx, sign, dx_result, publish]
+    if: always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -215,9 +213,18 @@ jobs:
           persist-credentials: false
 
       - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ inputs.sha || github.sha }}
           CHANNEL: latest
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.dx_result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha || github.sha }}
+          CHANNEL: latest
+        run: .github/scripts/ci-issue.sh recover

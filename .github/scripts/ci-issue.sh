@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One issue per ongoing failure of the dx / `latest` publishing on main, without duplicates (deduplicated on the LABEL, not on the title).
+# One issue per ongoing failure of the dx image / its `latest` publishing on main, without duplicates (deduplicated on the LABEL, not on the title).
 #
 #   ci-issue.sh fail      a run failed: open the issue, or add a comment to the one that is already open
 #   ci-issue.sh recover   `latest` moved: comment "recovered" on the open issue and close it (nothing to do when none is open)
@@ -17,7 +17,7 @@ sha="${SHA:?SHA}"
 channel="${CHANNEL:-latest}"
 label="${LABEL:-ci-failure-dx}"
 run_url="${RUN_URL:-${GITHUB_SERVER_URL:-https://github.com}/${repo}/actions/runs/${GITHUB_RUN_ID:-0}}"
-docs="${DOCS_URL:-https://github.com/${repo}/blob/main/CLAUDE.md#promoting-the-default-and-dx-images-together}"
+docs="${DOCS_URL:-https://github.com/${repo}/blob/main/CLAUDE.md#publishing-latest-one-image-at-a-time}"
 now="${NOW:-$(date -u +%Y-%m-%d)}"
 label_desc="${LABEL_DESC:-dx or latest was not published (one open issue at a time)}"
 short="${sha:0:7}"
@@ -42,13 +42,13 @@ case "${mode}" in
             gh issue comment "${num}" -R "${repo}" --body "${FAIL_COMMENT} (${now}): ${run_url} (commit ${sha})."
             echo "commented on #${num} for ${run_url}"
         elif [[ -z "${num}" ]]; then
-            body="The dx image of channel ${channel} (or the publication of \`latest\`) failed on main, so \`latest\` of both images stays on the previous pair.
+            body="The dx image of channel ${channel} (or the publication of its \`latest\`) failed on main, so \`octarine-os-dx:latest\` stays on the previous image (the default image publishes its own \`latest\` independently).
 
 - Run: ${run_url}
 - Commit: ${sha}
 - Failed job(s): ${failed:-see the run}
 
-What you can do: re-run the failed dx run (a green re-run publishes), or, for a security fix that cannot wait, dispatch \`Publish latest\` with scope=vanilla-only (\`gh workflow run publish-latest.yml --ref main -f scope=vanilla-only -f reason=\"...\"\`). See ${docs}.
+What you can do: re-run the failed dx run (a green re-run publishes). The default image is not held back by dx. See ${docs}.
 
 Later failures are added to this issue as comments; it closes itself when \`latest\` moves again."
             gh issue create -R "${repo}" --title "dx/latest not published: ${channel} ${short}" --label "${label}" --body "${body}"
