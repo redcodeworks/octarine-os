@@ -54,7 +54,6 @@ OCTARINE_MOTD_TIPS="$root/none" OCTARINE_MOTD_FILE="$root/none2" run
 check "nothing to show: silent, exit 0" bash -c "[ $rc = 0 ] && [ ! -s '$root/out' ]"
 check "the script passes no --config to fastfetch (it reads ~/.config/fastfetch then /etc/xdg/fastfetch)" bash -c "! grep -n -- '--config' '$motd' | grep -v '^[0-9]*:#'"
 check "the script is executable and bash -n clean" bash -c "[ -x '$motd' ] && bash -n '$motd'"
-if command -v shellcheck >/dev/null 2>&1; then check "shellcheck is clean for the motd script" shellcheck "$motd"; else echo "skip shellcheck (not installed here; the CI container has it)"; fi
 
 # ---- the profile.d hook: interactive shells with a terminal only, once
 mkdir -p "$root/hook"

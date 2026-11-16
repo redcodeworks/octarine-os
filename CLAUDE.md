@@ -460,6 +460,8 @@ trigger, so the image builds only on `testing` and `main` pushes, the schedule a
 
 The initial CI keeps only syntax, lint and parse checks, cheap obvious smoke checks, and behavior tests with stubs for logic that first executes on main, schedule or publish and could not otherwise be seen before it breaks production (promotion retag, publish-latest ordering and pairing, prune-daily deletion rules, sign and verify decisions, the luks-tpm-unlock SIGPIPE case, registry-read behavior). Tests must NOT assert workflow YAML text, README or doc prose, comment content, exact messages, file lists, or version, digest and count literals. When such an assertion fails, delete or loosen it (never move content to satisfy it, never add code to satisfy it); an error that a real build shows by itself needs no test.
 
+Interactive recipes (menus, checklists, wizards) are covered by a thin smoke only, kept for what is silent or irreversible (kernel arguments, TPM and Secure Boot, the security-key file, root refusal, the plan modes); the rest shows when the recipe is run (2026-11-16: `tests/toolbox.sh`, `gaming-setup.sh`, `niri-setup.sh` and `niri-keybinds.sh` deleted, `hardware-setup`, `virthost-setup`, `user-setup`, `dev-setup`, `update-services`, `scheduler-recipe` and `sensors-setup` thinned).
+
 Cut in the combined batch of 2026-11-16 (accepted by Kevin, no replacement checks): `tests/readme-defaults.sh` and `tests/test-workflow.sh` are deleted; the workflow, Containerfile, Justfile and script-text assertions of `binary-images.sh`, `binaries-validate.sh`, `bump-pins.sh`, `bump-checks.sh`, `bump-run.sh` and `ghostty-component.sh` are gone (their stub behavior tests stay). Invariants that are now unguarded by any test: nothing that publishes has a `pull_request` trigger; login, push and sign steps are gated on publish; sign runs in the `signing` environment; the `daily-*` tag is written only by the scheduled run; the default image must not install libvirt or QEMU; the personal-names grep (gitleaks still scans for secrets). A wrong edit shows on the first real run.
 
 ## Keeping the tests fast (2026-11-16)
@@ -516,18 +518,15 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, and `just dev-packages-bump`.
 - `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
-- `tests/dev-setup.sh` tests `ujust dev` (dx only), the sdk wrapper, the fnm and cargo shell snippets and the dx-only wiring (see "Developer menu").
-- `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup"); `tests/niri-keybinds.sh` the experimental keybind wizard (see "Keybind wizard" there).
+- `tests/dev-setup.sh` is a thin test of `ujust dev` (dx only): root refusal, the plan mode, the libvirt delegation and one smoke (see "Developer menu").
+- `tests/niri-setup.sh`, `tests/niri-keybinds.sh`, `tests/toolbox.sh` and `tests/gaming-setup.sh` were deleted on 2026-11-16 (interactive recipes, nothing silent or irreversible); the sections that name them below describe behavior that is no longer tested.
 - `tests/system-defaults.sh` tests the dconf keyfile, the fish snippets and the GameMode defaults (see "System defaults").
 - `tests/brew-bump.sh` tests `just brew-bump` with fake skopeo and cosign and the digest format of the Containerfile pin.
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
 - `tests/plan-promote.sh` tests the promote decision.
-- `tests/user-setup.sh` tests `ujust user-setup` with fake flatpak, sudo, id, getent and usermod; run it after changing that recipe.
-- `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
-  network, temp HOME); run it after any change to those recipes or to
-  `system_files/usr/share/ublue-os/distrobox/` (`<name>.ini`, `<name>.conf`).
+- `tests/user-setup.sh` is a thin test of `ujust user-setup` (plan mode, failure handling, no change without a choice).
 - `tests/just-recipes.sh` tests the image's just files assembled like the base `justfile` (parses, new recipes listed, removed
   base recipes absent, every public recipe has a description); `tests/switch-image.sh`, `tests/update-services.sh` and
   `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`

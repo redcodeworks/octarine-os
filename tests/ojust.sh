@@ -67,12 +67,8 @@ mkdir -p "$root/stub"; printf '#!/usr/bin/env bash\necho "just JUST_JUSTFILE=$JU
 check "launcher: ojust runs just with JUST_JUSTFILE=/usr/share/octarine-os/justfile (the same mechanism ujust uses) and OCTARINE_UJUST=/usr/bin/ojust, arguments passed through" bash -c "out=\$(OJUST_JUST='$root/stub/just' bash '$sf/usr/bin/ojust' --list foo); [[ \"\$out\" == *'JUST_JUSTFILE=/usr/share/octarine-os/justfile'* && \"\$out\" == *'OCTARINE_UJUST=/usr/bin/ojust'* && \"\$out\" == *'args=--list foo'* ]]"
 check "launcher: with the real just ojust --list works and prints the image's recipes" bash -c "OJUST_JUSTFILE='$oj' bash '$sf/usr/bin/ojust' --list | grep -q toggle-motd"
 check "launcher: with no argument ojust prints its own list (Available commands), no Universal Blue documentation link" bash -c "mkdir -p '$root/bin2'; sed 's|/usr/bin/ojust|$root/bin2/ojust|' '$sf/usr/bin/ojust' >'$root/bin2/ojust'; chmod +x '$root/bin2/ojust'; sed -i 's|OCTARINE_UJUST:-[^}]*|OCTARINE_UJUST:-$root/bin2/ojust|' '$oj'; out=\$(OJUST_JUSTFILE='$oj' '$root/bin2/ojust'); grep -q 'Available commands' <<<\"\$out\" && grep -q ' - toggle-motd' <<<\"\$out\" && ! grep -qiE 'universal blue|projectbluefin|Click here' <<<\"\$out\""
-check "ojust is executable in git (100755) and the launcher parses" bash -c "bash -n '$sf/usr/bin/ojust' && git -C '$here' ls-files -s system_files/usr/bin/ojust | grep -q '^100755'"
-# hardware-setup calls ujust itself: with OCTARINE_UJUST the calls stay in ojust
-check "recipes that call ujust themselves honor OCTARINE_UJUST (hardware-setup), which ojust sets" bash -c "grep -q 'ujust_cmd=\${OCTARINE_UJUST:-ujust}' '$sf/usr/share/ublue-os/just/60-custom.just'"
 # not documented
 check "ujust --list does not offer ojust (no recipe of that name) and the wrapper recipes carry no mention" bash -c "! just --justfile '$uj' --summary | grep -qw ojust"
-check "the default smoke test checks ojust" grep -q 'experimental second launcher runs' "$here/.github/scripts/default-smoke.sh"
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

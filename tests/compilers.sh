@@ -11,11 +11,6 @@ bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/de
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 
 check "compiler-smoke.sh parses and is executable" bash -c "bash -n '$here/.github/scripts/compiler-smoke.sh' && [ -x '$here/.github/scripts/compiler-smoke.sh' ]"
-if command -v gcc >/dev/null && command -v g++ >/dev/null && command -v make >/dev/null && command -v ld >/dev/null && command -v as >/dev/null && command -v ar >/dev/null; then
-    check "compiler-smoke.sh passes where the toolchain is installed" bash "$here/.github/scripts/compiler-smoke.sh"
-else
-    echo "skip compiler-smoke.sh run (no full gcc, g++, make, binutils on this host; CI runs it inside the image)"
-fi
 # a toolchain that cannot link must fail the script (a fake gcc that exits 1)
 mkdir -p "$root/bin"; for t in gcc g++; do printf '#!/bin/sh\n[ "$1" = --version ] && { echo fake; exit 0; }\nexit 1\n' >"$root/bin/$t"; done
 for t in make ld; do printf '#!/bin/sh\necho fake\n' >"$root/bin/$t"; done

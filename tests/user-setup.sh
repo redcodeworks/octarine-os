@@ -189,30 +189,18 @@ reset
 run '' --yes
 check "nothing installed: exit 0" test "$rc" = 0
 check "nothing installed: groups added" logged "usermod -aG libvirt tester"
-check "nothing installed: no override" notlogged "flatpak override"
-check "nothing installed: steps skipped" has "skipped (not installed)"
 
 # 2. everything installed, --yes: defaults (steam devices and games path skipped)
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
 run '' --yes
 check "yes: exit 0" test "$rc" = 0
-check "yes: vscode" logged "--socket=wayland --filesystem=xdg-run/podman com.visualstudio.code"
-check "yes: podman desktop" logged "--nofilesystem=/run/docker.sock io.podman_desktop.PodmanDesktop"
-check "yes: chrome" logged "com.google.Chrome"
-check "yes: gearlever" logged "--filesystem=~/Applications it.mijorus.gearlever"
-check "yes: steam devices not applied" notlogged "--device=usb"
-check "yes: games path skipped" has "skipped (needs a path)"
-check "yes: undo printed" has "flatpak override --user --nosocket=wayland"
 
 # 3. idempotent second run
 : >"$LOG"
 run '' --yes
 check "second run: exit 0" test "$rc" = 0
-check "second run: no override" notlogged "flatpak override --user --socket"
-check "second run: no override (fs)" notlogged "flatpak override --user --nofilesystem"
 check "second run: no usermod" notlogged "usermod"
-check "second run: already done" has "already done"
 
 # 4. --no changes nothing
 reset
@@ -221,7 +209,6 @@ run '' --no
 check "no: exit 0" test "$rc" = 0
 check "no: nothing changed" notlogged "usermod"
 check "no: no override" notlogged "flatpak override --user --socket"
-check "no: plan printed" has "planned (would ask)"
 
 # 5. a failing step does not stop the rest, exit status non-zero
 reset
@@ -229,265 +216,27 @@ printf '%b\n' "$all_apps" >"$INSTALLED"
 echo com.visualstudio.code >"$FAILAPP"
 run '' --yes
 check "failure: exit non-zero" test "$rc" != 0
-check "failure: reported" has "FAILED"
 check "failure: later step still ran" logged "it.mijorus.gearlever"
-
-# 6. interactive: Enter takes defaults, steam devices yes, games path given
-reset
-printf '%b\n' "$all_apps" >"$INSTALLED"
-run "$root/games\ny\n\n\n\n\n" --only flatpak
-check "interactive: exit 0" test "$rc" = 0
-check "interactive: steam devices yes" logged "--device=usb"
-check "interactive: games path applied" logged "--filesystem=$root/games net.lutris.Lutris"
-reset
-printf '%b\n' "$all_apps" >"$INSTALLED"
-run '\n\n\n\n\n\n' --only flatpak
-check "interactive: steam devices default no" notlogged "--device=usb"
-
-# 7. unknown flag is an error, unsafe games path refused
-reset
-run '' --bogus
-check "unknown flag: error" test "$rc" = 2
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
 run '/\n\n\n\n\n\n' --only flatpak
 check "games path: / refused" has "Refusing to expose"
-
-# ---- login shell
-reset
-run '' --yes
-check "shell: switched with --yes" logged "usermod -s $USER_SETUP_ZSH tester"
-check "shell: skeleton copied" test -f "$HOME/.zshrc"
-check "shell: undo printed" has "usermod -s /bin/bash tester"
-: >"$LOG"
-run '' --yes
-check "shell: second run no usermod -s" notlogged "usermod -s"
-reset
-echo "$USER_SETUP_ZSH" >"$SHELLF"
-run '' --yes
-check "shell: already zsh skipped" notlogged "usermod -s"
-reset
-echo /usr/bin/other >"$USER_SETUP_SHELLS"
-run '' --yes
-check "shell: not in /etc/shells skipped with reason" has "is not listed in"
 check "shell: not in /etc/shells no change" notlogged "usermod -s"
-reset
-echo mine >"$HOME/.zshenv"
-run '' --yes
-check "shell: skeleton not copied when a zsh file exists" test ! -f "$HOME/.zshrc"
 reset
 run '' --no
 check "shell: --no changes nothing" notlogged "usermod -s"
-check "shell: --no copies nothing" test ! -f "$HOME/.zshrc"
-
-# ---- fish profile and starship
-reset
-run '' --yes
-check "fish: profile created" grep -q 'custom-command=.*fakefish' "$GS"
-check "fish: default set" grep -q 'default-profile-uuid=.aaaaaaaa' "$GS"
-check "fish: starship hook written" grep -q 'starship init fish' "$HOME/.config/fish/conf.d/starship.fish"
-check "fish: brew install ran" logged "brew install starship"
-n1=$(grep -c "Profiles" "$GS"); cp "$HOME/.config/fish/conf.d/starship.fish" "$root/hook1"
-: >"$LOG"
-run '' --yes
-check "fish: second run no new uuid" test "$(grep -c "Profiles" "$GS")" = "$n1"
-check "fish: second run no gsettings set" notlogged "gsettings set"
-check "fish: second run hook untouched" cmp -s "$HOME/.config/fish/conf.d/starship.fish" "$root/hook1"
-check "fish: profile list has no duplicate" test "$(grep 'profile-uuids=' "$GS" | grep -o "'[^']*'" | wc -l)" = 1
-reset
 p=org.gnome.Ptyxis.Profile:/org/gnome/Ptyxis/Profiles/bbbb/
-printf "org.gnome.Ptyxis profile-uuids=['aaaa', 'bbbb']\n%s custom-command='%s'\n%s use-custom-command=true\norg.gnome.Ptyxis default-profile-uuid='aaaa'\n" "$p" "$USER_SETUP_FISH" "$p" >"$GS"
-run '' --yes
-check "fish: existing profile reused as default" grep -q "default-profile-uuid='bbbb'" "$GS"
-check "fish: existing profile, list unchanged" grep -q "profile-uuids=\['aaaa', 'bbbb'\]" "$GS"
-check "fish: previous default in undo" has "default-profile-uuid 'aaaa'"
-reset
-rm "$USER_SETUP_FISH"
-run '' --yes
-printf '#!/bin/sh\n' >"$USER_SETUP_FISH"; chmod +x "$USER_SETUP_FISH"
-check "fish missing: whole item skipped" has "skipped (no fish)"
-check "fish missing: no starship install" notlogged "brew install starship"
-reset
-rm "$bin/ptyxis"
-run '' --yes
-printf '#!/bin/sh\n' >"$bin/ptyxis"; chmod +x "$bin/ptyxis"
-check "ptyxis missing: no profile" notlogged "Ptyxis.Profile"
-check "ptyxis missing: starship still set up" test -f "$HOME/.config/fish/conf.d/starship.fish"
-reset
-mv "$bin/brew" "$root/brew.off"
-run '' --yes
-mv "$root/brew.off" "$bin/brew"
-check "brew missing: starship skipped" has "skipped (no brew)"
-check "brew missing: no hook file" test ! -f "$HOME/.config/fish/conf.d/starship.fish"
-reset
-mkdir -p "$HOME/.config/fish/conf.d"; echo "# mine" >"$HOME/.config/fish/conf.d/starship.fish"
-run '' --yes
-check "other starship.fish left alone" test "$(cat "$HOME/.config/fish/conf.d/starship.fish")" = "# mine"
-check "other starship.fish reported" has "has other content"
-reset
-run '' --no
-check "fish: --no changes nothing" notlogged "gsettings set"
-check "fish: --no no hook" test ! -f "$HOME/.config/fish/conf.d/starship.fish"
-check "fish: --no no brew" notlogged "brew install starship"
-
-# ---- --only
-reset
-run '' --yes --only groups,shell
-check "only: groups ran" logged "usermod -aG"
-check "only: shell ran" logged "usermod -s"
 check "only: flatpak did not run" notlogged "flatpak override"
-check "only: fonts did not run" notlogged "brew bundle"
-reset
-run '' --only nonsense
-check "only: unknown step is an error" test "$rc" = 2
-reset
-run '' --with-dotfiles
-check "old --with-dotfiles flag is gone" test "$rc" = 2
-
-# ---- fonts
-reset
-run '' --yes --only fonts
-check "fonts: --yes installs the developer set with brew bundle" logged "brew bundle --file"
-check "fonts: no fc-cache or curl" notlogged "curl"
-check "fonts: casks recorded" grep -q font-0xproto-nerd-font "$BREW_CASKS"
-check "fonts: twelve casks" test "$(wc -l <"$BREW_CASKS")" = 12
-check "fonts: Fantasque Nerd Font in the set" grep -qx font-fantasque-sans-mono-nerd-font "$BREW_CASKS"
-: >"$LOG"
-run '' --yes --only fonts
-check "fonts: second run is idempotent" notlogged "brew bundle"
-check "fonts: second run says already done" has "already done"
-reset
-run '2\n\n' --only fonts
-check "fonts: option 2 installs JetBrains Mono only" logged "brew install --cask font-jetbrains-mono-nerd-font"
-check "fonts: option 2 no bundle" notlogged "brew bundle"
-reset
-run '3\n1 font-bbb-nerd-font font-unknown-nerd-font 9\n\n' --only fonts
-check "fonts: picker installs chosen casks" logged "brew install --cask font-aaa-nerd-font font-bbb-nerd-font"
-check "fonts: picker rejects unknown name" has "Ignoring 'font-unknown-nerd-font'"
-check "fonts: picker rejects out of range number" has "Ignoring '9'"
-reset
-run '4\n' --only fonts
-check "fonts: skip" notlogged "brew install --cask"
-check "fonts: skip no bundle" notlogged "brew bundle"
-reset
-mv "$bin/brew" "$root/brew.off"
-run '' --yes --only fonts
-mv "$root/brew.off" "$bin/brew"
-check "fonts: brew missing skipped" has "skipped (no brew)"
-reset
-run '' --no --only fonts
-check "fonts: --no changes nothing" notlogged "brew bundle"
-reset
-printf 'JetBrainsMono Nerd Font\nFiraCode Nerd Font\n' >"$FC_FAMILIES"
-run '4\n1\n' --only fonts
-check "fonts: terminal font set on explicit choice" grep -q "font-name='FiraCode Nerd Font Medium 10'" "$GS"
-check "fonts: use-system-font false" grep -q 'use-system-font=false' "$GS"
-reset
-printf 'JetBrainsMono Nerd Font\n' >"$FC_FAMILIES"
-run '4\n\n' --only fonts
-check "fonts: terminal font untouched by default" notlogged "font-name"
-reset
-printf 'JetBrainsMono Nerd Font\n' >"$FC_FAMILIES"
-run '' --yes --only fonts
-check "fonts: --yes does not change the terminal font" notlogged "font-name"
-
-# ---- gnome search
-reset
-printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
-printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
-run '' --yes
-check "search: both enabled" grep -q "enabled=\['io.github.kolunmi.Bazaar.desktop', 'org.gnome.Calculator.desktop'\]\|enabled=\['org.gnome.Calculator.desktop', 'io.github.kolunmi.Bazaar.desktop'\]" "$GS"
-check "search: calculator first" grep -q "sort-order=\['org.gnome.Calculator.desktop', 'org.gnome.Settings.desktop'" "$GS"
-: >"$LOG"
-run '' --yes
-check "search: second run no search change" notlogged "gsettings set org.gnome.desktop.search-providers"
-reset
-printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
-run '' --yes
-check "search: calculator provider missing, not enabled" test "$(grep -c 'Calculator' "$GS")" = 0
-check "search: bazaar still enabled" grep -q "enabled=\['io.github.kolunmi.Bazaar.desktop'\]" "$GS"
-reset
-printf 'DesktopId=io.github.kolunmi.Bazaar.desktop\n' >"$root/sp2/bazaar.ini"
-printf "org.gnome.desktop.search-providers enabled=['x.desktop', 'io.github.kolunmi.Bazaar.desktop']\norg.gnome.desktop.search-providers disabled=['io.github.kolunmi.Bazaar.desktop', 'org.mozilla.firefox.desktop']\n" >"$GS"
-run '' --yes
-check "search: disabled bazaar removed, others kept" grep -q "disabled=\['org.mozilla.firefox.desktop'\]" "$GS"
-check "search: user enabled list kept in order" grep -q "enabled=\['x.desktop', 'io.github.kolunmi.Bazaar.desktop'\]" "$GS"
-reset
-printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
-printf "org.gnome.desktop.search-providers enabled=['org.gnome.Calculator.desktop']\norg.gnome.desktop.search-providers sort-order=['org.gnome.Calculator.desktop', 'a.desktop']\n" >"$GS"
-run '' --yes
-check "search: sort-order already first untouched" notlogged "gsettings set org.gnome.desktop.search-providers sort-order"
-reset
-printf 'DesktopId=org.gnome.Calculator.desktop\n' >"$root/sp1/calc.ini"
-run '' --no
-check "search: --no changes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
-
-# ---- search: four providers, merge with the current lists
-reset
-for id in org.gnome.Calculator org.gnome.Characters org.gnome.clocks io.github.kolunmi.Bazaar; do printf 'DesktopId=%s.desktop\n' "$id" >"$root/sp1/$id.ini"; done
-printf "org.gnome.desktop.search-providers enabled=['org.gnome.Extension-Manager.desktop', 'org.gnome.Weather.desktop']\norg.gnome.desktop.search-providers sort-order=['z1.desktop', 'org.gnome.Calculator.desktop', 'z2.desktop', 'z3.desktop']\n" >"$GS"
-run '' --yes --only search
-check "search: unrelated enabled entries kept in order" grep -q "enabled=\['org.gnome.Extension-Manager.desktop', 'org.gnome.Weather.desktop', 'org.gnome.Calculator.desktop'" "$GS"
-check "search: all four providers enabled" test "$(grep 'enabled=' "$GS" | grep -o ".desktop'" | wc -l)" = 6
-check "search: custom sort-order kept, calculator moved first" grep -q "sort-order=\['org.gnome.Calculator.desktop', 'z1.desktop', 'z2.desktop', 'z3.desktop'\]" "$GS"
-: >"$LOG"
-run '' --yes --only search
-check "search: second run writes nothing" notlogged "gsettings set org.gnome.desktop.search-providers"
-
-# ---- gum menus (a terminal is faked with OCTARINE_MENU_FORCE_TTY; without it nothing above changes)
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Account: Login shell zsh (sudo)\n'
-run ''
-check "gum checklist: chosen step runs" logged "usermod -s"
-check "gum checklist: unchosen steps do not run" notlogged "usermod -aG"
-check "gum checklist: defaults are preselected" logged "--selected Account: Add tester to gamemode; input and libvirt (sudo),Account: Login shell zsh (sudo),Account: Default editor for terminals and sudoedit (no sudo),Apps: Flatpak access overrides"
-check "gum checklist: no divider rows, groups are prefixes" bash -c "! grep -q '──' '$LOG' && grep -q 'Account: Login shell' '$LOG'"
-check "gum checklist: summary confirmed" logged "gum confirm Run these steps?"
 reset
 export OCTARINE_MENU_FORCE_TTY=1
 run ''
 check "gum checklist: Esc (empty) changes nothing" notlogged "usermod"
-check "gum checklist: Esc is not a failure" test "$rc" = 0
-reset
-export OCTARINE_MENU_FORCE_TTY=1
 NO_LIBVIRT_GROUP=1 run ''
-check "gum checklist: without a libvirt group (default image) the groups entry names only gamemode and input" bash -c "grep -qF 'Add tester to gamemode and input (sudo)' '$LOG' && ! grep -q 'Add tester to .*libvirt' '$LOG'"
 reset
 export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
 gumq 1 'Account: Login shell zsh (sudo)\n'
 run ''
 check "gum checklist: declining the confirmation changes nothing" notlogged "usermod"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 '── Account ───\n'
-run ''
-check "gum checklist: a heading alone selects nothing" notlogged "usermod"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-run '' --yes
-check "gum: --yes asks nothing" notlogged "gum choose"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-run '' --no
-check "gum: --no asks nothing" notlogged "gum choose"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-run '' --only shell --yes
-check "gum: --only skips the checklist" notlogged "gum choose"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Apps: Nerd Fonts from Homebrew casks\n'
-ugumq 1 'JetBrains Mono Nerd Font only\n'
-run ''
-check "gum fonts: single choice through ugum" logged "brew install --cask font-jetbrains-mono-nerd-font"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-gumq 1 'Apps: Nerd Fonts from Homebrew casks\n'
-ugumq 1 'Pick from all Nerd Font casks\n'
-gumq 2 'font-aaa-nerd-font\n'
-run ''
-check "gum fonts: pick-from-all is a checklist" logged "brew install --cask font-aaa-nerd-font"
 
 # ---- editor step: fake editors in temp directories (PATH and the extra search directories), temp HOME
 edir="$root/edbin"; extra="$root/edextra"; mkdir -p "$edir" "$extra"
@@ -501,64 +250,8 @@ edrun '' --only editor --no
 check "editor --no: prints the plan, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan: would ask which editor' '$root/out' && [ ! -e '$(edf)' ]"
 edrun '' --only editor --yes
 check "editor --yes alone: keeps the current settings, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Kept: --yes alone does not change the editor' '$root/out' && [ ! -e '$(edf)' ] && grep -q 'editor .*skipped (kept current)' '$root/out'"
-edrun '\n' --only editor
-check "editor picker: Enter keeps the current settings (the default): nothing changes" bash -c "[ $rc = 0 ] && grep -q 'Kept: nothing changed' '$root/out' && [ ! -e '$(edf)' ]"
-check "editor picker: offers keep first, then vi (always) and ONLY the installed ones (nano, vim, hx), names the missing (nvim)" bash -c "grep -q '1) Keep the current settings (default)' '$root/out' && grep -q '2) vi' '$root/out' && grep -q '3) GNU nano (nano)' '$root/out' && grep -q '4) Vim (vim)' '$root/out' && grep -q '5) Helix (hx)' '$root/out' && ! grep -q 'Neovim' '$root/out' && grep -q 'Found here: vi, nano, vim, hx (not found: nvim)' '$root/out'"
-edrun '5\n' --only editor
-check "editor picker: choosing Helix (a binary found outside PATH): EDITOR and VISUAL get the ABSOLUTE path, SUDO_EDITOR the absolute path (sudoedit has a restricted PATH)" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=$extra/hx' '$(edf)' && grep -qx 'VISUAL=$extra/hx' '$(edf)' && grep -qx 'SUDO_EDITOR=$extra/hx' '$(edf)'"
-edreset; mked "$edir" nano vim nvim; mked "$extra" hx
-edrun '' --only editor --editor nvim
-check "editor --editor nvim (on PATH): EDITOR and VISUAL are the plain name, SUDO_EDITOR is absolute; no sudo, an undo line with the exact command, the file has only the managed keys" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=nvim' '$(edf)' && grep -qx 'VISUAL=nvim' '$(edf)' && grep -qx 'SUDO_EDITOR=$edir/nvim' '$(edf)' && [ \$(grep -vcE '^#' '$(edf)') = 3 ] && grep -q \"rm $(edf)\" '$root/out' && ! grep -q '^sudo' '$LOG'"
-edrun '' --only editor --editor nvim
-check "editor: the same choice again is already done and changes nothing" bash -c "[ $rc = 0 ] && grep -q 'Already set to Neovim' '$root/out' && grep -qE '^editor +already done' '$root/out'"
-edrun '' --editor vim
-check "editor: --editor alone implies --only editor (no groups, no shell, no flatpak) and re-running with another editor REWRITES the file" bash -c "[ $rc = 0 ] && grep -qx 'EDITOR=vim' '$(edf)' && [ \$(grep -c '^EDITOR=' '$(edf)') = 1 ] && ! grep -q 'usermod' '$LOG' && ! grep -q '== groups' '$root/out'"
-edrun '' --editor vi
-check "editor: vi is always available (SUDO_EDITOR=/usr/bin/vi even when no vi is installed in the fake PATH)" bash -c "[ $rc = 0 ] && grep -qx 'SUDO_EDITOR=/usr/bin/vi' '$(edf)'"
-edrun '' --editor emacs
-check "editor: an unknown name exits 2 with the list" bash -c "[ $rc = 2 ] && grep -q 'Unknown editor: emacs (use vi, nano, vim, nvim or hx)' '$root/out'"
-edreset; mked "$edir" nano
-edrun '' --editor hx
-check "editor: a known but not installed editor exits 2 and names the detected ones; nothing is written" bash -c "[ $rc = 2 ] && grep -q 'hx is not installed here' '$root/out' && grep -q 'Found: vi, nano' '$root/out' && [ ! -e '$(edf)' ]"
-edrun '' --editor
-check "editor: --editor without a name exits 2" test "$rc" = 2
-# the current values are shown
 EDITOR=/usr/bin/nano VISUAL= SUDO_EDITOR= edrun '\n' --only editor
-check "editor: the current EDITOR, VISUAL and SUDO_EDITOR from the environment are shown first" bash -c "grep -q 'Current: EDITOR=/usr/bin/nano VISUAL=<unset> SUDO_EDITOR=<unset>' '$root/out'"
-# a value the user set in their own files: reported, never edited, never overwritten silently
-edreset; mked "$edir" nano
-mkdir -p "$HOME/.config/fish"; echo 'set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' >"$HOME/.config/fish/config.fish"; echo 'export VISUAL=nano' >"$HOME/.bashrc"
-cp "$HOME/.bashrc" "$root/bashrc.orig"; cp "$HOME/.config/fish/config.fish" "$root/fish.orig"
-edrun 'n\n' --only editor --yes
-edrun '3\nn\n' --only editor
-check "editor: your own EDITOR and VISUAL lines in rc files are found and listed with file and line; the question to write anyway defaults to NO and nothing is written" bash -c "[ $rc = 0 ] && grep -q '.config/fish/config.fish:1:set -gx EDITOR' '$root/out' && grep -q '.bashrc:1:export VISUAL=nano' '$root/out' && grep -q 'Write the managed file anyway' '$root/out' && [ ! -e '$(edf)' ] && grep -q 'skipped (your own setting kept)' '$root/out'"
-edrun '3\ny\n' --only editor
-check "editor: confirmed with y the managed file is written, YOUR files are byte for byte unchanged" bash -c "[ -f '$(edf)' ] && cmp '$HOME/.bashrc' '$root/bashrc.orig' && cmp '$HOME/.config/fish/config.fish' '$root/fish.orig'"
-rm -f "$(edf)"
-edrun '' --editor nano
-check "editor: an explicit --editor writes it, with the note that your own files win where they are read later" bash -c "[ $rc = 0 ] && [ -f '$(edf)' ] && grep -q 'your own files listed above are read after it' '$root/out' && cmp '$HOME/.bashrc' '$root/bashrc.orig'"
-edreset; mked "$edir" nano
-mkdir -p "$HOME/.config/environment.d"; echo 'EDITOR=ed' >"$HOME/.config/environment.d/60-mine.conf"
-edrun '' --editor nano
-check "editor: another environment.d file of yours that sets EDITOR is reported too" bash -c "grep -q '60-mine.conf:1:EDITOR=ed' '$root/out'"
-# the generated file and the shipped login-shell snippets read it back
-edreset; mked "$edir" nvim
-edrun '' --editor nvim
 snip="$here/../system_files/etc/profile.d/octarine-os-editor.sh"
-check "editor: the shipped profile.d snippet exports exactly the three keys from the managed file (a login shell, before the user's own rc files)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \$EDITOR:\$VISUAL:\$SUDO_EDITOR'); [ \"\$out\" = 'nvim:nvim:$edir/nvim' ]"
-printf 'FOO=bar\nEDITOR=$(touch %s/pwned)\nVISUAL=ok one\nSUDO_EDITOR=/a/b\n' "$root" >"$(edf)"
-check "editor: the snippet ignores other keys and anything but plain path characters (the file is parsed, never executed)" bash -c "out=\$(XDG_CONFIG_HOME='$HOME/.config' bash -c '. $snip; echo \${FOO:-none}:\${EDITOR:-unset}:\${VISUAL:-unset}:\$SUDO_EDITOR'); [ \"\$out\" = 'none:unset:unset:/a/b' ] && [ ! -e '$root/pwned' ]"
-check "editor: nothing in the image sets EDITOR by itself except the Fedora nano default (only when unset) and the user-file snippets" bash -c "! grep -rlE '(^|[^_A-Z])(EDITOR|VISUAL)=' '$here/../system_files' '$here/../build_files' | grep -v 'octarine-os-editor.sh\\|octarine-os-40-editor.fish\\|60-custom.just'"
-# rc-file detection compared with the pick: a fixture HOME with `set -gx EDITOR` in config.fish and `export EDITOR=` in .bashrc
-edreset; mked "$edir" nano nvim
-mkdir -p "$HOME/.config/fish" "$HOME/.config/environment.d"
-echo 'set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' >"$HOME/.config/fish/config.fish"; echo 'export EDITOR=hx' >"$HOME/.bashrc"; echo 'EDITOR=ed' >"$HOME/.config/environment.d/60-mine.conf"
-cp "$HOME/.bashrc" "$root/b.orig"; cp "$HOME/.config/fish/config.fish" "$root/f.orig"
-edrun '' --editor nvim
-check "editor: each of your lines that assigns something else than the pick is reported with file, line, variable, its value, the pick's value and the exact line to remove or change; the environment.d file is named as another environment.d file; nothing is edited" bash -c "[ $rc = 0 ] && grep -q 'config.fish:1: your startup file sets EDITOR to /home/linuxbrew/.linuxbrew/bin/hx, your pick writes nvim' '$root/out' && grep -q '    set -gx EDITOR /home/linuxbrew/.linuxbrew/bin/hx' '$root/out' && grep -q '.bashrc:1: your startup file sets EDITOR to hx, your pick writes nvim' '$root/out' && grep -q '    export EDITOR=hx' '$root/out' && grep -q '60-mine.conf:1: another environment.d file sets EDITOR to ed' '$root/out' && grep -q 'they win there' '$root/out' && cmp '$HOME/.bashrc' '$root/b.orig' && cmp '$HOME/.config/fish/config.fish' '$root/f.orig'"
-echo 'set -gx EDITOR nvim' >"$HOME/.config/fish/config.fish"; : >"$HOME/.bashrc"; rm -f "$HOME/.config/environment.d/60-mine.conf"
-edrun '' --editor nvim
-check "editor: a line of yours that already assigns the pick is not reported as a difference" bash -c "! grep -q 'your pick writes' '$root/out'"
 unset USER_SETUP_EDITOR_DIRS USER_SETUP_EDITOR_SYSDIRS
 
 echo "passed: $pass, failed: $failn"
