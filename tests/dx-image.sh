@@ -79,16 +79,7 @@ assert "environment" not in w["jobs"]["promote"] and "environment" not in w["job
 assert w["jobs"]["sign"]["environment"] == "signing"
 assert "environment" not in w["jobs"]["build"] and "environment" not in w["jobs"]["plan"]
 PY
-check "workflow: every third-party action is pinned by SHA with a version comment" python3 - "$wf" <<'PY'
-import re, sys
-for line in open(sys.argv[1]):
-    m = re.search(r"^\s*(?:- )?uses:\s*(\S+)", line)
-    if m and not m.group(1).startswith("./"):
-        ref = m.group(1).split("@", 1)[1]
-        assert re.fullmatch(r"[0-9a-f]{40}", ref), line
-        if "ublue-os/remove-unwanted-software" not in line:  # the other workflows pin this one without a comment too
-            assert re.search(r"#\s*v\d", line), line
-PY
+# (the SHA pins of every workflow are checked once, in tests/test-workflow.sh)
 check "workflow: pushes <channel> and <channel>-<date>-<sha> (testing: testing and testing-<sha>), one push-tags.sh call (one push, the other tag a digest copy), nothing else" bash -c "
   set -e
   [ \$(grep -c 'push-tags.sh' '$wf') = 1 ]
