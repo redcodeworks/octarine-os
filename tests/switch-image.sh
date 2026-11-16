@@ -55,7 +55,7 @@ echo 0x10de >"$root/drm-nvidia/card0/device/vendor"
 echo 0x1002 >"$root/drm-amd/card0/device/vendor"
 export OCTARINE_SYSFS_DRM="$root/drm-nvidia"
 
-pub_all="octarine-os:latest octarine-os:beta octarine-os:testing octarine-os-dx:latest octarine-os-dx:beta octarine-os-dx:testing octarine-os-nvidia:latest"
+pub_all="octarine-os:latest octarine-os:testing octarine-os-dx:latest octarine-os-dx:testing octarine-os-nvidia:latest"
 
 run() { # current ref, args...
     local cur=$1
@@ -116,7 +116,7 @@ STAGED=""
 
 run "$base" --help
 check "--help explains images, channels and the rollback" bash -c "[ $rc = 0 ]" 
-check "--help names the four images and three channels" bash -c "grep -q 'nvidia-dx' '$root/out' && grep -q 'beta' '$root/out' && grep -q 'testing' '$root/out'"
+check "--help names the four images and two channels" bash -c "grep -q 'nvidia-dx' '$root/out' && grep -q 'latest' '$root/out' && grep -q 'testing' '$root/out'"
 
 run "$base"
 check "no image and no terminal: exit 2 and a hint" bash -c "[ $rc = 2 ]"
@@ -130,7 +130,7 @@ run "$base" --list
 check "--list exits 0 and shows the running image" bash -c "[ $rc = 0 ]"
 check "--list marks the current image and channel" has "published (current)"
 check "--list shows an unpublished image as not published" bash -c "grep -E '^nvidia-dx +not published' '$root/out'"
-check "--list shows beta of nvidia as not published" bash -c "grep -E '^nvidia +published +not published' '$root/out'"
+check "--list shows testing of nvidia as not published" bash -c "grep -E '^nvidia +published +not published' '$root/out'"
 notlogged "bootc"; check "--list never switches" notlogged "sudo"
 
 run "$base" dx --no
@@ -146,12 +146,12 @@ run "$base" dx
 check "without --yes and no terminal the question is declined and nothing runs" bash -c "[ $rc = 0 ] && grep -q 'Left as it is' '$root/out'"
 check "a declined switch runs nothing" notlogged "bootc"
 
-run "$dx" beta --yes
-check "an image-less switch to beta is rejected without a terminal" bash -c "[ $rc = 2 ]"
-run "$dx" dx beta --yes
-check "dx -> dx beta changes the channel only" logged "bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:beta"
-run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:beta" default --no
-check "an image-only switch keeps the current channel (beta)" has "Target:  ghcr.io/redcodeworks/octarine-os:beta"
+run "$dx" testing --yes
+check "an image-less switch to testing is rejected without a terminal" bash -c "[ $rc = 2 ]"
+run "$dx" dx testing --yes
+check "dx -> dx testing changes the channel only" logged "bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:testing"
+run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:testing" default --no
+check "an image-only switch keeps the current channel (testing)" has "Target:  ghcr.io/redcodeworks/octarine-os:testing"
 run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest-20261109-abc1234" default --no
 check "a pinned dated tag falls back to latest" has "Target:  ghcr.io/redcodeworks/octarine-os:latest"
 run "ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os-dx:latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" nvidia --no
@@ -166,7 +166,7 @@ run "$dx" dx latest --yes
 check "already on the target: nothing to do" has "Already on dx (latest)."
 check "already on the target: no switch" notlogged "bootc"
 
-run "$base" nvidia beta --yes
+run "$base" nvidia testing --yes
 check "an unpublished channel is refused (exit 1)" bash -c "[ $rc = 1 ] && grep -q 'is not published' '$root/out'"
 check "an unpublished channel runs nothing" notlogged "bootc"
 run "$base" nvidia-dx --yes
@@ -187,7 +187,6 @@ check "from a foreign image the target uses the project's registry" has "Target:
 # ---- the base image's toggle-nvk is gone (the assembled justfile is checked in tests/just-recipes.sh)
 check "40-nvidia.just no longer rebases by string substitution" bash -c "! grep -q 'rpm-ostree rebase' '$justdir/40-nvidia.just'"
 check "40-nvidia.just defines no recipe" bash -c "! grep -qE '^toggle-nvk' '$justdir/40-nvidia.just'"
-check "switch-image is listed by the recipe scan" bash -c "just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx switch-image"
 
 # ---- Esc leaves everything as it is: exit 0, nothing run. A fake ugum that prints nothing is Esc; a terminal is faked.
 cat >"$root/fakebin/ugum" <<'EOF2'

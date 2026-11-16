@@ -21,11 +21,6 @@ output.env
 *_chunkah_*
 *_rpm-ostree_*
 
-# Disk images produced by bootc-image-builder
-*.qcow2
-*.raw
-*.iso
-
 # Local environment overrides
 .env
 .env.*

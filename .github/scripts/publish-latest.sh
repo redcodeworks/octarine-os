@@ -19,7 +19,7 @@
 # Tools: skopeo, cosign (cosign.pub in the current directory), jq, git (history of main), the helper registry-digest.sh.
 #
 # What it refuses (exit 1) and what it holds back (exit 0 with a notice):
-#   * a tag that is not a dated tag of the default image (testing-*, beta*, latest itself, anything else);
+#   * a tag that is not a dated tag of the default image (testing-*, latest itself, anything else);
 #   * an image without a valid signature (cosign.pub), a dx image whose label org.opencontainers.image.base.digest is not the default
 #     image's digest (the pairing rule), a default image whose label org.opencontainers.image.revision is not a commit of main;
 #   * HELD, not failed: a candidate OLDER than what `latest` is now (a re-run of an old green run must not move `latest` backwards):
@@ -66,7 +66,7 @@ vtag=""
 if [[ -z "${V}" ]]; then
     vtag="${VANILLA_TAG:-}"
     if [[ -n "${vtag}" ]]; then
-        [[ "${vtag}" =~ ${tag_re} ]] || fail "'${vtag}' is not a dated tag of ${vimg} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-*, beta* and latest are refused"
+        [[ "${vtag}" =~ ${tag_re} ]] || fail "'${vtag}' is not a dated tag of ${vimg} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused"
         rc=0; V=$(tag_digest "${vimg}" "${vtag}") || rc=$?
         [[ "${rc}" == 0 ]] || { [[ "${rc}" == 3 ]] && fail "${vimg}:${vtag} does not exist"; read_error "${vimg}:${vtag}"; }
     else

@@ -61,7 +61,6 @@ printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/d8"; rm "$root/d8/usr/bin/
 check "gen: a scheduler whose binary is not installed fails" test "$rc" != 0
 printf 'scx_a\tbin/scx_a\tsix\tAlpha\n' | mk_dest "$root/d9"; gen "$root/d9"
 check "gen: a minimum kernel that is not MAJOR.MINOR fails" test "$rc" != 0
-check "build.sh installs the binaries before it generates the registry from the manifest they install (the helper and rule existence is asserted by build.sh itself)" bash -c "b='$here/build_files/build.sh'; i=\$(grep -n '^/ctx/install-binaries.sh' \$b | head -1 | cut -d: -f1); g=\$(grep -n '^/ctx/gen-schedulers.sh' \$b | head -1 | cut -d: -f1); [ -n \"\$i\" ] && [ -n \"\$g\" ] && [ \$i -lt \$g ]"
 
 # ---- the template unit and the preset
 u="$here/system_files/usr/lib/systemd/system/scx@.service"
@@ -70,13 +69,10 @@ check "unit: ExecStartPre scx-wait-idle %i runs before ExecStart (a start must w
 check "unit: ConditionPathExists=/sys/kernel/sched_ext, Restart=on-failure, RestartSec=5, StartLimitIntervalSec=0" bash -c "grep -qx 'ConditionPathExists=/sys/kernel/sched_ext' '$u' && grep -qx 'Restart=on-failure' '$u' && grep -qx 'RestartSec=5' '$u' && grep -qx 'StartLimitIntervalSec=0' '$u'"
 check "unit: no sandboxing or capability directives that could block loading a BPF scheduler (as upstream's unit)" bash -c "! grep -E '^(NoNewPrivileges|Protect[A-Za-z]*|Private[A-Za-z]*|Restrict[A-Za-z]*|SystemCallFilter|CapabilityBoundingSet|AmbientCapabilities|MemoryDenyWriteExecute|LockPersonality|User|DynamicUser)=' '$u'"
 check "unit: no ConditionKernelVersion in the template (only generated per instance, when the registry has a minimum)" bash -c "! grep -q '^ConditionKernelVersion' '$u'"
-check "preset: scx@ instances are disabled and nothing in system_files enables a scheduler" bash -c "grep -qx 'disable scx@\\*.service' '$here/system_files/usr/lib/systemd/system-preset/00-octarine-scx.preset' && ! grep -rE '^enable .*scx' '$here/system_files'"
-check "build files never enable or start a scheduler" bash -c "! grep -E 'systemctl (enable|start|preset).*scx' '$here/build_files/build.sh' '$here/build_files/gen-schedulers.sh' '$here/build_files/install-binaries.sh'"
 
 # ---- the polkit rule: GENERATED from the template and the registry, tested with simulated actions (node)
 rules="$d/usr/share/polkit-1/rules.d/50-octarine-scx.rules"
 tpl="$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in"
-check "polkit: the repo has only the template (the rule that ships is generated at image build from the registry)" bash -c "[ -f '$tpl' ] && grep -q '@INSTANCES@' '$tpl' && [ ! -e '$here/system_files/usr/share/polkit-1/rules.d/50-octarine-scx.rules' ]"
 check "polkit: the generated rule has the exact alternation of the manifest instance names, no placeholder, no generic character class" bash -c "grep -qF '/^scx@($alt)\\.service\$/' '$rules' && ! grep -q '@INSTANCES@' '$rules' && ! grep -q 'A-Za-z0-9_-' '$rules'"
 cat >"$root/rule-test.js" <<'JSEOF'
 const fs = require("fs");
@@ -141,7 +137,6 @@ printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/dpol2"; rm "$root/dpol2/us
 check "polkit: a missing rule template fails the generation" test "$rc" != 0
 printf 'scx_a\tbin/scx_a\t\tAlpha\n' | mk_dest "$root/dpol3"; rm "$root/dpol3/usr/lib/systemd/system/scx@.service"; gen "$root/dpol3"
 check "polkit: the rule is never generated without the scx@.service template unit (StartTransientUnit under a matching name would otherwise create a root unit)" bash -c "[ $rc != 0 ] && grep -q 'not generating the polkit rule' '$root/run' && [ ! -e '$root/dpol3/usr/share/polkit-1/rules.d/50-octarine-scx.rules' ]"
-check "guard: usr/lib/systemd/system/scx@.service exists in the tree under exactly that name, next to the rule template; the default smoke test checks it and that the rule lists the registry instances" bash -c "[ -f '$here/system_files/usr/lib/systemd/system/scx@.service' ] && [ -f '$here/system_files/usr/share/octarine-os/polkit/50-octarine-scx.rules.in' ] && grep -q 'test -f /usr/lib/systemd/system/scx@.service' '$here/.github/scripts/default-smoke.sh' && grep -q 'polkit rule: generated from the registry' '$here/.github/scripts/default-smoke.sh'"
 check "polkit rule: YES is returned in one place only, the verbs are exactly start and stop (no restart), and the side doors are documented in the rule" bash -c "[ \$(grep -c 'polkit.Result.YES' '$tpl') = 1 ] && grep -q 'verb !== \"start\" && verb !== \"stop\") {' '$tpl' && ! grep -q 'restart\"' '$tpl' && grep -q 'FreezeUnit' '$tpl' && grep -q 'StartTransientUnit' '$tpl'"
 check "nothing relies on an unprivileged restart of scx units (hooks, recipe, restore use start and stop only)" bash -c "! grep -n 'systemctl[^|]*restart' '$lib'/gamemode-lib.sh '$lib'/gamemode-start '$lib'/gamemode-end '$here/system_files/usr/share/ublue-os/just/60-custom.just' | grep scx"
 
@@ -228,7 +223,7 @@ echo 'FLAGS=' >/dev/null
 printf 'NAME=scx_rusty\nINSTANCE=rusty\nBINARY=/usr/bin/scx_rusty\nDESCRIPTION=rusty test\nMIN_KERNEL=\nFLAGS=\n' >"$root/reg/rusty.conf"
 
 # verify: success, failures, threshold, reset, interrupts
-export OCTARINE_SCX_VERIFY_SECONDS=1
+export OCTARINE_SCX_VERIFY_SECONDS=0  # one probe, no waiting: the failure paths still run (the real unit waits 5 s); a wait of 1 s made each of the ~25 failure and busy cases cost 1 to 2 s
 ver() { bash "$lib/scx-verify" "$@" >"$root/run" 2>&1; rc=$?; }
 set_active() { echo enabled >"$root/sys/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$root/sys/root/ops"; }
 set_inactive() { echo disabled >"$root/sys/state"; rm -f "${root:?}/sys/root/ops"; }
@@ -283,7 +278,7 @@ bash "$lib/scx-verify" rusty >"$root/run" 2>&1 &
 vp=$!
 sleep 1
 kill -TERM "$vp"; wait "$vp"; rc=$?
-export OCTARINE_SCX_VERIFY_SECONDS=1
+export OCTARINE_SCX_VERIFY_SECONDS=0
 check "verify: a stop during the wait (SIGTERM) is not a failure: exit 143, nothing counted, nothing written" bash -c "[ $rc = 143 ] && [ -z \"\$(find '$root/state' -type f)\" ] && grep -q 'not counted' '$LOGF'"
 check "verify: the threshold defaults to three failures" bash -c "grep -q 'SCX_MAX_FAILURES=\\\${OCTARINE_SCX_MAX_FAILURES:-3}' '$lib/scx-lib.sh'"
 

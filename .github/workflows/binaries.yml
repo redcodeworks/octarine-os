@@ -1,28 +1,25 @@
 name: Prebuilt binaries
 # Builds ghcr.io/redcodeworks/octarine-os-binaries from the components of binaries/ (binaries/components.tsv: scx and extest, required;
-# more may be optional) and hands its digest to the image build. Called by build.yml and build-beta.yml before their image build (the dx
+# more may be optional) and hands its digest to the image build. Called by build.yml before its image build (the dx
 # and NVIDIA variants inherit the binaries from the default image); it can also be dispatched by hand to validate a change on a branch.
 #
-# One build job per component (binaries-component.yml, a matrix over components.tsv): each has its own content key (binaries-key.sh), its
-# own signed component image (tag c-<component>-<key>, same package), its own last good image (tag last-good-<component>) and its own
-# fallback; a change to one component does not rebuild the others (a change to lib/ or the builder pin rebuilds all). The assemble job
-# then puts whatever each component produced into ONE image, tagged with the assembled key (sha1 over the included "name key" lines;
-# binaries-key.sh), which the image build copies from by digest. A failed component uses its own last good image; an OPTIONAL component
-# with none is left out of the image (binaries-decide.sh and binaries-assemble.sh hold the rules, install-binaries.sh says loudly what is
-# missing); a REQUIRED one fails the run unless it can fall back (the daily build on main only).
+# One build job per component (binaries-component.yml, a matrix over components.tsv): each has its own content key (binaries-key.sh) and
+# its own signed component image (tag c-<component>-<key>, same package); a change to one component does not rebuild the others (a change
+# to lib/ or the builder pin rebuilds all). The assemble job then puts whatever each component produced into ONE image, tagged with the
+# assembled key (sha1 over the included "name key" lines; binaries-key.sh), which the image build copies from by digest. There is no
+# fallback to an older image: a REQUIRED component that cannot be built fails the run (the previous `latest` stays, nothing is published);
+# an OPTIONAL component whose build fails is left out of the image (binaries-decide.sh and binaries-assemble.sh hold the rules,
+# install-binaries.sh says loudly what is missing).
 #
 # Only testing and main publish; on any other ref (a validation dispatch) components are built and checked but never pushed or signed,
 # no digest is handed over, and the image build then stops with an instruction (binaries-use.sh).
 #
 # Own runs (Kevin, 2026-11-14; the README badge): `push` to main and testing (only when binaries/, this workflow, binaries-component.yml
 # or their scripts change) and a WEEKLY `schedule` on main (Friday 08:00 UTC) run it under its own name; a called run belongs to the
-# caller. An own `push` or `schedule` run, and a dispatch with `validate_only`, NEVER publish, sign, move last-good tags or touch the
-# issue: the push run only proves that this content builds (it reuses already signed images when the caller published them first), and
-# the schedule run and `validate_only` ignore the reuse shortcut and build again against the pinned sources and today's Fedora 45
-# packages, failing visibly when a required component fails. Nothing of it gets the signing secret (the sign jobs are skipped).
-#
-# Rehearsals (a dispatch): simulate_build_failure takes a comma separated list of components (or all) whose build fails on purpose and
-# skips their reuse; fallback_dry_run runs the fallback checks on their last good images and reports; nothing is published or changed.
+# caller. An own `push` or `schedule` run NEVER publishes or signs: the push run only proves that this content builds (it reuses already
+# signed images when the caller published them first), and the schedule run ignores the reuse shortcut and builds again against the
+# pinned sources and today's Fedora 45 packages, failing visibly when a required component fails. Nothing of it gets the signing secret
+# (the sign jobs are skipped).
 on:
   push:
     branches: [main, testing]
@@ -39,11 +36,6 @@ on:
       SIGNING_SECRET:
         description: "the cosign private key of the images (the sign jobs need it); callers pass only this secret"
         required: false
-    inputs:
-      allow_fallback:
-        description: "true on the scheduled daily build: a failed build of a REQUIRED component on main may fall back to its last good image"
-        type: boolean
-        default: false
     outputs:
       digest:
         description: "manifest digest of the published, signed assembled binaries image (empty when it was only built for validation)"
@@ -57,32 +49,10 @@ on:
       hash:
         description: the assembled key (the image tag)
         value: ${{ jobs.result.outputs.hash }}
-      fallback:
-        description: "true when a component fell back to its last good image or an optional one is left out (see degraded)"
-        value: ${{ jobs.result.outputs.fallback }}
-      fallback_hash:
-        description: the assembled key when fallback is true (empty otherwise)
-        value: ${{ jobs.result.outputs.fallback_hash }}
-      fallback_created:
-        description: when the assembled image was made (empty unless fallback)
-        value: ${{ jobs.result.outputs.fallback_created }}
       degraded:
-        description: "the components that fell back or were left out, e.g. scx:fallback ghostty:absent (empty when none)"
+        description: "the optional components that were left out, e.g. ghostty:absent (empty when none)"
         value: ${{ jobs.result.outputs.degraded }}
   workflow_dispatch:
-    inputs:
-      simulate_build_failure:
-        description: "Rehearsal: comma separated components (or all) whose build fails on purpose; their reuse is skipped; nothing is published"
-        type: string
-        default: ""
-      validate_only:
-        description: "Validation: ignore the reuse shortcut and build again; publish, sign and track nothing (what the weekly run does)"
-        type: boolean
-        default: false
-      fallback_dry_run:
-        description: "Rehearsal: when a build failed, run the fallback checks on the last good images and report; never publishes or uses them"
-        type: boolean
-        default: false
 
 env:
   IMAGE_NAME: octarine-os-binaries
@@ -119,10 +89,6 @@ jobs:
     with:
       component: ${{ matrix.name }}
       optional: ${{ matrix.optional }}
-      allow_fallback: ${{ inputs.allow_fallback == true }}
-      validate_only: ${{ inputs.validate_only == true }}
-      simulate: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure || '' }}
-      fallback_dry_run: ${{ inputs.fallback_dry_run == true }}
     permissions:
       contents: read
       packages: write
@@ -143,7 +109,6 @@ jobs:
       key: ${{ steps.decide.outputs.key }}
       degraded: ${{ steps.decide.outputs.degraded }}
       components: ${{ steps.decide.outputs.components }}
-      moves: ${{ steps.decide.outputs.moves }}
       image: ${{ steps.names.outputs.image }}
       usable: ${{ steps.final.outputs.usable }}
       nopublish: ${{ steps.final.outputs.nopublish }}
@@ -151,7 +116,6 @@ jobs:
       ok: ${{ steps.record.outputs.ok }}
       digest: ${{ steps.final.outputs.digest }}
       pushed: ${{ steps.push.outputs.digests }}
-      made: ${{ steps.record.outputs.made }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -221,7 +185,6 @@ jobs:
           REF: ${{ github.ref }}
           OWN: ${{ github.workflow == 'Prebuilt binaries' }}
           EVENT: ${{ github.event_name }}
-          VALIDATE_ONLY: ${{ inputs.validate_only == true }}
         run: |
           publish=false
           case "${REF}" in
@@ -229,7 +192,6 @@ jobs:
           esac
           nopublish=false
           if [[ "${OWN}" == true && ( "${EVENT}" == push || "${EVENT}" == schedule ) ]]; then nopublish=true; fi
-          [[ "${VALIDATE_ONLY}" != true ]] || nopublish=true
           [[ "${nopublish}" != true ]] || publish=false
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "nopublish=${nopublish}" >> "${GITHUB_OUTPUT}"
@@ -243,22 +205,19 @@ jobs:
           KEY: ${{ steps.decide.outputs.key }}
         run: .github/scripts/binaries-lookup.sh "${IMAGE}" "${KEY}"
 
-      # the assembled image of this key is reused when it exists and verifies, except for a validation or weekly run (own schedule
-      # run and validate_only build again) and a rehearsal
-      - name: Usable (not for a validation)
+      # the assembled image of this key is reused when it exists and verifies, except for the weekly validation run (it builds again)
+      - name: Usable (not for the weekly validation)
         id: final
         env:
           LOOKUP: ${{ steps.lookup.outputs.usable }}
           LOOKUP_DIGEST: ${{ steps.lookup.outputs.digest }}
           OWN: ${{ github.workflow == 'Prebuilt binaries' }}
           EVENT: ${{ github.event_name }}
-          VALIDATE_ONLY: ${{ inputs.validate_only == true }}
-          SIMULATE: ${{ github.event_name == 'workflow_dispatch' && inputs.simulate_build_failure != '' }}
           NOPUBLISH: ${{ steps.channel.outputs.nopublish }}
         run: |
           usable=${LOOKUP:-false}
           force=false
-          if [[ "${VALIDATE_ONLY}" == true || ( "${OWN}" == true && "${EVENT}" == schedule ) || "${SIMULATE}" == true ]]; then force=true; fi
+          if [[ "${OWN}" == true && "${EVENT}" == schedule ]]; then force=true; fi
           [[ "${force}" != true ]] || usable=false
           echo "usable=${usable}" >> "${GITHUB_OUTPUT}"
           echo "nopublish=${NOPUBLISH}" >> "${GITHUB_OUTPUT}"
@@ -280,7 +239,7 @@ jobs:
           set -euo pipefail
           content="${RUNNER_TEMP}/image"
           names=()
-          while IFS=$'\t' read -r name _ _ _ _ digest; do
+          while IFS=$'\t' read -r name _ _ _ digest; do
               [[ -n "${name}" ]] || continue
               [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for ${name}"; exit 1; }
               cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
@@ -325,7 +284,6 @@ jobs:
           ok=false
           if [[ "${ACTION}" == assemble && ( "${USABLE}" == true || ( "${ASSEMBLE}" == success && ( "${PUBLISH}" != true || "${PUSH}" == success ) ) ) ]]; then ok=true; fi
           echo "ok=${ok}" >> "${GITHUB_OUTPUT}"
-          echo "made=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${GITHUB_OUTPUT}"
 
   sign:
     name: Sign the binaries image
@@ -386,9 +344,6 @@ jobs:
       action: ${{ steps.pick.outputs.action }}
       hash: ${{ needs.assemble.outputs.key }}
       image: ${{ needs.assemble.outputs.image }}
-      fallback: ${{ steps.pick.outputs.fallback }}
-      fallback_hash: ${{ steps.pick.outputs.fallback_hash }}
-      fallback_created: ${{ steps.pick.outputs.fallback_created }}
       degraded: ${{ needs.assemble.outputs.degraded }}
       nopublish: ${{ needs.assemble.outputs.nopublish }}
     steps:
@@ -402,7 +357,6 @@ jobs:
           REUSE_DIGEST: ${{ needs.assemble.outputs.digest }}
           PUBLISHED: ${{ needs.assemble.outputs.published }}
           KEY: ${{ needs.assemble.outputs.key }}
-          MADE: ${{ needs.assemble.outputs.made }}
           DEGRADED: ${{ needs.assemble.outputs.degraded }}
           SIGN: ${{ needs.sign.result }}
           SIGN_DIGEST: ${{ needs.sign.outputs.digest }}
@@ -410,16 +364,12 @@ jobs:
           set -euo pipefail
           err() { echo "::error::$*"; exit 1; }
           [[ "${ASSEMBLE}" == success ]] || err "The binaries could not be put together (${ASSEMBLE}): a required component failed or has no result, see the component jobs"
-          fallback=false; [[ -z "${DEGRADED}" ]] || fallback=true
-          echo "fallback=${fallback}" >> "${GITHUB_OUTPUT}"
-          if [[ "${fallback}" == true ]]; then
-            echo "fallback_hash=${KEY}" >> "${GITHUB_OUTPUT}"
-            echo "fallback_created=${MADE}" >> "${GITHUB_OUTPUT}"
+          if [[ -n "${DEGRADED}" ]]; then
             echo "::warning::DEGRADED binaries: ${DEGRADED}"
-            echo "## DEGRADED binaries: ${DEGRADED} (fallback = the component's last good image, absent = an optional component left out of the image)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "## DEGRADED binaries: ${DEGRADED} (an optional component left out of the image)" >> "${GITHUB_STEP_SUMMARY}"
           fi
           if [[ "${ACTION}" == validated ]]; then
-            echo "Binaries image: components built for validation only (a ref that cannot publish, or a rehearsal), nothing is assembled, pushed or signed" >> "${GITHUB_STEP_SUMMARY}"
+            echo "Binaries image: components built for validation only (a ref that cannot publish), nothing is assembled, pushed or signed" >> "${GITHUB_STEP_SUMMARY}"
             { echo "digest="; echo "action=validated"; } >> "${GITHUB_OUTPUT}"
             exit 0
           fi
@@ -436,72 +386,3 @@ jobs:
             echo "Binaries image: assembled \`${KEY}\` for validation only (this ref does not publish), nothing was pushed or signed" >> "${GITHUB_STEP_SUMMARY}"
             { echo "digest="; echo "action=validated"; } >> "${GITHUB_OUTPUT}"
           fi
-
-  # After the decision: move `last-good-<component>` for every component this run built or reused on main (only a signed build or
-  # reuse), and keep the ONE issue for degraded binaries. Never fails the run (continue-on-error).
-  track:
-    name: Track the last good binaries
-    needs: [assemble, result]
-    # not for the workflow's own push and schedule runs or a validate_only dispatch: they validate, they do not publish
-    if: always() && needs.assemble.result == 'success' && needs.assemble.outputs.nopublish != 'true' && needs.assemble.outputs.action == 'assemble'
-    runs-on: ubuntu-26.04
-    continue-on-error: true
-    permissions:
-      contents: read
-      packages: write
-      issues: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Login to GitHub Container Registry
-        if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # the digests were verified by the lookup or the sign job of each component; the tag is a pointer to one, the signature belongs
-      # to the digest
-      - name: Move last-good-<component> to the digests of this run
-        if: github.ref == 'refs/heads/main'
-        env:
-          IMAGE: ${{ needs.assemble.outputs.image }}
-          MOVES: ${{ needs.assemble.outputs.moves }}
-        run: |
-          set -euo pipefail
-          for pair in ${MOVES}; do
-            name=${pair%%=*} digest=${pair#*=}
-            [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::warning::no digest to mark for ${name}"; continue; }
-            skopeo copy --all --preserve-digests "docker://${IMAGE}@${digest}" "docker://${IMAGE}:last-good-${name}"
-            got="sha256:$(skopeo inspect --raw "docker://${IMAGE}:last-good-${name}" | sha256sum | sed 's/ .*//')"
-            [[ "${got}" == "${digest}" ]] || { echo "::warning::last-good-${name} is ${got}, expected ${digest}"; continue; }
-            echo "last-good-${name} -> ${digest}" | tee -a "${GITHUB_STEP_SUMMARY}"
-          done
-
-      - name: Issue for degraded binaries (one, label ci-failure-binaries)
-        if: github.ref == 'refs/heads/main' && needs.assemble.outputs.degraded != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-          LABEL: ci-failure-binaries
-          LABEL_DESC: the image build used a component's last good binaries or left an optional component out because its build failed (one open issue at a time)
-          ISSUE_TITLE: "binaries build failed for a component: the image uses its last good build or leaves it out"
-          DEGRADED: ${{ needs.assemble.outputs.degraded }}
-          KEY: ${{ needs.assemble.outputs.key }}
-          FAIL_COMMENT: ${{ format('the binaries build failed again, degraded components {0}', needs.assemble.outputs.degraded) }}
-        run: |
-          export ISSUE_BODY="The build of these components of \`binaries/\` failed: ${DEGRADED} (\`fallback\` = the image uses the component's last good build, \`absent\` = an optional component with no last good build is left out of the image). The assembled binaries image is \`${KEY}\`, labeled \`org.octarineos.binaries-degraded\`, and so is the OS image (\`org.octarineos.binaries-fallback=true\`); the installed SOURCE, BUILDINFO, FALLBACK and MISSING records say which. Fix the component in \`binaries/\` (or revert the change); the next main run in which no component is degraded closes this issue. A Fedora library change that breaks a binary at link time is NOT covered by the fallback: only a rebuild fixes it. See CLAUDE.md, Prebuilt binaries."
-          .github/scripts/ci-issue.sh fail
-
-      - name: Close the issue when nothing is degraded any more
-        if: github.ref == 'refs/heads/main' && needs.assemble.outputs.degraded == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.sha }}
-          LABEL: ci-failure-binaries
-          RECOVER_COMMENT: every component of the binaries was built or reused without a fallback
-        run: .github/scripts/ci-issue.sh recover

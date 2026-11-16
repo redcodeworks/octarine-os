@@ -235,7 +235,7 @@ jobs:
       # module, initramfs, and no CUDA toolkit anywhere in the image)
       - name: Smoke test the image (dx checks)
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID=octarine-os-nvidia-dx \
             -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" "octarine-os-nvidia-dx:${CHANNEL}" bash /smoke.sh
 
       - name: Smoke test the image (NVIDIA checks)
@@ -254,7 +254,7 @@ jobs:
             podman image inspect "octarine-os-nvidia-dx:${CHANNEL}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
             podman run --rm "octarine-os-nvidia-dx:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
-          } | BETA=false .github/scripts/check-version-neutral.sh
+          } | .github/scripts/check-version-neutral.sh
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

@@ -8,6 +8,8 @@ folder with a `Containerfile`, a `build.sh` and an `upstream.env` that pins the 
 image's contents in (`build_files/install-binaries.sh`). `components.tsv` lists the components and whether each is required;
 `builder.env` pins the Fedora builder image they all compile in; `lib/` holds the shared fetch, stage and assemble scripts.
 
+If a required component (`scx`, `extest`) cannot be built, the build fails and nothing new is published; an optional one (Ghostty) is left out of the image instead.
+
 Before editing: the upstream pins here are moved by the weekly bump workflow (`bump-pins.yml`), and a change inside a component, in `lib/` or in
 `builder.env` rebuilds the affected components (a change in `lib/` or `builder.env` rebuilds all of them).
 See the [main README](../README.md) for what the images ship.

@@ -19,7 +19,7 @@ step lists, the recipes explain themselves), then the closing block Contributing
 (personal project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs,
 forks encouraged; its `### Fork it` heading is linked from `AGENTS.md`), disclaimer last. No design rationale, process
 history, CI or branching internals, agent instructions or recipe step lists in it. American English throughout. Checked
-against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale sections).
+by hand: no test reads the README (removed 2026-11-16, see "What the tests may assert").
 
 ## Layout
 
@@ -39,9 +39,9 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
   `toggle-nvk` recipe is still installed, generate the
   container signature policy from `IMAGE_ORG`/`IMAGE_NAME`/`cosign.pub`, install packages, enable services.
 - `system_files/`: files copied onto `/` (PAM, sysctl, firewalld, sudoers, Flatpak preinstall lists, `ujust` recipes).
-- `Justfile` (repo root, not in the image): build, VM and release recipes. `just check` runs `just --fmt --check`.
+- `Justfile` (repo root, not in the image): build and release recipes. `just check` runs `just --fmt --check`.
 - `.github/workflows/`: `build-dx.yml` (the dx image, see "Input hashes and dx on testing"), `test.yml` (quick tests and secret scan on dev branches), `build.yml` (plan, build, smoke test, push, then a separate `sign` job in the `signing`
-  environment), `require-testing-branch.yml`, `prune-testing.yml`, `build-disk.yml` (details under "CI and
+  environment), `require-testing-branch.yml` (details under "CI and
   signing flow").
 - `config/`: `image.env` (IMAGE_NAME, REPO_NAME and the label values; the Justfile loads it with `set dotenv-path`, the workflows read it by path; renamed from the template's `image-template.env` on 2026-11-14) and `chunkah.env` (the chunkah pin). Both are image-build inputs (any path outside `docs/`, `tests/` and top-level `*.md` is). `docs/` holds `CONFIG-GUIDE.md` (moved from the root 2026-11-14); `artifacthub-repo.yml` (template stub) was deleted the same day.
 - `githooks/pre-push`: gitleaks scan; enable with `just install-hooks`.
@@ -79,20 +79,18 @@ against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale 
 - Undo: remove the `brew` stage, the `COPY --from=brew` line, the `systemctl preset` line, the preset file,
   the CI steps and the smoke assertions; existing prefixes stay untouched.
 
-## Pin bumps (`bump-pins.yml`, one weekly workflow; 2026-11-15, Kevin: "consolidate the workflow, keep one PR per pin bump")
+## Pin bumps (`bump-pins.yml`, one weekly workflow, ONE combined pull request; 2026-11-16, Kevin: "Combine the weekly bumps into one PR": one PR and one build)
 
-- **One workflow, one schedule:** `.github/workflows/bump-pins.yml`, Monday 07:00 UTC plus `workflow_dispatch` (it replaced `upstream-check.yml`, Monday, and the old Tuesday `bump-pins.yml`; scheduled workflows run only from `main`, so the schedule starts after the first promotion; try it before with `gh workflow run bump-pins.yml --ref testing`: PRs appear only when something is newer). Independent jobs (matrices with `fail-fast: false`, a failing pin does not stop the others): `sources` (scx, extest, ghostty), `digests` (chunkah, dev-packages), `external` (brew, builder) and a `summary` job (`if: always()`) that writes ONE table (pin, current, proposed, PR or nothing to bump, status) and fails the run when any pin failed, which `scripts/scheduled-runs.sh` reports.
+- **One workflow, one job, one PR:** `.github/workflows/bump-pins.yml`, Monday 07:00 UTC plus `workflow_dispatch` (scheduled workflows run only from `main`, so the schedule starts after the first promotion). `.github/scripts/bump-weekly.sh` runs every pin one after the other through `bump-run.sh` (the decision scripts per kind and the pin writers; a failing pin changes nothing and turns the run red, which `scripts/scheduled-runs.sh` reports, the other pins still go in), makes ONE COMMIT per pin that moved (its message ends with the pin's table row: pin | from | to | what changed upstream | days the new value has existed), pushes ONE branch `bump/weekly-YYYYMMDD` (a run of the same day gets `-2`, `-3`: a new name instead of a force-push) from current `testing` and opens ONE PR `Weekly pin bumps YYYY-MM-DD: <pins>` whose body is that table. Nothing moved: no branch, no PR. Every older open weekly PR is closed (with its branch) with a comment pointing at the new one; the decisions compare with `testing`, so a pin that an unmerged older PR carried and `testing` still lacks is simply re-applied (nothing pending is lost). **Drop a pin: `git revert <its commit>` on the branch** (or edit the pin file). **Rerun by hand:** `gh workflow run bump-pins.yml --ref testing` (the new PR supersedes the old one, which is also the recovery when the checks are missing); `-f dry_run=true` from any branch prints the would-be PR (title, branch, commits, table) in the job summary and pushes and opens nothing. A real run refuses to start from a checkout that is not `origin/testing`. Zig moves with Ghostty in one commit (a Ghostty tag needs its Zig minor); a Zig patch alone is its own commit.
 - Pins bumped by bump-pins.yml: scx, extest, ghostty, chunkah, dev-packages, brew, builder.
-- **The checks of a bump PR (2026-11-15).** A bump branch is pushed with `GITHUB_TOKEN`, so no push run starts. Dispatching `Test` on the branch did not help: a `workflow_dispatch` run is not part of a PR's status rollup (found on #137: check runs on the commit, `gh pr checks` empty, GraphQL `statusCheckRollup` null, PR BLOCKED on the required `test` and `secrets`; the same for a dispatch by a person), and check runs posted through the API join the commit's GitHub Actions suite when one exists and are not counted there. What counts: check runs of the Actions app on a commit that has no Actions suite (an experiment PR went BLOCKED to CLEAN). So `bump-pr.sh` calls `bump-checks.sh <branch> <sha>`: it dispatches `test.yml` on the `testing` ref with the input `ref=<sha>` (the run is named `Test of <sha>`, its jobs check that commit out; its suite belongs to testing's commit), waits for it and posts `test` and `secrets` on the bump commit with the real conclusions (marker title `Reported by bump-checks.sh`; a run that did not finish posts nothing). An open bump PR whose rollup has no `test` (an older run, or a commit that already had a suite) gets one empty commit and the checks again on the next weekly run. Jobs need `checks: write`. No PAT, no app. Test: `tests/bump-checks.sh`, `tests/bump-run.sh`.
-- **ONE PR per pin**, branch `bump/<name>` into `testing` (`bump/scx`, `bump/extest`, `bump/ghostty` and `bump/zig` for a Zig patch, `bump/chunkah-digest`, `bump/dev-packages-digest`, `bump/brew`, `bump/builder`), created or updated in place, only the pin lines changed, merged by the owner. Plumbing: `.github/scripts/bump-pr.sh` (branch from testing without force-push, the writer command, only the listed pin files may change, commit, push, PR create or edit, dispatch of the Test workflow so `test` and `secrets` attach; an open PR with the same title is a no-op). Decision: `.github/scripts/bump-run.sh <pin>` (per kind: `upstream-check.sh`, `ghostty-check.sh`, `bump-pin.sh`, and the two new ones) and `bump-summary.sh`. A registry that cannot be reached or a signature that does not verify fails that pin (red) and changes nothing.
+- **The checks of a bump PR (2026-11-15).** The bump branch is pushed with `GITHUB_TOKEN`, so no push run starts. Dispatching `Test` on the branch did not help: a `workflow_dispatch` run is not part of a PR's status rollup (found on #137: check runs on the commit, `gh pr checks` empty, GraphQL `statusCheckRollup` null, PR BLOCKED on the required `test` and `secrets`; the same for a dispatch by a person), and check runs posted through the API join the commit's GitHub Actions suite when one exists and are not counted there. What counts: check runs of the Actions app on a commit that has no Actions suite (an experiment PR went BLOCKED to CLEAN). So `bump-weekly.sh` calls `bump-checks.sh <branch> <tip sha>` once, for the tip of the one branch: it dispatches `test.yml` on the `testing` ref with the input `ref=<sha>` (the run is named `Test of <sha>`, its jobs check that commit out; its suite belongs to testing's commit), waits for it and posts `test` and `secrets` on the bump commit with the real conclusions (marker title `Reported by bump-checks.sh`; a run that did not finish posts nothing). If the checks are missing, rerun the workflow: it makes a new branch and PR and closes the old one (this replaced the empty-commit repair of the per-pin flow). Jobs need `checks: write`. No PAT, no app. Test: `tests/bump-checks.sh`, `tests/bump-run.sh`. The one job has `timeout-minutes: 40` because it waits for that Test run.
 - **brew** (new): the newest 8-digit dated tag of `ghcr.io/ublue-os/brew` (the rule of `just brew-bump`), only when newer than `ARG BREW_TAG`; `just brew-bump <tag>` IS the pin writer (digest and the cosign check against `keys/ublue-os-brew-cosign.pub`).
 - **builder** (new): `binaries/builder.env` keeps the Fedora major and moves to the current digest of `fedora:<major>` only once that digest has been the tag's value for `MIN_AGE_DAYS` (default 7; the image's creation date is the stand-in, a registry has no tag history; the same idea as a Dependabot cooldown, and it avoids rebuilding every component for a digest that Fedora replaces the next day). A builder bump changes the content key of EVERY binaries component (about 4.4 min scx, 1 min extest, 11 min Ghostty on a runner, in parallel): the PR body says so.
 - The datastore-images pin was removed on 2026-11-16 (item 15): the datastore bundle is fetched on demand by `ujust datastore-install`, see "Datastore containers".
-- Stay MANUAL by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor in `setup-tool` and the workflows), bootc-image-builder, the runner label, the repository variables and the signing key. Tests: `tests/bump-run.sh` (helper, brew and builder with stub registries, the table, the workflow and this list), `tests/bump-pins.sh`, `tests/upstream-check.sh`.
+- Stay MANUAL by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor in `setup-tool` and the workflows), the runner label, the repository variables and the signing key. Tests: `tests/bump-run.sh` (scx, brew and builder with stub registries, the orchestrator: one branch and PR, a commit per pin, supersede, nothing moved, failures, rerun, dry run, no force-push, the workflow and this list), `tests/bump-pins.sh`, `tests/upstream-check.sh`.
 
 ## Prebuilt binaries (binaries/)
 
-- **last-good tags are armed by every promotion (2026-11-15, L2).** The `track` job of `binaries.yml` moves `last-good-<component>` but runs only when a main run BUILDS; the normal main run is a promotion (build=false, binaries.yml not called), so on 2026-11-15 `ghcr.io/redcodeworks/octarine-os-binaries` had no `last-good-*` tag and the daily's fallback was unarmed. `build.yml`'s promote job now runs `.github/scripts/binaries-arm.sh` (continue-on-error) after the retag: for each component of `components.tsv` it verifies `c-<component>-<key>` of the promoted tree (`binaries-lookup.sh`, cosign.pub) and copies it to `last-good-<component>` with the digest kept; missing or unsigned images are skipped with a warning (an optional component left out keeps no tag). No hand step: the first promotion to main after this change arms them. `binaries-fallback.sh` reads exactly those tags (`last-good-${COMPONENT}` in `binaries-component.yml`). Test: `tests/binaries-arm.sh`.
 
 The default image ships binaries that are built in this repository, not compiled in the image build and not taken from a foreign
 registry: the sched_ext schedulers (`scx_*`) and the extest libraries. They are built from pinned upstream commits into ONE
@@ -124,57 +122,41 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   description; no header; read it with `awk -F'\t'` or `cut -f`, never `IFS=$'\t' read`, which collapses the empty field),
   `/extest/lib/libextest.so` (ELF32), `/extest/lib64/libextest.so` (ELF64); `/scx` and `/extest` each hold `LICENSES/`, `SOURCE`, `BUILDINFO`;
   `/LICENSES`, `/SOURCE`, `/BUILDINFO` combine both.
-- **Per-component pipeline (2026-11-15, Kevin: "option 2": one image, one build job per component, each with its own fallback).** Components are
+- **Per-component pipeline (2026-11-15, Kevin: "option 2": one image, one build job per component; the last-good fallback was REMOVED 2026-11-16).** Components are
   listed in `binaries/components.tsv` (name, `required` or `optional`: scx and extest are required). Each has its own content key,
   `.github/scripts/binaries-key.sh <component>` = sha1 of "tree of `binaries/<c>`, tree of `binaries/lib`, blob of `binaries/builder.env`": a change to
   one component rebuilds only it; a change to `lib/` or to the builder pin (`binaries/builder.env`, the one place of the Fedora 45 digest) rebuilds all
   (coarse on purpose: lib/ is small and a wrong skip is worse than a spare build). The Containerfiles are per component
   (`binaries/<c>/Containerfile`, a build stage plus a `FROM scratch` image that holds only `/<c>`; CI passes `--build-arg BUILDER` from `builder.env`).
   All images live in the SAME package `ghcr.io/redcodeworks/octarine-os-binaries` (no second package): component images `c-<component>-<key>`
-  (cosign signed, label `org.octarineos.binaries-component-key`), the moving pointers `last-good-<component>` (moved by `track` on main after a
-  signed build or reuse, never for a fallback), and the ASSEMBLED image tagged with the assembled key (`binaries-key.sh --assembled`: sha1 of the
-  sorted "name key" lines of the components actually included; a fallback component contributes its last good key). Old tree-hash tags and the old
-  `last-good` tag are left alone (never pruned, small). `binaries-key.sh` with no argument is the assembled key of the whole tree, which `just build`
-  uses locally.
-  - *Workflows.* `binaries.yml` (reusable and dispatchable; own push, weekly and `validate_only` runs as described below): `plan` (matrix from
+  (cosign signed, label `org.octarineos.binaries-component-key`; they are the cache of the pipeline: a signed image of the key is reused, not rebuilt), and the
+  ASSEMBLED image tagged with the assembled key (`binaries-key.sh --assembled`: sha1 of the sorted "name key" lines of the components actually included).
+  Old tree-hash tags, the old assembled `last-good` tag and the `last-good-scx|extest|ghostty` tags from the time of the fallback are harmless leftovers in GHCR (nothing reads them; never pruned, small).
+  `binaries-key.sh` with no argument is the assembled key of the whole tree, which `just build` uses locally.
+  - *Workflows.* `binaries.yml` (reusable and dispatchable; own push and weekly runs as described below): `plan` (matrix from
     `components.tsv`), `component` (a matrix, `fail-fast: false`, calling `binaries-component.yml` once per component), `assemble`, `sign` (environment
-    `signing`), `result` (the outputs build.yml reads: digest, image, action reused|built|validated, hash, fallback, fallback_hash, fallback_created,
-    degraded), `track`. `binaries-component.yml` per component: `check` (key, `binaries-lookup.sh`: a signed image of the key exists, nothing to
+    `signing`), `result` (the outputs build.yml reads: digest, image, action reused|built|validated, hash, degraded). `binaries-component.yml` per component: `check` (key, `binaries-lookup.sh`: a signed image of the key exists, nothing to
     build), `build` (podman build, layout check, `push-tags.sh`; the build step is `continue-on-error` and an `ok` record says whether it worked, so a handled
     failure never turns the called workflow red: a failed job inside a called workflow would fail the caller job and skip the image build, which has no
-    `always()`), `sign`, `fallback`, `result` (`binaries-decide.sh` writes the line `name status digest key created reason`, uploaded as the artifact
-    `binres-<component>`). Statuses: reused, built, validated (a ref that cannot publish, or a rehearsal), fallback, absent (optional, left out), failed.
-    `assemble` downloads the artifacts, `binaries-assemble.sh` decides (writes `COMPONENTS`, prints action, key, degraded, components, moves), looks the
+    `always()`), `sign`, `result` (`binaries-decide.sh` writes the line `name status digest key reason`, uploaded as the artifact
+    `binres-<component>`). Statuses: reused, built, validated (a ref that cannot publish), absent (optional, left out), failed.
+    `assemble` downloads the artifacts, `binaries-assemble.sh` decides (writes `COMPONENTS`, prints action, key, degraded, components), looks the
     assembled key up (reuse), else exports the component images by digest (each verified again), `binaries/lib/assemble.sh` + `lib/assemble.Containerfile`
     build the image (layout check `--assembled`), `push-tags.sh`, `sign`.
-  - *Rules.* A REQUIRED component that is neither built, reused nor validly fallen back fails the run, and its fallback stays daily-build-only on main
-    (`allow_fallback` on the schedule event, enforced again in the leg's `if`). An OPTIONAL component degrades on every PUBLISHING run (testing and main,
-    not an own validation run): its `last-good-<c>` image if one verifies, else it is left out (status absent); it never blocks an image build. On a run type WITHOUT a fallback job (the own push and weekly validation runs, a pull request, a rehearsal) a failed optional build is also `absent`, never `failed` (loud warning and summary, no issue): an optional component can never keep `Assemble`, the image build or the promotion PR red (2026-11-15: a failing Ghostty did exactly that on the own push run of testing). A failure
-    of an optional component IS remembered per content key (an Actions cache entry `known-fail-<component>-<key>-<ISO week>`, only its existence matters, saved on non-PR runs only when the BUILD STEP itself failed, never for a push or network failure; the week in the key limits it to at most seven days; a skip prints a warning that names the component): a later push with the SAME key does not build it again (status absent, loud warning); the daily scheduled run, a validation run, a rehearsal and any change of the component try again; a required component is never skipped. The assembled image carries `/COMPONENTS` (name, required|optional, key, origin built|reused|fallback,
-    created, digest) and the labels `org.octarineos.binaries-components` and `-degraded`; `fallback=true` in the outputs means "something is degraded"
-    (build.yml then sets the OS image labels `org.octarineos.binaries-fallback=true` and `-tree=<assembled key>`; plan-skip never keeps such an image).
+  - *Rules.* A REQUIRED component that is neither built nor reused fails the run: there is no fallback to an older image. **What a red binaries build means now (2026-11-16):** a required component (scx, extest) could not be built, so the run is red, `Build and push image` fails, nothing is published and the previous `latest` stays; on main the `ci-failure-default` alert tells the owner. Fix it by re-running the failed jobs (a transient download failure) or by fixing or pinning back the component; an OPTIONAL component that keeps failing (Ghostty) is removed from the image by deleting its line in `binaries/components.tsv`, its directory `binaries/ghostty/`, its entry in `install-binaries.sh` (`optional=`) and the tests that name it. An OPTIONAL component whose build fails is left out on EVERY run type (status `absent`, loud warning and summary, no issue): it can never keep `Assemble`, the image build or the promotion PR red (2026-11-15: a failing Ghostty did exactly that on the own push run of testing). A failure
+    of an optional component IS remembered per content key (an Actions cache entry `known-fail-<component>-<key>-<ISO week>`, only its existence matters, saved on non-PR runs only when the BUILD STEP itself failed, never for a push or network failure; the week in the key limits it to at most seven days; a skip prints a warning that names the component): a later push with the SAME key does not build it again (status absent, loud warning); the daily scheduled run and any change of the component try again; a required component is never skipped. The assembled image carries `/COMPONENTS` (name, required|optional, key, origin built|reused, digest) and the labels `org.octarineos.binaries-components` and `-degraded`;
+    a non-empty `degraded` output (an optional component left out) makes build.yml set the OS image label `org.octarineos.binaries-degraded=<list>`; plan-skip never keeps such an image (`LATEST_DEGRADED`), so the next daily run builds again and tries the component again.
   - *Installer.* `install-binaries.sh` reads `COMPONENTS`; its `required` and `optional` lists must match `components.tsv` (a test checks). A missing required component fails;
     a missing optional one prints `WARNING: optional component <c> is not in the binaries image: it is NOT installed`, a `::warning::` annotation and writes
-    `/usr/share/licenses/octarine-os-binaries/MISSING`; a fallback component gets a FALLBACK note in its own SOURCE and BUILDINFO and in `FALLBACK`.
-    `BINARIES_ONLY=<c>` installs one component from a single-component directory (the fallback check uses it).
+    `/usr/share/licenses/octarine-os-binaries/MISSING`.
   - *Runtime libraries.* Build dependencies never travel (FROM scratch, builder stages discarded), so after installing, in a real image build (empty `DESTDIR`; `BINARIES_CHECK_NEEDED=1`
     forces it in tests, `BINARIES_LDD` replaces ldd), every ELF file must find its libraries in THIS image: a 64-bit file must resolve with `ldd`, a 32-bit file (libextest
     in 32-bit Steam) may need only libc, libgcc_s, libm, libdl, libpthread, librt, ld-linux. A required component that fails FAILS the build (add the package to
     `build.sh`); an optional one is REMOVED again with a WARNING and `/usr/share/licenses/octarine-os-binaries/REMOVED`. Before this the schedulers' `ldd` ran only in
     the smoke test and in the builder (wrong environment), and libextest was never checked.
-  - *Fallback per component (daily build for required ones; Kevin, 2026-11-14, extended 2026-11-15).* `binaries-fallback.sh <image> last-good-<c> <c> schedulers.tsv install-binaries.sh`:
-    resolves the tag to a digest, verifies the cosign signature of THAT digest, exports it, `binaries-layout.sh` for the component and THIS tree's installer
-    (`BINARIES_ONLY`) must accept it, and the content-key label must be readable; otherwise it is refused (an optional component without one logs a warning, a required one fails).
-    Not for: a failed lookup, a failed SIGNING (build succeeded, `sign` failed), a refused candidate. A Fedora library change that breaks a binary at link time
-    is NOT covered (an old image would hit the same failure at the runtime check). Visible: summary and warning annotations from `binaries-decide.sh` (`FALLBACK:` and `OMITTED:`), the
-    labels above, the records above, and ONE issue labeled `ci-failure-binaries` from the `track` job on main only (named degraded components, a comment per
-    later run, closed with a comment when a main run has none degraded; `.github/scripts/ci-issue.sh`). The assembled `last-good` pointer is gone: components are the unit.
-  - *Rehearsal without publishing.* `gh workflow run binaries.yml --ref <branch> -f simulate_build_failure=scx,ghostty -f fallback_dry_run=true` (a comma list or `all`;
-    `true` still means all) skips the reuse of those components, fails their build on purpose, runs the fallback checks on their real `last-good-<c>` images and reports `FALLBACK (dry run)`;
-    nothing is pushed, signed, used or retagged.
-  - Tests: `tests/binaries-fallback.sh` (candidate checks, `binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, issue mechanics), `tests/binary-images.sh`
-    (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until they run: the first matrix run, artifact hand-over,
-    the first real fallback or omission, `last-good-<c>` first move (a component's first main run creates it), issue creation with the default token.
+  - *Removed 2026-11-16 (Kevin, after an independent failure-history review: it never fired in nine days and cost about 600 lines).* The `last-good-<component>` fallback: `binaries-fallback.sh`, `binaries-arm.sh` (the promote job's arming step), the `track` job, the `fallback` job and `allow_fallback`, the rehearsal inputs `simulate_build_failure`, `fallback_dry_run` and `validate_only`, the `org.octarineos.binaries-fallback` and `-tree` labels, the plan-skip `LATEST_FALLBACK` trigger (replaced by `LATEST_DEGRADED` for a left-out optional component), `BINARIES_ONLY` and the FALLBACK records of the installer, and their tests. Undo: `git revert` of that change.
+  - Tests: `tests/binaries-decide.sh` (`binaries-decide.sh` and `binaries-assemble.sh` decisions, keys, installer records and runtime check, plan-skip), `tests/binary-images.sh`
+    (lookup, use, layout, installer, workflow wiring), `tests/binaries-validate.sh`, `tests/binaries-build.sh`. UNVERIFIED until a real daily run on main: a required failure failing the run and publishing nothing, and the alert it raises.
   - The binaries image has three components: scx and extest (required), ghostty (optional, 2026-11-15).
 - **Ghostty (optional component `binaries/ghostty/`; Kevin 2026-11-15: it replaces the third-party AppImage and must never block an image build).**
   Source: the git tag `v1.4.0` pinned with its peeled commit `83fb9562...` in `upstream.env` (`fetch-source.sh` fails if the tag moved). There are no official Linux
@@ -195,16 +177,16 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   record, readelf NEEDED). The installer copies the tree to `/usr` but never over a file the image already has (a conflict leaves Ghostty out with a warning, MISSING; the exception: the terminfo entries `usr/share/terminfo/*`, which ncurses-term already ships for ghostty, are kept as the image has them and skipped) and the OS
   image gets `gtk4-layer-shell` in the `misc` optional group of `build.sh` (gtk4 4.24, libadwaita 1.10 and EGL are in the base). The desktop file and icon keep upstream's names
   (`com.mitchellh.ghostty`) so nothing in the image conflicts; a user's `~/.local/share/applications/ghostty.desktop` (AppImage) has another ID and shows as a second entry until the
-  owner removes it. Smoke tests (`build.yml`, `build-beta.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
+  owner removes it. Smoke tests (`build.yml`): Ghostty is installed with its desktop file and resolved libraries, or MISSING/REMOVED records it.
   **Update path (weekly `bump-pins.yml`; the Ghostty tag decides the Zig minor, never independently).** `.github/scripts/ghostty-check.sh` takes the newest STABLE tag
-  (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one opens ONE pull request on `bump/ghostty` (`bump-ghostty.sh ghostty`)
+  (`v<major>.<minor>.<patch>` only: not `tip`, not `vt-*`, no pre-releases) of ghostty-org/ghostty; a newer one becomes one commit of the weekly pull request (`bump-ghostty.sh ghostty` writes the pins)
   that moves `upstream.env` (tag AND peeled commit) and `zig.env` (version, URL, sha256, size, signature URL) together: the Zig minor is read from `.minimum_zig_version` in that
   tag's `build.zig.zon` and the newest published patch of that minor (x86_64-linux tarball) comes from `index.json`; when no tarball of that minor is published yet (or the newest is
-  below the minimum) NOTHING is opened and the job summary says `wait ...`. A newer patch of the PINNED Zig minor (checked against the minimum at the pinned tag) is a separate
-  low-priority pull request on `bump/zig` that changes only `zig.env`; a newer Zig minor alone never causes anything. Bump pull requests change pins only (nothing is published or signed); the
-  build after the merge into `testing` proves the bump, and a failing Ghostty bump degrades the optional component (last good, else left out) instead of touching the image.
+  below the minimum) NOTHING is committed and the job summary says `wait ...`. A newer patch of the PINNED Zig minor (checked against the minimum at the pinned tag) is its own
+  commit that changes only `zig.env` (low priority: revert it if you do not want it); a newer Zig minor alone never causes anything. The bump pull request changes pins only (nothing is published or signed); the
+  build after the merge into `testing` proves the bump, and a failing Ghostty bump leaves the optional Ghostty component out of the image (the last-good fallback was removed 2026-11-16).
   Tests: `tests/ghostty-component.sh` (pins, recipe, `fetch-zig.sh` with a stub curl/minisign and a fake tarball, the installer cases, the version selection with stubbed `gh` and index.json
-  data: new tag same minor, new minor without a tarball, new minor with one, patch bump, pre-release ignored, same tag no-op, version sort, unreadable inputs, the bump pull requests).
+  data: new tag same minor, new minor without a tarball, new minor with one, patch bump, pre-release ignored, same tag no-op, version sort, unreadable inputs, the pin writer).
   ROOT CAUSE of the first CI failures (2026-11-15, found by a local build in the builder image): Zig 0.17's `zig fetch` no longer leaves unpacked package directories in `<cache>/p` but `<hash>.tar.gz` files, so Ghostty's PACKAGING.md recipe and `nix/build-support/fetch-zig-cache.sh` are stale: `zig build --system <cache>/p` panicked ('reached unreachable code') and a plain build in the same polluted cache reported a hash mismatch for every package (with Zig 0.17.0 and 0.17.1 alike). `build.sh` now fetches every URL of `build.zig.zon.txt` into a FRESH empty cache, unpacks each saved tarball into a separate package directory (flattening the packages whose tarball keeps the upstream top-level directory; it fails with a message if a directory is still a lone subdirectory) and runs `zig build --system <that directory>` (no `-fno-sys`, no extra -devel packages). libghostty-vt (`usr/lib/libghostty-vt*`, `usr/include/ghostty`) is pruned: not wanted in the image. The builder package list of the Containerfile was enough (295 packages). Runtime libraries: freetype, harfbuzz, fontconfig, oniguruma, libglvnd-egl, libadwaita, gtk4, glib2, libX11 are in the base; `gtk4-layer-shell` is added by build.sh. UNVERIFIED until a build works: the builder package list, `ghostty +version` as the smoke run, `-fno-sys` spelling, the real file list,
   **Icon and desktop caches (2026-11-15, Kevin's VM: Ghostty needed an icon):** the base's `icon-theme.cache` and `/usr/share/icons/hicolor` share the normalized epoch mtime of an ostree image, so GTK trusts a STALE cache that lists no new icons; `install-binaries.sh` therefore runs `gtk-update-icon-cache -f -t /usr/share/icons/hicolor` (or the gtk4 tool) and `update-desktop-database` after installing Ghostty in the real build (empty `DESTDIR`) and warns when the cache does not list `com.mitchellh.ghostty`; the smoke test checks the 256x256 icon file and that the cache lists it. `/usr/libexec/octarine-os/motd` prints ONE blank line after a successful fastfetch (the tip and `/etc/user-motd` branches unchanged; the image does not wire fish_greeting, the owner does).
   that gtk4-layer-shell is the only extra runtime library, and the Zig minisign check (the tarball was verified here only through the sha256 the hub read from the official page).
@@ -213,50 +195,46 @@ pinned by digest; Kevin moved the build here on 2026-11-13 because the binaries 
   It therefore also runs by itself: `push` to `main` and `testing` filtered to `binaries/**`, `binaries.yml`, `binaries-*.sh` and `push-tags.sh` (the image's content is the tree of `binaries/`, so those are all its inputs), and a
   WEEKLY `schedule` (Friday 08:00 UTC, away from the daily 11:00 build, the Monday bumps and the Wednesday jobs). An own run is told from a called one by `github.workflow == 'Prebuilt binaries'` (in a called
   workflow `github.workflow` is the caller's name). The `check` job's step `final` decides: an own push run NEVER publishes (`nopublish`) but reuses an already signed image of the tree when the caller published it first, and builds
-  to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run and a dispatch with `validate_only` also ignore the reuse shortcut (`usable=false`) and
-  build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails (no fallback: `allow_fallback` is the caller's input), and do not publish, sign (the `sign` job is skipped, so the
-  `signing` environment and secret are never reached), move `last-good` or open or close the `ci-failure-binaries` issue (the `track` job is skipped when `nopublish`). A plain dispatch on main and testing and the called runs
+  to prove the content builds when not; so the publishing run stays the caller's and nothing is pushed twice or races. The own weekly run also ignores the reuse shortcut (`usable=false`) and
+  build again against the pinned sources and today's Fedora 45 packages, fail visibly when the build fails, and do not publish, sign (the `sign` job is skipped, so the
+  `signing` environment and secret are never reached). A plain dispatch on main and testing and the called runs
   are unchanged. The hub's `scheduled-runs.sh` already reports a failed newest scheduled run per workflow. Tests: `tests/binaries-validate.sh`. UNVERIFIED until it runs: the first scheduled run.
 - **Tag = assembled key** (see the per-component pipeline above; it replaced the tree hash `git rev-parse HEAD:binaries`): content-addressed, so the same content is built once and
-  reused by `testing`, `main`, the beta channel and the daily rebuild (build once, promote falls out for free).
-- **Workflow notes.** Called by the `binaries` job of `build.yml` (only when the plan wants an image build, not for a promotion or a docs-only push) and `build-beta.yml`, before the image build; the
-  build job `needs` it. The signing secret is passed by name down the chain (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}` in build.yml, build-beta.yml and the `component` job; no `secrets: inherit`;
+  reused by `testing`, `main` and the daily rebuild (build once, promote falls out for free).
+- **Workflow notes.** Called by the `binaries` job of `build.yml` (only when the plan wants an image build, not for a promotion or a docs-only push), before the image build; the
+  build job `needs` it. The signing secret is passed by name down the chain (`secrets: SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}` in build.yml and the `component` job; no `secrets: inherit`;
   without it the sign step fails with "invalid pem block"), old bundle format, then verify by digest and by tag. Only `testing` and `main` publish; on any other ref (a validation dispatch) the
   components are built and checked but never pushed or signed, no digest is handed over, and the image build stops with an instruction (`binaries-use.sh`): a change to `binaries/` is first fully
   exercised by the merge into `testing` (validate alone with `gh workflow run binaries.yml --ref <branch>`). The binaries jobs carry no required check name; `Build and push image`, `Sign and verify images`
   and `Build dx and push image` are unchanged, and a failed binaries run fails `Build and push image` (the build job is skipped). The image build verifies the handed digest with `cosign.pub`
   (`binaries-use.sh`, which exports `BINARIES_IMAGE=<image>@<digest>`; `just build` passes it as a build argument, defaulting locally to the assembled-key tag of the checked-out tree, and labels the image
   `io.github.redcodeworks.octarine-os.binaries`). The `Containerfile` has no default for `BINARIES_IMAGE`. GHCR creates a new package private: the hub must make `octarine-os-binaries` public.
-- **Which path ran.** The run summary says it per component (Component scx: reused, built and signed, validation only, FALLBACK, OMITTED) and for the assembled image (reused, assembled and signed, validation only); the outputs are
-  in the per-component pipeline bullet; `build.yml` and `build-beta.yml` repeat the path in their own summary.
+- **Which path ran.** The run summary says it per component (Component scx: reused, built and signed, validation only, OMITTED) and for the assembled image (reused, assembled and signed, validation only); the outputs are
+  in the per-component pipeline bullet; `build.yml` repeats the path in its own summary.
 - **Installation.** The build step bind-mounts the binaries image at `/binaries`; `build_files/install-binaries.sh` (called by `build.sh`;
   `BINARIES_ROOT` and `DESTDIR` exist for tests) checks that `schedulers.tsv` and `bin/` agree both ways (awk, four fields), then installs
   the schedulers to `/usr/bin/`, the manifest to `/usr/share/octarine-os/schedulers.tsv`, the extest libraries to
   `/usr/lib/extest/lib/libextest.so` and `/usr/lib/extest/lib64/libextest.so`, and the license texts, `SOURCE` and `BUILDINFO` to
   `/usr/share/licenses/octarine-os-binaries/<scx|extest>/` (it fails when the GPL or MIT text is missing). Nothing is enabled or started:
   no unit, no preset.
-- **Smoke test** (`build.yml`, copied into `build-beta.yml`; `tests/binary-images.sh` fails when they drift): the manifest exists; per scheduler
+- **Smoke test** (`default-smoke.sh`, run by `build.yml`): the manifest exists; per scheduler
   it is executable, `--version` runs, and `ldd` shows no `not found`; the extest libraries are executable and `file` shows a 32-bit and
   a 64-bit ELF; the GPL-2.0 and MIT texts and the `SOURCE` and `BUILDINFO` records ship.
-- **Weekly upstream check** (now the `sources` job of `bump-pins.yml`, see "Pin bumps" below; Monday 07:00 UTC plus `workflow_dispatch`; scheduled workflows run only from
+- **Weekly upstream check** (now part of the weekly `bump-pins.yml` run, see "Pin bumps" above; Monday 07:00 UTC plus `workflow_dispatch`; scheduled workflows run only from
   `main`, so the schedule starts after the first promotion). `upstream-check.sh` per `binaries/<name>/upstream.env`: scx asks `releases/latest`
   (not prereleases); extest asks the watched project and counts a release or tag only when it is NOT an ancestor of the pinned commit
   (compare API on the fork); when the fork lacks the new commit it ends green with the notice "the fork is behind upstream: sync it
-  (`gh repo sync redcodeworks/extest`) and rerun" and never writes to the fork. On a newer release `bump-upstream.sh` opens or updates ONE pull request per
-  component on `bump/<name>` into `testing`, changing only `UPSTREAM_TAG` and `UPSTREAM_COMMIT` (an existing branch gets a new commit, never a
-  force-push), body with the release notes and compare links; nothing is published from this workflow (the merge into `testing` changes the tree
-  hash, and the build after it builds and signs the new binaries). The owner merges bump pull requests. Tests: `tests/upstream-check.sh`.
-- **Token (both bump workflows).** Only the default `GITHUB_TOKEN` (job permissions `contents`, `pull-requests`, `actions` write; no personal
-  token, no `BUMP_TOKEN`). GitHub starts no `push` or `pull_request` workflow for events made with it, except `workflow_dispatch`, so after each push
-  to the bump branch the script runs `gh workflow run test.yml --ref bump/<name>`: the jobs of `test.yml` (named `test` and `secrets`, no
-  `if:`) run on the branch tip. Fail soft: a failed dispatch is a warning and the PR body says to run that command by hand. The setting "Allow GitHub Actions
+  (`gh repo sync redcodeworks/extest`) and rerun" and never writes to the fork. On a newer release `bump-run.sh` commits the change of only `UPSTREAM_TAG` and `UPSTREAM_COMMIT` (one commit of the weekly pull request, whose table row links the compare view); nothing is published from this workflow (the merge into `testing` changes the tree
+  hash, and the build after it builds and signs the new binaries). The owner merges the bump pull request. Tests: `tests/upstream-check.sh` (the decision), `tests/bump-run.sh` (the writer and the commit).
+- **Token.** Only the default `GITHUB_TOKEN` (job permissions `contents`, `pull-requests`, `actions`, `checks` write, `packages` read; no personal
+  token, no `BUMP_TOKEN`). GitHub starts no `push` or `pull_request` workflow for events made with it, except `workflow_dispatch`, so `bump-checks.sh` dispatches `Test` on `testing` for the tip (see "The checks of a bump PR" above). Fail soft: a failed dispatch is a warning and the PR body says how to rerun. The setting "Allow GitHub Actions
   to create and approve pull requests" must be on (the hub turned it on 2026-11-13). UNVERIFIED on GitHub: whether a dispatched run satisfies the
   required checks of the pull request, and the first real run of either workflow (they must be on `main` first).
 - **dev-packages.** The only image still pinned by digest from outside is `dev-packages` (`variants/dx/Containerfile`, key
   `keys/redcodeworks-toolbox-cosign.pub`). `.github/workflows/bump-pins.yml` (Monday 07:00 UTC plus dispatch, see "Pin bumps") runs `.github/scripts/bump-pin.sh dev-packages`:
   resolve `:latest` (`skopeo inspect --raw | sha256sum`), verify the signature, compare. Decisions (exit code, result): equal (0, `equal`,
   "nothing to bump"; the signature is still verified); different (10, `different`: the digest line and the tag line, the dated tag with the same
-  digest or `latest`, nothing else; ONE pull request on `bump/dev-packages-digest` into `testing`); registry unreachable, `latest` missing or an
+  digest or `latest`, nothing else; one commit of the weekly pull request); registry unreachable, `latest` missing or an
   empty answer (1, `unreachable`: the job fails, nothing changes); bad signature (2, `badsignature`: fails, even when the digest is equal); malformed
   pin or unknown image (3). Tests: `tests/bump-pins.sh`; `just dev-packages-bump` stays for a manual bump.
 - **Tests.** `tests/binaries-build.sh` (parser, commit verification with local repositories, `stage.sh`, the scheduler list driving `scx/build.sh`,
@@ -340,7 +318,7 @@ after install; the owner decides default-on after a soak. Whatever fails, the ma
 - **Recipe `ujust scheduler`** (group Setup, above `toolbox`, not part of `hardware-setup`): step 1 scheduler at boot (None plus every registry entry, current first; `sudo -v` once, then `sudo systemctl enable --now scx@NAME.service` FIRST and the enabled other instance is disabled only after the new one is verified running (`systemctl is-active` plus `/sys/kernel/sched_ext/state` and `root/ops`, waited up to `SCHEDULER_WAIT` seconds, default 5); "already set" means enabled AND running; a scheduler that does not run is reported FAILED with the reason (no BTF, the crash-loop marker of this kernel, or the last journal lines), the new instance is disabled again if this run enabled it and the old one is started again, and a marker is removed (`sudo rm -- /var/lib/octarine-os/scx-disabled/NAME`) only when the user confirms (default no; never under `--yes`); sharing one security-key touch between the sudo commands is NOT guaranteed (it depends on the sudoers credential cache); never retried; exact command printed on failure), step 2 scheduler while GameMode is active (Skip, None, entries; writes `scheduler.conf`, no sudo). Every option shows its
   description (menu text shortened to 76 characters; `--list` shows the full text). Flags `--boot`, `--gamemode`, `--status`, `--list`, `--restore`, `--yes`, `--no`, `-h`; unknown name or option exits 2; refuses root; "not applicable" without
   `/sys/kernel/sched_ext`. Test hooks `SCHEDULER_REGISTRY|SYSFS|STATE_DIR|USER_CONF|WAIT|BTF|KERNEL`. Tests: `tests/scheduler-recipe.sh`.
-- **Tier 1 compatibility check** (`.github/scripts/scx-kernel-check.py`, a step after the smoke test in `build.yml` and `build-beta.yml`, run inside the built image; the dx and NVIDIA variants inherit the same kernel and the
+- **Tier 1 compatibility check** (`.github/scripts/scx-kernel-check.py`, a step after the smoke test in `build.yml`, run inside the built image; the dx and NVIDIA variants inherit the same kernel and the
   schedulers, so they need none). FEASIBLE and built: the image's `/usr/lib/modules/<kver>/vmlinuz` is an x86 bzImage whose payload offset and length are in the setup header (zstd on Fedora 45); decompressed, the vmlinux has a
   `.BTF` section (159774 types on 7.2.15) which the script parses itself (no bpftool or pahole needed), plus `config` and `System.map` next to it. It checks `CONFIG_SCHED_CLASS_EXT`, `CONFIG_BPF_SYSCALL` and
   `CONFIG_DEBUG_INFO_BTF` are `y`; for each scheduler binary it extracts the embedded BPF object (an EM_BPF ELF inside the Rust binary) and requires that every REQUIRED import (undefined, non-weak ELF symbols; weak
@@ -404,11 +382,11 @@ Compared with Bluefin's `build_files/` (shared/validate-repos.sh, base/04-packag
   meant it, add the id to `ALLOWED`. The NVIDIA layer's `nvidia-install.sh` (akmods, read 2026-11-14) re-enables `fedora-multimedia` and disables the cisco, nvidia and staging repositories itself, so it ends inside the list (UNVERIFIED until the next NVIDIA build).
   Tests: `tests/validate-repos.sh` (stub dnf5 and directories).
 - **Compilers on the default image** (reverses the earlier rule that the image has none; the owner, 2026-11-14): `gcc gcc-c++ make binutils` are in the CRITICAL tier of `build.sh` (Fedora vendor, a missing name fails the build) and in the CRITICAL list of both smoke tests
-  (`build.yml`, `build-beta.yml`). `binutils` is already in the base and a dependency of gcc; it is named so it stays. Measured with `dnf5 install --assumeno` on the testing image: 7 packages, 221 MiB installed (70 MiB download): gcc 121.8, gcc-c++ 46.8,
+  (`build.yml`). `binutils` is already in the base and a dependency of gcc; it is named so it stays. Measured with `dnf5 install --assumeno` on the testing image: 7 packages, 221 MiB installed (70 MiB download): gcc 121.8, gcc-c++ 46.8,
   libstdc++-devel 41.3, kernel-headers 7.1 (surprising on a non-dev image, a gcc dependency through glibc-devel), glibc-devel 2.3, make 1.8, libxcrypt-devel 0.03 MiB. dx and the NVIDIA images inherit them; nothing in `variants/dx` listed any of them, so nothing was removed there.
   The step `Compiler smoke test` (`.github/scripts/compiler-smoke.sh`, mounted into the built image by both workflows) compiles, links and runs a C and a C++ program, links through `ld` (`-fuse-ld=bfd`), runs `make` and assembles, links (`ld`) and runs a tiny program (`as`, `ar`).
   Tests: `tests/compilers.sh` (the lists agree, the script and its wiring). Still absent from the default image: clang, cmake, ninja, meson, gdb, the development-tools group and `-devel` libraries.
-- **One smoke script for the default image (2026-11-15, item 14).** The in-image smoke test of `build.yml` and `build-beta.yml` is `.github/scripts/default-smoke.sh` (mounted into the built image and run with bash; env `REF`, `BASE_TAG`, `VERSION_RE`, the beta workflow passes the `beta-` pattern): one copy, no drift test needed. `tests/check-call-shape.sh` still guards joined `check "a" "b"` strings. `check` runs its command in a subshell: an `exit 1` inside a command (the `for ... || exit 1` forms) used to end the whole script silently at the first failure, with no FAIL line; now every failure is listed. To try the script by hand against a pulled image: `podman run --rm -v <copy of the script>:/default-smoke.sh:ro,z -e REF=... -e BASE_TAG=45 -e VERSION_RE=... <image> bash /default-smoke.sh` (older images fail the checks they predate). The default-enabled extensions must each have a directory in the image or the build must have recorded a missing optional package. Dropped as pure restatements: checks that `build.sh` already asserts during the build (PRETTY_NAME, IMAGE_ID, the plymouth theme file and selection, zsh in `/etc/shells` and not the useradd default), the sudo timeout literal, file-exists checks of files that tests/ read from the tree, and the dconf mtime comparison (the chunkah rechunk normalizes mtimes: the compiled database must hold the keys instead). The iommu check is one assertion: no `kargs.d` file mentions iommu.
+- **One smoke script for the default image (2026-11-15, item 14).** The in-image smoke test of `build.yml` is `.github/scripts/default-smoke.sh` (mounted into the built image and run with bash; env `REF`, `BASE_TAG`): one copy, no drift test needed. `tests/check-call-shape.sh` still guards joined `check "a" "b"` strings. `check` runs its command in a subshell: an `exit 1` inside a command (the `for ... || exit 1` forms) used to end the whole script silently at the first failure, with no FAIL line; now every failure is listed. To try the script by hand against a pulled image: `podman run --rm -v <copy of the script>:/default-smoke.sh:ro,z -e REF=... -e BASE_TAG=45 -e VERSION_RE=... <image> bash /default-smoke.sh` (older images fail the checks they predate). The default-enabled extensions must each have a directory in the image or the build must have recorded a missing optional package. Dropped as pure restatements: checks that `build.sh` already asserts during the build (PRETTY_NAME, IMAGE_ID, the plymouth theme file and selection, zsh in `/etc/shells` and not the useradd default), the sudo timeout literal, file-exists checks of files that tests/ read from the tree, and the dconf mtime comparison (the chunkah rechunk normalizes mtimes: the compiled database must hold the keys instead). The iommu check is one assertion: no `kargs.d` file mentions iommu.
 - **Grouped build logs.** Every section of `build.sh`, `dx.sh` and `nvidia.sh` and each of `install-binaries.sh`, `gen-schedulers.sh`, `final-cleanup.sh` and `validate-repos.sh` prints `::group::<name>` ... `::endgroup::` (folded in the GitHub Actions log; plain text elsewhere, and
   `just build` output is only decorated). GitHub does not nest groups, so a script that runs another is called BETWEEN two of its own groups. The helper scripts open one group at the top and close it from an `EXIT` trap; `build.sh` and the layers also set an `EXIT` trap that
   prints `::endgroup::` and then `::error::<script> failed (exit N)` outside the group, so a failure is not folded away; exit status, `set -x` and trap order are unchanged. Tests: `tests/build-log-groups.sh` (balanced and not nested per script, a failing script closes its group and prints the error).
@@ -417,7 +395,6 @@ Compared with Bluefin's `build_files/` (shared/validate-repos.sh, base/04-packag
 
 `testing` builds the `testing` image (once per merge, no build on pull requests); `main` is protected, changes only by pull request from `testing`
 (merge commit), and publishes `latest`. `just release` opens or merges that pull request.
-The `testing` VM (`just test-vm`) follows the `testing` tag, and updating it is the normal way to test.
 
 ## Branching: GitLab Flow
 
@@ -463,27 +440,35 @@ integration branch (GitLab's "main"); `main` is the production branch.
 ## Test workflow
 
 `.github/workflows/test.yml` (name `Test`) is the fast lane for dev branches (the image build takes about ten
-minutes). Triggers: `push` with `branches-ignore: [main]` (testing included since 2026-11-15: a non-required result on the tip that never cancels an earlier one) and `workflow_dispatch` (input `ref`: the bump workflow tests a bump commit from the testing ref); no `pull_request`
+minutes). Triggers: `push` with `branches-ignore: [main]` (testing included since 2026-11-15: a non-required result; since 2026-11-16 a newer push to testing cancels the older still-running Test run, so a burst of merges leaves one run on the final tip) and `workflow_dispatch` (input `ref`: the bump workflow tests a bump commit from the testing ref); no `pull_request`
 (the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
-`testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
-Jobs `scope`, `base`, `test` and `secrets`; `test` and `secrets` have these exact names because they are required checks (`scope` is not required):
+`testing` or `main` (those run `build.yml`). One concurrency group per ref (a dispatched run: per tested commit, so a push never cancels it and it never cancels a push), cancel in progress, `contents: read`.
+Jobs `test`, `suite` and `secrets`; `test` and `secrets` have these exact names because they are required checks (`suite` is not):
 
-- `test` (2026-11-15: INSIDE THE BASE THE IMAGES ARE BUILT ON): the job `base` resolves `${BASE_IMAGE}:${FEDORA_VERSION}` (the same defaults and repository variables as `build.yml`) to a digest with `base-pin.sh` (cosign-verified, retried) and `test` runs as `container: ${{ needs.base.outputs.image }}`, so the tests see the Fedora, niri, fish and shellcheck of the image build; the steps live in the shared action `.github/actions/test-suite` (the beta build runs the same action in `build-beta.yml`'s `tests` job on ITS base, `silverblue-main:beta`, before the build, and the build waits for it: a red test blocks the beta publish; the beta base job needs `base-pin.sh` to accept `FEDORA_VERSION=beta`, which it did not before this change and would have failed the Wednesday beta run). The action installs only the tools the base lacks (`rpm -q`, then a retried `dnf install`), PRINTS every tool's version (`Versions of the environment`: read it first when a run is red), then
-  `just check` (which includes `just --fmt --check`), `bash -n` on every tracked `*.sh`, and every `tests/*.sh` by
-  glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), the results printed in the order of the list with a PASS or FAIL line per test, the output of failing ones and a `Summary: N passed, M failed` line; any failure or timeout fails the job; the tests make their own temp directories, so they are independent). Measured on 2026-11-14 before this change: the job took about 170 s, of which the tool install was 25 s and the sequential test loop 133 s.
-  The job `scope` (no container, full-history checkout) runs `.github/scripts/test-scope.sh` and tells the other jobs whether the push is DOCUMENTATION ONLY (every changed file is a top-level `*.md`, under `docs/`, `LICENSE` or `.gitignore`; a changed test is NOT documentation here, unlike `docs-only.sh`, which decides image builds). For `docs` (2026-11-16, Kevin: docs-only pushes must not pull the base image and install tools) the jobs `base` and `test` are SKIPPED by a job-level `if: always() && needs.scope.outputs.scope != 'docs'` (a failed scope job still means the full run; a skipped job reports Skipped, which satisfies the required `test`: verify on a real docs-only PR, see below) and the light job `docs` runs on the host runner with no container: the tests that read the documentation (derived at run time by grepping the tests for README.md, CLAUDE.md or `docs/`, never a fixed list) and `.github/scripts/docs-sanity.sh` (not empty, no merge conflict markers). The FIRST push of a new branch (before is all zeros) is compared with `git merge-base origin/testing <sha>` instead of running everything (a new docs-only branch used to run the full job on its first push); a dispatch (the bump PRs' `Test of <sha>`), a mixed push and any failure of the detection run everything, so `test` and `secrets` keep their names and the bump checks are unchanged. Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism; the scope cases) and `tests/test-workflow.sh`. The tests use stubs for podman,
-  skopeo, cosign, brew and the network, so none is skipped in CI. The container runs as root, so `just check` and the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
+- `test` (Kevin, 2026-11-16, two stages; "we are over-engineering to catch errors that will be shown later"): stage 1 is the fast required `test` check, only the cheapest obvious things, on the host runner without a container (about 10 s): `.github/scripts/sanity.sh` runs `bash -n` on every tracked shell script and parses the workflow files (a broken one gives a "workflow file issue" with no job and no message). No shellcheck, no JSON/TOML parse, no `just check` (the build job of `build.yml` runs it) and no path check: each shows where it matters. Stage 2 is the image build on `testing` (the smoke test of the image build); a problem that needs the real image is not for the initial CI. It runs for every push, documentation-only ones included, and for the dispatched `Test of <sha>` runs of the bump workflow (`bump-checks.sh` posts the conclusions of `test` and `secrets` from that run).
+- `suite`: the behavior tests, `tests/*.sh` by glob, FOUR AT A TIME (`.github/scripts/run-tests.sh --jobs 4`: plain shell, `xargs -P`, each test's output buffered in a temp file, a `timeout` per test (900 s), PASS or FAIL per test in list order, a `Summary: N passed, M failed` line; the tests make their own temp directories) in a plain `registry.fedoraproject.org/fedora:45` container (floating tag; `dnf` install of the tools, an ordinary user, the pinned `just` at `/usr/bin/just`). NOT required: informative and freely cancelable (a newer push supersedes it); a watching agent may cancel `suite` and merge once `test` and `secrets` pass (a cancelled required check would block the merge, a cancelled `suite` does not). Skipped for the dispatched bump runs.
+  No documentation-only shortcut (removed 2026-11-16, Kevin: the fast `test` makes it redundant; the image build's own docs-only plan, `plan-build.sh` and `docs-only.sh`, is a different thing and stays): a documentation push runs `test`, `suite` and `secrets` like any other. Tests: `tests/run-tests.sh` (fixture scripts: a failing one, a hanging one, ordering, parallelism). `run-tests.sh` unsets `GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_STEP_SUMMARY` and `GITHUB_PATH` for every test (the runner points them at files the test user cannot write); tests set the ones they need themselves. The tests use stubs for podman,
+  skopeo, cosign, brew and the network, so none is skipped in CI. The `suite` container runs as root, so the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
 
 Run the same locally: `just check; .github/scripts/run-tests.sh` (or the loop `for t in tests/*.sh; do bash "$t" || echo "FAIL $t"; done`).
-Test: `tests/test-workflow.sh`.
 
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
 
+## What the tests may assert (Kevin, 2026-11-16: "many of the tests are over-sensitive to things that will not result in a failed build; we should be okay with the actual error revealing itself at build-time; the initial CI should be for just obvious sanity checks")
+
+The initial CI keeps only syntax, lint and parse checks, cheap obvious smoke checks, and behavior tests with stubs for logic that first executes on main, schedule or publish and could not otherwise be seen before it breaks production (promotion retag, publish-latest ordering and pairing, prune-daily deletion rules, sign and verify decisions, the luks-tpm-unlock SIGPIPE case, registry-read behavior). Tests must NOT assert workflow YAML text, README or doc prose, comment content, exact messages, file lists, or version, digest and count literals. When such an assertion fails, delete or loosen it (never move content to satisfy it, never add code to satisfy it); an error that a real build shows by itself needs no test.
+
+Cut in the combined batch of 2026-11-16 (accepted by Kevin, no replacement checks): `tests/readme-defaults.sh` and `tests/test-workflow.sh` are deleted; the workflow, Containerfile, Justfile and script-text assertions of `binary-images.sh`, `binaries-validate.sh`, `bump-pins.sh`, `bump-checks.sh`, `bump-run.sh` and `ghostty-component.sh` are gone (their stub behavior tests stay). Invariants that are now unguarded by any test: nothing that publishes has a `pull_request` trigger; login, push and sign steps are gated on publish; sign runs in the `signing` environment; the `daily-*` tag is written only by the scheduled run; the default image must not install libvirt or QEMU; the personal-names grep (gitleaks still scans for secrets). A wrong edit shows on the first real run.
+
+## Keeping the tests fast (2026-11-16)
+
+The suite is one 4-way parallel run, so its length is the longest test plus whatever is left over. Three tests used to take 76, 48-62 and 37 s in CI; measured with `PS4='+T${EPOCHREALTIME} ' bash -x tests/<name>.sh` and a look at the biggest gaps between traced lines, nearly all of it was waiting, not work. Rules that came out of it: a test exports `RETRY_DELAY=0` whenever a stub makes `registry-read.sh`, `cosign-check.sh` or `retry.sh` fail (their pauses are 5 s, then 10 s, per call), sets `OCTARINE_SCX_VERIFY_SECONDS=0` for `scx-verify` (one probe instead of a 1 to 2 s wait; `tests/schedulers.sh` 35 s to 7 s), and runs an independent matrix of many `just` starts four at a time with `xargs -P` and one private HOME per combination (the niri keybind matrix, `tests/niri-keybinds.sh`: 18 s to 6 s on 16 cores, the same CPU time, so on the 4-core runner it only helps when other tests are done). Nothing shipped changed.
+
 ## Runner disk space (2026-11-14)
 
-The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s on the default build, 73 s on dx). Measured on `ubuntu-26.04` with two non-publishing dispatches of `build.yml` from `exp/disk-a` and `exp/disk-b`: the root disk is 145 GB with 57 GB used and 88 GB free BEFORE any cleanup; after the action 26 GB used and 119 GB free; after the default image build and rechunk 44 GB used and 102 GB free, so the whole build needs about 18 GB on top of the cleaned runner (about 5 times less than the free space at the start). A targeted removal of the biggest directories (dotnet, android, ghc, CodeQL, swift...) instead of the action was measured too and was SLOWER (119 s against 85 s for the action in the same measurement), so not deleting at all is the fast choice. Every image workflow (`build.yml`, `build-beta.yml`, `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`) therefore runs a step `Check disk space` (id `disk`) and the action only as `Maximize build space (fallback, only when the disk is low)` when fewer than 60 GiB are free at the start. `build.yml` and `build-dx.yml` also print the free space after the build (job summary) and warn below 15 GiB. Only the default image was measured on a branch (dx and the NVIDIA builds publish, so they are only measured by their own runs: the summary line of the first dx build after this change is the number to look at). If a build ever fails with "no space left on device", lower nothing: remove the `if:` of the fallback step (the old behavior) and read the summary lines.
+The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s on the default build, 73 s on dx). Measured on `ubuntu-26.04` with two non-publishing dispatches of `build.yml` from `exp/disk-a` and `exp/disk-b`: the root disk is 145 GB with 57 GB used and 88 GB free BEFORE any cleanup; after the action 26 GB used and 119 GB free; after the default image build and rechunk 44 GB used and 102 GB free, so the whole build needs about 18 GB on top of the cleaned runner (about 5 times less than the free space at the start). A targeted removal of the biggest directories (dotnet, android, ghc, CodeQL, swift...) instead of the action was measured too and was SLOWER (119 s against 85 s for the action in the same measurement), so not deleting at all is the fast choice. Every image workflow (`build.yml`, `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`) therefore runs a step `Check disk space` (id `disk`) and the action only as `Maximize build space (fallback, only when the disk is low)` when fewer than 60 GiB are free at the start. `build.yml` and `build-dx.yml` also print the free space after the build (job summary) and warn below 15 GiB. Only the default image was measured on a branch (dx and the NVIDIA builds publish, so they are only measured by their own runs: the summary line of the first dx build after this change is the number to look at). If a build ever fails with "no space left on device", lower nothing: remove the `if:` of the fallback step (the old behavior) and read the summary lines.
 
 ## Rules
 
@@ -525,12 +510,11 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - `tests/plan-build.sh` tests the docs-only plan script with fixed inputs; run it after changing
   `.github/scripts/plan-build.sh`.
 - `tests/binaries-build.sh`, `tests/binary-images.sh`, `tests/upstream-check.sh` and `tests/bump-pins.sh` test the prebuilt binaries and their workflows (see "Prebuilt binaries"); `tests/schedulers.sh`, `tests/scheduler-recipe.sh` and `tests/scx-kernel-check.sh` test the scheduler runtime, the recipe and the kernel check (see "sched_ext schedulers").
-- `tests/beta-channel.sh` tests the beta workflow (schedule, base env, permissions, pins, tags, signing) and the beta prune rule.
-- `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks and the released-tag prune mode.
+- `tests/nvidia-variant.sh` tests the variant workflow triggers, the policy of both repositories, the kernel-matched akmods tag, the smoke checks.
 - `tests/inputs-hash.sh` tests the two input hashes, the dx-only path list, `plan-vanilla-reuse.sh` (testing) and the promote of a dx-only tip; `tests/plan-dx.sh` the dx plan decision table (stub skopeo and cosign; the testing base `testing-<sha7>`, walk-back, fallback and the promotion sequence) and `aggregate-dx.sh`; `tests/push-tags.sh` one push plus digest copies.
 - `tests/nvidia-dx-image.sh` tests the NVIDIA dx workflow (triggers, guards, no required-check context, the shared dx layer, both smoke tests, tags, signing), the `DX_IMAGE_ID` part of `dx.sh`, the CDI part of `nvidia.sh` and the dx-only input list; the plan decision for it is in `tests/plan-dx.sh`.
-- `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, the dx prune rule and `just dev-packages-bump`.
-- `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`, beta rule) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
+- `tests/dx-image.sh` tests the dx workflow (triggers, guards, channel mapping, permissions, pins, tags, signing, the promote job, the result job), the Containerfile and package lists, the policy of all three repositories, the dx smoke script with stub tools, and `just dev-packages-bump`.
+- `tests/image-version.sh` tests the version string, the neutral-version check (labels and os-release `IMAGE_VERSION`) and `set_os_release_field` of the three scripts; `tests/fastfetch-default.sh` the default fastfetch configuration.
 - `tests/build-triggers.sh` tests the build triggers: no `pull_request` in `build.yml`, a dispatch from another ref never logs in, pushes or signs, the aggregate job name, other workflows unchanged.
 - `tests/dev-setup.sh` tests `ujust dev` (dx only), the sdk wrapper, the fnm and cargo shell snippets and the dx-only wiring (see "Developer menu").
 - `tests/niri-setup.sh` tests `ujust niri-setup` and the shipped niri files (see "niri setup"); `tests/niri-keybinds.sh` the experimental keybind wizard (see "Keybind wizard" there).
@@ -539,7 +523,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - `tests/plan-skip.sh` tests the scheduled-run skip decision with fixed inputs.
 - `tests/image-version.sh` tests the version string and its channel-neutral check.
 - `tests/aggregate-result.sh` tests the aggregate decision with fixed job results.
-- `tests/plan-promote.sh` and `tests/prune-testing.sh` test the promote decision and the prune safety net.
+- `tests/plan-promote.sh` tests the promote decision.
 - `tests/user-setup.sh` tests `ujust user-setup` with fake flatpak, sudo, id, getent and usermod; run it after changing that recipe.
 - `tests/toolbox.sh` tests the `toolbox <name>` recipe with fake curl, distrobox and podman (no
   network, temp HOME); run it after any change to those recipes or to
@@ -548,8 +532,6 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   base recipes absent, every public recipe has a description); `tests/switch-image.sh`, `tests/update-services.sh` and
   `tests/luks-tpm-unlock.sh` test the recipes of `ujust switch-image`, `toggle-updates`/`update` and `luks-tpm-unlock`
   (Esc, the single-call re-enroll, the image-off line).
-- `tests/readme-defaults.sh` tests the README (section order, no removed sections, every `ujust` recipe of the recipe files listed, the
-  three variant URLs, the disclaimer last) and the zsh and `iommu=pt` shipping rules (no image ships either; the iommu karg is opt-in).
 - The default image carries `gcc`, `gcc-c++`, `make` and `binutils` (critical tier of `build.sh`, the owner's decision of 2026-11-14, which reversed the earlier rule that the image has none; 221 MiB installed, dependencies glibc-devel, libstdc++-devel, libxcrypt-devel and kernel-headers) but no clang, cmake, ninja, meson or -devel libraries (the dx image has the full toolchain); the toolbox the definition describes is
   the image `ghcr.io/redcodeworks/fedora-toolbox` built from its own repo (`TOOLBOX_IMAGE` overrides the tag). The host recipe is `ujust toolbox <name>`; to add a toolbox ship a
   definition `<name>.ini` (section `[<name>]`), an optional `<name>.conf` (TOOLS, EXPORT_BINS, IDES as plain data) and
@@ -584,7 +566,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   title, description, created, version, artifacthub keys). chunkah (`just rechunk`) starts from the image's own config
   (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
   `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
-- **Secure Boot check of the kernel (2026-11-14, Bluefin's way).** After the rechunk, `build.yml`, `build-beta.yml` and (after its smoke test) `build-nvidia.yml` run
+- **Secure Boot check of the kernel (2026-11-14, Bluefin's way).** After the rechunk, `build.yml` and (after its smoke test) `build-nvidia.yml` run
   `.github/scripts/secureboot-check.sh <image>`, the same as Bluefin's and Aurora's `secureboot` recipe: the single kernel of the image is copied out, Universal Blue's kernel signing key is downloaded
   (`fetch_key`, curl with 3 retries, from `https://github.com/ublue-os/akmods/raw/main/certs/public_key.der`; a failed download fails the check clearly), converted DER to PEM, `sbverify --list` is printed
   and `sbverify --cert` must accept the kernel, otherwise the build FAILS ("Secureboot Signature Failed"). The Fedora signature is not checked. The earlier attempt to pin Fedora's leaf or CA certificate was dropped (Kevin,
@@ -608,7 +590,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   what the packages put in `/var` into `/usr/lib/tmpfiles.d/octarine-var.conf` (`d` for directories with their mode and owner, `C` copies of files from `/usr/share/factory/var`, `L+` for symlinks), so the
   directories and files come back at boot (a later layer appends). No warning is silenced. The dx and NVIDIA layers use the same script; UNVERIFIED until their first CI build with it.
 - **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
-  `just rechunk` (every image workflow: default, beta, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
+  `just rechunk` (every image workflow: default, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
   with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
   The image is pinned by digest in `config/chunkah.env` and `.github/scripts/chunkah-ref.sh` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
   identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump-pin.sh chunkah`)
@@ -628,10 +610,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   signature policy (a `sigstoreSigned` scope for `ghcr.io/<org>/<image>`, a `registries.d` entry, the key under
   `/etc/pki/containers`) from `IMAGE_ORG`, `IMAGE_NAME` and `cosign.pub`, keeping the catch-all last (rules for the default, `-nvidia`, `-dx` and `-nvidia-dx` repositories).
   `just build` passes `IMAGE_NAME=${target_image##*/}` so a `localhost/` prefix does not leak into it.
-- **Pruning.** `prune-testing.yml` runs weekly from `main`: it keeps the newest 10 `testing` builds, deletes
-  older ones with their cosign signature versions and untagged versions older than a week, never a `latest*`
-  or dated tag. Scheduled runs only delete once the repository variable `PRUNE_ENABLED` is `true`; run it by
-  hand with `dry_run` on to see the plan. Safety cap `MAX_DELETES` (default 400, was 60): a plan over it makes the run FAIL without deleting (dry runs too). 2026-11-15 the weekly dry run failed with "Refusing to delete 216 versions (limit 60)": pruning was never enabled, so the backlog (83 testing builds plus signatures) outgrew 60; not a permission or API error, and it touches no image build or `latest`.
+- **Daily tag and a small prune (2026-11-16, replaces the big prune workflow).** The scheduled daily build of `build.yml` (event `schedule` only: not pushes, promotions or dispatches) adds the tag `daily-YYYYMMDD` (UTC) next to the dated aliases, in the same push (one digest for every tag). The dx image built right after it gets the same tag when the default image it is built on (its base digest) is the digest of `octarine-os:daily-<today>` (`build-dx.yml`, step Tags; no new input). A daily run that skips because nothing changed makes no new image and no tag, so the 14 are the last 14 daily-tagged images, not 14 days. `prune-daily.yml` (Sundays 05:00 UTC, `.github/scripts/prune-daily.py`) works on `octarine-os` and `octarine-os-dx` only: of the versions with a `daily-*` tag it keeps the newest 14 and deletes older ones whose tags are all `daily-*` or dated aliases (`latest-<sha>`, `latest-<date>[-<sha>]`, `<date>[-<sha>]`), with their cosign signature version (`sha256-<digest>.sig`); a signature whose digest is not a version of the package is deleted too. Never deleted: a version with any other tag (the bare `latest`, `testing*`, ...), and the digest behind `latest` and the base of the dx `latest` (the workflow reads the dx image's `org.opencontainers.image.base.digest` label and passes both as `PROTECT`; a failed lookup stops the run). A plan over 30 versions is refused (the run fails, nothing deleted). Scheduled runs delete; a dry run is `gh workflow run prune-daily.yml -f dry_run=true`. There is no alert job (a failed prune is a red scheduled run). Testing builds, `testing-<sha>`, the NVIDIA images and everything else accumulate (public GHCR storage is free); delete old versions by hand in the GitHub packages UI if ever needed. Test: `tests/prune-daily.sh`. UNVERIFIED until a scheduled main run: the daily tag on both images, the first real prune.
 - **Scheduled skip.** The 11:00 UTC run rebuilds only when something changed. The `plan` job (steps "Scheduled run, skip
   when nothing changed") reads the published `latest` with `skopeo inspect --config` and compares: the base image's
   manifest-list digest now (`sha256sum` of `skopeo inspect --raw`) against the label
@@ -647,7 +626,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `just build` and re-passed by the rechunk. Failure modes: a stale or unavailable registry lookup builds (costs minutes,
   never skips wrongly); a base digest label from a different lookup method would build every day (the build computes the
   label the same way the plan does).
-- **Runners and cache.** Every job runs on the pinned `ubuntu-26.04` (build-disk also `ubuntu-26.04-arm`), not
+- **Runners and cache.** Every job runs on the pinned `ubuntu-26.04`, not
   `ubuntu-latest`, so the toolchain (podman, skopeo, just) changes only when this repo changes it. No layer or registry
   cache: the image is one large `RUN build.sh` after `COPY system_files`, whose cache key changes with every commit and
   with the daily base, so a layer cache would almost never hit, and the rechunk step rebuilds the layers anyway; the
@@ -661,12 +640,19 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   not those of another branch, so `testing` and pull request runs fall back to `main`'s cache and `main` never sees
   `testing`'s: the first run on each branch downloads, then it is a hit. A cached binary that does not run is ignored
   and reinstalled. Bumping a tool means changing the version in the action (and the installer's `with:`).
+- **Debounce of testing builds (2026-11-16).** The first step of `build.yml`'s `plan` job sleeps 90 s for pushes to `testing` only (never main, the schedule or a dispatch); a newer push cancels the older run through the workflow's concurrency group while it still waits, so a burst of merges leaves one plan and one build on the last push. Whether it works only a real burst of merges shows.
 - **Docs-only skip.** A `plan` job always runs `.github/scripts/plan-build.sh` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
   request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`
   (the list is `is_docs` in `.github/scripts/docs-only.sh`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
   `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
   An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
+  Exception (2026-11-16): a push to `testing` is never skipped by its own diff (`plan-build.sh` gets `github.ref` as a fourth argument and prints
+  `true`): after a batch of back-to-back merges the last push was tests and notes only, the builds of the earlier pushes had been cancelled by the newer
+  pushes, and the tip had no image (the plan said `only docs changed`). With `build=true` the reuse step (`plan-vanilla-reuse.sh`) decides: it reuses a
+  signed image only when its default-image inputs equal the tip's (so a docs-only or dx-only tip still reuses), otherwise the build runs. The diff of one
+  push may confirm a reuse, never skip a build whose inputs have no image. Batch rule: merging several PRs into `testing` back to back leaves ONE build, on
+  the final tip, which covers all of them; check that `octarine-os:testing-<short sha>` of the tip exists afterwards.
   Required checks are `Build and push image`, `require-testing-branch` and `Sign and verify images`; do not
   rename them (a skipped `sign` job counts as passing).
 - **Promotion (build once, promote).** A merge into `main` retags the already tested and signed `testing`
@@ -690,12 +676,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   aggregate `Build and push image` counts a successful promote as the build.
   The job graph is linear: `plan` -> `build_push` or `promote` (exclusive) -> `sign` -> `build_result`, so the
   aggregate means built, signed and published. `aggregate-result.sh` (tested by `tests/aggregate-result.sh`)
-  accepts a skipped `sign` only when nothing was published and fails when sign was expected and did not succeed. Pruning stays safe: a version
-  carrying `latest*` next to `testing*` tags is never a candidate (`tests/prune-testing.sh`).
-- **Disk images.** `build-disk.yml` runs only on `workflow_dispatch` (Run workflow in the Actions tab, or
-  `just build-iso` / `just build-qcow2` locally); no trigger, no required check depends on it. It passes
-  `rootfs: btrfs` to the builder action (the failure was `no default root filesystem type specified in
-  container`). Config paths are passed as `./disk_config/...` because podman reads a bare path as a volume name.
+  accepts a skipped `sign` only when nothing was published and fails when sign was expected and did not succeed.
 
 ## Input hashes and dx on testing
 
@@ -717,8 +698,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `vanilla_inputs` stops the walk (build). Images from before the label have none: the commit decides. The scheduled skip compares
   `vanilla_inputs` of the `latest` revision with HEAD instead of the git tree, so a dx-only change does not rebuild `latest` the next day.
 - **dx on testing (`build-dx.yml`).** Since 2026-11-13 dx is DISPATCHED (bullet "How dx is started" below), no longer started by `workflow_run`; the plan, tags and channels below are unchanged. Channels: `testing` (after a testing build; base
-  `octarine-os:testing-<sha7>` of the triggering commit, see below; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build), `beta`
-  (main only, dispatch or after the beta build; unchanged). Every checkout is `inputs.sha`, the commit the pipeline built (a manual dispatch without it: the ref's tip).
+  `octarine-os:testing-<sha7>` of the triggering commit, see below; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build). Every checkout is `inputs.sha`, the commit the pipeline built (a manual dispatch without it: the ref's tip).
   `.github/scripts/plan-dx.sh` (tests: `tests/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
   `org.opencontainers.image.base.digest` and `io.github.redcodeworks.octarine-os.dx-inputs` (new; `dx-tree` is still written but no longer compared):
   skip only when BOTH equal the current base digest (raw manifest digest of the verified base, see "Base of the testing channel" below) and `dx_inputs` of the
@@ -729,7 +709,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   Force always builds. Decision table (build / promote / skip), testing: nothing published or any label differs or force = build, both equal = skip
   (the base digest is that of `octarine-os:testing-<sha7>`, walk-back or fallback below);
   latest: both equal = skip, a matching tested testing image = promote (its base digest equals `octarine-os:latest`, which after the default promote
-  is the digest of the tested `testing-<sha7>`), else build; beta: both equal = skip, else build.
+  is the digest of the tested `testing-<sha7>`), else build.
   Change combinations on `testing`: dx-only = vanilla `reuse` (no vanilla build), dx builds; vanilla-only = vanilla builds, the new base digest
   makes dx build; both = both; nothing/docs-only = vanilla skips, dx skips (labels equal); first run = both build.
 - **Base of the testing channel.** `plan-dx.sh` for `testing` does not read the floating `octarine-os:testing` tag: it resolves
@@ -738,7 +718,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   change) it walks back with `nearest_image_for_inputs` (the `plan-vanilla-reuse.sh` logic: first-parent history, stops at a commit whose
   `vanilla_inputs` differ) to the nearest earlier `testing-<sha>`; if there is none either it falls back to the floating `testing` tag with
   a `::warning::` (the old behavior). `base_tag` in the plan output is the tag actually used (`testing-<sha7>`), and the dx image's `base.name`
-  label records it. `latest` still resolves `octarine-os:latest`, `beta` `octarine-os:beta`.
+  label records it. `latest` still resolves `octarine-os:latest`.
 - **One manifest digest per build (`push-tags.sh`).** Why the dx image never promoted (found 2026-11-10): every image workflow pushed each
   tag with its own `podman push` of the same local image, and the pushes did not produce one manifest: `octarine-os:testing` and
   `testing-cc213cb` of one build had different digests. The default promote copies `testing-<sha7>`, so `latest` had that digest, while the
@@ -746,13 +726,11 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (about 21 minutes per promotion). The fix: `.github/scripts/push-tags.sh <local image> <registry image> <tag>...` pushes the first tag once
   (`podman push --digestfile`), makes every other tag a registry-side `skopeo copy --all --preserve-digests` of that digest, and reads each
   tag's digest back from the registry (a mismatch fails the step; the read-back POLLS, 6 reads 5 s apart, because GHCR answered a read right after a copy with the previous manifest of the tag on 2026-11-14 and failed a green dx push of `testing`, leaving an unsigned `testing` image until a re-run); it writes the single `digests=` output the sign job signs. `build.yml`,
-  `build-beta.yml`, `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
-  with the stub podman/skopeo registry, plus the `dx-image` and `beta-channel` workflow checks). Images published before the fix still have
+  `build-dx.yml` and `build-nvidia.yml` all use it; a workflow must not `podman push` twice (tested in `tests/push-tags.sh`,
+  with the stub podman/skopeo registry, plus the `dx-image` workflow checks). Images published before the fix still have
   two digests; the first promotion after it builds dx once because no tested dx image on a matching base exists yet.
-- **How dx is started (2026-11-13) and the result check.** dx stays a SEPARATE workflow (re-runnable on its own, own badge; a reusable-workflow attempt, #66 and #67, was reverted for that reason). `build-dx.yml` has ONE trigger, `workflow_dispatch` (inputs `channel` testing|latest|beta, `sha`, `force`; `run-name: dx <channel> <sha>`). The LAST job of `build.yml` (`dispatch_dx`, `needs: build_result`, `if: always() && build_result success`, main and testing only, `actions: write`) and of `build-beta.yml` (after `sign`, main only) runs `.github/scripts/dispatch-dx.sh <channel> <github.sha>`: `gh workflow run build-dx.yml --ref <same ref> -f channel -f sha`, then waits until a run titled `dx <channel> <sha>` EXISTS (12 tries, 10 s; it does not wait for the dx run) and fails otherwise, so a refused or lost dispatch makes the final job red while the base stays green (re-run that job alone to dispatch again; tests: `tests/dispatch-dx.sh`). A dispatched run uses the workflow file of the ref and is recorded ON that branch, so a change to `build-dx.yml` runs on `testing` before promotion and the README has dx badges for `main` and `testing`. The plan job refuses a `sha` that is not a full sha or not an ancestor of the ref. Concurrency group `build-dx-<channel>`, never cancelling a running build (a newer dispatch waits; only one can wait; a replaced pending run belongs to a superseded commit). The aggregate job is the check `Build dx and push image` ONLY when `inputs.sha` equals the ref's tip (a check run attaches to the tip; for an older commit it is named `Build dx (older commit)`, so a green check never appears on a commit whose own dx build has not run); the commit status of the same name is ALWAYS posted on the built commit from the same result (they never disagree). Main's ruleset lists the context without an integration id, so a status or a check run satisfies it: no ruleset change. `aggregate-dx.sh` is unchanged (green when built and signed, promoted and verified, or legitimately skipped). `plan-dx.sh` skips only when the published dx image's digest also verifies with `cosign.pub`.
+- **How dx is started (2026-11-13) and the result check.** dx stays a SEPARATE workflow (re-runnable on its own, own badge; a reusable-workflow attempt, #66 and #67, was reverted for that reason). `build-dx.yml` has ONE trigger, `workflow_dispatch` (inputs `channel` testing|latest, `sha`, `force`; `run-name: dx <channel> <sha>`). The LAST job of `build.yml` (`dispatch_dx`, `needs: build_result`, `if: always() && build_result success`, main and testing only, `actions: write`) runs `.github/scripts/dispatch-dx.sh <channel> <github.sha>`: `gh workflow run build-dx.yml --ref <same ref> -f channel -f sha`, then waits until a run titled `dx <channel> <sha>` EXISTS (12 tries, 10 s; it does not wait for the dx run) and fails otherwise, so a refused or lost dispatch makes the final job red while the base stays green (re-run that job alone to dispatch again; tests: `tests/dispatch-dx.sh`). A dispatched run uses the workflow file of the ref and is recorded ON that branch, so a change to `build-dx.yml` runs on `testing` before promotion and the README has dx badges for `main` and `testing`. The plan job refuses a `sha` that is not a full sha or not an ancestor of the ref. Concurrency group `build-dx-testing` for the testing channel (a newer tip's run CANCELS the older one since 2026-11-16: a superseded tip needs no dx image, and the cancelled run posts no commit status, so nothing red stays on its commit; `dispatch-dx.sh` only needs the run to appear, it never waits for it), and `build-dx-latest-<sha>` per commit for the latest channel, which is never cancelled. The aggregate job is the check `Build dx and push image` ONLY when `inputs.sha` equals the ref's tip (a check run attaches to the tip; for an older commit it is named `Build dx (older commit)`, so a green check never appears on a commit whose own dx build has not run); the commit status of the same name is ALWAYS posted on the built commit from the same result (they never disagree). Main's ruleset lists the context without an integration id, so a status or a check run satisfies it: no ruleset change. `aggregate-dx.sh` is unchanged (green when built and signed, promoted and verified, or legitimately skipped). `plan-dx.sh` skips only when the published dx image's digest also verifies with `cosign.pub`.
 - **Transition (2026-11-13).** Until the promotion that brings this to `main`, `main` still has the OLD `workflow_run` file, which starts after each successful testing run and builds dx for the same commit. The new dispatched run finishes before the old one starts (the old one waits for the whole base run), the shared group `build-dx-testing` serializes them, and the old run's plan (same `plan-dx.sh`) sees a signed image with equal base digest and dx inputs and skips. Residual risk: a pending concurrency slot replaced by a newer one. The promotion removes the trigger.
-- **Prune.** `prune-testing.yml` now runs the generic testing pass on the `-dx` package too (same keep count as the default package; `testing-*` only versions,
-  promoted versions carrying `latest*` are never candidates) next to the dx per-channel pass.
 - **NVIDIA dx.** `build-nvidia-dx.yml` reuses `plan-dx.sh` (`BASE_NAME`, `DX_NAME`, `PROMOTE_FROM_TESTING=false`) and builds the same `variants/dx` layer on `octarine-os-nvidia`; see "NVIDIA dx image and the CUDA toolbox".
 - **Dry run and finding the run (2026-11-14).** `build-dx.yml` has the inputs `dry_run` (plan and report only: build, promote and sign are skipped, no commit status, the aggregate job is named `Build dx (dry run)` so it can never satisfy the required `Build dx and push image` on a tip) and `base_digest` (declared for channel `latest` on main, wired by the part that publishes `latest` through `Publish latest`). The commit status of the required name is posted for channel `testing` only. `dispatch-dx.sh` takes the run from the URL that `gh workflow run` prints (the dispatch API returns the run id when the request sets `return_run_details`, `gh` 2.87.0 and later sends it and prints the URL when stdout is not a terminal; the job prints `gh --version`: the runner had 2.103.3 on the first real run), checks event and branch (NOT the title: a fresh run is still titled with the workflow name for a few seconds, and the first real run was rejected by a title check), and falls back to a snapshot of the run ids taken BEFORE the dispatch when no URL is printed (a new run on the branch titled with the run-name or the workflow name; the title never fails the step). `dispatch_dx` turns the whole `Build container image` run red when it fails; that is meant for "no dx run appeared" or "the run is not a dispatch on this branch" (re-run the job alone), and was wrongly triggered once by the title race of the first version; no clock. A failure to write the step summary never fails the step (the first version failed in CI because the runner's summary file is not writable for the test user; `tests/dispatch-dx.sh` isolates `GITHUB_STEP_SUMMARY`).
 - **First runs.** The dispatch path first runs on the first `testing` build after the merge (the file on the ref is used, no wait for a promotion). Only that run shows: that a `GITHUB_TOKEN` dispatch starts a run, the run-title lookup, the dynamic check name, and the old `workflow_run` run skipping.
@@ -797,24 +775,23 @@ signed and the dx image was built on exactly that default digest.
   labels, no walk through the tags.
 - **Escape hatch** (security fix while dx is broken): `gh workflow run publish-latest.yml --ref main -f scope=vanilla-only -f reason="<why>"`
   (optionally `-f vanilla_tag=latest-<date>-<sha7>`; default: the newest main commit with a published `latest-<sha7>`). It needs no dx image, moves
-  only `octarine-os:latest`, and says in the summary that `octarine-os-dx:latest` is behind. It refuses `testing-*`, `beta*`, `latest` and anything
+  only `octarine-os:latest`, and says in the summary that `octarine-os-dx:latest` is behind. It refuses `testing-*`, `latest` and anything
   that is not a dated tag, an unsigned image and an image whose revision is not on main. A later green dx run catches dx up.
-- **dx on main is grouped per commit** (`build-dx-latest-<full sha>`; testing and beta stay per channel): with one group GitHub cancels a PENDING run
+- **dx on main is grouped per commit** (`build-dx-latest-<full sha>`; testing stays per channel): with one group GitHub cancels a PENDING run
   when a third arrives, which would silently drop a default image that never gets its pair. `cancel-in-progress` stays false.
 - **Failure and re-run table.** Daily run changes the base, dx build fails: `latest` stays on the previous pair, `Build container image` is
   green, `Build dx image` is red, an issue is opened; re-run the failed dx run (a green re-run publishes) or use the escape hatch. dx fails then is
   re-run green: `latest` moves at the re-run (inputs are reused: please check, see below). Docs-only merge: no digest, dx skips, Publish is a no-op.
   Base build fails: nothing is dispatched. Dispatch does not start: re-run `dispatch_dx` alone. Publish fails halfway: both images are valid and
   signed, re-run Publish (idempotent). Old green run re-run later: held by the ordering guard.
-- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) and of `publish-latest.yml` runs `ci-issue.sh fail`: it looks
+- **Issue on failure, no duplicates.** The `alert` job of the dx run (latest on main) runs `ci-issue.sh fail`: it looks
   for an OPEN issue with the label `ci-failure-dx` (created if missing; deduplicated on the label, not the title); none: one issue `dx/latest not
   published: <channel> <sha7>` with the run URL, the failed jobs and what Kevin can do; one open: a comment per further failure. When Publish moves
   `latest` the `recover` job comments "recovered: <run URL>" and closes it. A failed `dispatch_dx` (no dx run exists) is not covered: the red job
   on the base run is the signal. Reason it exists: a failure of a run started by a token dispatch probably e-mails nobody.
 - **Consumers.** `ujust switch-image` and `bootc upgrade` see `latest` after Publish only; `build-nvidia.yml` uses `octarine-os:latest` and so follows
   the published pair (the NVIDIA pair could later get its own publish scope); `plan-skip.sh` reads `latest`, so while dx blocks a new default image
-  every daily run rebuilds it (accepted by Kevin: an automatic daily retry); `prune-testing.py` never touches `latest*` of the default package and
-  keeps a bare `latest` dx version. The hub's `scripts/scheduled-runs.sh` must also judge the newest `build-dx.yml` run on main and the age of `latest`.
+  every daily run rebuilds it (accepted by Kevin: an automatic daily retry). The hub's `scripts/scheduled-runs.sh` must also judge the newest `build-dx.yml` run on main and the age of `latest`.
 - **Pipeline-only files** (`dispatch-dx.sh`, `publish-latest.sh`, `ci-issue.sh`, `publish-latest.yml` and their tests) are in neither input hash
   (`is_pipeline_only` in `inputs-hash.sh`): changing them rebuilds neither image.
 - **Unverified until a real run:** the first Publish on main (both `latest` moves), the per-sha group behavior, that a re-run of a dispatched run reuses
@@ -827,8 +804,8 @@ signed and the dx image was built on exactly that default digest.
   `publish-latest.sh` with `ALLOW_BACKWARDS=true` (same script, same verification: both signatures with `cosign.pub`, the dx image whose `base.digest` label is the default
   image's digest, the default image built from main, digests preserved with a read-back, dx first and the default image LAST, nothing signed, no `signing` environment, the
   concurrency group `publish-latest`); only the ordering guard is skipped and the summary says `ROLLBACK`. With no dx image built on that default image it REFUSES unless `default_only`
-  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback opens or updates the ONE `ci-failure-dx` issue. The next green dx run on main moves `latest`
-  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry), `tests/rollback-latest.sh` (the shape).
+  (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback raises no issue (the red run is the signal). The next green dx run on main moves `latest`
+  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry).
   UNVERIFIED: a real rollback. GitHub only runs `workflow_dispatch` for a workflow file that exists on the default branch, so the first dry run is possible after the promotion that
   carries the file: `gh workflow run rollback-latest.yml --ref main -f vanilla_tag=latest-<date>-<sha7> -f reason=trial -f dry_run=true`.
 
@@ -839,7 +816,7 @@ signed and the dx image was built on exactly that default digest.
   them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults. CI and
   `just build` pass both as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
 - **Floating base with safeguards (2026-11-14; Kevin chose to keep the base FLOATING so `latest` keeps getting base fixes daily).** `.github/scripts/base-pin.sh`
-  (step `Check the base image can be pulled` of `build.yml` and `build-beta.yml`) resolves `${BASE_IMAGE}:${FEDORA_VERSION}` to a manifest digest ONCE at the start of
+  (step `Check the base image can be pulled` of `build.yml`) resolves `${BASE_IMAGE}:${FEDORA_VERSION}` to a manifest digest ONCE at the start of
   the run (sha256 of `skopeo inspect --raw`), verifies its cosign signature with the vendored `keys/ublue-os-main-cosign.pub` (the key of github.com/ublue-os/main, compared
   with the upstream file on 2026-11-14: identical; the list digest, or for a manifest list the linux/amd64 child) and FAILS the build if it does not verify, with an error that
   names a rotated key as a possible cause. The build is FROM that digest (`Containerfile`: `FROM ${BASE_IMAGE}:${FEDORA_VERSION}${BASE_PIN:+@}${BASE_PIN}`, `BASE_PIN` passed by
@@ -860,7 +837,7 @@ signed and the dx image was built on exactly that default digest.
   variable, so set it only when the next scheduled build should use it.
   (5) In the SAME change move the binaries builder: `BUILDER=registry.fedoraproject.org/fedora:<N>@sha256:...` in `binaries/builder.env` (re-resolve the digest as
   "Prebuilt binaries" says). Otherwise the binaries are built against the old release's libraries; a changed `binaries/builder.env` also gives new component keys, so the next build
-  rebuilds them for the new release. The fallback to the last good binaries image does not help here: an old image built for release N-1 may not link on N, and only a rebuild fixes that.
+  rebuilds them for the new release. There is no fallback to an older binaries image: one built for release N-1 may not link on N, and only a rebuild fixes that.
 
 ## Logo files
 
@@ -884,7 +861,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   Tailscale's UDP port, with the wide high-port range of the stock zone removed. A zone that names a service that does not exist makes firewalld silently fall back to the wide stock config: check a change with `firewall-cmd --check-config`.
 - **sshd:** off by default; `45-hardening.conf` disables root login, X11 forwarding and TCP forwarding. Key-only login (`PasswordAuthentication no`) is not shipped: the user sets it once their `authorized_keys` works.
 - **sysctl:** `vm.overcommit_memory=1`, `kptr_restrict`, `ptrace_scope`, a very high `vm.max_map_count`, SysRq enabled.
-- **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` and `build-beta.yml` assert the file is absent.
+- **Kernel argument:** none in any image. `iommu=pt` used to ship in the dx image (`kargs.d/10-iommu.toml`); since 2026-11-13 it is opt-in, through `ujust virthost-setup` (it matters only for machines that pass devices through to VMs). A machine that had it from an older dx image loses it on the first image that drops the file until the step is run (`sudo rpm-ostree kargs --append-if-missing=iommu=pt`, reboot; undo `--delete-if-present=iommu=pt`). `tests/readme-defaults.sh` and `dx-smoke.sh` assert that no tree ships a `kargs.d` file with iommu, and the smoke tests of `build.yml` assert the file is absent.
 - **Size and compilers:** the default image carries only `gcc`, `gcc-c++`, `make` and `binutils` since 2026-11-14 (the base had none; about 221 MiB); the dx image provides the full toolchain, and `ujust toolbox` can still create a toolbox. ROCm was removed from the image (2026-11-08): GPU compute tooling lives in a rootless distrobox, created by the `rocm` step of `ujust hardware-setup` (the dx images exclude it from the shared list too, see below).
 - **Services:** only `pmcd` and `pmlogger` are enabled; `sshd`, `tailscaled`, `cockpit.socket`
   and the snapper timers are installed and left off.
@@ -904,7 +881,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Homebrew:** see the Homebrew section above; formulae are not pinned (use `brew bundle`).
 - **Login shell:** zsh is installed and listed in `/etc/shells`, but it is NOT the default of new users any more
   (2026-11-10: `build.sh` no longer patches `/etc/default/useradd`, and fails the build if that file names zsh; the smoke tests of
-  `build.yml`, `build-beta.yml` and `dx-smoke.sh` assert `SHELL=/usr/bin/zsh` is absent). Choosing it is opt-in through the `shell`
+  `build.yml` and `dx-smoke.sh` assert `SHELL=/usr/bin/zsh` is absent). Choosing it is opt-in through the `shell`
   step of `ujust user-setup` (`usermod -s`, copies `/etc/skel/.zshrc` when the user has no zsh files); `shell-setup` is planned
   to replace that step. Accounts created while zsh was the default keep it; rolling back to an image without zsh breaks them.
   Distrobox copies the host login shell, so every toolbox image a zsh user enters needs zsh (`dev-toolbox` has it; check the `gaming` one).
@@ -1017,7 +994,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - **Refreshing a default from dot-files.** Read the dot-files file, apply the selection rule again, edit the shipped file
   by hand (nothing is generated), run `tests/system-defaults.sh`. The image never copies dot-files wholesale.
 - Tests: `tests/system-defaults.sh` (placement and modes, `dconf compile`, `fish --no-execute`, snippet behavior in a temp HOME,
-  INI parse, build step, smoke checks in `build.yml` and `build-beta.yml`, and a grep that no excluded category is shipped).
+  INI parse, build step, smoke checks in `build.yml`, and a grep that no excluded category is shipped).
   Not verified in CI or here: a real boot reading the compiled database, fish loading the vendor snippets in a session.
 
 ## niri setup (`ujust niri-setup`)
@@ -1074,7 +1051,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `<file>.bak-YYYYMMDD-HHMMSS` first; the `polkit` step skips without `noctalia` on PATH; a failed step is FAILED with its re-run command, exit 1;
   option errors exit 2; no sudo. Test hook: `OCTARINE_NIRI_SETUP_SRC` (a tree with `niri/*.kdl`, `niri-portals.conf`, `10-octarine-os.toml`).
   Test: `tests/niri-setup.sh` (fake gum, ugum, noctalia, sudo, temp HOME; `niri validate` of every include combination when niri exists; a guard
-  that `ghostty` and `ptyxis` appear in no shipped niri file). The smoke checks in `build.yml` and `build-beta.yml` look for the files.
+  that `ghostty` and `ptyxis` appear in no shipped niri file). The smoke checks in `build.yml` look for the files.
 - **User-facing notes (formerly the README's "Niri session" section).** Without a user config niri falls back to the shipped files. To
   drop the shipped key bindings delete the `include "40-binds.kdl"` line of `~/.config/niri/config.kdl` (any other include line drops that part).
   A different existing file is never replaced silently: the user sees a diff, the default is keep, and a replacement saves
@@ -1152,7 +1129,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 
 - Read the identity on a machine with `grep IMAGE_ /etc/os-release` (formerly a README section "Which image is this?").
 
-- `PRETTY_NAME` stays `octarineOS` in EVERY image (default, beta, nvidia, dx); `NAME`, `ID`, `VERSION_ID`, `VARIANT_ID` are
+- `PRETTY_NAME` stays `octarineOS` in EVERY image (default, nvidia, dx); `NAME`, `ID`, `VERSION_ID`, `VARIANT_ID` are
   untouched. The image identity goes only into `IMAGE_ID` and `IMAGE_VERSION` of `/usr/lib/os-release` (`/etc/os-release` is a
   symlink), written as quoted lines by `set_os_release_field` (replace the line if it exists, append otherwise; the same
   function is in `build_files/build.sh`, `variants/nvidia/nvidia.sh` and `variants/dx/dx.sh`, and `OS_RELEASE_FILE` is a test-only
@@ -1162,22 +1139,18 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | Image | `IMAGE_ID` | `IMAGE_VERSION` | Set in |
   |---|---|---|---|
   | `octarine-os` (`latest`, `testing`) | `octarine-os` | `<YYYYMMDD>-<short sha>` | `build.sh` |
-  | `octarine-os:beta` | `octarine-os` | `beta-<YYYYMMDD>-<short sha>` | `build.sh` |
   | `octarine-os-nvidia` | `octarine-os-nvidia` | its own build's `<YYYYMMDD>-<short sha>` | `nvidia.sh` |
   | `octarine-os-dx` (`latest`) | `octarine-os-dx` | its own build's version | `dx.sh` |
-  | `octarine-os-dx:beta` | `octarine-os-dx` | `beta-` plus its own build's version | `dx.sh` |
 
 - The version string is `.github/scripts/image-version.sh`, the same string as the `org.opencontainers.image.version` label (the
-  label never carries the `beta-` prefix). It reaches the build as the build argument `IMAGE_VERSION` (`just build` adds
-  `${IMAGE_VERSION_PREFIX}` in front: the beta workflow sets `IMAGE_VERSION_PREFIX: beta-` in its `env:`; the nvidia and dx
-  workflows pass `--build-arg IMAGE_VERSION`, dx adds `beta-` for its beta channel). The variants override both fields with
+  label). It reaches the build as the build argument `IMAGE_VERSION` (`just build` passes it; the nvidia and dx
+  workflows pass `--build-arg IMAGE_VERSION`). The variants override both fields with
   their OWN build's version, never the base's. A promoted image (testing to `latest`) is a retag of the tested digest, so it keeps
   exactly the fields it was built with: that is why the version names no channel.
-- Checks: the smoke tests of `build.yml` and `build-beta.yml` (env `VERSION_RE`), `dx-smoke.sh` (env `IMAGE_CHANNEL`) and
+- Checks: the smoke tests of `build.yml`, `dx-smoke.sh` and
   `nvidia-smoke.sh present` assert `PRETTY_NAME="octarineOS"`, the right `IMAGE_ID` and the `IMAGE_VERSION` format
-  (`[0-9]{8}-[0-9a-f]{7,}`, with `beta-` for beta builds). `check-version-neutral.sh` also reads the image's os-release
-  `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`, no `beta` in a stable image, and
-  with `BETA=true` it must start with `beta-`. Tests: `tests/image-version.sh`, `beta-channel.sh`, `dx-image.sh`, `nvidia-variant.sh`.
+  (`[0-9]{8}-[0-9a-f]{7,}`). `check-version-neutral.sh` also reads the image's os-release
+  `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`. Tests: `tests/image-version.sh`, `dx-image.sh`, `nvidia-variant.sh`.
 - fastfetch: OUR build does not install it and must not (owner's rule; a Homebrew install is the owner's way); only a default configuration ships. On the owner's machine `/usr/bin/fastfetch` exists anyway (fastfetch-2.68.1-1.fc45, not layered): it is not in `build.sh`, the dx lists or the `packages.json` of ublue-os/main, so it comes with the upstream Fedora Silverblue set that the base image carries (to confirm with `rpm -qf /usr/bin/fastfetch`: open item for the hub); the motd script works with and without it. Default configuration:
   `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
   so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
@@ -1192,23 +1165,17 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - The switch: `ujust toggle-motd` ("Toggle the motd (fastfetch summary or tips) in every shell"; prints "motd is now on/off") and `ujust toggle-user-motd` (the base recipe's name, a dependency on `toggle-motd`). `build.sh` keeps the base `00-default.just` as `00-default-base.just` (the way `10-update` and `30-distrobox` are kept); our `00-default.just` imports it and defines both names (a recipe of the importing file beats the imported one); the smoke tests check that each name is listed once. Tests: `tests/motd.sh`, `tests/just-recipes.sh`.
 - Only a real login shell can verify: an SSH login, a bash and a zsh login on a terminal, the fish greeting, and that the recipe wins over the base file in a real `ujust --list`.
 
-## Failure alerts (issues) for the scheduled workflows (2026-11-15)
+## Failure alerts (issues) (2026-11-16: only the two that matter)
 
-`ci-issue.sh` (one issue per streak of failures, deduplicated on the LABEL, a comment per further failure, closed by the next green run) now also covers the workflows that fail without anybody being told: the `alert` job at the end of `build.yml` (label `ci-failure-default`: the daily and promotion builds on main; the job needs plan, build_push, promote, build_result), `build-beta.yml` (`ci-failure-beta`), `build-nvidia.yml` (`ci-failure-nvidia`) and `prune-testing.yml` (`ci-failure-prune`; since the repository variable PRUNE_ENABLED is true the scheduled prune deletes, so a refusal above its limit or a failed pass raises the issue too). Each runs only on main (`github.ref`), has `issues: write` only, a `fail` step on any `failure` among its needs and a `recover` step (comment plus close) when the run's main job succeeded and nothing failed or was cancelled: a cancelled run raises nothing and closes nothing. The existing alerts stay (`ci-failure-dx`, `ci-failure-binaries`, publish-latest, rollback-latest). Labels are created by the script on first use. Test: `tests/alert-jobs.sh`. The hub's `scripts/scheduled-runs.sh` should also report open issues with these labels.
+`ci-issue.sh` (one issue per streak of failures, deduplicated on the LABEL, a comment per further failure, closed by the next green run; labels are created on first use) serves exactly two alerts: the `alert` job at the end of `build.yml` (label `ci-failure-default`: the daily and promotion builds on main; the job needs plan, build_push, promote, build_result) and the `alert` job of `build-dx.yml` (label `ci-failure-dx`: a red dx run on main holds `latest` back silently; the `recover` job of `publish-latest.yml` closes it when `latest` moves). Each runs only on main (`github.ref`), has `issues: write` only, a `fail` step on any `failure` among its needs and a `recover` step (comment plus close) when the run's main job succeeded and nothing failed or was cancelled: a cancelled run raises nothing and closes nothing. The alert jobs of the NVIDIA build, `binaries.yml` (degraded components), `publish-latest.yml`, `rollback-latest.yml`, the beta build and the prune were removed (a red run is the signal there, and the hub's `scripts/scheduled-runs.sh` lists failed newest scheduled runs). Test: `tests/alert-jobs.sh`, `tests/ci-issue.sh`.
 
-## Beta channel (`octarine-os:beta`)
+## Testing the next Fedora (replaces the beta channel, 2026-11-16)
 
-- User-facing note (formerly in the README): try it with `sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:beta`
-  and go back with the same command and `:latest`. Until Universal Blue starts a new beta it is the same Fedora release as `latest`.
-
-- `.github/workflows/build-beta.yml`: weekly (Wednesday 14:00 UTC, clear of the daily 11:00, Sunday 05:00 prune and Sunday 12:00
-  NVIDIA runs) and on dispatch from any ref, never on pushes or pull requests, not a required check. It builds the normal
-  image FROM `ghcr.io/ublue-os/silverblue-main:beta` (workflow env `BASE_IMAGE`, `FEDORA_VERSION=beta`; the repository variables
-  are ignored), smoke tests (a copy of build.yml's block, `tests/beta-channel.sh` fails on drift), rechunks, pushes `beta` and
-  `beta-<date>-<sha>` only, signs with the same key (`signing` environment) and verifies both tags. Failure = a red scheduled run, no
-  notification. The `beta` tag only exists upstream while ublue-os/main builds a beta (their `BUILD_BETA` variable); until then it
-  equals stable. Policy: the existing rule for the `octarine-os` path covers every tag. Prune: `PRUNE_KIND=beta KEEP=3` in
-  `prune-testing.yml` keeps the newest three `beta-*` builds and any version holding `beta`. Test: `tests/beta-channel.sh`.
+The `octarine-os:beta` channel (a weekly build on Universal Blue's beta base) was removed: it was an early warning nobody read. To try the next Fedora release by hand:
+`gh variable set FEDORA_VERSION --body <n> -R redcodeworks/octarine-os`, then `gh workflow run build.yml --ref <any branch other than main or testing>` (a dispatch from such a branch
+builds as validation only: nothing is pushed or signed; `testing` itself publishes the `testing` image), watch that run, and `gh variable delete FEDORA_VERSION -R redcodeworks/octarine-os`
+afterwards. The variable is read by every run, the daily `main` build and `test.yml` included, so do not leave it set unless the next scheduled build should use it. A real upgrade
+also moves `binaries/builder.env` (see "Base image and Fedora major upgrade").
 
 ## Overriding the base image's ujust recipes
 
@@ -1238,12 +1205,11 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   `logs-this-boot`, `logs-last-boot`, `enroll-secure-boot-key`, `check-local-overrides`, `device-info`, `changelogs`, `update-firmware`, `clean-system` and the aliases (Apache-2.0, attribution in its header);
   NOT copied: `check-idle-power-draw`, `distrobox-assemble`, `distrobox-new`, `install-resolve`, `setup-distrobox-app` (they need `/usr/lib/ujust` helpers). The three helper libraries are NOT copied: no file
   ojust imports sources them, and `ugum` is only an optional menu helper (`menu.sh` falls back without it). Keep new recipes free of `/usr/lib/ujust` sourcing and of imports of base files.
-  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`, `build-beta.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
+  `30-distrobox.just` stays a ujust-only wrapper. Smoke (`build.yml`): `ojust --list` works, lists `toggle-motd` and `niri-setup`, no `-base.just` import. Test: `tests/ojust.sh`.
 - **Hiding** a base recipe: redefine it `[private]` (hidden from `ujust --list`, still runnable) in a file that wins:
   `setup-distrobox-app` (its only entry is an NVIDIA PyTorch container) in `30-distrobox.just`, (`configure-broadcom-wl` is removed outright, see above). `enroll-secure-boot-key` stays visible: the NVIDIA variant needs it.
   `install-resolve` stays: it asks for no host `sudo` (the only `sudo` in the pinned davincibox script runs inside the
   rootless container).
-- `tests/readme-defaults.sh` scans `60-custom.just` and `octarine-os/just/update.just` for public recipes (each must be in the README).
   `tests/toolbox.sh` requires that no executable `sudo` appears after the `toolbox` recipe in `60-custom.just`, so new
   recipes go BEFORE the `[group('Toolbox')]` line.
 
@@ -1363,7 +1329,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 ## `ujust switch-image`
 
 - One recipe in `60-custom.just` switches between the images (`default` = `octarine-os`, `dx` = `octarine-os-dx`, `nvidia` =
-  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `beta`, `testing`. It replaces the
+  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `testing`. It replaces the
   base image's `toggle-nvk` (Universal Blue's `40-nvidia.just`), which derived names by string substitution
   (`octarine-os-dx-nvidia-open` does not exist) and rebased without enforcing the signature policy; our `40-nvidia.just`
   overwrites that file and is empty, so `toggle-nvk` is gone (build.sh fails if a `toggle-nvk` recipe is still installed, the
@@ -1374,8 +1340,8 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   keeps the current channel, `latest` when the tag is pinned. Availability is checked with `skopeo inspect --raw` before
   anything runs: a missing manifest is "not published", a network failure is reported separately and never treated as
   missing. The switch is `sudo bootc switch --enforce-container-sigpolicy <ref>`, the form the README documents.
-  `--list` probes all twelve combinations in parallel; `--yes` skips the question, `--no` prints the plan.
-- Which combinations exist is not hard-coded: `nvidia` and `nvidia-dx` have only `latest` (no `beta` or `testing` tag). `octarine-os-nvidia-dx` is
+  `--list` probes all eight combinations in parallel; `--yes` skips the question, `--no` prints the plan.
+- Which combinations exist is not hard-coded: `nvidia` and `nvidia-dx` have only `latest` (no `testing` tag). `octarine-os-nvidia-dx` is
   built by `build-nvidia-dx.yml` (see "NVIDIA dx image"); its repository is in the signature policy that `build_files/build.sh` generates
   (`tests/nvidia-variant.sh` and `tests/dx-image.sh` check the policy for each repository), so the recipe needed no change except a hint
   printed for `nvidia-dx` (a machine whose image predates the rule gets a signature-policy error from bootc).
@@ -1423,8 +1389,6 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `...-nvidia` and `...-dx` into the default image (the variant inherits the file; the `registries.d` entry is per namespace and already
   there). A machine first switches to the default image (installing the policy), then to the variant with
   `--enforce-container-sigpolicy`; switching back works the same way.
-- **Prune.** `prune-testing.yml` also prunes the variant's repository (`PRUNE_KIND=released`: versions whose tags are only
-  dated or `latest-*` aliases, never one that carries the bare `latest`, newest builds kept).
 - **Policy exception.** NVIDIA's proprietary driver is out-of-tree software (negativo17, NVIDIA's toolkit repository, a COPR at
   build time), accepted only in this opt-in variant; the default image stays Fedora-official packages only.
 - **Unverified.** No GPU, no boot test, the akmods kernel-tag form, the driver version, Secure Boot enrollment
@@ -1438,14 +1402,12 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image has only gcc, g++, make and binutils (see "Image build steps added 2026-11-14"), not the dx toolchain; nothing in `Containerfile` or `build.sh` installs the dx
   set, `tests/dx-image.sh` asserts that.
-- **Lineage (two channels).**
+- **Lineage (the `latest` channel; `testing` follows the testing default image).**
 
   | Base | Default image | dx image |
   |---|---|---|
   | `ghcr.io/ublue-os/silverblue-main:45` | `octarine-os:latest` | `octarine-os-dx:latest` |
-  | `ghcr.io/ublue-os/silverblue-main:beta` | `octarine-os:beta` | `octarine-os-dx:beta` |
 
-  The beta channel is a duplicate of latest until Universal Blue moves its `beta` tag to Fedora 46; that is expected.
 - **Files.** `variants/dx/Containerfile` (ARGs `BASE_IMAGE`, `BASE_TAG`, `BASE_DIGEST`; `FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}`,
   so the workflow's digest wins and a bare local `podman build` still works; the `devpkgs` stage; `bootc container lint`),
   `variants/dx/dx.sh` (runs the shared installer, then the extras, copies `variants/dx/system_files/`, enables
@@ -1466,12 +1428,12 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `tests/dx-image.sh` covers the recipe with fake skopeo and cosign.
 - **Workflow rules (`build-dx.yml`).** Since 2026-11-10 dx also builds on `testing` and promotes on `main`; the flow, the plan decision table, the
   input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/plan-dx.sh`. The text below
-  describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: `workflow_run` of "Build container image" and "Build beta image" (`completed`,
+  describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: `workflow_run` of "Build container image" (`completed`,
   `branches: [main, testing]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
   or a feature branch and the first run of a changed file happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The
   plan job runs only when `github.ref == refs/heads/main` and (a dispatch, or the triggering run concluded `success`, its event
-  is `schedule`, `push` or `workflow_dispatch`, and its `head_branch` is `main`; never a pull request). Channel: `beta` after
-  the beta build, `latest` after the default build, the input on dispatch. Plan: resolves
+  is `schedule`, `push` or `workflow_dispatch`, and its `head_branch` is `main`; never a pull request). Channel: `latest` after
+  the default build, the input on dispatch. Plan: resolves
   `octarine-os:<channel>` to a digest (sha256 of the raw manifest), verifies it with `cosign.pub`, reads the published
   `octarine-os-dx:<channel>` labels and ends green with the notice "base unchanged, nothing to build" when its
   `org.opencontainers.image.base.digest` equals the digest AND its `io.github.redcodeworks.octarine-os.dx-tree` label equals
@@ -1482,8 +1444,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   explicit labels (the `just build` set plus `base.name`/`base.digest`, `dx-tree` and `dev-packages`; inherited maintainer
   labels and the base's `base-index-digest` are unset), size guard (15 GiB), `dx-smoke.sh`, `just rechunk`, the
   channel-neutral version check, push of `<channel>` and `<channel>-<date>-<sha>`. Sign job (`signing` environment): signs
-  every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: one group per channel,
-  `cancel-in-progress: false`. Least privilege per job, actions pinned by SHA with version comments, schedules none.
+  every pushed digest with the repository key, verifies both tags with `cosign.pub`. Concurrency: see "How dx is started" (testing: one group, a newer run cancels; latest: per commit, never cancelled). Least privilege per job, actions pinned by SHA with version comments, schedules none.
 - **Smoke test.** `dx-smoke.sh` runs inside the built image: gcc, g++, clang, cmake, ninja, meson, gdb, pkgconf, uv, fish, the rustup package and `rustup-init` (the RPM ships only that; no `rustup` command),
   `glib2-devel`, `openssl-devel`, virt-manager, virt-viewer, qemu-kvm, the libvirtd and virtqemud units, `podman.socket`,
   no VS Code or virt-manager Flatpak in any preinstall list, exactly one kernel equal to `BASE_KERNEL`, and the default image's checks that still apply
@@ -1493,13 +1454,9 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   the default image (strips `-nvidia` and `-dx` from `IMAGE_NAME`); the dx image inherits it. A machine therefore switches to
   the dx image only after it runs a default image built with the rule (update first, then
   `bootc switch --enforce-container-sigpolicy`). Asserted in `tests/nvidia-variant.sh` and `tests/dx-image.sh`, and in the smoke tests of
-  `build.yml` and `build-beta.yml`.
-- **Prune.** `prune-testing.yml` also prunes the `octarine-os-dx` package with `PRUNE_KIND=dx KEEP=3`: per channel the newest
-  three dated builds (`latest-<date>-<sha>`, `beta-<date>-<sha>`) stay, never a version holding the bare `latest` or `beta`
-  tag, any version with another tag is not a candidate, signatures of deleted images go with them.
+  `build.yml`.
 - **User-facing note (formerly in the README).** Switch with `bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest`
-  after updating to the newest default image (it carries the signature policy); undo by switching back to `octarine-os:latest`. `beta` follows
-  `octarine-os:beta`. The README table and the `ujust dev` text say what `dev` sets up; the step table lived in the README and is now in
+  after updating to the newest default image (it carries the signature policy); undo by switching back to `octarine-os:latest`. The README table and the `ujust dev` text say what `dev` sets up; the step table lived in the README and is now in
   "Developer menu" below.
 - **VS Code.** `com.visualstudio.code` is the community-maintained Flathub build; Flathub's API reports it as not verified
   (Microsoft is only listed as developer). The owner chose it knowingly; it is installed only by the `vscode` step of `ujust dev` (which says so), never preinstalled.
@@ -1518,11 +1475,10 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `qemu-img`, `qemu-common`, `edk2-ovmf`, `nbdkit*`, `passt`, `supermin`, `libguestfs-appliance`, `swtpm` (with `-libs`, `-tools`,
   `-selinux`, dragged in by the QEMU driver, so it is NOT asserted absent), `dnsmasq`, `virt-what`. The `libvirt` group and the
   `virtqemud` units can still exist in the default image through the driver packages, but nothing enables them. Smoke tests:
-  `build.yml` and `build-beta.yml` assert `libvirt`, `qemu-kvm`, `cockpit-machines`, `virt-manager`, `virt-viewer` and `libvirt-nss`
+  `build.yml` asserts `libvirt`, `qemu-kvm`, `cockpit-machines`, `virt-manager`, `virt-viewer` and `libvirt-nss`
   are absent (and `guestfs-tools` present); `nvidia-smoke.sh present` asserts the same for the plain NVIDIA image (skipped for an
   `-dx` image id); `dx-smoke.sh` asserts the full set, the `libvirtd`, `virtqemud`, `virtnetworkd` and `virtstoraged` units and
-  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). The root `Justfile` recipe `test-vm`
-  needs libvirt on the host, so it runs on a dx machine. Switching a machine from dx to the default image removes VM hosting
+  `libvirt-nss`. `user-setup` names only the groups that exist in its menu (`getent group`). Switching a machine from dx to the default image removes VM hosting
   (`ujust dev --only libvirt` and `ujust virthost-setup` are dx-only; the hardware-setup `virtualization` step was removed; the user's `libvirt` group membership stays
   in `/etc/group` and is harmless). UNVERIFIED: the package set after a real build (the list above is from a local image dated
   2026-11-10, CI is the first full run), and that a machine switching from dx to default loses nothing else.
@@ -1550,13 +1506,13 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   as this commit; otherwise build. `is_dx_only` lists the new workflow and `tests/nvidia-dx-image.sh`, so a change to them changes
   `dx_inputs` (dx rebuilds too) and never rebuilds the default image.
 - **Tags.** `latest`, `latest-<sha>`, `latest-<date>-<sha>`, `<date>-<sha>`, `<date>`, `latest-<date>` (the NVIDIA variant's set), one push through
-  `push-tags.sh`, signed like the others (`cosign.pub`). No `testing`, no `beta`.
+  `push-tags.sh`, signed like the others (`cosign.pub`). No `testing`.
 - **Smoke tests on the built image.** `dx-smoke.sh` with `EXPECT_IMAGE_ID=octarine-os-nvidia-dx`, then `nvidia-smoke.sh present` with the same
   `EXPECT_IMAGE_ID` (driver package, kernel module, one kernel equal to the base's, initramfs, kargs, SELinux module) and the new checks (also run by
   the NVIDIA variant's own build): no `cuda-toolkit*`/`cuda-nvcc*`/`cuda-compiler*`/`nvidia-cuda-toolkit` package, no `/usr/local/cuda*`, no `nvcc`
   on PATH; the CDI pieces (`nvidia-container-toolkit`, `-base`, `nvidia-ctk`) are reported as INFO only.
 - **Signature policy.** `build.sh` now writes the rule for FOUR repositories (`octarine-os`, `-nvidia`, `-dx`, `-nvidia-dx`; the base name is derived by stripping
-  `-dx` first, then `-nvidia`) into the default image, so the dx and NVIDIA images (built on it) inherit it; the smoke tests of `build.yml`, `build-beta.yml`
+  `-dx` first, then `-nvidia`) into the default image, so the dx and NVIDIA images (built on it) inherit it; the smoke tests of `build.yml`
   and `dx-smoke.sh` assert it. Consequence: `bootc switch --enforce-container-sigpolicy ...octarine-os-nvidia-dx` works only on a machine that has booted
   an image carrying the new rule (the policy is `reject` by default); `ujust switch-image` prints a hint for it.
 - **CDI pieces in the NVIDIA variant (`nvidia.sh`).** Our `nvidia.sh` runs the akmods `nvidia-install.sh`, which per the ublue-os/akmods sources (read 2026-11-10, addons 0.15) installs the full `nvidia-container-toolkit` and enables `nvidia-cdi-refresh.service`, `.path` and `nvidia-persistenced.service`; so `nvidia.sh` only keeps a guarded fallback (install `nvidia-container-toolkit-base` when NEITHER toolkit package is installed; warning on failure; enable the refresh units when present). The smoke test reports the units as INFO (enabled) or WARNING (not enabled), never a failure. UNVERIFIED in a real build.
@@ -1653,8 +1609,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 Edit `config/image.env` (`IMAGE_NAME`, `REPO_ORGANIZATION`, `IMAGE_DESC`), generate a key
 (`COSIGN_PASSWORD="" cosign generate-key-pair`), commit `cosign.pub`, create a protected environment
 `signing` limited to `main` and `testing` (deployment branch policies through the API) and store the private key
-as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Point `disk_config/iso.toml` at the
-image, review `build.sh` and `system_files/`, enable Actions and make the GHCR package public.
+as the `SIGNING_SECRET` environment secret. Never commit `cosign.key`. Review `build.sh` and `system_files/`, enable Actions and make the GHCR package public.
 
 ## build.sh notes
 

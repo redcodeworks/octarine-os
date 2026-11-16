@@ -67,7 +67,7 @@ expect() { # name build promote source_tag
     else bad "$1 (got build=$(get build) promote=$(get promote) tag=$(get source_tag); want $2 $3 $4)"; sed 's/^/     /' "$root/log"; fi
 }
 other="sha256:$(printf 'a%.0s' {1..64})"
-bt="sha256:$(base "testing-${sha7}")"; bf="sha256:$(base testing)"; bl="sha256:$(base latest)"; bb="sha256:$(base beta)"
+bt="sha256:$(base "testing-${sha7}")"; bf="sha256:$(base testing)"; bl="sha256:$(base latest)"
 
 echo "== testing channel"
 rm -f "$CFG"/*
@@ -112,9 +112,9 @@ echo "ghcr.io/redcodeworks/octarine-os@${pinned}" > "$MISSING"
 BASE_DIGEST_PIN="${pinned}" run latest
 [[ $? != 0 ]] && pass "a pinned digest the registry cannot read is refused" || bad "unreadable pin"
 : > "$MISSING"
-BASE_DIGEST_PIN="${pinned}" run beta
-[[ $? != 0 ]] && grep -q "only for the channel latest" "$root/log" && pass "a pin on another channel is refused" || bad "pin on beta"
-printf '%s\n' "ghcr.io/redcodeworks/octarine-os@${pinned} ghcr.io/redcodeworks/octarine-os:beta" > "$ALIAS"
+BASE_DIGEST_PIN="${pinned}" run testing
+[[ $? != 0 ]] && grep -q "only for the channel latest" "$root/log" && pass "a pin on another channel is refused" || bad "pin on testing"
+printf '%s\n' "ghcr.io/redcodeworks/octarine-os@${pinned} ghcr.io/redcodeworks/octarine-os:latest" > "$ALIAS"
 BASE_DIGEST_PIN="${pinned}" run latest
 [[ $? != 0 ]] && grep -q "does not hash to its digest" "$root/log" && pass "a pin whose manifest hashes to another digest is refused" || bad "pin hash mismatch"
 : > "$ALIAS"; rm -f "$CFG"/*
@@ -157,12 +157,6 @@ grep -q '::warning::' "$root/log" && pass "...with a warning" || bad "unsigned w
 : > "$UNSIGNED"; run latest true; expect "latest, force builds even with a promotable image" true false ""
 cfg latest "${bl}" "${inputs}"; run latest true; expect "latest, force builds although unchanged" true false ""
 cfg latest "${bl}" "-"; run latest; expect "latest, published image without the dx-inputs label: not a skip, promotes the tested one" false true testing
-
-echo "== beta channel (main only)"
-rm -f "$CFG"/*; cfg testing "${bb}" "${inputs}"
-run beta; expect "beta never promotes: build" true false ""
-[[ "$(get base_tag)" == beta && "$(get base_digest)" == "${bb}" ]] && pass "beta builds on octarine-os:beta" || bad "beta base"
-cfg beta "${bb}" "${inputs}"; run beta; expect "beta, unchanged: skip" false false ""
 
 echo "== NVIDIA developer image (octarine-os-nvidia-dx on octarine-os-nvidia:latest, no testing channel)"
 rm -f "$CFG"/*

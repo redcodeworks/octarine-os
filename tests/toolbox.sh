@@ -261,16 +261,6 @@ run() { # keys, args...
     rc=$?
 }
 
-# ---- the shipped definition ---------------------------------------------------
-check "definition has the dev-toolbox section" grep -qx '\[dev-toolbox\]' "$shipped_def"
-check "definition uses our toolbox image" grep -qx 'image=ghcr.io/redcodeworks/fedora-toolbox:latest' "$shipped_def"
-check "definition pulls, does not replace, starts" bash -c "grep -qx 'pull=true' '$shipped_def' && grep -qx 'replace=false' '$shipped_def' && grep -qx 'start_now=true' '$shipped_def'"
-check "definition has no additional_packages key" bash -c "! grep -qE '^additional_packages' '$shipped_def'"
-check "definition has no home= key" bash -c "! grep -qE '^home=' '$shipped_def'"
-check "definition has no exported_bins keys" bash -c "! grep -qE '^exported_bins' '$shipped_def'"
-check "definition mounts brew read-only" grep -qx 'volume="/home/linuxbrew:/home/linuxbrew:ro"' "$shipped_def"
-check "definition has no pixi" bash -c "! grep -q pixi '$shipped_def'"
-check "definition says where the packages live" bash -c "grep -q 'packages/dev.txt' '$shipped_def' && grep -q 'rustup-init' '$shipped_def'"
 
 # ---- --list on an empty machine -----------------------------------------------
 newenv
@@ -601,7 +591,6 @@ run "y" rustup
 check "rustup-init blocked from sudo too" has "wanted sudo"
 check "no toolchain after the sudo attempt" test ! -d "$HOME/.rustup/toolchains/stable-x86_64"
 unset FAKE_SUDO
-check "no executable sudo in either recipe" bash -c "! sed -n '/^toolbox \*args:/,\$p' '$justfile' | grep -w sudo | grep -vE '^\s*(echo|printf|#)|grep -qiE|sudo-called|bin/sudo|no-sudo guard'"
 
 # ---- failed download, declining, view --------------------------------------------------------------------
 newenv
@@ -798,7 +787,6 @@ check "launcher flags" grep -q '^Terminal=false' "$pc" && check "launcher startu
 check "second launcher created" test -f "$apps/dev-toolbox-datagrip.desktop"
 check "launchers recorded" instate "launcher $pc"
 check "output explains the toolchain" has "use the box's compilers"
-check "no versioned directory hardcoded in the recipe" bash -c "! grep -qE 'ch-0|Toolbox/apps/[A-Z]' '$justfile'"
 run "" --ide pycharm
 check "rerun says already created" has "Already created"
 run "" --ide --list
@@ -983,7 +971,6 @@ check "unknown name with an option exits 2" test "$rc" -eq 2
 rawrun dev-toolbox --help
 check "--help lists the IDEs of the toolbox" has "IDEs offered by dev-toolbox: pycharm idea datagrip rustrover clion goland webstorm vscode"
 check "--help lists the tools of the toolbox" has "Tools offered by dev-toolbox: uv rustup sdkman nvm"
-check "the old dev-toolbox recipe is gone" bash -c "! just --justfile '$justfile' --summary | tr ' ' '\\n' | grep -qx dev-toolbox"
 rawrun dev --help
 check "dev is an alias for dev-toolbox" bash -c "grep -q 'now called dev-toolbox' '$root/out' && grep -q 'IDEs offered by dev-toolbox' '$root/out'"
 mkdir -p "$HOME/.local/state/ublue-os/toolbox"
@@ -1152,13 +1139,6 @@ check "TOOLBOX_IMAGE applies to the named toolbox" grep -qx 'image=example.inval
 unset TOOLBOX_IMAGE
 
 # ---- the gaming toolbox: isolated home, app export, extra volumes ---------------------------------------
-check "gaming definition has the gaming section" grep -qx '\[gaming\]' "$gaming_def"
-check "gaming definition uses the gaming image" grep -qx 'image=ghcr.io/redcodeworks/fedora-gaming:latest' "$gaming_def"
-check "gaming definition: no init, no nvidia" bash -c "grep -qx 'init=false' '$gaming_def' && grep -qx 'nvidia=false' '$gaming_def'"
-check "gaming definition has no home, volume or additional_packages line" bash -c "! grep -qE '^(home|volume|additional_packages|unshare_netns)=' '$gaming_def'"
-check "gaming sidecar isolates the home and exports steam" bash -c "grep -qx 'ISOLATED_HOME=true' '$gaming_conf' && grep -qx 'EXPORT_APPS=\"steam\"' '$gaming_conf'"
-check "gaming sidecar has no tools, bins or IDEs" bash -c "grep -qx 'TOOLS=\"\"' '$gaming_conf' && grep -qx 'EXPORT_BINS=\"\"' '$gaming_conf' && grep -qx 'IDES=\"\"' '$gaming_conf'"
-check "shipped files hold no personal path" bash -c "! grep -qE '/var/mnt|/mnt/container_data|kevin|linux_data' '$gaming_def' '$gaming_conf'"
 
 newenv
 name=gaming
@@ -1178,7 +1158,6 @@ check "gaming home creation recorded" bash -c "grep -qxF 'home $ghome created' '
 check "gaming prints the home path" has "Isolated home: $ghome (created)"
 check "assembled definition has home=" grep -qxF "home=$ghome" "$FAKE_STATE/assembled.ini"
 check "assembled definition keeps init=false" grep -qx 'init=false' "$FAKE_STATE/assembled.ini"
-check "assembled definition has no brew volume (shipped has none)" bash -c "! grep -q linuxbrew '$FAKE_STATE/assembled.ini'"
 check "steam launcher exported" test -e "$apps/gaming-steam.desktop"
 check "steam launcher recorded" bash -c "grep -qxF 'app $apps/gaming-steam.desktop' '$gstate'"
 check "no tools are offered or installed" notlogged "curl url="

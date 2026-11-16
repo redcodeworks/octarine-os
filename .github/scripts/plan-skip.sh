@@ -15,8 +15,8 @@
 #   SIGNED            `true` when `latest` has a valid signature
 #   LATEST_MISSING    the label org.octarineos.optional-packages-missing of `latest` (`none` or a comma separated list, set by `just rechunk`): a list means
 #                     optional packages failed to install; such an image is never kept, the next run tries again
-#   LATEST_FALLBACK   the label org.octarineos.binaries-fallback of `latest`: `true` means the image was built with the last good
-#                     binaries image because the binaries build failed; such an image is never kept, the next run tries again
+#   LATEST_DEGRADED   the label org.octarineos.binaries-degraded of `latest`: a list (e.g. `ghostty:absent`) means an optional binaries
+#                     component was left out because its build failed; such an image is never kept, the next run tries again
 #
 # Anything missing or unreadable means build (fail safe): an image from before the labels existed has no
 # LATEST_BASE or REPO_SAME and therefore gets one normal build that records them.
@@ -29,7 +29,7 @@ build() { echo "build: $*"; exit 0; }
 [[ -n "${BASE_NOW:-}" && -n "${LATEST_BASE:-}" ]] || build "base digest unknown (now '${BASE_NOW:-}', in latest '${LATEST_BASE:-}')"
 [[ "${BASE_NOW}" == "${LATEST_BASE}" ]] || build "base image changed"
 [[ -z "${LATEST_MISSING:-}" || "${LATEST_MISSING}" == none ]] || build "latest was built with optional packages missing (${LATEST_MISSING}): trying again"
-[[ "${LATEST_FALLBACK:-}" != true ]] || build "latest was built with the fallback binaries image: trying the real binaries again"
+[[ -z "${LATEST_DEGRADED:-}" ]] || build "latest was built without an optional binaries component (${LATEST_DEGRADED}): trying again"
 [[ "${REPO_SAME:-}" == true ]] || build "repository content differs from, or is unknown for, the commit latest was built from"
 [[ -n "${LATEST_CREATED:-}" ]] || build "age of latest unknown"
 created=$(date -u -d "${LATEST_CREATED}" +%s 2>/dev/null) || build "cannot read created date '${LATEST_CREATED}'"

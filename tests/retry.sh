@@ -32,23 +32,5 @@ check "no command: usage, exit 2" bash -c "[ $rc = 2 ] && grep -q usage '$root/r
 bash "$r" -n x true > "$root/run" 2>&1; rc=$?
 check "bad tries: exit 2" test "$rc" = 2
 check "the pause grows with the try number (DELAY times k)" bash -c "RETRY_DELAY=1 bash '$r' -n 3 -- bash -c 'exit 1' 2>&1 | grep -c 'retrying in' | grep -qx 2 && RETRY_DELAY=1 bash '$r' -n 3 -- bash -c 'exit 1' 2>&1 | grep -q 'retrying in 2 s'"
-check "the call sites go through it: apt-get (Secure Boot check) in build, beta and nvidia workflows; the chunkah verify and pull; the binaries and brew verifications; the tag pushes and copies" python3 -I - "$here" <<'PY'
-import re, sys
-h = sys.argv[1]
-for f in ("build", "build-beta", "build-nvidia"):
-    t = open(h + "/.github/workflows/%s.yml" % f).read()
-    for line in t.splitlines():
-        if "apt-get" in line and not line.strip().startswith("#"):
-            assert ".github/scripts/retry.sh sudo apt-get" in line, (f, line)
-c = open(h + "/.github/scripts/chunkah-ref.sh").read()
-assert '"${retry}" cosign verify' in c and '"${retry}" podman pull' in c
-assert "retry.sh" in open(h + "/.github/scripts/binaries-use.sh").read()
-p = open(h + "/.github/scripts/push-tags.sh").read()
-assert "retry.sh\" podman push" in p and "retry.sh\" skopeo copy" in p
-for f in ("build", "build-beta"):
-    t = open(h + "/.github/workflows/%s.yml" % f).read()
-    assert ".github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub" in t, f
-    assert ".github/scripts/retry.sh podman pull" in t, f
-PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

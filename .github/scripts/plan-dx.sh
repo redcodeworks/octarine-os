@@ -2,7 +2,7 @@
 # The plan of the developer image workflow (build-dx.yml): decide, for one channel, whether to skip, promote or build,
 # and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
-# Environment: CHANNEL (latest, beta or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
+# Environment: CHANNEL (latest or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
 # GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx),
 # BASE_DIGEST_PIN (channel latest only: the default image's digest this run is built on, handed over by the pipeline; without it the
 # base is whatever `octarine-os:latest` is now, which is the digest of the published pair),
@@ -11,7 +11,7 @@
 # The NVIDIA developer image (build-nvidia-dx.yml) runs this with CHANNEL=latest BASE_NAME=octarine-os-nvidia
 # DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false: it skips when the NVIDIA base digest and the dx inputs are unchanged.
 #
-# Base: octarine-os:<channel> for latest and beta, resolved to the digest of its raw manifest and verified with
+# Base: octarine-os:latest for the latest channel, resolved to the digest of its raw manifest and verified with
 # cosign.pub before anything is built on it. The testing channel does NOT use the floating `testing` tag: it takes the
 # immutable tag of the commit being built, octarine-os:testing-<short sha> (the default build of that same push). When
 # that tag does not exist (the default build was reused for a dx-only or docs-only change), it walks back like
@@ -31,13 +31,13 @@
 # the dx testing image recorded: that equality is what makes the promote match.
 # Candidates for the promotion: the `testing` tag, then `testing-<short sha>` of the newest MAX_WALK commits of HEAD
 # (the testing commits are the second parents of the merges on main); each must carry both labels and a valid
-# signature. `beta` never promotes (it has no testing image). Every lookup that fails means build, never skip.
+# signature. Every lookup that fails means build, never skip.
 set -euo pipefail
 here=$(dirname "${BASH_SOURCE[0]}")
 source "${here}/inputs-hash.sh"
 
 channel="${CHANNEL:?CHANNEL}"
-[[ "${channel}" =~ ^(latest|beta|testing)$ ]] || { echo "::error::Unknown channel '${channel}' (latest, beta or testing)"; exit 1; }
+[[ "${channel}" =~ ^(latest|testing)$ ]] || { echo "::error::Unknown channel '${channel}' (latest or testing)"; exit 1; }
 force="${FORCE:-false}"
 : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER}"
 owner="${GITHUB_REPOSITORY_OWNER,,}"

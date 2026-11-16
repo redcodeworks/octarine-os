@@ -1,11 +1,10 @@
 # The developer image of octarineOS (published as octarine-os-dx, see CLAUDE.md "dx image"): the published default
-# image (or its beta channel) plus the developer toolchain of the owner's dev-toolbox. Two channels follow the lineage
+# image plus the developer toolchain of the owner's dev-toolbox. The latest channel follows the lineage
 #   silverblue-main:45   -> octarine-os:latest -> octarine-os-dx:latest
-#   silverblue-main:beta -> octarine-os:beta   -> octarine-os-dx:beta
 # The workflow resolves the base by DIGEST (and verifies its signature) and passes it in, so the build, the labels and the
 # size and kernel checks all talk about the same base:
 #   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os (the NVIDIA developer image, octarine-os-nvidia-dx, passes ghcr.io/redcodeworks/octarine-os-nvidia)
-#   BASE_TAG     latest or beta (only names the channel in the labels; the digest decides)
+#   BASE_TAG     latest (only names the channel in the labels; the digest decides)
 #   BASE_DIGEST  sha256:... of that tag when the build started (empty only for a bare local `podman build`)
 ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
 ARG BASE_TAG=latest
@@ -15,8 +14,8 @@ ARG BASE_DIGEST=
 # fedora-toolbox repository, pinned by DIGEST. The tag is for humans. Bump both with `just dev-packages-bump [tag]`, which
 # resolves the digest, verifies it with cosign against keys/redcodeworks-toolbox-cosign.pub and writes both lines; CI checks
 # the format and the signature on every build.
-ARG DEV_PACKAGES_TAG=latest-20261109-0969783
-ARG DEV_PACKAGES_DIGEST=sha256:011daff3e22d1155890ce9e8612a21a6a1223574e390ae1794e6c04c3433d640
+ARG DEV_PACKAGES_TAG=latest-20261115-2ae8e11
+ARG DEV_PACKAGES_DIGEST=sha256:30db0bbf32391f9b05a550091a102c6b04fe20ba892a22da7e87bb2c67f6b052
 
 FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 # (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
@@ -31,7 +30,7 @@ COPY keys/redcodeworks-toolbox-cosign.pub /toolbox-cosign.pub
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
-# os-release IMAGE_VERSION of this build (beta channel: `beta-` prefix, set by the workflow), written by dx.sh
+# os-release IMAGE_VERSION of this build (set by the workflow), written by dx.sh
 ARG IMAGE_VERSION
 # os-release IMAGE_ID: octarine-os-dx, or octarine-os-nvidia-dx when the base is the NVIDIA variant (same layer, same packages)
 ARG DX_IMAGE_ID=octarine-os-dx

@@ -2,11 +2,10 @@
 name: Build dx image
 run-name: dx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}
 # The developer image (ghcr.io/<owner>/octarine-os-dx): the published default image plus the developer toolchain of the
-# owner's dev-toolbox, in three channels that follow the default image's own:
+# owner's dev-toolbox, in two channels that follow the default image's own:
 #   octarine-os:testing  -> octarine-os-dx:testing   (dispatched by "Build container image" on `testing`)
 #   octarine-os:latest   -> octarine-os-dx:latest    (dispatched by "Build container image" on `main`: promotes the tested testing
 #                                                     image when base digest and dx inputs match, else builds)
-#   octarine-os:beta     -> octarine-os-dx:beta      (dispatched by "Build beta image" on `main`)
 # A SEPARATE workflow that is started by the last job of those pipelines (`gh workflow run build-dx.yml --ref <ref> -f
 # channel=<channel> -f sha=<built commit>`, .github/scripts/dispatch-dx.sh) after the base succeeded, and that can be re-run on
 # its own. A dispatched run uses the file of the ref it was dispatched on and is recorded on that branch, so a change here runs
@@ -23,12 +22,11 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: "Channel to build: testing (ref testing), latest or beta (ref main)"
+        description: "Channel to build: testing (ref testing) or latest (ref main)"
         type: choice
         options:
           - testing
           - latest
-          - beta
         default: latest
       sha:
         description: "Commit to build (default: the tip of the ref); the pipeline passes the commit it just built"
@@ -53,13 +51,13 @@ env:
   SHA: ${{ inputs.sha || github.sha }}
   DRY_RUN: ${{ inputs.dry_run || false }}
 
-# testing and beta: one group per channel, a running build is never cancelled (a newer trigger waits, only one can wait: the last writer of a
-# floating tag must be the newest). latest on main: one group per COMMIT, because with one group a third run would cancel the PENDING second
-# one, silently dropping a default image that then never gets its dx pair; runs of different commits build side by side and Publish latest
-# serializes the moves
+# testing: one group per channel and a newer run CANCELS the older one (a superseded tip needs no dx image; the newest tip's run is the one that
+# counts, and a cancelled run posts no commit status, see the status step). latest on main: one group per COMMIT and never cancelled, because with
+# one group a third run would cancel the PENDING second one, silently dropping a default image that then never gets its dx pair; runs of different
+# commits build side by side and Publish latest serializes the moves
 concurrency:
   group: build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ inputs.channel == 'testing' }}
 
 permissions:
   contents: read
@@ -67,10 +65,10 @@ permissions:
 jobs:
   plan:
     name: Plan the dx build
-    # Only `testing` (channel testing) or `main` (latest, beta): never a feature branch; a dispatch is the only trigger
+    # Only `testing` (channel testing) or `main` (channel latest): never a feature branch; a dispatch is the only trigger
     if: >-
       (github.ref == 'refs/heads/testing' && inputs.channel == 'testing') ||
-      (github.ref == 'refs/heads/main' && contains(fromJSON('["latest","beta"]'), inputs.channel))
+      (github.ref == 'refs/heads/main' && inputs.channel == 'latest')
     runs-on: ubuntu-26.04
 
     outputs:
@@ -223,14 +221,11 @@ jobs:
           set -a; . ./config/image.env; set +a
           version=$(.github/scripts/image-version.sh)
           sha=$(git rev-parse HEAD)
-          # os-release IMAGE_VERSION: this build's version, `beta-` prefixed on the beta channel (never promoted)
-          os_version="${version}"
-          [[ "${CHANNEL}" != beta ]] || os_version="beta-${version}"
           podman build -f variants/dx/Containerfile \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
-            --build-arg "IMAGE_VERSION=${os_version}" \
+            --build-arg "IMAGE_VERSION=${version}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
             --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \
             --unsetlabel org.opencontainers.image.maintainer \
@@ -274,7 +269,7 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the image
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e IMAGE_CHANNEL="${CHANNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
             "octarine-os-dx:${CHANNEL}" bash /smoke.sh
 
       - name: Rechunk with chunkah
@@ -290,12 +285,12 @@ jobs:
 
       - name: Check the version is channel-neutral
         run: |
-          # the labels plus os-release IMAGE_VERSION of the rechunked image (a beta build's must start with beta-)
+          # the labels plus os-release IMAGE_VERSION of the rechunked image
           {
             podman image inspect "octarine-os-dx:${CHANNEL}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
             podman run --rm "octarine-os-dx:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
-          } | BETA=$([[ "${CHANNEL}" == beta ]] && echo true || echo false) .github/scripts/check-version-neutral.sh
+          } | .github/scripts/check-version-neutral.sh
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -305,7 +300,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Only `<channel>` and `<channel>-<date>-<sha>` are pushed; the testing channel pushes `testing` and `testing-<sha>`
-      # (the tag the promotion search and the prune rule look for)
+      # (the tag the promotion search looks for)
       - name: Tags
         id: tags
         run: |
@@ -319,6 +314,13 @@ jobs:
             else
               alias_tags="${CHANNEL}-$(date +%Y%m%d)-${sha} ${CHANNEL}"
             fi
+          fi
+          if [[ "${CHANNEL}" == latest ]]; then
+            # a dx image belongs to the daily run when the default image it is built on carries today's daily-<date> tag (set by build.yml's
+            # scheduled run, which dispatches this workflow right after): same tag, so prune-daily.yml counts both packages alike
+            today="daily-$(date -u +%Y%m%d)"
+            seen=$(IMAGE="${BASE_IMAGE}" .github/scripts/registry-digest.sh "${today}" 2> /dev/null || true)
+            if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
           fi
           echo "Tags: ${alias_tags}"
           echo "alias_tags=${alias_tags}" >> "${GITHUB_OUTPUT}"
@@ -499,7 +501,8 @@ jobs:
         run: .github/scripts/aggregate-dx.sh
 
       - name: Post the result as a commit status on the built commit
-        if: always() && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
+        # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
+        if: always() && !contains(needs.*.result, 'cancelled') && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OUTCOME: ${{ steps.result.outcome }}

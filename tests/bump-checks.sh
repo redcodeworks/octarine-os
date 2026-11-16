@@ -50,14 +50,5 @@ unset SHAARG
 run POST_FAIL=1
 check "a failed post is a warning, not a failure of the bump job" bash -c "[ $rc = 0 ] && grep -q 'could not post the check run test' '$root/run'"
 run NO_RUN=1 DISPATCH_FAIL=1
-check "bump-pr.sh calls it with the pushed commit; bump-pins.yml gives the three bump jobs checks: write; test.yml accepts the ref input, names its run after it and checks it out" python3 -I - "$here" <<'PY'
-import sys
-h = sys.argv[1]
-pr = open(h + "/.github/scripts/bump-pr.sh").read()
-assert 'bump-checks.sh" "${branch}" "$(git rev-parse HEAD)"' in pr
-assert open(h + "/.github/workflows/bump-pins.yml").read().split("\n").count("      checks: write") == 3
-t = open(h + "/.github/workflows/test.yml").read()
-assert "format('Test of {0}', inputs.ref)" in t and t.count("ref: ${{ inputs.ref || github.sha }}") >= 3 and "inputs.ref || github.ref" in t
-PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

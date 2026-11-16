@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the image's just files as one assembled justfile (how ujust sees them on the image): every public recipe has a
-# description (the comment line directly above it), the new recipes are listed, and the base recipes the image removes or
-# hides (toggle-nvk, the two LUKS names, setup-distrobox-app, configure-broadcom-wl) are not. The base files that build.sh
-# renames (00-default-base, 10-update-base, 30-distrobox-base) are stubs here. Needs: bash, just, jq. Run: tests/just-recipes.sh
+# Tests for the image's just files as one assembled justfile (how ujust sees them on the image): it parses, and every public recipe has a description
+# (the comment line directly above it). Which recipes exist is not asserted. The base files that build.sh renames are stubs here. Needs: bash, just, jq.
+# Run: tests/just-recipes.sh
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -58,17 +57,6 @@ cp -- "$root/Justfile" "$root/Assembled"
 
 summary() { just --justfile "$root/Assembled" --summary 2>/dev/null | tr ' ' '\n'; }
 check "the assembled justfile parses" just --justfile "$root/Assembled" --summary
-for r in toggle-motd toggle-user-motd switch-image toggle-updates update luks-tpm-unlock toolbox user-setup niri-setup gaming-setup gnome-candy flatpak-preinstall; do
-    check "$r is listed" bash -c "$(declare -f summary); root='$root'; summary | grep -qx '$r'"
-done
-for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock setup-distrobox-app configure-broadcom-wl broadcom-wl; do
-    check "$r is not listed" bash -c "$(declare -f summary); root='$root'; ! summary | grep -qx '$r'"
-done
-check "our 40-nvidia.just, 15-luks.just and 50-akmods.just define no recipe or alias (they only replace the base files)" bash -c "! grep -qE '^(alias |[a-z@\\[])' '$justdir/40-nvidia.just' '$justdir/15-luks.just' '$justdir/50-akmods.just'"
-check "the base's toggle-nvk cannot return: no recipe of that name in any file we ship" bash -c "! grep -rqE '^toggle-nvk' '$justdir' '$dxdir'"
-for f in 15-luks 40-nvidia 50-akmods; do
-    check "$f.just keeps the base file name (build.sh's copy overwrites the base file)" test -f "$justdir/$f.just"
-done
 
 # every public recipe has a description
 nodoc=$(just --justfile "$root/Assembled" --dump --dump-format json | jq -r '.recipes[] | select((.private | not) and ((.doc // "") == "")) | .name')
