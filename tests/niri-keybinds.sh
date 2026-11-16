@@ -380,34 +380,40 @@ if [ "$have_niri" = 1 ]; then
     PATH_BIN="$realbin:$bin"
     mods=(ctrl-alt ctrl-super meh hypr)
     others=(ctrl-alt ctrl-super meh hypr super)
-    total=0
-    okc=0
-    badlist=""
+    # One combination = one private HOME and source copy, so the 180 of them run four at a time (xargs -P): each costs one `just` start, a niri validate and two
+    # python runs, and run one after the other they took most of this test. The workers print one line each (ok or FAIL <combination>); nothing is shared between them.
+    matrix_one() {
+        local lay=$1 sw=$2 mv=$3 ot=$4 d H S ok=1 f
+        d=$(mktemp -d "$root/m.XXXXXX"); H=$d/home; S=$d/src
+        mkdir -p "$H" "$S/niri"; cp "$etc_niri"/*.kdl "$S/niri/"; cp -r "$share"/* "$S/"
+        printf '' | HOME="$H" PATH="$PATH_BIN:$sysbin" OCTARINE_NIRI_SETUP_SRC="$S" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" niri-setup --yes --only niri,keybinds --keybinds "$lay" --switch-mod "$sw" --move-mod "$mv" --other-mod "$ot" >"$d/mout" 2>&1 || ok=0
+        local files=("$H/.config/niri/40-binds-standard.kdl")
+        [ "$lay" = standard ] || files+=("$H/.config/niri/41-binds-$lay.kdl")
+        for f in "${files[@]}"; do [ -f "$f" ] || ok=0; done
+        if [ "$ok" = 1 ]; then
+            niri validate -c "$H/.config/niri/config.kdl" >"$d/vout" 2>&1 || ok=0
+            python3 -I "$root/dups.py" "${files[@]}" >"$d/dout" 2>&1 || ok=0
+            # the generated binds plus Noctalia's: only the XF86 keys may repeat (Noctalia replaces them on purpose)
+            python3 -I "$root/dups.py" "${files[@]}" "$H/.config/niri/50-noctalia.kdl" 2>&1 | grep -v 'XF86' | grep -q '(also in' && ok=0
+        fi
+        if [ "$ok" = 1 ]; then echo ok; else echo "FAIL $lay/$sw/$mv/$ot"; fi
+        rm -rf -- "${d:?}"
+    }
+    export -f matrix_one
+    export root etc_niri share justfile sysbin REAL_JUST PATH_BIN
+    combos=()
     for lay in standard compact hhkb; do
         for sw in "${mods[@]}"; do
             for mv in "${mods[@]}"; do
                 [ "$sw" = "$mv" ] && continue
-                for ot in "${others[@]}"; do
-                    total=$((total + 1))
-                    rm -rf "$HOME"
-                    mkdir -p "$HOME"
-                    mkreal
-                    pass_one=1
-                    printf '' | PATH="$PATH_BIN:$sysbin" OCTARINE_NIRI_SETUP_SRC="$src" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" niri-setup --yes --only niri,keybinds --keybinds "$lay" --switch-mod "$sw" --move-mod "$mv" --other-mod "$ot" >"$root/mout" 2>&1 || pass_one=0
-                    files=("$HOME/.config/niri/40-binds-standard.kdl")
-                    [ "$lay" = standard ] || files+=("$HOME/.config/niri/41-binds-$lay.kdl")
-                    for f in "${files[@]}"; do [ -f "$f" ] || pass_one=0; done
-                    if [ "$pass_one" = 1 ]; then
-                        niri validate -c "$HOME/.config/niri/config.kdl" >"$root/vout" 2>&1 || pass_one=0
-                        python3 -I "$root/dups.py" "${files[@]}" >"$root/dout" 2>&1 || pass_one=0
-                        # the generated binds plus Noctalia's: only the XF86 keys may repeat (Noctalia replaces them on purpose)
-                        python3 -I "$root/dups.py" "${files[@]}" "$HOME/.config/niri/50-noctalia.kdl" 2>&1 | grep -v 'XF86' | grep -q '(also in' && pass_one=0
-                    fi
-                    if [ "$pass_one" = 1 ]; then okc=$((okc + 1)); else badlist="$badlist $lay/$sw/$mv/$ot"; fi
-                done
+                for ot in "${others[@]}"; do combos+=("$lay $sw $mv $ot"); done
             done
         done
     done
+    total=${#combos[@]}
+    printf '%s\n' "${combos[@]}" | xargs -P 4 -L 1 bash -c 'matrix_one $0 $1 $2 $3' >"$root/matrix.res"
+    okc=$(grep -c '^ok$' "$root/matrix.res")
+    badlist=$(grep '^FAIL ' "$root/matrix.res" | sed 's/^FAIL / /' | tr -d '\n')
     echo "matrix: $okc of $total combinations passed"
     [ -n "$badlist" ] && echo "failed:$badlist" | head -c 600 >"$root/out"
     check "matrix: $total combinations (3 layouts x 12 ordered switch/move pairs x 5 other-action modifiers): every one renders, passes niri validate and has no duplicate key combination" test "$okc" = "$total"
