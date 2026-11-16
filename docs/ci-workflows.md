@@ -7,7 +7,7 @@ Everything that builds, tests, signs and publishes the images runs from here.
   build the variants; `binaries.yml` builds the prebuilt programs; `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens the weekly pull requests that move pinned versions; the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
 - `scripts/` has the shell and Python helpers the workflows call (planning which builds are needed, registry and signature
-  checks, smoke tests, pin bumps). `actions/` has two small shared steps (tool install and the test suite).
+  checks, smoke tests, pin bumps). `actions/` has one small shared step (tool install).
 - `dependabot.yml` and `zizmor.yml` configure dependency updates and the workflow audit.
 
 How a change flows: work on a feature branch, where `test.yml` runs the tests; open a pull request into `testing`; merging
