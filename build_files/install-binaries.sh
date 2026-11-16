@@ -10,8 +10,8 @@
 # The license texts, source and build records go to /usr/share/licenses/octarine-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
-# Which components are present is told by /binaries/COMPONENTS (one JSON object per line with name and digest, read with jq by name). Every component is required: the list
-# below must match binaries/components.tsv (a test checks it), and a component that is missing or cannot be installed fails the build.
+# Which components are present is told by /binaries/COMPONENTS (the component names, one per line, written by binaries/lib/assemble.sh). Every component is required: the list
+# below must match binaries/components.tsv (the installer test feeds it the real assembler output for that list), and a component that is missing or cannot be installed fails the build.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
 # find its shared libraries in THIS image: a 64-bit file must resolve with ldd (no "not found"), a 32-bit one (extest, loaded into
@@ -92,7 +92,7 @@ while read -r name; do
     [[ " ${required} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
     test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
     want+=("${name}")
-done < <(jq -r .name "${root}/COMPONENTS")
+done < "${root}/COMPONENTS"
 for d in "${root}"/*/; do
     # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
     [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"

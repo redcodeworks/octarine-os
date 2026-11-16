@@ -1,4 +1,4 @@
-# component   (one build job each in binaries.yml; every component is required, see CLAUDE.md "Prebuilt binaries")
+# component   (one stage each in binaries/Containerfile; every component is required, see CLAUDE.md "Prebuilt binaries")
 scx
 extest
 ghostty

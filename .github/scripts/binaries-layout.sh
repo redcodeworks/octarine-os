@@ -4,8 +4,7 @@
 #   binaries-layout.sh [--assembled] <listing file> <schedulers.tsv> <component>...
 #
 # Per component: scx needs scx/bin/<name> for every scheduler of the manifest and scx/schedulers.tsv; extest both libraries; every
-# component needs <c>/SOURCE, <c>/BUILDINFO and <c>/LICENSES/*. A component image (FROM scratch, one component) is checked with its own
-# name; the assembled image with --assembled, which also needs the top-level SOURCE, BUILDINFO, LICENSES/ and COMPONENTS and
+# component needs <c>/SOURCE, <c>/BUILDINFO and <c>/LICENSES/*. The assembled image is checked with --assembled, which also needs the top-level SOURCE, BUILDINFO, LICENSES/ and COMPONENTS and
 # exactly the named components. Nothing else is judged here (the build already ran the smoke tests and the ELF checks).
 set -euo pipefail
 assembled=0

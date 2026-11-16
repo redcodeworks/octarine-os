@@ -1,16 +1,16 @@
 name: Prebuilt binaries
-# Builds ghcr.io/redcodeworks/octarine-binaries from the components of binaries/ (binaries/components.tsv: scx, extest and ghostty, all required) and promotes it.
-# The image build (build.yml) does not call this workflow: it installs from octarine-binaries:latest, which only this workflow moves.
+# Builds ghcr.io/redcodeworks/octarine-binaries and promotes it. ONE build: binaries/Containerfile is a multi-stage build with a stage per component
+# (binaries/components.tsv: scx, extest and ghostty, all required) and an assemble stage; a component that cannot be built fails the whole build, nothing is
+# pushed and `testing` stays where it was (atomic). The image build (build.yml) does not call this workflow: on testing it installs from octarine-binaries:testing,
+# elsewhere from octarine-binaries:latest, which only the promote job below moves.
 #
-# On testing (a push that touches binaries/ or this pipeline, or a dispatch): one build job per component (binaries-component.yml, a matrix over components.tsv), each
-# with its own content key (binaries-key.sh) and its own signed component image (tag c-<component>-<key>, same package): a change to one component does not rebuild
-# the others (a change to lib/ or the builder pin rebuilds all). The assemble job then puts what each component produced into ONE image, tagged with the assembled key
-# and `testing`, and signs it. A component that cannot be built fails the run: nothing is assembled and `testing` stays where it was.
+# On testing (a push that touches binaries/ or this pipeline, or a dispatch): `build` builds the image, checks its layout and pushes it under its key tag (the git tree
+# id of binaries/, binaries-key.sh, also its version label); `sign` signs that digest and only THEN moves `testing` to it, so the image build never sees an unsigned `testing`.
 #
 # On main (the promotion of testing into main, or a dispatch): the promote job retags the tested, signed `testing` image to `latest` (binaries-promote.sh; no rebuild;
-# it fails unless `testing` was built from exactly the binaries/ of this commit), and when `latest` moved it starts the image build on main, which installs from it.
+# it fails unless `testing` was built from exactly the binaries/ of this commit). It starts no image build: main promotes the tested image, which already carries these binaries.
 #
-# Any other ref (a dispatch from a branch) builds the components for validation only and publishes nothing. Nothing rebuilds the binaries on a timer: they and their pins
+# Any other ref (a dispatch from a branch) builds for validation only and publishes nothing. Nothing rebuilds the binaries on a timer: they and their pins
 # change only through a pull request the owner approves. To rebuild by hand: `gh workflow run binaries.yml --ref testing`; to promote by hand: `--ref main`.
 on:
   push:
@@ -20,11 +20,10 @@ on:
     paths:
       - 'binaries/**'
       - '.github/workflows/binaries.yml'
-      - '.github/workflows/binaries-component.yml'
       - '.github/scripts/binaries-*.sh'
   workflow_dispatch:
 
-# one run per ref at a time, none cancelled: two runs of the same content would push the same content tag at the same moment
+# one run per ref at a time, none cancelled: two runs never push `testing` out of order
 concurrency:
   group: binaries-${{ github.ref }}
   cancel-in-progress: false
@@ -33,59 +32,19 @@ env:
   IMAGE_NAME: octarine-binaries
 
 jobs:
-  plan:
-    name: Components
+  build:
+    name: Build the binaries image
     if: github.ref != 'refs/heads/main'
     runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-    outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Components of binaries/components.tsv
-        id: matrix
-        run: |
-          set -euo pipefail
-          m=$(grep -vE '^[[:space:]]*(#|$)' binaries/components.tsv | jq -Rsc '{include: [split("\n")[] | select(length > 0) | split("\t") | {name: .[0]}]}')
-          echo "matrix=${m}" >> "${GITHUB_OUTPUT}"
-          echo "${m}"
-
-  component:
-    name: Component ${{ matrix.name }}
-    needs: plan
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    uses: ./.github/workflows/binaries-component.yml
-    with:
-      component: ${{ matrix.name }}
-    permissions:
-      contents: read
-      packages: write
-    secrets:
-      SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
-
-  assemble:
-    name: Assemble the binaries image
-    needs: [plan, component]
-    if: always() && needs.plan.result == 'success'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 90
     permissions:
       contents: read
       packages: write
     outputs:
-      action: ${{ steps.decide.outputs.action }}
-      key: ${{ steps.decide.outputs.key }}
-      components: ${{ steps.decide.outputs.components }}
-      image: ${{ steps.names.outputs.image }}
       published: ${{ steps.channel.outputs.publish }}
-      pushed: ${{ steps.push.outputs.digests }}
+      image: ${{ steps.names.outputs.image }}
+      key: ${{ steps.key.outputs.key }}
+      digest: ${{ steps.push.outputs.digests }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -96,60 +55,11 @@ jobs:
         id: names
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${IMAGE_NAME}" >> "${GITHUB_OUTPUT}"
 
-      - name: Set up cosign
-        uses: ./.github/actions/setup-tool
-        with:
-          tool: cosign
+      - name: Key
+        id: key
+        run: echo "key=$(.github/scripts/binaries-key.sh)" >> "${GITHUB_OUTPUT}"
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # a missing artifact is a component that did not finish: binaries-assemble.sh counts it (counted as failed). A FAILED DOWNLOAD is
-      # different: it is retried twice, and when all three tries fail the job fails with "could not read the results" (a workflow problem), never as "a required component failed"
-      - name: Fetch the results of the components
-        id: fetch1
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: binres-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/binres
-
-      - name: Fetch the results of the components (retry 1)
-        id: fetch2
-        if: steps.fetch1.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: binres-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/binres
-
-      - name: Fetch the results of the components (retry 2)
-        id: fetch3
-        if: steps.fetch1.outcome == 'failure' && steps.fetch2.outcome == 'failure'
-        continue-on-error: true
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: binres-*
-          merge-multiple: true
-          path: ${{ runner.temp }}/binres
-
-      - name: The results could not be read
-        if: steps.fetch1.outcome == 'failure' && steps.fetch2.outcome == 'failure' && steps.fetch3.outcome == 'failure'
-        run: |
-          echo "::error::could not read the results of the components: the artifact download failed three times. This is a problem of the workflow run (GitHub's artifact service), NOT a failed component build: re-run the failed jobs."
-          exit 1
-
-      - name: What goes into the image
-        id: decide
-        run: .github/scripts/binaries-assemble.sh binaries/components.tsv "${RUNNER_TEMP}/binres" "${RUNNER_TEMP}/image"
-
-      - name: Choose channel
+      - name: Channel
         id: channel
         env:
           REF: ${{ github.ref }}
@@ -159,53 +69,47 @@ jobs:
           echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
           echo "publish=${publish} (only testing publishes; any other ref builds for validation)"
 
-      # Assemble from the component images by digest (each verified again), layout check, push
-      - name: Assemble
-        id: assemble
-        if: steps.decide.outputs.action == 'assemble'
+      # the pinned builder, every component in its own stage; any failing stage fails this step and the run
+      - name: Build
         env:
-          IMAGE: ${{ steps.names.outputs.image }}
-          KEY: ${{ steps.decide.outputs.key }}
-          COMPONENTS: ${{ steps.decide.outputs.components }}
+          KEY: ${{ steps.key.outputs.key }}
         run: |
           set -euo pipefail
-          content="${RUNNER_TEMP}/image"
-          names=()
-          while read -r name digest; do
-              [[ -n "${name}" ]] || continue
-              [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for ${name}"; exit 1; }
-              cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
-              id=$(podman create "${IMAGE}@${digest}" /nonexistent)
-              podman export "${id}" | tar -x -C "${content}"
-              podman rm "${id}" > /dev/null
-              names+=("${name}")
-          done < <(jq -r '"\(.name) \(.digest)"' "${content}/COMPONENTS")
-          binaries/lib/assemble.sh "${content}"
+          builder=$(sed -n 's/^BUILDER=//p' binaries/builder.env)
+          [[ "${builder}" =~ ^registry\.fedoraproject\.org/fedora:[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "::error::binaries/builder.env has no digest-pinned BUILDER"; exit 1; }
           podman build \
+            --build-arg "BUILDER=${builder}" \
             --build-arg "IMAGE_VERSION=${KEY}" \
             --build-arg "IMAGE_REVISION=${GITHUB_SHA}" \
             --build-arg "IMAGE_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --build-arg "IMAGE_COMPONENTS=${COMPONENTS}" \
             --tag "${IMAGE_NAME}:${KEY}" \
-            --file binaries/lib/assemble.Containerfile "${content}"
+            --file binaries/Containerfile binaries
           id=$(podman create "${IMAGE_NAME}:${KEY}" /nonexistent)
           podman export "${id}" | tar -t > "${RUNNER_TEMP}/listing.txt"
           podman rm "${id}" > /dev/null
-          .github/scripts/binaries-layout.sh --assembled "${RUNNER_TEMP}/listing.txt" binaries/scx/schedulers.tsv "${names[@]}"
+          .github/scripts/binaries-layout.sh --assembled "${RUNNER_TEMP}/listing.txt" binaries/scx/schedulers.tsv $(grep -vE '^[[:space:]]*(#|$)' binaries/components.tsv | cut -f1)
 
-      # One push under the assembled key, `testing` is a registry-side copy: one manifest digest, which the signature belongs to
-      - name: Push
+      - name: Login to GitHub Container Registry
+        if: steps.channel.outputs.publish == 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One push under the key tag: one manifest digest, which the signature belongs to. `testing` is not touched here (the sign job moves it after signing).
+      - name: Push under the key tag
         id: push
-        if: steps.assemble.outcome == 'success' && steps.channel.outputs.publish == 'true'
+        if: steps.channel.outputs.publish == 'true'
         env:
           IMAGE: ${{ steps.names.outputs.image }}
-          KEY: ${{ steps.decide.outputs.key }}
-        run: .github/scripts/push-tags.sh "${IMAGE_NAME}:${KEY}" "${IMAGE}" "${KEY}" testing
+          KEY: ${{ steps.key.outputs.key }}
+        run: .github/scripts/push-tags.sh "${IMAGE_NAME}:${KEY}" "${IMAGE}" "${KEY}"
 
   sign:
-    name: Sign the binaries image
-    needs: assemble
-    if: needs.assemble.result == 'success' && needs.assemble.outputs.action == 'assemble' && needs.assemble.outputs.published == 'true'
+    name: Sign the binaries image and move testing
+    needs: build
+    if: needs.build.result == 'success' && needs.build.outputs.published == 'true'
     runs-on: ubuntu-26.04
     environment: signing
     permissions:
@@ -229,23 +133,25 @@ jobs:
         with:
           tool: cosign
 
-      - name: Sign and verify
+      - name: Sign, then move testing
         env:
           COSIGN_EXPERIMENTAL: false
           COSIGN_PRIVATE_KEY: ${{ secrets.SIGNING_SECRET }}
-          IMAGE: ${{ needs.assemble.outputs.image }}
-          KEY: ${{ needs.assemble.outputs.key }}
-          DIGEST: ${{ needs.assemble.outputs.pushed }}
+          IMAGE: ${{ needs.build.outputs.image }}
+          KEY: ${{ needs.build.outputs.key }}
+          DIGEST: ${{ needs.build.outputs.digest }}
         run: |
           set -euo pipefail
           [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::No pushed digest to sign"; exit 1; }
           # the old bundle format, as for the images (https://github.com/containers/container-libs/issues/388)
           cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY "${IMAGE}@${DIGEST}"
           cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
-          cosign verify --key cosign.pub "${IMAGE}:${KEY}" > /dev/null
+          # signed: now `testing` may point at it (a registry-side copy, the same digest)
+          .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:testing"
+          .github/scripts/registry-settled.sh "${IMAGE}" testing "${DIGEST}"
           cosign verify --key cosign.pub "${IMAGE}:testing" > /dev/null
           echo "signed: ${IMAGE}:${KEY} and :testing = ${DIGEST}"
-          echo "Binaries image: assembled \`${KEY}\`, signed and published as \`testing\` (digest \`${DIGEST}\`)" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Binaries image: key \`${KEY}\`, signed and published as \`testing\` (digest \`${DIGEST}\`)" >> "${GITHUB_STEP_SUMMARY}"
 
   # main: the testing image becomes latest (see binaries-promote.sh). Nothing else moves latest.
   promote:

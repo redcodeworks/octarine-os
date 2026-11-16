@@ -1,25 +1,26 @@
 #!/usr/bin/env bash
-# Put the staged components together into the content of the published image:
+# The `assemble` stage of binaries/Containerfile: put the built components together into the content of the published image.
 #
-#   assemble.sh <dir>        <dir> holds COMPONENTS (written by binaries-assemble.sh: name and digest
-#                            per component that is in the image) and one directory per listed component, each with LICENSES/,
-#                            SOURCE and BUILDINFO from stage.sh
+#   assemble.sh <dir> <components.tsv>     <dir> holds one directory per component (scx, extest, ghostty), each with LICENSES/, SOURCE and BUILDINFO from stage.sh
 #
-# Each component directory stays as it is (the image installer reads them). On top, /LICENSES/ is the union of the license
-# directories and /SOURCE and /BUILDINFO are the components' files one after the other, each under a [name] heading, so a reader of
-# the bare image sees everything in one place. COMPONENTS stays in the image: it tells the installer what is present.
+# Each component directory stays as it is (the image installer reads them). On top, /LICENSES/ is the union of the license directories, /SOURCE and
+# /BUILDINFO are the components' files one after the other, each under a [name] heading, and /COMPONENTS lists the component names, one per line (what the
+# installer expects to find: build_files/install-binaries.sh).
 set -euo pipefail
 dir="${1:?directory}"
-[[ -s "${dir}/COMPONENTS" ]] || { echo "assemble.sh: ${dir}/COMPONENTS is missing or empty" >&2; exit 1; }
+tsv="${2:?components.tsv}"
 comps=()
-mapfile -t comps < <(jq -r .name "${dir}/COMPONENTS")
+while IFS=$'\t' read -r name _; do
+    [[ -n "${name}" && "${name}" != \#* ]] && comps+=("${name}")
+done < "${tsv}"
+[[ ${#comps[@]} -gt 0 ]] || { echo "assemble.sh: no component in ${tsv}" >&2; exit 1; }
 for c in "${comps[@]}"; do
     for f in LICENSES SOURCE BUILDINFO; do
         [[ -e "${dir}/${c}/${f}" ]] || { echo "assemble.sh: ${dir}/${c}/${f} is missing" >&2; exit 1; }
     done
 done
 for d in "${dir}"/*/; do
-    [[ " ${comps[*]} " == *" $(basename "${d}") "* ]] || { echo "assemble.sh: ${d} is not listed in COMPONENTS" >&2; exit 1; }
+    [[ " ${comps[*]} " == *" $(basename "${d}") "* ]] || { echo "assemble.sh: ${d} is not listed in ${tsv}" >&2; exit 1; }
 done
 mkdir -p "${dir}/LICENSES"
 for c in "${comps[@]}"; do cp -a "${dir}/${c}/LICENSES/." "${dir}/LICENSES/"; done
@@ -29,4 +30,5 @@ for f in SOURCE BUILDINFO; do
         { echo "[${c}]"; cat "${dir}/${c}/${f}"; echo; } >> "${dir}/${f}"
     done
 done
+printf '%s\n' "${comps[@]}" > "${dir}/COMPONENTS"
 echo "assembled: ${comps[*]}"
