@@ -2,7 +2,7 @@
 
 Everything that builds, tests, signs and publishes the images runs from here.
 
-- `workflows/` has the GitHub Actions workflows. `test.yml` runs the tests on every branch; `build.yml` builds the default
+- `workflows/` has the GitHub Actions workflows. `test.yml` runs the fast sanity check and the behavior tests on every branch; `build.yml` builds the default
   image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml`
   build the variants; `binaries.yml` builds the prebuilt programs; `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens the weekly pull requests that move pinned versions; the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
@@ -10,7 +10,7 @@ Everything that builds, tests, signs and publishes the images runs from here.
   checks, smoke tests, pin bumps). `actions/` has one small shared step (tool install).
 - `dependabot.yml` and `zizmor.yml` configure dependency updates and the workflow audit.
 
-How a change flows: work on a feature branch, where `test.yml` runs the tests; open a pull request into `testing`; merging
+How a change flows: work on a feature branch, where `test.yml` runs a fast sanity check (the required `test`, only the obvious: syntax, parse, missing files) and the behavior tests (`suite`, not required, cancelable); open a pull request into `testing`; merging
 it makes `build.yml` build and publish the `testing` image. A pull request from `testing` into `main` (the only way into
 `main`, enforced by `require-testing-branch.yml` and the branch rules) is checked, and merging it promotes the tested
 build instead of building again; the `latest` tag then moves for the default and dx images together. Pushes that change

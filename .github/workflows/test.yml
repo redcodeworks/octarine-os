@@ -29,10 +29,8 @@ permissions:
   contents: read
 
 jobs:
-  # How much of the test job a push needs (.github/scripts/test-scope.sh): `docs` when every changed file is documentation text, else `full`
-  # (a dispatch, a mixed push, a failing detection). For `docs` the job `test` is SKIPPED by a job-level `if` (a skipped job
-  # reports "Skipped", which satisfies the required check; a path filter on the workflow would leave it missing) and the light job `docs`
-  # runs the documentation tests on the host runner: no container pull, no dnf install.
+  # How much of the suite a push needs (.github/scripts/test-scope.sh): `docs` when every changed file is documentation text, else `full` (a dispatch, a mixed push,
+  # a failing detection). For `docs` the job `suite` is skipped and the light job `docs` runs the documentation tests on the host runner instead.
   scope:
     name: scope
     runs-on: ubuntu-26.04
@@ -58,13 +56,36 @@ jobs:
           echo "scope=${scope}" >> "${GITHUB_OUTPUT}"
           echo "Test scope: ${scope}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
-  # The initial CI is for the obvious sanity checks, on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a script shows here);
-  # problems of the real image show at build time (the smoke test of the image build).
+  # Stage 1 of the pipeline (the required check): only the OBVIOUS, in about a minute (.github/scripts/sanity.sh): syntax, shellcheck, parse of the YAML/JSON/TOML files,
+  # `just check`, every literal path the workflows, Containerfiles and Justfile mention exists. Stage 2 is the image build on testing, which shows the complicated problems.
+  # It runs for every push, a documentation-only one included (it is fast), and for the dispatched `Test of <sha>` runs of the bump workflow.
   test:
     name: test
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Sanity checks
+        run: .github/scripts/sanity.sh
+
+  # The behavior tests (tests/*.sh) on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a script shows here). NOT a required check: it is
+  # informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and `secrets` pass). Not run for the dispatched
+  # bump runs (they only need `test` and `secrets`) or for documentation-only pushes (the `docs` job runs instead).
+  suite:
+    name: suite
     needs: [scope]
-    # always(): a failed scope job means the full run; only a documentation-only scope skips (the `docs` job below runs instead)
-    if: always() && needs.scope.outputs.scope != 'docs'
+    # always(): a failed scope job means the full run
+    if: always() && needs.scope.outputs.scope != 'docs' && github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     container: registry.fedoraproject.org/fedora:45
