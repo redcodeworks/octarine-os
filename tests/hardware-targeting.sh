@@ -35,7 +35,7 @@ check "mcelog: build.sh no longer masks it" bash -c "! grep -qE '^systemctl mask
 check "automatic updates: bounded retry drop-in" bash -c "grep -qx Restart=on-failure '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf' && grep -qx RestartSec=60 '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf' && grep -qx StartLimitBurst=5 '$d/rpm-ostreed-automatic.service.d/50-octarine-retry.conf'"
 check "automatic updates: the base override.conf is not shadowed by a file of ours" test ! -e "$d/rpm-ostreed-automatic.service.d/override.conf"
 check "automatic updates: the policy is not set by us (stays stage from the base)" bash -c "! grep -rqs AutomaticUpdatePolicy '$d/rpm-ostreed-automatic.service.d'"
-check "smoke test (build.yml) asserts the drop-ins" bash -c "grep -q 'Restart=on-failure' '$here/.github/workflows/build.yml' && grep -q 'mcelog is not masked' '$here/.github/workflows/build.yml'"
+check "smoke test (default-smoke.sh) asserts the drop-ins" bash -c "grep -q 'Restart=on-failure' '$here/.github/scripts/default-smoke.sh' && grep -q 'mcelog is not masked' '$here/.github/scripts/default-smoke.sh'"
 check "50-akmods.just is comment-only" bash -c "! grep -qvE '^(#|\$)' '$sf/usr/share/ublue-os/just/50-akmods.just'"
 
 echo

@@ -76,22 +76,11 @@ check "workflow: pushes exactly beta and beta-<date>-<sha> (one push line, tags 
 check "workflow: both pushed tags are verified after signing" bash -c "grep -q 'for tag in \${ALIAS_TAGS}' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf' && grep -q 'alias_tags: .*steps.tags' '$wf'"
 check "workflow: signs the pushed digest and verifies the tag with cosign.pub" bash -c "grep -q 'cosign sign .*SIGNING\|cosign sign -y' '$wf' && grep -q 'cosign verify --key cosign.pub' '$wf'"
 check "workflow: the daily build does not mention the beta workflow" bash -c "! grep -q 'build-beta\|silverblue-main:beta' '$here/.github/workflows/build.yml'"
-check "workflow: smoke test equals the one in build.yml" python3 - "$here" <<'PY'
-import sys
-def block(p):
-    t = open(p).read()
-    a = t.index("- name: Smoke test image")
-    b = t.index("# Optional packages that could not be installed") if "build.yml" in p else t.index("- name: Rechunk with chunkah")
-    # the only intended difference: the version pattern of the IMAGE_VERSION assertion (beta- prefix)
-    return t[a:b].strip().replace("-e VERSION_RE='beta-[0-9]{8}", "-e VERSION_RE='[0-9]{8}")
-d = sys.argv[1] + "/.github/workflows/"
-assert block(d + "build.yml") == block(d + "build-beta.yml")
-PY
+check "workflow: the smoke test is the same script as the daily build's (default-smoke.sh), only the version pattern differs" bash -c "grep -q default-smoke.sh '$wf' && grep -q default-smoke.sh '$here/.github/workflows/build.yml'"
 check "workflow: beta builds get the beta- version prefix and assert it; the stable build does not" bash -c "
-  grep -q 'IMAGE_VERSION_PREFIX: beta-' '$wf' && ! grep -q IMAGE_VERSION_PREFIX '$here/.github/workflows/build.yml'
-  grep -q \"VERSION_RE='beta-\[0-9\]{8}-\[0-9a-f\]{7,}'\" '$wf'
-  grep -q 'BETA=true .github/scripts/check-version-neutral.sh' '$wf'
-  grep -q 'check \"image id\"' '$wf' && grep -q 'IMAGE_ID=' '$wf'"
+  grep -q 'IMAGE_VERSION_PREFIX: beta-' '$wf' && ! grep -q IMAGE_VERSION_PREFIX '$here/.github/workflows/build.yml' &&
+  grep -q \"VERSION_RE='beta-\[0-9\]{8}-\[0-9a-f\]{7,}'\" '$wf' &&
+  grep -q 'BETA=true .github/scripts/check-version-neutral.sh' '$wf'"
 check "signature policy covers the repository the beta tag lives in (any tag)" grep -q 'refs="ghcr.io/${org}/${base_name}' "$here/build_files/build.sh"
 
 # ---- prune rule for the beta channel

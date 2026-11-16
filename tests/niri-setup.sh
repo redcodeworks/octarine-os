@@ -362,7 +362,7 @@ d=tomllib.load(open(sys.argv[1],'rb')); assert d=={'shell':{'polkit_agent':True}
 check "portal file keeps the packaged lines and sets the oo7 Secret portal" bash -c "f='$share/niri-portals.conf'; grep -qx '\\[preferred\\]' \$f && grep -qx 'default=gnome;gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Access=gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Notification=gtk;' \$f && grep -qx 'org.freedesktop.impl.portal.Secret=oo7-portal;' \$f && ! grep -qiE 'EXAMPLE|do not install' \$f"
 check "the portal and polkit sources are NOT in /etc (nothing applies without the recipe)" bash -c "[ ! -e '$repo/system_files/etc/xdg-desktop-portal' ] && [ ! -e '$repo/system_files/etc/noctalia' ] && [ ! -e '$repo/system_files/usr/share/xdg-desktop-portal' ]"
 check "user-setup has no polkit step" bash -c "! grep 'valid_steps=\" groups' '$justfile' | grep -q polkit"
-check "smoke tests check the niri files and the three sources in both workflows" bash -c "for w in build.yml build-beta.yml; do grep -q '/etc/niri/config.kdl' '$repo/.github/workflows/'\$w && grep -q 'niri-setup/niri-portals.conf' '$repo/.github/workflows/'\$w && grep -q 'niri-setup/10-octarine-os.toml' '$repo/.github/workflows/'\$w || exit 1; done"
+check "smoke tests check the niri files and the three sources" bash -c "s='$repo/.github/scripts/default-smoke.sh'; grep -q '/etc/niri/config.kdl' \$s && grep -q 'niri-setup/niri-portals.conf' \$s && grep -q 'niri-setup/10-octarine-os.toml' \$s"
 
 if command -v niri >/dev/null 2>&1; then
     # every combination of parts: leave out any subset of the include lines (a user deleting lines), in a copy under a
