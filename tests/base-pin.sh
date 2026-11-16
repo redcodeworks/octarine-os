@@ -4,6 +4,7 @@
 # Run: tests/base-pin.sh. Needs: bash, jq, python3 with PyYAML.
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 # the CI runner exports these (root-owned files the test user cannot write): the script must only write where each case points them
@@ -62,7 +63,7 @@ bp FEDORA_VERSION=beta MANIFEST="$SINGLE" SIGNED="$P"
 check "FEDORA_VERSION=beta (the beta channel base, build-beta.yml) is accepted" bash -c "[ $rc = 0 ] && grep -q '^BASE_PIN=sha256:' '$root/run'"
 bp FEDORA_VERSION=rawhide MANIFEST="$SINGLE" SIGNED="$P"
 check "other words stay refused (rawhide is not a Universal Blue tag)" bash -c "[ $rc = 1 ]"
-check "keys/ublue-os-main-cosign.pub is the default key of the script and is in the repository with its source documented" bash -c "grep -q 'keys/ublue-os-main-cosign.pub' '$here/.github/scripts/base-pin.sh' && test -s '$here/keys/ublue-os-main-cosign.pub' && grep -q 'ublue-os/main' '$here/keys/README.md'"
+check "keys/ublue-os-main-cosign.pub is the default key of the script and is in the repository with its source documented" bash -c "grep -q 'keys/ublue-os-main-cosign.pub' '$here/.github/scripts/base-pin.sh' && test -s '$here/keys/ublue-os-main-cosign.pub' && grep -q 'ublue-os/main' '$keys_doc'"
 check "Containerfile builds FROM the pinned digest when BASE_PIN is set and on the tag otherwise (the ARG before the first FROM is guarded by tests/containerfile-from-args.sh)" bash -c "grep -qE '^FROM .*BASE_PIN:\\+@.*BASE_PIN' '$here/Containerfile' && grep -q 'BASE_PIN=\\\${BASE_PIN}' '$here/Justfile'"
 check "build.yml and build-beta.yml resolve and verify the base once (base-pin.sh) before the build, pull it BY DIGEST, and no later step resolves the floating tag again" python3 -I - "$here" <<'PY'
 import sys, yaml
