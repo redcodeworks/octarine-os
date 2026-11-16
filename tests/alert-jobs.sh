@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Checks the `alert` jobs that turn a failed scheduled build into ONE issue (ci-issue.sh, deduplicated on the label): the default build, the beta and
-# NVIDIA builds and the weekly prune. A cancelled run raises nothing and closes nothing. Run: tests/alert-jobs.sh
+# NVIDIA builds. A cancelled run raises nothing and closes nothing. Run: tests/alert-jobs.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 python3 -I - "$here" <<'PY'
 import sys, yaml
 h = sys.argv[1]
 labels = {}
-for f, main in (("build", "build_result"), ("build-beta", "sign"), ("build-nvidia", "sign"), ("prune-testing", "prune")):
+for f, main in (("build", "build_result"), ("build-beta", "sign"), ("build-nvidia", "sign")):
     w = yaml.safe_load(open("%s/.github/workflows/%s.yml" % (h, f)))
     a = w["jobs"]["alert"]
     assert a["permissions"] == {"contents": "read", "issues": "write"}, (f, a["permissions"])

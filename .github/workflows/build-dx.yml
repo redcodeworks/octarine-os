@@ -305,7 +305,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Only `<channel>` and `<channel>-<date>-<sha>` are pushed; the testing channel pushes `testing` and `testing-<sha>`
-      # (the tag the promotion search and the prune rule look for)
+      # (the tag the promotion search looks for)
       - name: Tags
         id: tags
         run: |

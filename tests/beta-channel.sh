@@ -72,33 +72,5 @@ check "workflow: beta builds get the beta- version prefix and assert it; the sta
   grep -q 'BETA=true .github/scripts/check-version-neutral.sh' '$wf'"
 check "signature policy covers the repository the beta tag lives in (any tag)" grep -q 'refs="ghcr.io/${org}/${base_name}' "$here/build_files/build.sh"
 
-# ---- prune rule for the beta channel
-prune=$here/.github/scripts/prune-testing.py
-pj() { # n versions with dated beta tags, ids 1..n, oldest first
-    python3 - "$1" "${2:-}" <<'PY'
-import json, sys
-n = int(sys.argv[1]); extra = sys.argv[2]
-vs = [{"id": i, "name": "sha256:" + format(i, "x") * 64, "created_at": f"2026-01-{i:02d}T00:00:00Z",
-       "metadata": {"container": {"tags": [f"beta-202601{i:02d}-{i}{i}{i}{i}{i}{i}{i}"]}}} for i in range(1, n + 1)]
-if extra == "beta-on-oldest":
-    vs[0]["metadata"]["container"]["tags"].append("beta")
-vs += [{"id": 90, "name": "sha256:" + "e" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["latest", "latest-20250101-aaaaaaa", "20250101"]}}},
-       {"id": 91, "name": "sha256:" + "f" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["testing-bbbbbbb", "testing"]}}},
-       {"id": 92, "name": "sha256:" + "d" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": ["20250101-aaaaaaa"]}}},
-       {"id": 93, "name": "sha256:" + "9" * 64, "created_at": "2025-01-01T00:00:00Z", "metadata": {"container": {"tags": [f"sha256-{'3' * 64}.sig"]}}}]
-print(json.dumps(vs))
-PY
-}
-beta_out=$(pj 5 | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune beta: keeps 3 of 5 (the 2 oldest are deleted)" bash -c "[ \$(grep -c 'DELETE image' <<<'$beta_out') = 2 ] && grep -q 'DELETE image id=1 ' <<<'$beta_out' && grep -q 'DELETE image id=2 ' <<<'$beta_out'"
-check "prune beta: latest, testing, dated stable tags and signatures of other images are untouched" bash -c "! grep -qE 'id=(90|91|92|93) ' <<<'$beta_out'"
-beta_out=$(pj 2 | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune beta: nothing deleted with 2 builds (keep 3)" grep -q 'Nothing to prune' <<<"$beta_out"
-beta_out=$(pj 5 beta-on-oldest | PRUNE_KIND=beta KEEP=3 DRY_RUN=true python3 -I "$prune" 2>&1)
-check "prune beta: a version holding the beta tag is kept however old" bash -c "! grep -q 'DELETE image id=1 ' <<<'$beta_out' && grep -q 'DELETE image id=2 ' <<<'$beta_out'"
-check "prune beta: dry run is the default" bash -c "pj() { :; }; echo '[]' | env -u DRY_RUN PRUNE_KIND=beta python3 -I '$prune' | grep -q 'Nothing to prune'"
-check "prune testing kind leaves beta versions alone" bash -c "! (python3 -c 'print(1)' >/dev/null; $(declare -f pj); pj 5 | PRUNE_KIND=testing KEEP=1 DRY_RUN=true python3 -I '$prune' | grep -E 'DELETE image id=[1-5] ')"
-check "prune workflow runs weekly and passes the beta kind with keep 3" bash -c "grep -q \"cron: '0 5 \* \* 0'\" '$here/.github/workflows/prune-testing.yml' && grep -q 'PRUNE_KIND=beta KEEP=3' '$here/.github/workflows/prune-testing.yml'"
-
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
