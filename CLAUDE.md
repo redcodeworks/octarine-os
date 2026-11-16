@@ -665,6 +665,12 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (the list is `is_docs` in `.github/scripts/docs-only.sh`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
   `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
   An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
+  Exception (2026-11-16): a push to `testing` is never skipped by its own diff (`plan-build.sh` gets `github.ref` as a fourth argument and prints
+  `true`): after a batch of back-to-back merges the last push was tests and notes only, the builds of the earlier pushes had been cancelled by the newer
+  pushes, and the tip had no image (the plan said `only docs changed`). With `build=true` the reuse step (`plan-vanilla-reuse.sh`) decides: it reuses a
+  signed image only when its default-image inputs equal the tip's (so a docs-only or dx-only tip still reuses), otherwise the build runs. The diff of one
+  push may confirm a reuse, never skip a build whose inputs have no image. Batch rule: merging several PRs into `testing` back to back leaves ONE build, on
+  the final tip, which covers all of them; check that `octarine-os:testing-<short sha>` of the tip exists afterwards.
   Required checks are `Build and push image`, `require-testing-branch` and `Sign and verify images`; do not
   rename them (a skipped `sign` job counts as passing).
 - **Promotion (build once, promote).** A merge into `main` retags the already tested and signed `testing`

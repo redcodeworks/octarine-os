@@ -67,8 +67,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: |
-          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
+          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}" "${REF}")
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
           echo "Build image: ${build}"
 
