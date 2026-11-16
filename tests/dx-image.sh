@@ -58,11 +58,18 @@ w = yaml.safe_load(open(sys.argv[1]))
 st = next(s for s in w["jobs"]["plan"]["steps"] if s.get("name", "").startswith("Check the commit belongs"))
 assert "[0-9a-f]{40}" in st["run"] and "git merge-base --is-ancestor" in st["run"] and 'git fetch --no-tags origin "${GITHUB_REF}"' in st["run"]
 PY
-check "workflow: channel, sha and dry_run are the inputs; the group build-dx-<channel> never cancels a running build and is the group the old workflow_run version used" python3 - "$wf" <<'PY'
+check "workflow: channel, sha and dry_run are the inputs; the testing group is per channel and cancels a superseded run, the latest group is per commit and never cancels" python3 - "$wf" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 assert w["env"] == {"CHANNEL": "${{ inputs.channel }}", "FORCE": "${{ inputs.force || false }}", "SHA": "${{ inputs.sha || github.sha }}", "DRY_RUN": "${{ inputs.dry_run || false }}"}, w["env"]
-assert w["concurrency"]["group"] == "build-dx-${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}" and w["concurrency"]["cancel-in-progress"] is False
+c = w["concurrency"]
+# invariants: the latest channel is grouped per commit and never cancelled; the testing channel shares one group (not per commit) and a newer run cancels the older
+assert "inputs.sha" in c["group"].split("||")[0] and "inputs.channel == 'latest'" in c["group"], c
+assert c["group"].rstrip().endswith("|| inputs.channel }}"), c
+assert c["cancel-in-progress"] == "${{ inputs.channel == 'testing' }}", c
+steps = w["jobs"]["dx_result"]["steps"] if "dx_result" in w["jobs"] else [s for j in w["jobs"].values() for s in j.get("steps", [])]
+post = next(s for s in steps if s.get("name", "").startswith("Post the result as a commit status"))
+assert "cancelled" in post["if"], post["if"]  # a superseded run must not post a failing status on its commit
 assert w["jobs"]["build"]["env"]["CHANNEL"] == "${{ needs.plan.outputs.channel }}"
 assert w["jobs"]["build"]["env"]["BASE_DIGEST"] == "${{ needs.plan.outputs.base_digest }}"
 assert w["jobs"]["build"]["env"]["BASE_TAG"] == "${{ needs.plan.outputs.base_tag }}"
@@ -127,7 +134,7 @@ j = w["jobs"]["dx_result"]
 assert j["name"] == "${{ inputs.dry_run && 'Build dx (dry run)' || ((inputs.sha || github.sha) == github.sha && 'Build dx and push image' || 'Build dx (older commit)') }}", j["name"]
 assert j["if"] == "always()" and j["needs"] == ["plan", "build", "promote", "sign"], j
 post = next(s for s in j["steps"] if "commit status" in s.get("name", ""))
-assert post["if"] == "always() && needs.plan.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run", post["if"]
+assert all(t in post["if"] for t in ("always()", "needs.plan.result != 'skipped'", "inputs.channel == 'testing'", "!inputs.dry_run")), post["if"]
 assert 'context="Build dx and push image"' in post["run"] and "statuses/${SHA}" in post["run"] and "workflow_run" not in post["run"]
 assert any(s.get("run") == ".github/scripts/aggregate-dx.sh" for s in j["steps"])
 PY
