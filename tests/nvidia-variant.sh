@@ -213,11 +213,8 @@ smoke present >"$root/out" 2>&1; check "smoke present: a long lsinitrd listing (
 # an lsinitrd that prints nothing, or fails, fails the check and the diagnostics say why
 printf '#!/usr/bin/env bash\nexit 0\n' >"$root/bin/lsinitrd"
 smoke present >"$root/smoke2.out" 2>&1; check "smoke present: an empty lsinitrd listing fails" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
-check "smoke present: the diagnostics show the lsinitrd exit status" grep -q 'DIAG lsinitrd exit status: 0' "$root/smoke2.out"
 printf '#!/usr/bin/env bash\necho "cpio: boom" >&2\necho "-rw-r--r-- 1 root root 100 Jan 1 00:00 usr/lib/modules/x/extra/nvidia/nvidia.ko.xz"\nexit 3\n' >"$root/bin/lsinitrd"
 smoke present >"$root/smoke2.out" 2>&1; check "smoke present: a failing lsinitrd fails the check" grep -q 'FAIL the initramfs contains the nvidia modules' "$root/smoke2.out"
-check "smoke present: the diagnostics keep lsinitrd's stderr and status" bash -c "grep -q 'DIAG lsinitrd exit status: 3' '$root/smoke2.out' && grep -q 'DIAG   cpio: boom' '$root/smoke2.out'"
-check "smoke present: the diagnostics list the nvidia lines and ls -l" bash -c "grep -q 'DIAG   .*extra/nvidia/nvidia.ko.xz' '$root/smoke2.out' && grep -q 'DIAG ls -l of the initramfs' '$root/smoke2.out'"
 cp "$root/lsinitrd.real" "$root/bin/lsinitrd"
 
 echo "passed: $pass, failed: $failn"

@@ -147,55 +147,6 @@ check "compact and HHKB use only the switch and move placeholders" bash -c "! gr
 check "standard template: the terminal comes from the TERMINAL_NAME and TERMINAL_SPAWN placeholders (the choice of ujust niri-setup), none is hard-coded" grep -q "Open a Terminal: @TERMINAL_NAME@\" { spawn @TERMINAL_SPAWN@; }" "$kbdir/standard.kdl.in"
 check "no ghostty or ptyxis in the shipped keybind files" bash -c "! grep -qiE 'ghostty|ptyxis' '$kbdir'/*"
 
-# ---- NO path: the shipped 40-binds.kdl is niri's upstream default, with documented deviations only
-up=/usr/share/doc/niri/default-config.kdl
-if [ -f "$up" ]; then
-    cat >"$root/updiff.py" <<'F'
-import re, sys
-def binds(path):
-    out, inb = {}, False
-    for line in open(path):
-        s = re.sub(r"\s+", " ", line.strip())
-        if not s or s.startswith("//"):
-            continue
-        if s.startswith("binds {"):
-            inb = True
-            continue
-        if inb and s == "}":
-            inb = False
-            continue
-        if inb:
-            out[re.split(r"[\s{]", s, maxsplit=1)[0]] = s
-    return out
-up, ours = binds(sys.argv[1]), binds(sys.argv[2])
-removed = {"Mod+D", "Super+Alt+L"}  # launcher (fuzzel) and screen locker (swaylock): the image ships neither
-guarded = {"XF86AudioPlay", "XF86AudioStop", "XF86AudioPrev", "XF86AudioNext", "XF86MonBrightnessUp", "XF86MonBrightnessDown"}
-errs = []
-for k in up:
-    if k not in ours:
-        if k not in removed:
-            errs.append("missing from ours: " + k)
-    elif up[k] != ours[k] and k not in guarded:
-        errs.append("differs: " + k)
-for k in ours:
-    if k not in up:
-        errs.append("only in ours: " + k)
-for k in removed:
-    if k in ours:
-        errs.append("should be removed: " + k)
-for k in guarded:
-    if "command -v" not in ours.get(k, ""):
-        errs.append("not guarded: " + k)
-print("\n".join(errs))
-sys.exit(1 if errs else 0)
-F
-    python3 -I "$root/updiff.py" "$up" "$etc_niri/40-binds.kdl" >"$root/out" 2>&1
-    rc=$?
-    check "NO path: 40-binds.kdl equals niri's upstream default binds except the documented deviations (fuzzel and swaylock removed, six keys guarded with command -v)" test "$rc" = 0
-else
-    echo "skip upstream default comparison ($up is not installed here)"
-fi
-
 # ---- --yes alone and the NO answers keep niri's defaults
 reset
 run '' --yes

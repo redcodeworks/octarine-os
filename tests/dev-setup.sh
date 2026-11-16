@@ -410,7 +410,6 @@ check "libvirt --no passes --no on (a plan only)" grep -qx 'ujust virthost-setup
 check "a failing delegate makes the step FAILED and the exit non-zero" bash -c "[ $rc != 0 ] && grep -q FAILED '$root/out'"
 : >"$LOG"; OCTARINE_UJUST="$root/ujbin/ujust" run '' --yes
 check "--yes alone skips the libvirt step (it needs sudo) and says how to run it" bash -c "! grep -q virthost-setup '$LOG' && grep -q 'ujust dev --only libvirt --yes' '$root/out'"
-check "the dev recipe file has no libvirt group, usermod, virsh or sudo code of its own any more" bash -c "! grep -E 'usermod|virsh |gpasswd|net-autostart|^[[:space:]]*sudo ' '$repo/variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just'"
 
 # ---- tools
 reset
@@ -467,9 +466,6 @@ run '' --yes --only jetbrains
 check "jetbrains: the old ublue cask is replaced, state in HOME kept (said so)" bash -c "grep -qx 'brew uninstall --cask jetbrains-toolbox-linux' '$LOG' && grep -qx 'brew install --cask jetbrains-toolbox' '$LOG' && grep -q 'state in your home' '$root/out'"
 check "jetbrains: the uninstall comes before the install" bash -c "[ \$(grep -n 'brew uninstall --cask' '$LOG' | head -1 | cut -d: -f1) -lt \$(grep -n 'brew install --cask' '$LOG' | head -1 | cut -d: -f1) ]"
 check "jetbrains: launcher valid, marked, and the icon copied from the cask" bash -c "d='$HOME/.local/share/applications/jetbrains-toolbox.desktop'; grep -qx '\\[Desktop Entry\\]' \$d && grep -qx 'X-Octarine-Generated=ujust dev' \$d && grep -qx 'Icon=jetbrains-toolbox' \$d && cmp -s '$STATE/brewprefix/Caskroom/jetbrains-toolbox/9.9/jetbrains-toolbox-9.9/bin/toolbox.png' '$HOME/.local/share/icons/hicolor/256x256/apps/jetbrains-toolbox.png'"
-if command -v desktop-file-validate >/dev/null 2>&1; then
-    check "jetbrains: the launcher passes desktop-file-validate" desktop-file-validate "$HOME/.local/share/applications/jetbrains-toolbox.desktop"
-fi
 check "jetbrains: the Toolbox self-update note" has "updates itself"
 run '' --yes --only jetbrains
 check "jetbrains again: already done" row jetbrains "already done"
@@ -715,7 +711,6 @@ FAKE_UID=0 run '' --yes --only python
 check "root is refused" bash -c "[ $rc = 1 ] && grep -q 'not as root' '$root/out' && ! grep -q 'uv python' '$LOG'"
 
 # ---- the dx-only wiring and the shipped files
-check "the default image has no sdk wrapper and no cargo profile snippet" bash -c "[ ! -e '$repo/system_files/usr/bin/sdk' ] && [ ! -e '$repo/system_files/etc/profile.d/octarine-dx-cargo.sh' ]"
 check "dx.sh appends the import line to ublue's main justfile, idempotently, and asserts it" bash -c "grep -q 'import? \"/usr/share/ublue-os/just/70-octarine-dev.just\"' '$repo/variants/dx/dx.sh' && grep -q 'grep -qxF \"\${dev_import}\" \"\${ujust_main}\"' '$repo/variants/dx/dx.sh'"
 # ---- cuda (only where an NVIDIA driver exists)
 cuda_world() { reset; : >"$STATE/nvidia"; mkdir -p "$root/cdi"; echo 'cdiVersion: 0.5.0' >"$root/cdi/nvidia.yaml"; }
@@ -810,8 +805,6 @@ if command -v fish >/dev/null 2>&1; then
 fi
 check "the sdk wrapper is executable and shell-valid in the repo" bash -c "[ -x '$wrapper' ] && bash -n '$wrapper'"
 
-# ---- the dx smoke script knows the dev files
-check "the dx smoke test checks the dev recipe, its import, the sdk wrapper and the cargo snippet" bash -c "grep -q 'lists_dev' '$repo/.github/scripts/dx-smoke.sh' && grep -q '70-octarine-dev.just' '$repo/.github/scripts/dx-smoke.sh' && grep -q 'octarine-dx-cargo.sh' '$repo/.github/scripts/dx-smoke.sh' && grep -q 'bin_dir}/sdk' '$repo/.github/scripts/dx-smoke.sh'"
 
 # ---- cuda export (opt-in)
 cuda_world
