@@ -1,6 +1,6 @@
 name: Prebuilt binaries
 # Builds ghcr.io/redcodeworks/octarine-os-binaries from the components of binaries/ (binaries/components.tsv: scx and extest, required;
-# more may be optional) and hands its digest to the image build. Called by build.yml and build-beta.yml before their image build (the dx
+# more may be optional) and hands its digest to the image build. Called by build.yml before its image build (the dx
 # and NVIDIA variants inherit the binaries from the default image); it can also be dispatched by hand to validate a change on a branch.
 #
 # One build job per component (binaries-component.yml, a matrix over components.tsv): each has its own content key (binaries-key.sh), its

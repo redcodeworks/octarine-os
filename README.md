@@ -14,7 +14,6 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 |---|---|---|
 | default | [![default, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Amain) | [![default, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build.yml?query=branch%3Atesting) |
 | dx | [![dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Amain) | [![dx, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx.yml?query=branch%3Atesting) |
-| beta | [![beta, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-beta.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | weekly, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | weekly, main only |
 | binaries | [![binaries, main](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Amain) | [![binaries, testing](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml/badge.svg?branch=testing)](https://github.com/redcodeworks/octarine-os/actions/workflows/binaries.yml?query=branch%3Atesting) |
@@ -78,9 +77,6 @@ Added by this image:
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 
-The default and dx images also have a `beta` tag (for example `octarine-os:beta`): a weekly build on Universal Blue's beta base
-that shows early what the next Fedora release would break. It is not tested for daily use. The NVIDIA images have only `latest`.
-
 ## Install
 
 1. Install Fedora Silverblue (the current release, 45).
@@ -127,7 +123,7 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust gaming-setup` | Checklist for gaming: Steam, ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, extest, launchers and GameMode tuning |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
-| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia, nvidia-dx) or channel (latest, beta, testing); `--list` shows what exists |
+| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, nvidia, nvidia-dx) or channel (latest, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust toggle-motd` | Turns the message of the day (a fastfetch summary, or a tip when fastfetch is not installed) on or off for every shell; `toggle-user-motd` is the same switch |

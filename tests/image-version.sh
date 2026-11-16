@@ -19,9 +19,6 @@ ok "stable IMAGE_VERSION" bash -c "$(declare -f iv); iv 20261108-b8a6aba | '${d}
 ok "quoted IMAGE_VERSION" bash -c "$(declare -f iv); iv '\"20261108-b8a6aba\"' | '${d}/check-version-neutral.sh'"
 no "latest in IMAGE_VERSION" bash -c "$(declare -f iv); iv latest-20261108-b8a6aba | '${d}/check-version-neutral.sh'"
 no "testing in IMAGE_VERSION" bash -c "$(declare -f iv); iv testing-20261108-b8a6aba | '${d}/check-version-neutral.sh'"
-no "beta in a stable IMAGE_VERSION" bash -c "$(declare -f iv); iv beta-20261108-b8a6aba | '${d}/check-version-neutral.sh'"
-ok "beta-prefixed IMAGE_VERSION on a beta build" bash -c "$(declare -f iv); iv beta-20261108-b8a6aba | BETA=true '${d}/check-version-neutral.sh'"
-no "unprefixed IMAGE_VERSION on a beta build" bash -c "$(declare -f iv); iv 20261108-b8a6aba | BETA=true '${d}/check-version-neutral.sh'"
 no "missing IMAGE_VERSION" bash -c "echo org.opencontainers.image.version=20261108-b8a6aba | '${d}/check-version-neutral.sh'"
 # set_os_release_field of build.sh and the variant scripts: replace, append (also after a missing final newline), keep the file sourceable
 root=$(mktemp -d); trap 'rm -rf "${root}"' EXIT
@@ -31,7 +28,7 @@ for s in build_files/build.sh variants/nvidia/nvidia.sh variants/dx/dx.sh; do
     [[ -s "${root}/fn.sh" ]] || { echo "FAIL ${s}: no set_os_release_field"; fail=1; continue; }
     f="${root}/os-release"
     printf 'NAME="Fedora Linux"\nID=fedora\nVERSION_ID=45\nPRETTY_NAME="octarineOS"\nIMAGE_ID="old"' >"${f}"   # no final newline
-    run() { OS_RELEASE_FILE="${f}" bash -c ". '${root}/fn.sh'; set -e; set_os_release_field IMAGE_ID octarine-os-dx; set_os_release_field IMAGE_VERSION beta-20261110-abc1234; set_os_release_field IMAGE_VERSION 20261110-abc1234"; }
+    run() { OS_RELEASE_FILE="${f}" bash -c ". '${root}/fn.sh'; set -e; set_os_release_field IMAGE_ID octarine-os-dx; set_os_release_field IMAGE_VERSION 20261109-aaaaaaa; set_os_release_field IMAGE_VERSION 20261110-abc1234"; }
     ok "${s}: sets both fields" run
     ok "${s}: replaces instead of duplicating" bash -c "[ \$(grep -c '^IMAGE_ID=' '${f}') = 1 ] && [ \$(grep -c '^IMAGE_VERSION=' '${f}') = 1 ] && grep -qx 'IMAGE_ID=\"octarine-os-dx\"' '${f}' && grep -qx 'IMAGE_VERSION=\"20261110-abc1234\"' '${f}'"
     ok "${s}: other fields untouched and the file sources" bash -c "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${f}' && grep -qx 'ID=fedora' '${f}' && grep -qx 'VERSION_ID=45' '${f}' && ( . '${f}'; [ \"\${IMAGE_ID}\" = octarine-os-dx ] && [ \"\${NAME}\" = 'Fedora Linux' ] )"

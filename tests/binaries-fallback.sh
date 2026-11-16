@@ -192,9 +192,6 @@ assert j["permissions"]["issues"] == "write"
 t = open(f"{root}/.github/workflows/build.yml").read()
 for needle in ("FALLBACK: using binaries image", "BINARIES_FALLBACK_TREE=", "org.octarineos.binaries-fallback", "LATEST_FALLBACK=", "needs.binaries.outputs.degraded"):
     assert needle in t, needle
-b = yaml.safe_load(open(f"{root}/.github/workflows/build-beta.yml"))
-assert "with" not in b["jobs"]["binaries"], "the beta build passes no allow_fallback (an optional component still degrades)"
-assert b["jobs"]["binaries"]["permissions"]["issues"] == "write"
 PY
 check "Justfile and Containerfile: degraded binaries label the image with org.octarineos.binaries-fallback=true plus the assembled key; the installer reads COMPONENTS, no build argument carries the fallback any more" bash -c "grep -q 'org.octarineos.binaries-fallback=true' '$here/Justfile' && grep -q 'org.octarineos.binaries-tree=' '$here/Justfile' && ! grep -q 'BINARIES_FALLBACK_CREATED' '$here/Justfile' '$here/Containerfile' '$here/build_files/install-binaries.sh'"
 

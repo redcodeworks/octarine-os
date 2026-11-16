@@ -27,10 +27,10 @@ check "config/chunkah.env: the pin is the digest of quay.io/coreos/chunkah, tag 
 check "Justfile: rechunk runs chunkah through the digest-pinned reference of chunkah-ref.sh (never a floating tag) and does not use the old rechunkers" bash -c "
   j='$here/Justfile'; grep -q '^rechunk ' \"\$j\" && ! grep -q 'ostree-rechunk\|build-chunked-oci' \"\$j\" &&
   grep -q 'chunkah-ref.sh' \"\$j\" && ! grep -q 'chunkah:latest@' \"\$j\""
-check "every image workflow (default, beta, dx, nvidia-dx) rechunks with 'just rechunk' after cosign is set up; none calls ostree-rechunk; the NVIDIA variant stays a layer without rechunk" python3 -I - "$here" <<'PY'
+check "every image workflow (default, dx, nvidia-dx) rechunks with 'just rechunk' after cosign is set up; none calls ostree-rechunk; the NVIDIA variant stays a layer without rechunk" python3 -I - "$here" <<'PY'
 import sys, yaml
 root = sys.argv[1]
-for f in ("build", "build-beta", "build-dx", "build-nvidia-dx"):
+for f in ("build", "build-dx", "build-nvidia-dx"):
     t = open(f"{root}/.github/workflows/{f}.yml").read()
     assert "ostree-rechunk" not in t and "rpm-ostree compose build-chunked-oci" not in t, f
     w = yaml.safe_load(t)

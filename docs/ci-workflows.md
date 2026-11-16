@@ -3,8 +3,8 @@
 Everything that builds, tests, signs and publishes the images runs from here.
 
 - `workflows/` has the GitHub Actions workflows. `test.yml` runs the tests on every branch; `build.yml` builds the default
-  image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml` and `build-beta.yml`
-  build the variants and the beta channel; `binaries.yml` builds the prebuilt programs; `publish-latest.yml` moves the
+  image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml`
+  build the variants; `binaries.yml` builds the prebuilt programs; `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens the weekly pull requests that move pinned versions; the rest are maintenance (disk
   images, cleanup of old test images, a rollback, a workflow security audit, a monthly check against Fedora's own base image).
 - `scripts/` has the shell and Python helpers the workflows call (planning which builds are needed, registry and signature

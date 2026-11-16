@@ -114,8 +114,8 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
     # CI resolves the floating base to a digest once and verifies its signature (base-pin.sh): the build is FROM that digest
     if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
-    # os-release IMAGE_VERSION: the build's version, `beta-` prefixed when the beta workflow sets IMAGE_VERSION_PREFIX
-    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=${IMAGE_VERSION_PREFIX:-}$(.github/scripts/image-version.sh)")
+    # os-release IMAGE_VERSION: the build's version
+    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=$(.github/scripts/image-version.sh)")
     LABELS=()
     # Trace the image to its base (CI exports BASE_DIGEST after pulling the base)
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi

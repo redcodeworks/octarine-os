@@ -84,10 +84,10 @@ check "workflow: both smoke tests run on the built image (dx checks with the nvi
   [ \$a -lt \$b ] && [ \$b -lt \$r ]"
 check "workflow: size guard, rechunk, neutral-version check, one push (push-tags.sh), the NVIDIA variant's tags" bash -c "
   grep -q 'MAX_IMAGE_GIB: 15' '$wf' && grep -q 'just rechunk octarine-os-nvidia-dx \"\${CHANNEL}\"' '$wf'
-  grep -q 'BETA=false .github/scripts/check-version-neutral.sh' '$wf'
+  grep -q 'check-version-neutral.sh' '$wf'
   [ \$(grep -c 'push-tags.sh' '$wf') = 1 ] && ! grep -q 'podman push' '$wf'
   grep -q 'alias_tags=\"latest-\${sha} latest-\${date}-\${sha} \${date}-\${sha} \${date} latest latest-\${date}\"' '$wf'
-  ! grep -qE 'testing|beta' <(grep -v '^ *#' '$wf')"
+  ! grep -q 'testing' <(grep -v '^ *#' '$wf')"
 check "workflow: it signs every pushed digest with the repository key and verifies every tag" bash -c "
   grep -q 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wf'
   grep -q 'SIGNING_SECRET' '$wf' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${tag}\"' '$wf'"

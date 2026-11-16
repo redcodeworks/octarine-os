@@ -13,11 +13,11 @@ check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "
 # the critical list of build.sh: the words of the first `dnf5 install -y` after the CRITICAL comment
 crit_build=$(awk '/^# CRITICAL/{f=1} f&&/^dnf5 install -y/{g=1;next} g{print} g&&!/\\$/{exit}' "$here/build_files/build.sh" | sed 's/\\//' | tr -s ' \t' '\n' | sed '/^$/d' | sort | tr '\n' ' ')
 crit_wf=$(grep -m1 '^ *CRITICAL="' "$here/.github/scripts/default-smoke.sh" | sed 's/^ *CRITICAL="//; s/"$//' | tr ' ' '\n' | sort | tr '\n' ' ')
-check "the CRITICAL list of default-smoke.sh (both workflows run it) equals the critical tier of build.sh" bash -c "[ -n '$crit_build' ] && [ '$crit_build' = '$crit_wf' ]"
+check "the CRITICAL list of default-smoke.sh (build.yml runs it) equals the critical tier of build.sh" bash -c "[ -n '$crit_build' ] && [ '$crit_build' = '$crit_wf' ]"
 check "gcc, gcc-c++, make and binutils are in the critical tier" bash -c "for p in gcc gcc-c++ make binutils; do grep -qw -- \$p <<<'$crit_build' || exit 1; done"
 check "the compilers are not in an optional group of build.sh" bash -c "! grep -E '^    \"[a-z]+:.*\\b(gcc|gcc-c\\+\\+|make|binutils)\\b' '$here/build_files/build.sh'"
 check "no test or script still says the default image has no compilers" bash -c "! grep -rIiE 'no compilers|carries no compilers|has none \\(neither' '$here/README.md' '$here/CLAUDE.md' '$here/docs/CONFIG-GUIDE.md' '$here/build_files' '$here/system_files/usr/share/ublue-os/distrobox'"
-for w in build build-beta; do
+for w in build; do
     check "$w.yml runs the compiler smoke test on the built image" python3 -I - "$here/.github/workflows/$w.yml" <<'PY'
 import sys, yaml
 wf = yaml.safe_load(open(sys.argv[1]))
