@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the Containerfile wiring, the
-# lookup of the hash-tagged image (.github/scripts/binaries-lookup.sh: published and signed, missing, bad signature), the gate of
-# the image build (latest-ref.sh), the layout check of a built image (binaries-layout.sh), the installer
-# (build_files/install-binaries.sh).
+# Tests for the consumption side of the prebuilt binaries (built from binaries/ in this repository): the gate of
+# the image build (latest-ref.sh), the layout check of a built image (binaries-layout.sh), and the installer
+# (build_files/install-binaries.sh) fed by the real assembler (binaries/lib/assemble.sh).
 # Needs: bash, git, python3 with PyYAML, awk. Run: tests/binary-images.sh
 set -uo pipefail
 export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-source "$here/tests/lib/components.sh"
 keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
@@ -46,17 +44,6 @@ IMG=ghcr.io/redcodeworks/octarine-binaries
 H40=$(printf 'a%.0s' {1..40})
 dg() { printf 'manifest of docker://%s:%s' "$1" "$2" | sha256sum | sed 's/ .*//'; }
 echo key >"$root/cosign.pub"
-
-# ---- binaries-lookup.sh: the hash tag exists and is signed, or not
-look() { : >"$LOG"; : >"$root/gho"; env "$@" PATH="$bin:$PATH" COSIGN_KEY_FILE="$root/cosign.pub" GITHUB_OUTPUT="$root/gho" bash "$here/.github/scripts/binaries-lookup.sh" "$IMG" "$H40" >"$root/run" 2>&1; rc=$?; }
-look X=1
-check "lookup: published and signed: usable=true with the digest of the tag, signature verified with the repo key" bash -c "[ $rc = 0 ] && grep -qx 'usable=true' '$root/gho' && grep -qx 'digest=sha256:$(dg $IMG $H40)' '$root/gho' && grep -q 'unchanged, nothing to build' '$root/run' && grep -qF 'cosign verify --key $root/cosign.pub $IMG@sha256:$(dg $IMG $H40)' '$LOG'"
-look SKOPEO_FAIL=1
-check "lookup: tag missing: usable=false (reason missing), exit 0, no cosign call" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=missing' '$root/gho' && ! grep -q cosign '$LOG'"
-look SKOPEO_READ=1
-check "lookup: a registry that cannot be read is reason=unreadable (a warning that says so), never 'missing'; exit 0, no cosign call, the leg builds" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=unreadable' '$root/gho' && ! grep -qx 'reason=missing' '$root/gho' && ! grep -q cosign '$LOG' && grep -q 'registry read error' '$root/run'"
-look COSIGN_RC=1
-check "lookup: the tag exists but the signature does not verify: usable=false (reason badsignature), a warning, rebuild" bash -c "[ $rc = 0 ] && grep -qx 'usable=false' '$root/gho' && grep -qx 'reason=badsignature' '$root/gho' && grep -q '::warning::' '$root/run'"
 
 # ---- latest-ref.sh: the gate of the image build (octarine-binaries and dev-packages float at latest)
 use() { : >"$LOG"; : >"$root/genv"; env "$@" PATH="$bin:$PATH" GITHUB_ENV="$root/genv" bash "$here/.github/scripts/latest-ref.sh" "$IMG" "$root/cosign.pub" BINARIES_IMAGE >"$root/run" 2>&1; rc=$?; }
@@ -102,7 +89,8 @@ mk_images() { # dir
     for i in scx extest; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
     mkdir -p "$1/ghostty/root/usr/bin" "$1/ghostty/LICENSES"; printf '#!/bin/sh\n' >"$1/ghostty/root/usr/bin/ghostty"; chmod +x "$1/ghostty/root/usr/bin/ghostty"
     echo usr/bin/ghostty >"$1/ghostty/FILES"; echo MIT >"$1/ghostty/LICENSES/ghostty-LICENSE"; echo src >"$1/ghostty/SOURCE"; echo build >"$1/ghostty/BUILDINFO"
-    write_components "$1" scx extest ghostty
+    # the REAL writer of COMPONENTS and the combined LICENSES/SOURCE/BUILDINFO (the assemble stage of binaries/Containerfile) into the real reader below (install-binaries.sh)
+    bash "$here/binaries/lib/assemble.sh" "$1" "$here/binaries/components.tsv" >/dev/null
 }
 imgs="$root/imgs"; dest="$root/dest"
 inst() { rm -rf "$dest"; (BINARIES_ROOT="$imgs" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") >"$root/run" 2>&1; rc=$?; }

@@ -8,7 +8,6 @@ rules:
   self-repository:
     ignore:
       - action.yml
-      - binaries-component.yml
       - binaries.yml
       - build-dx.yml
       - build-nvidia-dx.yml
