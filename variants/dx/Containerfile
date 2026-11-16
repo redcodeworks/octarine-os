@@ -17,13 +17,16 @@ ARG BASE_DIGEST=
 # the format and the signature on every build.
 ARG DEV_PACKAGES_TAG=latest-20261109-0969783
 ARG DEV_PACKAGES_DIGEST=sha256:011daff3e22d1155890ce9e8612a21a6a1223574e390ae1794e6c04c3433d640
-FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
 
 # The container images of the opt-in datastore Quadlets: a tiny signed FROM scratch image (/images.txt, one `<name> <image>:<tag>@sha256:<digest>`
 # line per image, edited BY HAND in the fedora-toolbox repository, datastore-images/images.txt), pinned by DIGEST like the list above. The tag is for
 # humans. Bump both with `just datastore-images-bump [tag]` (or the weekly bump pull request); CI checks the format and the signature on every build.
 ARG DATASTORE_IMAGES_TAG=latest-20261115-2ae8e11
 ARG DATASTORE_IMAGES_DIGEST=sha256:0b107dc33efd5bacb321048e214ac030c3bcd8e58de6204c7442b8b4eeb115e0
+
+FROM ghcr.io/redcodeworks/dev-packages@${DEV_PACKAGES_DIGEST} AS devpkgs
+
+# (both list-image ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
 FROM ghcr.io/redcodeworks/datastore-images@${DATASTORE_IMAGES_DIGEST} AS datastoreimgs
 
 FROM scratch AS ctx
