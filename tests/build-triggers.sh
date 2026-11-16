@@ -27,6 +27,15 @@ c = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))["concurre
 assert "github.ref" in c["group"] and "github.workflow" in c["group"], c
 assert "refs/heads/main" in str(c["cancel-in-progress"]), c
 PY
+check "build.yml: the debounce wait is the first step of plan and only for pushes to testing (never main, the schedule or a dispatch)" python3 - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/build.yml"))
+first = w["jobs"]["plan"]["steps"][0]
+assert "sleep" in first["run"] and "uses" not in first, first
+cond = first["if"]
+assert "'push'" in cond and "refs/heads/testing" in cond and "main" not in cond and "schedule" not in cond and "dispatch" not in cond, cond
+assert w["concurrency"]["cancel-in-progress"], "a newer testing push must be able to cancel the waiting run"
+PY
 check "build.yml: only main and testing publish (channel step); a dispatch from any other ref is validation only" bash -s -- "$here" "$root" <<'SH'
 python3 - "$1" "$2" <<'PY'
 import sys, yaml

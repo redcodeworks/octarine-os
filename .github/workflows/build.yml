@@ -55,6 +55,13 @@ jobs:
       image: ${{ steps.names.outputs.image }}
       brew_pin_changed: ${{ steps.brewpin.outputs.changed }}
     steps:
+      # Debounce: merges that land seconds apart start one run each; the newer push cancels the older run (concurrency group of this workflow and
+      # ref) while it is still waiting here, so only the last push of a burst plans and builds. Testing pushes only: promotions on main, the
+      # schedule and dispatches never wait.
+      - name: Wait for further merges (testing pushes only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/testing'
+        run: sleep 90
+
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -67,8 +74,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: |
-          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}")
+          build=$(.github/scripts/plan-build.sh "${EVENT}" "${BEFORE}" "${AFTER}" "${REF}")
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
           echo "Build image: ${build}"
 
