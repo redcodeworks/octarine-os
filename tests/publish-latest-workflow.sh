@@ -40,7 +40,7 @@ import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
 g = w["concurrency"]["group"]
 assert "format('latest-{0}', inputs.sha || github.sha)" in g and "inputs.channel" in g, g
-assert w["concurrency"]["cancel-in-progress"] is False
+assert w["concurrency"]["cancel-in-progress"] == "${{ inputs.channel == 'testing' }}"  # cancels only the testing channel: latest (and any other value) never cancels
 plan = next(s for s in w["jobs"]["plan"]["steps"] if s.get("id") == "plan")
 assert plan["env"]["BASE_DIGEST_PIN"] == "${{ inputs.channel == 'latest' && inputs.base_digest || '' }}"
 PY
