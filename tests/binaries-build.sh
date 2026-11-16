@@ -158,12 +158,12 @@ asm="${tmp}/asm"
 mkdir -p "${asm}/scx/LICENSES" "${asm}/extest/LICENSES"
 echo gpl > "${asm}/scx/LICENSES/scx-LICENSE"; echo mit > "${asm}/extest/LICENSES/extest-LICENSE"
 for c in scx extest; do echo "src ${c}" > "${asm}/${c}/SOURCE"; echo "build ${c}" > "${asm}/${c}/BUILDINFO"; done
-printf 'scx\trequired\t%s\tbuilt\t\tsha256:%s\nextest\trequired\t%s\treused\t\tsha256:%s\n' "$(sha a)" "$(printf 'a%.0s' {1..64})" "$(sha b)" "$(printf 'b%.0s' {1..64})" > "${asm}/COMPONENTS"
+printf 'scx\t%s\tbuilt\t\tsha256:%s\nextest\t%s\treused\t\tsha256:%s\n' "$(sha a)" "$(printf 'a%.0s' {1..64})" "$(sha b)" "$(printf 'b%.0s' {1..64})" > "${asm}/COMPONENTS"
 "${src}/binaries/lib/assemble.sh" "${asm}" > "${tmp}/asm.log" 2>&1 && ok "assemble: runs" || bad "assemble: $(cat "${tmp}/asm.log")"
 [[ -s "${asm}/LICENSES/scx-LICENSE" && -s "${asm}/LICENSES/extest-LICENSE" ]] && ok "assemble: /LICENSES is the union of the license directories" || bad "assemble licenses"
 [[ "$(cat "${asm}/SOURCE")" == "$(printf '[scx]\nsrc scx\n\n[extest]\nsrc extest\n')" && -s "${asm}/BUILDINFO" ]] && ok "assemble: /SOURCE and /BUILDINFO are the components' files under [name] headings" || bad "assemble SOURCE: $(cat "${asm}/SOURCE")"
 [[ -s "${asm}/scx/SOURCE" && -s "${asm}/extest/BUILDINFO" && -s "${asm}/COMPONENTS" ]] && ok "assemble: the component directories and COMPONENTS stay as they are" || bad "assemble components"
-# an optional component that is not in COMPONENTS is simply not there; one with a directory but no entry is refused
+# a directory with no COMPONENTS entry is refused
 mkdir -p "${asm}/extra"; "${src}/binaries/lib/assemble.sh" "${asm}" > /dev/null 2>&1 && bad "assemble: a directory not listed in COMPONENTS must fail" || ok "assemble: a directory that is not listed in COMPONENTS fails"
 rmdir "${asm}/extra"
 rm "${asm}/extest/SOURCE"; "${src}/binaries/lib/assemble.sh" "${asm}" > /dev/null 2>&1 && bad "assemble: a missing component file must fail" || ok "assemble: a missing component file fails"
