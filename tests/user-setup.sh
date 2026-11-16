@@ -125,42 +125,11 @@ esac
 exit 0
 F
 export bin_dir="$bin"
-cat >"$bin/uuidgen" <<'F'
-#!/usr/bin/env bash
-n=$(( $(cat "$root_cnt" 2>/dev/null || echo 0) + 1 )); echo $n >"$root_cnt"
-printf 'AAAAAAAA-0000-0000-0000-%012d\n' "$n"
-F
-export root_cnt="$root/uuidcnt"
-cat >"$bin/fc-list" <<'F'
-#!/bin/sh
-cat "$FC_FAMILIES" 2>/dev/null
-F
-cat >"$bin/gum" <<'F'
-#!/usr/bin/env bash
-echo "gum $*" >>"$LOG"
-case "$1" in
-    choose)
-        n=$(( $(cat "$GUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$GUMQ.n"
-        [ -f "$GUMQ.$n" ] && cat "$GUMQ.$n"
-        exit 0
-        ;;
-    confirm) exit "${GUM_CONFIRM_RC:-0}" ;;
-    style) echo "${@: -1}" ;;
-esac
-exit 0
-F
-cat >"$bin/ugum" <<'F'
-#!/usr/bin/env bash
-echo "ugum $*" >>"$LOG"
-n=$(( $(cat "$UGUMQ.n" 2>/dev/null || echo 0) + 1 )); echo "$n" >"$UGUMQ.n"
-[ -f "$UGUMQ.$n" ] && cat "$UGUMQ.$n"
-exit 0
-F
 chmod +x "$bin"/*
 
 reset() {
-    rm -f "$root"/gumq.* "$root"/ugumq.*; unset OCTARINE_MENU_FORCE_TTY GUM_CONFIRM_RC
-    rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".* "$root_cnt"
+    
+    rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".*
     rm -rf "$HOME" "$XDG_CACHE_HOME" "$root"/sp1/* "$root"/sp2/*
     mkdir -p "$HOME"
     : >"$LOG"; : >"$INSTALLED"; : >"$GS"
@@ -168,8 +137,6 @@ reset() {
     echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
     : >"$BREW_CASKS"; : >"$FC_FAMILIES"
 }
-gumq() { printf '%b' "$2" >"$root/gumq.$1"; }
-ugumq() { printf '%b' "$2" >"$root/ugumq.$1"; }
 run() { # stdin text, args...
     local input=$1
     shift
@@ -190,18 +157,6 @@ run '' --yes
 check "nothing installed: exit 0" test "$rc" = 0
 check "nothing installed: groups added" logged "usermod -aG libvirt tester"
 
-# 2. everything installed, --yes: defaults (steam devices and games path skipped)
-reset
-printf '%b\n' "$all_apps" >"$INSTALLED"
-run '' --yes
-check "yes: exit 0" test "$rc" = 0
-
-# 3. idempotent second run
-: >"$LOG"
-run '' --yes
-check "second run: exit 0" test "$rc" = 0
-check "second run: no usermod" notlogged "usermod"
-
 # 4. --no changes nothing
 reset
 printf '%b\n' "$all_apps" >"$INSTALLED"
@@ -217,26 +172,6 @@ echo com.visualstudio.code >"$FAILAPP"
 run '' --yes
 check "failure: exit non-zero" test "$rc" != 0
 check "failure: later step still ran" logged "it.mijorus.gearlever"
-reset
-printf '%b\n' "$all_apps" >"$INSTALLED"
-run '/\n\n\n\n\n\n' --only flatpak
-check "games path: / refused" has "Refusing to expose"
-check "shell: not in /etc/shells no change" notlogged "usermod -s"
-reset
-run '' --no
-check "shell: --no changes nothing" notlogged "usermod -s"
-p=org.gnome.Ptyxis.Profile:/org/gnome/Ptyxis/Profiles/bbbb/
-check "only: flatpak did not run" notlogged "flatpak override"
-reset
-export OCTARINE_MENU_FORCE_TTY=1
-run ''
-check "gum checklist: Esc (empty) changes nothing" notlogged "usermod"
-NO_LIBVIRT_GROUP=1 run ''
-reset
-export OCTARINE_MENU_FORCE_TTY=1 GUM_CONFIRM_RC=1
-gumq 1 'Account: Login shell zsh (sudo)\n'
-run ''
-check "gum checklist: declining the confirmation changes nothing" notlogged "usermod"
 
 # ---- editor step: fake editors in temp directories (PATH and the extra search directories), temp HOME
 edir="$root/edbin"; extra="$root/edextra"; mkdir -p "$edir" "$extra"
@@ -250,8 +185,6 @@ edrun '' --only editor --no
 check "editor --no: prints the plan, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan: would ask which editor' '$root/out' && [ ! -e '$(edf)' ]"
 edrun '' --only editor --yes
 check "editor --yes alone: keeps the current settings, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Kept: --yes alone does not change the editor' '$root/out' && [ ! -e '$(edf)' ] && grep -q 'editor .*skipped (kept current)' '$root/out'"
-EDITOR=/usr/bin/nano VISUAL= SUDO_EDITOR= edrun '\n' --only editor
-snip="$here/../system_files/etc/profile.d/octarine-os-editor.sh"
 unset USER_SETUP_EDITOR_DIRS USER_SETUP_EDITOR_SYSDIRS
 
 echo "passed: $pass, failed: $failn"

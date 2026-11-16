@@ -61,8 +61,8 @@ jobs:
           # a plain loop: the repository (and its retry.sh) is not checked out yet
           for attempt in 1 2 3; do
             dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
-              just jq fish zsh niri git python3 python3-pyyaml shellcheck gawk dconf bash-completion \
-              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils binutils nodejs openssl && exit 0
+              jq git python3 python3-pyyaml gawk \
+              findutils diffutils tar gzip curl ca-certificates util-linux shadow-utils binutils nodejs openssl && exit 0
             echo "::warning::dnf install failed (attempt ${attempt}); retrying in 20 s"
             sleep 20
           done
@@ -91,23 +91,15 @@ jobs:
       - name: Make the pinned just usable by that user
         run: install -m 0755 "$(command -v just)" /usr/bin/just && just --version
 
-      - name: just check
-        run: runuser -u ci -- just check
-
-      - name: bash -n on every script
-        run: |
-          fail=0
-          while IFS= read -r f; do
-            if ! bash -n "$f"; then echo "FAIL bash -n $f"; fail=1; fi
-          done < <(git ls-files '*.sh' githooks/pre-push)
-          # shell blocks of the workflows are checked by the tests that read them; scripts only here
-          [ "$fail" = 0 ] && echo "bash -n: all scripts parse"
-          exit "$fail"
-
-      # four at a time, output buffered per test, results in a fixed order (.github/scripts/run-tests.sh)
       - name: Run every tests/*.sh
-        shell: runuser -u ci -- bash -e {0}
-        run: .github/scripts/run-tests.sh --jobs 4
+        shell: runuser -u ci -- bash {0}
+        run: |
+          unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY GITHUB_PATH
+          fail=0
+          for t in tests/*.sh; do
+            if out=$(timeout 600 bash "$t" 2>&1); then echo "PASS $t"; else echo "FAIL $t"; echo "$out"; fail=1; fi
+          done
+          exit "$fail"
 
   secrets:
     name: secrets

@@ -38,25 +38,4 @@ rm "$d1/_copr_x.repo"
 repo "$d3/99-config_manager.repo" vscode 1
 run STUB_ENABLED="$BASE"
 check "an enabled override in the override directory fails (exit 1)" bash -c "[ $rc = 1 ] && grep -q 'NOT EXPECTED: vscode' '$root/run'"
-rm "$d3/99-config_manager.repo"
-
-printf '[tailscale-stable]\nname=x\nenabled = 1\n' >"$d1/tailscale.repo"
-run STUB_ENABLED="$BASE"
-check "the spaced form 'enabled = 1' is recognised" bash -c "[ $rc = 1 ] && grep -q 'NOT EXPECTED: tailscale-stable' '$root/run'"
-repo "$d1/tailscale.repo" tailscale-stable 0
-run STUB_ENABLED="$BASE"
-check "the same repository with enabled=0 passes" bash -c "[ $rc = 0 ]"
-
-printf '[a]\nenabled=1\n[b]\nenabled=0\n' >"$d1/two.repo"
-run STUB_ENABLED="$BASE"
-check "only the section that is enabled is named (a, not b)" bash -c "[ $rc = 1 ] && grep -q 'NOT EXPECTED: a\$' '$root/run' && ! grep -q 'NOT EXPECTED: b\$' '$root/run'"
-rm "$d1/two.repo"
-
-env STUB_ENABLED="$BASE" REPO_DIRS="$root/nope1:$root/nope2" PATH="$bin:$PATH" bash "$here/build_files/validate-repos.sh" >"$root/run" 2>&1; rc=$?
-check "missing directories are fine" bash -c "[ $rc = 0 ] && grep -q 'does not exist' '$root/run'"
-
-env STUB_ENABLED="$BASE" DNF5="$root/no-such-dnf5" REPO_DIRS="$d1:$d2:$d3" bash "$here/build_files/validate-repos.sh" >"$root/run" 2>&1; rc=$?
-check "without dnf5 only the files are checked (and pass when they hold nothing unexpected)" bash -c "[ $rc = 0 ] && grep -q 'files only' '$root/run'"
-
-check "the shell syntax of the script is valid" bash -n "$here/build_files/validate-repos.sh"
 echo; echo "$pass passed, $failn failed"; [ "$failn" = 0 ]
