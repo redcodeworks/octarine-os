@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the optional Ghostty component of the prebuilt binaries and its update path: the pins and the build recipe, the Zig fetch
 # (fetch-zig.sh with a stub curl, minisign and a fake tarball), the installer's handling of the component (installed, conflict, absent), the
-# version selection of the weekly check (ghostty-check.sh with stubbed gh and index.json data) and the bump pull requests (bump-ghostty.sh with a
-# local origin and a stub gh). No network. Needs: bash, git, jq, python3 with PyYAML, tar with xz. Run: tests/ghostty-component.sh
+# version selection of the weekly check (ghostty-check.sh with stubbed gh and index.json data) and the pin writer (bump-ghostty.sh). No network. Needs: bash, git, jq, python3 with PyYAML, tar with xz. Run: tests/ghostty-component.sh
 # shellcheck disable=SC2016,SC2034
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -332,51 +331,31 @@ out=$(chk)
 check "check: an unreadable index.json is unreachable" bash -c "[[ \"$out\" == unreachable* ]]"
 ! grep -qE 'gh (pr|repo|release) |--method|-X ' "$GH_LOG" && ok "check: only reads (gh api GET)" || bad "check wrote something"
 
-# ---- bump-ghostty.sh: a local origin and a stub gh
-origin="$root/origin.git"; git init -q --bare -b testing "$origin"
-wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty" "$wc/.github/scripts"
-cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$here/.github/scripts/bump-checks.sh" "$wc/.github/scripts/"
+# ---- bump-ghostty.sh: the pin writer (the commit and the pull request are bump-run.sh and bump-weekly.sh, tested in tests/bump-run.sh)
+wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty"
+cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"
 cp "$g/upstream.env" "$g/zig.env" "$wc/binaries/ghostty/"
-git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$origin"; git -C "$wc" push -q origin testing
-cat >"$bin/gh" <<'F'
-#!/usr/bin/env bash
-echo "gh $*" >>"$GH_LOG"
-case "$1 $2" in
-    "pr list") cat "${PR_LIST:-/dev/null}" ;;
-    "pr create"|"pr edit") exit 0 ;;
-    "workflow run") [ -z "${GH_WF_FAIL:-}" ] ;;
-    *) exit 99 ;;
-esac
-F
 Z2=https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz; Z3=https://ziglang.org/download/0.18.0/zig-x86_64-linux-0.18.0.tar.xz
-bump() { PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash "$wc/.github/scripts/bump-ghostty.sh" "$@" >"$root/run" 2>&1; rc=$?; }
-: >"$root/prlist"; : >"$GH_LOG"
+bump() { REPO_ROOT="$wc" bash "$here/.github/scripts/bump-ghostty.sh" "$@" >"$root/run" 2>&1; rc=$?; }
+cp "$wc/binaries/ghostty/upstream.env" "$root/up.orig"
 bump ghostty v1.5.0 "$(sha d)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}$' '$GH_LOG'"
-check "bump ghostty: upstream.env AND zig.env change in the same branch (tag, peeled commit, Zig version, URL, sha256, size, signature URL; the minisign key and the comments stay), nothing else" bash -c "
-  [ \"\$(git -C '$origin' diff --name-only testing bump/ghostty | sort | tr '\n' ' ')\" = 'binaries/ghostty/upstream.env binaries/ghostty/zig.env ' ] &&
-  z=\$(git -C '$origin' show bump/ghostty:binaries/ghostty/zig.env) && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
+check "bump ghostty: upstream.env AND zig.env change together (tag, peeled commit, Zig version, URL, sha256, size, signature URL; the minisign key and the comments stay)" bash -c "
+  [ $rc = 0 ] && z=\$(cat '$wc/binaries/ghostty/zig.env') && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
   grep -qx 'ZIG_SIGNATURE_URL=$Z3.minisig' <<<\"\$z\" && grep -qx 'ZIG_MINISIGN_KEY=$key' <<<\"\$z\" && grep -q '^# ' <<<\"\$z\" &&
-  u=\$(git -C '$origin' show bump/ghostty:binaries/ghostty/upstream.env) && grep -qx 'UPSTREAM_TAG=v1.5.0' <<<\"\$u\" && grep -qx 'UPSTREAM_COMMIT=$(sha d)' <<<\"\$u\""
-printf '{"number":4,"title":"Bump ghostty to v1.5.0 (Zig 0.18.0)"}\n' >"$root/prlist"; : >"$GH_LOG"
-bump ghostty v1.5.0 "$(sha d)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: a PR for exactly this version is already open: nothing happens" bash -c "[ $rc = 0 ] && ! grep -qE '^gh (pr (create|edit)|workflow run)' '$GH_LOG'"
-printf '{"number":4,"title":"Bump ghostty to v1.5.0 (Zig 0.18.0)"}\n' >"$root/prlist"; : >"$GH_LOG"
-bump ghostty v1.5.1 "$(sha f)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: an older bump PR is updated (edit, a new commit on the same branch, never a force-push), not duplicated" bash -c "[ $rc = 0 ] && grep -q '^gh pr edit 4 --title Bump ghostty to v1.5.1' '$GH_LOG' && [ \"\$(git -C '$origin' log --format=%s testing..bump/ghostty | wc -l)\" -ge 2 ] && ! git -C '$origin' log --format=%B bump/ghostty | grep -qi 'co-authored-by'"
-: >"$root/prlist"; : >"$GH_LOG"
+  u=\$(cat '$wc/binaries/ghostty/upstream.env') && grep -qx 'UPSTREAM_TAG=v1.5.0' <<<\"\$u\" && grep -qx 'UPSTREAM_COMMIT=$(sha d)' <<<\"\$u\""
+cp "$root/up.orig" "$wc/binaries/ghostty/upstream.env"; cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"
 bump zig 0.17.2 "$Z2" "$(printf 'd%.0s' {1..64})" 555
-check "bump zig: a SEPARATE low-priority PR from bump/zig that changes only zig.env (upstream.env is untouched) and says it is low priority" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/zig --title Bump the Ghostty Zig toolchain to 0.17.2' '$GH_LOG' && [ \"\$(git -C '$origin' diff --name-only testing bump/zig)\" = binaries/ghostty/zig.env ] && grep -q 'LOW PRIORITY' '$GH_LOG'"
-: >"$GH_LOG"; bump zig 0.17.2 "https://example.org/zig.tar.xz" "$(printf 'd%.0s' {1..64})" 555
-check "bump: Zig arguments that are not an official ziglang.org x86_64-linux entry are refused before anything is touched" bash -c "[ $rc = 2 ] && ! grep -q '^gh pr' '$GH_LOG'"
-: >"$GH_LOG"; bump other 1 2 3 4
+check "bump zig: only zig.env changes (upstream.env is untouched)" bash -c "[ $rc = 0 ] && cmp -s '$root/up.orig' '$wc/binaries/ghostty/upstream.env' && grep -qx 'ZIG_VERSION=0.17.2' '$wc/binaries/ghostty/zig.env'"
+cp "$g/zig.env" "$wc/binaries/ghostty/zig.env"; bump zig 0.17.2 "https://example.org/zig.tar.xz" "$(printf 'd%.0s' {1..64})" 555
+check "bump: Zig arguments that are not an official ziglang.org x86_64-linux entry are refused before anything is touched" bash -c "[ $rc = 2 ] && cmp -s '$g/zig.env' '$wc/binaries/ghostty/zig.env'"
+bump other 1 2 3 4
 check "bump: an unknown mode is refused" test "$rc" = 2
 
 # ---- the workflow and the documentation of the update path
 ghostty_in_bump_runner() { local r="$here/.github/scripts/bump-run.sh" w="$here/.github/workflows/bump-pins.yml"
-    grep -q 'ghostty-check.sh' "$r" && grep -q 'bump-ghostty.sh" ghostty' "$r" && grep -q 'bump-ghostty.sh" zig' "$r" && grep -q 'wait)' "$r" && grep -q 'pin: \[scx, extest, ghostty\]' "$w" && ! grep -q 'packages: write\|podman' "$w"; }
-check "bump-pins.yml: ghostty is one of the source pins (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump through bump-run.sh), a wait is not a failure, nothing is published" ghostty_in_bump_runner
-check "CLAUDE.md documents the update path: the Ghostty tag decides the Zig minor, a patch bump is separate and low priority, a missing Zig tarball opens nothing" bash -c "grep -q 'Ghostty tag decides the Zig minor' '$here/CLAUDE.md' && grep -q 'bump/zig' '$here/CLAUDE.md' && grep -q 'ghostty-check.sh' '$here/CLAUDE.md'"
+    grep -q 'ghostty-check.sh' "$r" && grep -q 'bump-ghostty.sh" ghostty' "$r" && grep -q 'bump-ghostty.sh" zig' "$r" && grep -q 'wait)' "$r" && grep -q 'scx extest ghostty' "$here/.github/scripts/bump-weekly.sh" && ! grep -q 'packages: write\|podman' "$w"; }
+check "bump-pins.yml: ghostty is one of the bumped pins (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump through bump-run.sh), a wait is not a failure, nothing is published" ghostty_in_bump_runner
+check "CLAUDE.md documents the update path: the Ghostty tag decides the Zig minor, a patch bump is separate and low priority, a missing Zig tarball opens nothing" bash -c "grep -q 'Ghostty tag decides the Zig minor' '$here/CLAUDE.md' && grep -q 'ghostty-check.sh' '$here/CLAUDE.md'"
 
 echo
 echo "passed: $pass, failed: $failn"

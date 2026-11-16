@@ -1,108 +1,109 @@
 #!/usr/bin/env bash
-# One weekly bump check of ONE pin: decide (decision scripts of its kind), and when something is newer open or update its pull request through
-# bump-pr.sh (branch bump/<name>, into testing). Writes the summary row of the pin to $BUMP_ROW_DIR/<pin>.tsv (pin, current, proposed, pr, status, note;
-# tab separated) whatever happens and exits non-zero when the pin's check FAILED (a registry that cannot be reached, a signature that does not verify,
-# a bad pin): nothing is changed then. Run from the repository root on a checkout of testing, with GH_TOKEN set for the PR step.
+# The weekly bump check of ONE pin: decide (the decision scripts of its kind) and, when something is newer, write the pin into the working tree and make ONE
+# commit for it (its message ends with the row of the pull request's table: pin | from | to | what changed upstream | days the new value has existed).
+# bump-weekly.sh runs every pin one after the other on one branch and opens the one pull request. Exits non-zero when the pin's check FAILED (a registry that
+# cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
+# Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
 #   bump-run.sh scx|extest|ghostty|dev-packages|chunkah|brew|builder
 #
-# Kinds: source pins (upstream-check.sh and ghostty-check.sh, written by bump-upstream.sh and bump-ghostty.sh), image digest pins (bump-pin.sh: the dev-packages list image of the fedora-toolbox repository, chunkah),
-# the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs on every write) and the Fedora builder
-# digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for MIN_AGE_DAYS, default 7: the creation date of the
-# image is the stand-in for "has not been replaced since", a registry has no tag history).
+# Kinds: source pins (upstream-check.sh and ghostty-check.sh; bump-ghostty.sh writes the Ghostty and Zig pins), image digest pins (bump-pin.sh: the dev-packages
+# list image of the fedora-toolbox repository, chunkah), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
+# on every write) and the Fedora builder digest of binaries/builder.env (the same major, the newest digest of the tag once it has been the tag's value for
+# MIN_AGE_DAYS, default 7: the creation date of the image is the stand-in for "has not been replaced since", a registry has no tag history).
 set -uo pipefail
 pin=${1:?pin name}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-rowdir=${BUMP_ROW_DIR:-${RUNNER_TEMP:-/tmp}}
-mkdir -p "${rowdir}"
-current="-" proposed="-" pr="-" status=ok note=""
+current="-" proposed="-" status="nothing to bump" files=()
+say() { echo "$*"; [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- $*" >> "${GITHUB_STEP_SUMMARY}" || true; }
 finish() {
     local rc=$?
-    [[ "${rc}" == 0 ]] || { status=failed; [[ -n "${note}" ]] || note="exit ${rc}, see the log"; }
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${pin}" "${current}" "${proposed}" "${pr}" "${status}" "${note}" > "${rowdir}/${pin}.tsv"
+    if [[ "${rc}" != 0 ]]; then git checkout -q -- . 2> /dev/null; say "\`${pin}\`: FAILED, ${status}"; else say "\`${pin}\`: ${status}"; fi
     exit "${rc}"
 }
 trap finish EXIT
-fail() { echo "::error::${pin}: $*"; note="$*"; exit 1; }
-prnum() { gh pr list --head "$1" --base testing --state open --json number --jq '.[0].number // empty' 2> /dev/null || true; }
-open_pr() { # branch title bodyfile message file... -- writer...
-    local branch=$1 title=$2 bodyfile=$3 message=$4; shift 4
-    local fa=() ; while [[ "$1" != -- ]]; do fa+=(--file "$1"); shift; done; shift
-    local out; out=$("${here}/bump-pr.sh" --branch "${branch}" --title "${title}" --body-file "${bodyfile}" --message "${message}" "${fa[@]}" -- "$@") || { echo "${out}"; fail "could not open or update the pull request"; }
-    echo "${out}"
-    pr=$(grep -m1 '^pr_number=' <<<"${out}" | cut -d= -f2); pr=${pr:-$(prnum "${branch}")}; pr="#${pr:-?}"
+fail() { echo "::error::${pin}: $*"; status="$*"; exit 1; }
+days() { # an ISO date -> whole days since then, or "unknown"
+    local t; [[ -n "${1:-}" ]] && t=$(date -u -d "$1" +%s 2> /dev/null) || { echo unknown; return; }
+    echo $(( ($(date -u +%s) - t) / 86400 ))
 }
-body_tail="Only the pin lines change. Not verified: nothing was built or booted by the check; the image build after the merge into \`testing\` is the first build with this pin. Bump pull requests are merged by the owner."
+commit_age() { days "$(gh api "repos/$1/commits/$2" --jq .commit.committer.date 2> /dev/null)"; }
+image_age() { days "$(skopeo inspect --override-os linux --override-arch amd64 --config "docker://$1" 2> /dev/null | jq -r '.created // empty' 2> /dev/null)"; }
+# commit_pin <subject> <what changed upstream: a link or an image> <days>: the pin was written; check that only its files changed, commit them
+commit_pin() {
+    local changed; changed=$(git diff --name-only)
+    [[ -n "${changed}" ]] || fail "the writer changed nothing for ${proposed}"
+    local f; for f in ${changed}; do printf '%s\n' "${files[@]}" | grep -qxF -- "${f}" || fail "the writer changed ${f}, which is not one of the pin files (${files[*]})"; done
+    git commit -q -a -m "$1
+
+${pin} | ${current} | ${proposed} | $2 | $3"
+    status="moved ${current} to ${proposed}"
+}
+git diff --quiet || fail "the working tree is not clean"
 
 case "${pin}" in
     scx | extest)
-        env_file="binaries/${pin}/upstream.env"
+        files=("binaries/${pin}/upstream.env")
         # shellcheck source=../../binaries/lib/upstream-env.sh
-        source binaries/lib/upstream-env.sh; upstream_env_load "${env_file}" || fail "invalid ${env_file}"
+        source binaries/lib/upstream-env.sh; upstream_env_load "${files[0]}" || fail "invalid ${files[0]}"
         current=${UPSTREAM_TAG:-${UPSTREAM_COMMIT:0:7}}
         decision=$("${here}/upstream-check.sh" "binaries/${pin}")
         echo "${pin}: ${decision}"
         read -r verb tag commit _ <<<"${decision}"
         case "${verb}" in
-            bump) proposed=${tag}; "${here}/bump-upstream.sh" "binaries/${pin}" "${tag}" "${commit}" || fail "bump-upstream.sh failed"; pr="#$(prnum "bump/${pin}")" ;;
-            forkbehind) proposed="${tag} (the fork is behind: gh repo sync first)"; note="fork behind upstream" ;;
+            bump)
+                proposed=${tag}; old=${UPSTREAM_TAG:-${UPSTREAM_COMMIT}}; upstream_env_set "${files[0]}" "${tag}" "${commit}" || fail "cannot write ${files[0]}"
+                commit_pin "Bump ${pin} to ${tag}" "https://github.com/${UPSTREAM_WATCH}/compare/${old}...${tag}" "$(commit_age "${UPSTREAM_WATCH}" "${commit}")" ;;
+            forkbehind) status="the fork is behind upstream (${tag}): run gh repo sync on it first" ;;
             unreachable) fail "${decision#unreachable }" ;;
-            *) note="${decision}" ; proposed="nothing to bump" ;;
+            *) status="nothing to bump: ${decision}" ;;
         esac ;;
     ghostty)
-        source binaries/lib/upstream-env.sh; upstream_env_load binaries/ghostty/upstream.env || fail "invalid upstream.env"
-        current="${UPSTREAM_TAG}, zig $(sed -n 's/^ZIG_VERSION=//p' binaries/ghostty/zig.env)"
+        files=(binaries/ghostty/upstream.env binaries/ghostty/zig.env)
+        source binaries/lib/upstream-env.sh; upstream_env_load "${files[0]}" || fail "invalid upstream.env"
+        current="${UPSTREAM_TAG}, zig $(sed -n 's/^ZIG_VERSION=//p' "${files[1]}")"
         decision=$("${here}/ghostty-check.sh")
         echo "ghostty: ${decision}"
         read -r verb a1 a2 a3 a4 a5 a6 <<<"${decision}"
         case "${verb}" in
-            bump) proposed="${a1}, zig ${a3}"; "${here}/bump-ghostty.sh" ghostty "${a1}" "${a2}" "${a3}" "${a4}" "${a5}" "${a6}" || fail "bump-ghostty.sh failed"; pr="#$(prnum bump/ghostty)" ;;
-            zigbump) proposed="zig ${a1} (low priority)"; "${here}/bump-ghostty.sh" zig "${a1}" "${a2}" "${a3}" "${a4}" || fail "bump-ghostty.sh failed"; pr="#$(prnum bump/zig)" ;;
-            wait) proposed="nothing to bump"; note="${decision#wait }" ;;
+            bump) # a new Ghostty tag brings the Zig minor it needs: one commit for both, they cannot be applied apart
+                proposed="${a1}, zig ${a3}"; "${here}/bump-ghostty.sh" ghostty "${a1}" "${a2}" "${a3}" "${a4}" "${a5}" "${a6}" || fail "bump-ghostty.sh failed"
+                commit_pin "Bump ghostty to ${a1} (Zig ${a3})" "https://github.com/${UPSTREAM_WATCH}/compare/${UPSTREAM_TAG}...${a1}" "$(commit_age "${UPSTREAM_WATCH}" "${a2}")" ;;
+            zigbump) # a newer patch of the pinned Zig minor, its own commit
+                proposed="${current%%,*}, zig ${a1}"; "${here}/bump-ghostty.sh" zig "${a1}" "${a2}" "${a3}" "${a4}" || fail "bump-ghostty.sh failed"
+                commit_pin "Bump the Ghostty Zig toolchain to ${a1}" "https://ziglang.org/download/${a1}/" "unknown" ;;
+            wait) status="nothing to bump yet: ${decision#wait }" ;;
             unreachable) fail "${decision#unreachable }" ;;
-            *) proposed="nothing to bump"; note="${decision}" ;;
+            *) status="nothing to bump: ${decision}" ;;
         esac ;;
     dev-packages | chunkah)
+        case "${pin}" in
+            dev-packages) files=(variants/dx/Containerfile); ref=ghcr.io/redcodeworks/dev-packages:latest; src="the dev-packages list image of the fedora-toolbox repository (${ref}), cosign signature verified" ;;
+            chunkah) files=(config/chunkah.env); ref=quay.io/coreos/chunkah:latest; src="${ref}, keyless cosign signature verified" ;;
+        esac
         go=$(mktemp)
-        script="${here}/bump-pin.sh"; branch="bump/${pin}-digest"
-        GITHUB_OUTPUT="${go}" "${script}" "${pin}"; rc=$?
+        GITHUB_OUTPUT="${go}" "${here}/bump-pin.sh" "${pin}"; rc=$?
         read_out() { sed -n "s/^$1=//p" "${go}" | tail -n1; }
-        result=$(read_out result); old=$(read_out previous); new=$(read_out digest); tag=$(read_out tag)
+        result=$(read_out result); old=$(read_out previous); new=$(read_out digest); tag=$(read_out tag); rm -f "${go}"
         current="${old:0:19}"; case "${rc}" in 0 | 10) ;; *) fail "the check failed (${result:-exit ${rc}})" ;; esac
-        if [[ "${result}" == equal ]]; then proposed="nothing to bump"; note="pin equals latest"
+        if [[ "${result}" == equal ]]; then status="nothing to bump: the pin equals latest"
         else
             proposed="${tag} ${new:0:19}"
-            mapfile -t changed < <(git diff --name-only); [[ "${#changed[@]}" -eq 1 ]] || fail "expected exactly one changed file, got: ${changed[*]:-none}"
-            file=${changed[0]}; cp "${file}" "${go}.pin"; git checkout -- "${file}"
-            bodyfile=$(mktemp)
-            {
-                case "${pin}" in
-                    chunkah) echo "Moves the chunkah pin (\`config/chunkah.env\`, the layer splitter \`just rechunk\` runs) from \`${old}\` to \`${new}\`: the digest of \`quay.io/coreos/chunkah:latest\`, whose keyless cosign signature (GitHub Actions identity of the coreos/chunkah repository) verified." ;;
-                    dev-packages) echo "Moves the dev-packages pin from \`${old}\` to \`${new}\` (tag \`${tag}\`): the digest of \`ghcr.io/redcodeworks/dev-packages:latest\`, whose cosign signature verified against \`keys/redcodeworks-toolbox-cosign.pub\`." ;;
-                esac
-                echo; echo "Only ${file} changes. ${body_tail}"
-            } > "${bodyfile}"
-            open_pr "${branch}" "Bump the ${pin} pin to latest (${tag})" "${bodyfile}" "Bump the ${pin} pin to its latest digest ${new}: it moves only through this reviewed change." "${file}" -- cp "${go}.pin" "${file}"
-            rm -f "${bodyfile}"
+            commit_pin "Bump the ${pin} pin to latest (${tag})" "${src}" "$(image_age "${ref}")"
         fi ;;
     brew)
         current=$(sed -n 's/^ARG BREW_TAG=//p' Containerfile)
         latest=$(skopeo list-tags docker://ghcr.io/ublue-os/brew 2> /dev/null | python3 -I -c 'import json,re,sys; print(sorted(t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"\d{8}", t))[-1])' 2> /dev/null) || latest=""
         [[ "${latest}" =~ ^[0-9]{8}$ ]] || fail "cannot list the tags of ghcr.io/ublue-os/brew"
-        if [[ "${latest}" == "${current}" || "${latest}" < "${current}" ]]; then proposed="nothing to bump"; note="the pinned ${current} is the newest (or newer than the newest) dated tag ${latest}"
+        if [[ "${latest}" == "${current}" || "${latest}" < "${current}" ]]; then status="nothing to bump: the pinned ${current} is the newest (or newer than the newest) dated tag ${latest}"
         else
+            files=(Containerfile); proposed=${latest}
             just brew-bump "${latest}" || fail "just brew-bump ${latest} failed (digest or signature; nothing changed)"
-            git diff --quiet -- Containerfile && fail "just brew-bump changed nothing for ${latest}"
-            git checkout -- Containerfile
-            proposed=${latest}
-            bodyfile=$(mktemp)
-            { echo "Moves the Homebrew files image pin (\`ARG BREW_TAG\` and \`ARG BREW_DIGEST\` in the Containerfile) from \`${current}\` to \`${latest}\`: the newest dated tag of \`ghcr.io/ublue-os/brew\`, its manifest digest from the registry, and its cosign signature verified against \`keys/ublue-os-brew-cosign.pub\` by the \`just brew-bump\` recipe (the manual path, reused as the pin writer)."; echo; echo "Only the two pin lines of the Containerfile change. ${body_tail}"; } > "${bodyfile}"
-            open_pr bump/brew "Bump the Homebrew files image to ${latest}" "${bodyfile}" "Bump the Homebrew files image pin to ${latest}: newest dated tag, signature verified with keys/ublue-os-brew-cosign.pub" Containerfile -- just brew-bump "${latest}"
-            rm -f "${bodyfile}"
+            commit_pin "Bump the Homebrew files image to ${latest}" "ghcr.io/ublue-os/brew:${latest}, cosign signature verified" "$(image_age "ghcr.io/ublue-os/brew:${latest}")"
         fi ;;
     builder)
-        # shellcheck disable=SC1091
-        cur=$(sed -n 's/^BUILDER=//p' binaries/builder.env)
+        files=(binaries/builder.env)
+        cur=$(sed -n 's/^BUILDER=//p' "${files[0]}")
         [[ "${cur}" =~ ^(registry\.fedoraproject\.org/fedora):([0-9]+)@(sha256:[0-9a-f]{64})$ ]] || fail "binaries/builder.env has no digest-pinned BUILDER"
         repo=${BASH_REMATCH[1]} major=${BASH_REMATCH[2]} curdigest=${BASH_REMATCH[3]}
         current="${major}@${curdigest:0:19}"
@@ -110,19 +111,16 @@ case "${pin}" in
         [[ -n "${manifest}" ]] || fail "cannot resolve ${repo}:${major}"
         new="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
         [[ "${new}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "cannot compute the digest of ${repo}:${major}"
-        if [[ "${new}" == "${curdigest}" ]]; then proposed="nothing to bump"; note="the pin is the current digest of ${major}"
+        if [[ "${new}" == "${curdigest}" ]]; then status="nothing to bump: the pin is the current digest of ${major}"
         else
             created=$(skopeo inspect --override-os linux --override-arch amd64 --config "docker://${repo}:${major}" 2> /dev/null | jq -r '.created // empty') || created=""
             [[ -n "${created}" ]] || fail "cannot read the creation date of ${repo}:${major}"
-            age=$(( ($(date -u +%s) - $(date -u -d "${created}" +%s)) / 86400 ))
-            min=${MIN_AGE_DAYS:-7}
-            if (( age < min )); then proposed="nothing to bump yet"; note="${new:0:19} was built ${age} days ago (${created}); a digest is proposed once it has been the tag's value for ${min} days"
+            age=$(days "${created}"); min=${MIN_AGE_DAYS:-7}
+            if [[ "${age}" -lt "${min}" ]]; then status="nothing to bump yet: ${new:0:19} was built ${age} days ago (${created}); a digest is proposed once it has been the tag's value for ${min} days"
             else
                 proposed="${major}@${new:0:19}"
-                bodyfile=$(mktemp)
-                { echo "Moves the builder image of the prebuilt binaries (\`binaries/builder.env\`) from \`${curdigest}\` to \`${new}\`: the current digest of \`${repo}:${major}\` (the same Fedora ${major}), built ${created}, ${age} days ago (the cooldown is ${min} days: the tag has not moved since)."; echo; echo "**This changes the content key of EVERY binaries component, so scx, extest and Ghostty rebuild once after the merge** (about 4.4 minutes, 1 minute and 11 minutes on a runner, in parallel)."; echo; echo "Only the BUILDER line changes. ${body_tail}"; } > "${bodyfile}"
-                open_pr bump/builder "Bump the Fedora ${major} builder digest (built ${created%%T*})" "${bodyfile}" "Bump the binaries builder to the current digest of fedora:${major} (${new:0:19})" binaries/builder.env -- sed -i "s|^BUILDER=.*|BUILDER=${repo}:${major}@${new}|" binaries/builder.env
-                rm -f "${bodyfile}"
+                sed -i "s|^BUILDER=.*|BUILDER=${repo}:${major}@${new}|" "${files[0]}"
+                commit_pin "Bump the Fedora ${major} builder digest (built ${created%%T*})" "${repo}:${major}" "${age}"
             fi
         fi ;;
     *) fail "unknown pin '${pin}'" ;;
