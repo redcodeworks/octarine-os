@@ -35,18 +35,17 @@ supersede() { # a comment for every other open weekly PR, which is closed with i
             gh pr close "${num}" --delete-branch --comment "$1" || echo "::warning::could not close #${num}"
         done
 }
-commits=$(git rev-list --reverse --no-merges "origin/${base}..HEAD")
-if [[ -z "${commits}" ]]; then
+# the pin commits: those whose message ends with a table row (anything else on the branch, as on a dry run from a feature branch, is not a pin)
+rows="" names="" list=""
+for c in $(git rev-list --reverse --no-merges "origin/${base}..HEAD"); do
+    row=$(git log -1 --format=%b "${c}" | sed -n 1p); [[ "${row}" == *" | "* ]] || continue
+    names+="${names:+, }${row%% |*}"; rows+="| ${row} |"$'\n'; list+="- ${c:0:7} $(git log -1 --format=%s "${c}")"$'\n'
+done
+if [[ -z "${rows}" ]]; then
     summary "Nothing moved: no branch, no pull request."
     [[ -n "${DRY_RUN:-}" || "${failed}" != 0 ]] || supersede "No pin is pending any more (testing has them all): closing this weekly bump pull request."
     exit "${failed}"
 fi
-
-rows="" names=""
-for c in ${commits}; do
-    row=$(git log -1 --format=%b "${c}" | sed -n 1p); names+="${names:+, }${row%% |*}"
-    rows+="| ${row} |"$'\n'
-done
 title="Weekly pin bumps $(date -u +%F): ${names}"
 body="One commit per pin that moved. To drop a pin, revert its commit (\`git revert <commit>\`) or edit the pin; the other pins stay.
 
@@ -59,7 +58,7 @@ Checks: this commit is tested by the \`Test\` workflow (dispatched on \`${base}\
 
 if [[ -n "${DRY_RUN:-}" ]]; then
     summary "Dry run, nothing pushed. Branch ${branch}, title: ${title}"
-    summary "Commits:"; summary "$(git log --reverse --no-merges --format='- %h %s' "origin/${base}..HEAD")"
+    summary "Commits:"; summary "${list}"
     summary "${body}"
     exit "${failed}"
 fi

@@ -134,6 +134,8 @@ fresh; weekly DRY_RUN=1 TAGS='"20261108","20261115"' MANIFEST=new CREATED="$old1
 check "weekly, dry run: prints the would-be title, branch, commits and table; nothing is pushed, no PR, no dispatch, no close" bash -c "[ $rc = 0 ] && grep -q 'Weekly pin bumps $(date -u +%F): brew, builder' '$root/run' && grep -q '| pin | from | to |' '$root/run' && grep -q -- '- [0-9a-f]* Bump the Homebrew' '$root/run' && [ -z \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" ] && ! grep -qE '^gh (pr|workflow)' '$GH_LOG'"
 fresh; git -C "$wc" commit -q --allow-empty -m "feature work"; weekly TAGS='"20261115"'
 check "weekly, a real run from a checkout that is not origin/testing is refused (a feature commit must never ride into a bump PR); nothing is pushed" bash -c "[ $rc = 1 ] && grep -q 'must start from origin/testing' '$root/run' && [ -z \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" ]"
+fresh; git -C "$wc" commit -q --allow-empty -m "feature work"; PINS=brew weekly DRY_RUN=1 TAGS='"20261115"'
+check "weekly, dry run from a branch with other commits: only the pin commits are listed and tabled, never the feature commit or an empty row" bash -c "[ $rc = 0 ] && grep -q 'Weekly pin bumps .*: brew\$' '$root/run' && ! grep -q 'feature work' '$root/run' && ! grep -q '^|  |' '$root/run'"
 fresh; weekly GH_WF_FAIL=1 TAGS='"20261115"' MANIFEST=new CREATED="$old10"
 check "weekly, a failed Test dispatch is a warning, not a failure" bash -c "[ $rc = 0 ] && grep -q 'Could not dispatch the Test workflow' '$root/run'"
 
