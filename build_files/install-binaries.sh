@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs the prebuilt binaries into the image tree. Run by build.sh; the Containerfile bind-mounts the published
 # octarine-os-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
-# source, DESTDIR the target; both only for the tests and the fallback check).
+# source, DESTDIR the target; both only for the tests).
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
@@ -10,12 +10,9 @@
 # The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
-# Which components are present is told by /binaries/COMPONENTS (name, required|optional, key, origin, created, digest; origin built,
-# reused or fallback). The REQUIRED list below must match binaries/components.tsv (a test checks it): a required component that is
+# Which components are present is told by /binaries/COMPONENTS (name, required|optional, key, origin built or reused, digest). The REQUIRED list below must match binaries/components.tsv (a test checks it): a required component that is
 # missing fails the build. An OPTIONAL one that is missing is NEVER skipped silently: a WARNING line and annotation, and the file
-# /usr/share/licenses/octarine-os-binaries/MISSING name it. A component whose origin is fallback gets a FALLBACK note in its SOURCE
-# and BUILDINFO and the file FALLBACK (BINARIES_ONLY=<name> installs just that component from a single-component directory: the
-# fallback check of binaries-fallback.sh uses it).
+# /usr/share/licenses/octarine-os-binaries/MISSING name it.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
 # find its shared libraries in THIS image: a 64-bit file must resolve with ldd (no "not found"), a 32-bit one (extest, loaded into
@@ -29,7 +26,6 @@ echo "::group::install-binaries.sh"
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-binaries.sh failed (exit ${rc})"; fi' EXIT
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
-only=${BINARIES_ONLY:-}
 required="scx extest"
 optional="ghostty"
 lic=${dest}/usr/share/licenses/octarine-os-binaries
@@ -92,33 +88,27 @@ install_ghostty() {
 declare -A installed_note
 
 # ---- which components
-declare -A origin req
 want=()
-if [[ -n "${only}" ]]; then
-    want=(${only})
-else
-    test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
-    while IFS=$'\t' read -r name rq _ org _; do
-        [[ -n "${name}" && "${name}" != \#* ]] || continue
-        [[ " ${required} ${optional} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
-        test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
-        origin[${name}]=${org}; req[${name}]=${rq}; want+=("${name}")
-    done < "${root}/COMPONENTS"
-    for d in "${root}"/*/; do
-        # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
-        [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
-    done
-    for c in ${required}; do [[ " ${want[*]} " == *" ${c} "* ]] || err "the required component ${c} is not in the binaries image"; done
-fi
+test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
+while IFS=$'\t' read -r name _; do
+    [[ -n "${name}" && "${name}" != \#* ]] || continue
+    [[ " ${required} ${optional} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
+    test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
+    want+=("${name}")
+done < "${root}/COMPONENTS"
+for d in "${root}"/*/; do
+    # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
+    [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
+done
+for c in ${required}; do [[ " ${want[*]} " == *" ${c} "* ]] || err "the required component ${c} is not in the binaries image"; done
 
 # ---- install
 for c in ${required} ${optional}; do
-    [[ -z "${only}" || " ${only} " == *" ${c} "* ]] || continue
     if [[ " ${want[*]:-} " != *" ${c} "* ]]; then
         # an optional component that is not there: said loudly, recorded, never skipped silently
         warn "optional component ${c} is not in the binaries image: it is NOT installed"
         install -d "${lic}"
-        echo "${c}: not in the binaries image (its build failed and no last good image existed)" >> "${lic}/MISSING"
+        echo "${c}: not in the binaries image (its build failed or was skipped)" >> "${lic}/MISSING"
         continue
     fi
     if ! "install_${c}"; then
@@ -136,13 +126,6 @@ for c in ${required} ${optional}; do
     cp -a "${root}/${c}/LICENSES/." "${d}/"
     install -m0644 "${root}/${c}/SOURCE" "${root}/${c}/BUILDINFO" "${d}/"
     track "${c}" "${d}"
-    if [[ "${origin[${c}]:-}" == fallback ]]; then
-        note="FALLBACK: this component is NOT built from the binaries/ tree of this image's commit; it is the last good ${c} image, content key $(awk -F'\t' -v c="${c}" '$1 == c {print $3}' "${root}/COMPONENTS") (built $(awk -F'\t' -v c="${c}" '$1 == c {print $5}' "${root}/COMPONENTS"; true)), used because its build failed"
-        printf '%s\n' "${note}" >> "${d}/SOURCE"
-        printf '%s\n' "${note}" >> "${d}/BUILDINFO"
-        printf '%s: %s\n' "${c}" "${note}" >> "${lic}/FALLBACK"
-        warn "${note}"
-    fi
 done
 grep -rqF 'GNU GENERAL PUBLIC LICENSE' "${lic}/scx" 2> /dev/null || [[ " ${want[*]:-} " != *" scx "* ]] || err "no GPL text shipped with scx"
 grep -rqF 'MIT License' "${lic}/extest" 2> /dev/null || [[ " ${want[*]:-} " != *" extest "* ]] || err "no MIT text shipped with extest"
@@ -171,7 +154,7 @@ if [[ -z "${dest}" || -n "${BINARIES_CHECK_NEEDED:-}" ]]; then
         probs=$(needed_problems "${c}")
         [[ -n "${probs}" ]] || { echo "runtime libraries of ${c}: all found in this image"; continue; }
         echo "${probs}" >&2
-        if [[ "${req[${c}]:-$([[ " ${required} " == *" ${c} "* ]] && echo required || echo optional)}" == required ]]; then
+        if [[ " ${required} " == *" ${c} "* ]]; then
             err "the required component ${c} needs shared libraries this image does not have (see above): add the package to build.sh"
         fi
         warn "optional component ${c} needs shared libraries this image does not have: it is REMOVED again (see above)"
