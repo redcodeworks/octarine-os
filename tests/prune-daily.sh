@@ -61,15 +61,5 @@ run DRY_RUN=false API_BASE=users/o/packages/container/img PATH="$root/bin:$PATH"
 expect "live: one gh api -X DELETE per planned version (2 images and 1 signature)" bash -c "[ $rc = 0 ] && [ \$(grep -c 'gh api -X DELETE users/o/packages/container/img/versions/' '$root/log') = 3 ]"
 run KEEP=10 < <(gen 16); expect "KEEP changes the count (10 kept, 6 deleted)" bash -c "[ \$(grep -c 'DELETE image' '$root/out') = 6 ]"
 
-if python3 -I - "$here" >"$root/out" 2>&1 <<'PY'; then ok "workflows: prune-daily.yml is weekly with a dry-run default, no alert job; build.yml tags only the scheduled run"; else bad "workflow shape"; fi
-import sys, yaml
-h = sys.argv[1]
-w = yaml.safe_load(open(h + "/.github/workflows/prune-daily.yml")); on = w.get(True) or w.get("on")
-assert on["schedule"] == [{"cron": "0 5 * * 0"}] and on["workflow_dispatch"]["inputs"]["dry_run"]["default"] is True
-assert set(w["jobs"]) == {"prune"} and w["jobs"]["prune"]["permissions"] == {"contents": "read", "packages": "write"}
-assert "octarine-os octarine-os-dx" in open(h + "/.github/workflows/prune-daily.yml").read()
-b = open(h + "/.github/workflows/build.yml").read()
-assert 'if [[ "${EVENT}" == schedule ]]; then alias_tags="${alias_tags} daily-$(date -u +%Y%m%d)"; fi' in b
-PY
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

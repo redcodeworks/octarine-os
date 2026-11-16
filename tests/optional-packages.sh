@@ -46,15 +46,5 @@ blk FAIL_PKGS=niri -- "$G1"
 check "a missing session package (niri) FAILS the build with a clear message" bash -c "[ $rc = 1 ] && grep -q 'session package niri is missing' '$root/run'"
 blk FAIL_PKGS=noctalia -- "$G1"
 check "a missing noctalia fails it too" bash -c "[ $rc = 1 ] && grep -q 'session package noctalia is missing' '$root/run'"
-check "the label chain: just rechunk reads the list out of the image and sets org.octarineos.optional-packages-missing (none when empty), plan-skip rebuilds when it lists packages, build.yml hands the label to it, the smoke test prints the list" python3 -I - "$here" <<'PY'
-import sys
-h = sys.argv[1]
-j = open(h + "/Justfile").read()
-assert "optional-packages-missing" in j and 'org.octarineos.optional-packages-missing=${csv:-none}' in j and '"${MISSING_LABEL[@]}"' in j
-assert "LATEST_MISSING" in open(h + "/.github/scripts/plan-skip.sh").read()
-b = open(h + "/.github/workflows/build.yml").read()
-assert "label org.octarineos.optional-packages-missing" in b and 'LATEST_MISSING="${latest_missing}"' in b
-assert "cat /usr/share/octarine-os/optional-packages-missing" in open(h + "/.github/scripts/default-smoke.sh").read()
-PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

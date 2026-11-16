@@ -76,21 +76,5 @@ settled X=1
 check "registry-settled: a tag that shows the digest passes" test "$rc" = 0
 settled DOWN=1
 check "registry-settled: a registry that stays unreadable fails, saying 'unreadable' (never a pass)" bash -c "[ $rc = 1 ] && grep -q 'is unreadable' '$root/run'"
-check "the rule is wired: plan-promote fails on a read error, build.yml's verify step reports unreadable, binaries.yml retries the results download, no pipeline script reads a registry with 2>/dev/null as 'absent'" python3 -I - "$here" <<'PY'
-import re, sys, yaml
-h = sys.argv[1]
-assert "cannot decide whether a tested testing image exists" in open(h + "/.github/scripts/plan-promote.sh").read()
-b = yaml.safe_load(open(h + "/.github/workflows/build.yml"))
-steps = {s.get("name"): s for s in b["jobs"]["plan"]["steps"]}
-v = steps["Verify the signature of the image to promote or reuse"]
-assert "cosign-check.sh" in v["run"] and "unreadable=true" in v["run"]
-assert "UNREADABLE" in steps["Final decision"]["env"] and "unreadable" in steps["Final decision"]["env"]["UNREADABLE"]
-w = yaml.safe_load(open(h + "/.github/workflows/binaries.yml"))
-names = [s.get("name") for s in w["jobs"]["assemble"]["steps"]]
-assert names.count("Fetch the results of the components") == 1 and "Fetch the results of the components (retry 2)" in names and "The results could not be read" in names
-for f in ("plan-promote.sh", "plan-vanilla-reuse.sh", "plan-dx.sh", "publish-latest.sh", "binaries-lookup.sh", "base-pin.sh"):
-    t = open(h + "/.github/scripts/" + f).read()
-    assert not re.search(r"skopeo inspect[^\n]*2> /dev/null", t), f
-PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

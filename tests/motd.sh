@@ -109,7 +109,5 @@ check "toggle-motd again: removes the flag and says it is now on" bash -c "[ ! -
 J toggle-user-motd >"$root/out" 2>&1
 check "toggle-user-motd runs OUR recipe (the base stub does not run) and flips the same flag" bash -c "[ -e '$root/home/.config/no-show-user-motd' ] && ! grep -q 'BASE RAN' '$root/out' && grep -q 'motd is now off' '$root/out'"
 rm -f "$root/home/.config/no-show-user-motd"
-check "build.sh keeps the base 00-default.just as 00-default-base.just (the rename list)" bash -c "grep -q 'for f in 00-default 10-update 30-distrobox' '$here/build_files/build.sh'"
-check "the image's justfiles define toggle-user-motd once, in our own motd.just only (the base copy is the renamed one)" bash -c "[ \$(grep -rlE '^toggle-user-motd' '$justdir' '$here/system_files/usr/share/octarine-os/just' | wc -l) = 1 ] && grep -q '^toggle-user-motd' '$here/system_files/usr/share/octarine-os/just/motd.just'"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

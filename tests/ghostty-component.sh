@@ -16,37 +16,6 @@ bin="$root/bin"; mkdir -p "$bin"
 sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 g="$here/binaries/ghostty"
 
-# ---- the pins and the recipe
-check "upstream.env: the repo, a stable v<semver> tag AND a 40-hex peeled commit (the build fails if the tag moved); the loader accepts it (format only: a bump PR moves the values)" bash -c "grep -qx 'UPSTREAM_REPO=ghostty-org/ghostty' '$g/upstream.env' && grep -qE '^UPSTREAM_TAG=v[0-9]+\\.[0-9]+\\.[0-9]+\$' '$g/upstream.env' && grep -qE '^UPSTREAM_COMMIT=[0-9a-f]{40}\$' '$g/upstream.env' && source '$here/binaries/lib/upstream-env.sh' && upstream_env_load '$g/upstream.env' && [ \"\$UPSTREAM_WATCH\" = ghostty-org/ghostty ]"
-check "zig.env: exactly the five keys, consistent with each other (URL and signature URL name the version, the signature URL is the tarball URL plus .minisig, the official ziglang.org host), a 64-hex sha256, no pinned size, a minisign key (format only: a Zig or Ghostty bump PR moves the values)" python3 -I - "$g/zig.env" <<'PY'
-import re, sys
-kv = {}
-for line in open(sys.argv[1]):
-    line = line.strip()
-    if line and not line.startswith("#"):
-        k, v = line.split("=", 1)
-        assert k not in kv, "duplicate " + k
-        kv[k] = v
-assert set(kv) == {"ZIG_VERSION", "ZIG_URL", "ZIG_SHA256", "ZIG_SIGNATURE_URL", "ZIG_MINISIGN_KEY"}, sorted(kv)
-v = kv["ZIG_VERSION"]
-assert re.fullmatch(r"\d+\.\d+\.\d+", v), v
-assert kv["ZIG_URL"] == "https://ziglang.org/download/%s/zig-x86_64-linux-%s.tar.xz" % (v, v), kv["ZIG_URL"]
-assert kv["ZIG_SIGNATURE_URL"] == kv["ZIG_URL"] + ".minisig", kv["ZIG_SIGNATURE_URL"]
-assert re.fullmatch(r"[0-9a-f]{64}", kv["ZIG_SHA256"]), kv["ZIG_SHA256"]
-assert re.fullmatch(r"RW[A-Za-z0-9+/]{40,}={0,2}", kv["ZIG_MINISIGN_KEY"]), kv["ZIG_MINISIGN_KEY"]
-PY
-check "Containerfile: builder from builder.env, the Zig and the source are fetched and verified before the build, a FROM scratch image holds only /ghostty, the packages include gtk4-layer-shell-devel, blueprint-compiler and minisign" bash -c "
-  cf='$g/Containerfile'; grep -qx 'FROM \${BUILDER} AS build' \$cf && grep -q 'fetch-zig.sh /binaries/ghostty/zig.env /opt/zig' \$cf && grep -q 'fetch-source.sh /binaries/ghostty/upstream.env /src' \$cf &&
-  grep -q 'gtk4-layer-shell-devel' \$cf && grep -q 'blueprint-compiler' \$cf && grep -qw 'minisign' \$cf && grep -q 'libadwaita-devel' \$cf && grep -qx 'COPY --from=build /out /ghostty' \$cf &&
-  [ \"\$(grep -E '^FROM ' \$cf | tail -n1)\" = 'FROM scratch' ] && [ \"\$(grep -c '^FROM \${BUILDER}' \$cf)\" = 1 ]"
-check "build.sh: Zig 0.17 recipe: a FRESH empty Zig cache, zig fetch of every build.zig.zon.txt URL, each saved tarball unpacked into a separate package directory and flattened, a clear failure for a package still nested, zig build --system <that directory>, no -fno-sys, libghostty-vt pruned, the absolute exe path, ReleaseFast and the baseline CPU, a --version smoke run, the staged tree with FILES" bash -c "
-  b='$g/build.sh'; grep -q 'mktemp -d /tmp/zig-global-cache' \$b && grep -q 'zig fetch \"\${url}\"' \$b && grep -q 'build.zig.zon.txt' \$b && grep -q 'tar -xzf \"\${pkg}\" -C \"\${sys}\"' \$b && grep -q 'still holds a single subdirectory' \$b &&
-  grep -q -- '--system \"\${sys}\"' \$b && ! grep -q -- '-fno-sys' \$b && ! grep -q 'fetch-zig-cache.sh\$' \$b && grep -q -- '-Doptimize=ReleaseFast' \$b && grep -q -- '-Dcpu=baseline' \$b &&
-  grep -q -- '-Dinstalled-exe-path=/usr/bin/ghostty' \$b && grep -q -- '--prefix /usr' \$b && grep -q 'libghostty-vt' \$b && grep -q 'include/ghostty' \$b &&
-  grep -q -- '--smoke root/usr/bin/ghostty:--version' \$b && grep -q -- '--elf-x86-64 root/usr/bin/ghostty' \$b && grep -q 'FILES' \$b && grep -q 'com.mitchellh.ghostty.desktop' \$b"
-check "the OS image build installs gtk4-layer-shell (the runtime library Ghostty links); a missing one is recorded as an optional package, and the runtime check then removes Ghostty with a warning" bash -c "grep -q '\"misc:.* gtk4-layer-shell\"' '$here/build_files/build.sh'"
-check "components.tsv lists ghostty as optional and the installer's lists agree; the layout contract knows ghostty" bash -c "grep -qP '^ghostty\toptional\$' '$here/binaries/components.tsv' && grep -q '^optional=\"ghostty\"' '$here/build_files/install-binaries.sh' && grep -q 'ghostty) need ghostty/root/usr/bin/ghostty' '$here/.github/scripts/binaries-layout.sh'"
-check "the default smoke test checks ghostty (installed with its desktop file and resolved libraries, or recorded as left out)" grep -q 'optional ghostty: installed with its desktop file' "$here/.github/scripts/default-smoke.sh"
 
 # ---- fetch-zig.sh with a fake tarball, a stub curl, minisign and index.json
 ver=0.17.9
@@ -250,19 +219,6 @@ echo "UPSTREAM_COMMIT=changed" >>"$kr2/binaries/ghostty/upstream.env"; k1=$(DK g
 echo "# recipe change" >>"$kr2/binaries/ghostty/build.sh"; k2=$(DK ghostty); cp "$g/build.sh" "$kr2/binaries/ghostty/"
 echo "# zig" >>"$kr2/binaries/ghostty/zig.env"; k3=$(DK ghostty)
 check "dependency cache key: a changed tag/commit, a changed fetch recipe (build.sh) and a changed Zig pin each change the key" bash -c "[ '$k1' != '$k0' ] && [ '$k2' != '$k0' ] && [ '$k3' != '$k0' ] && [ '$k1' != '$k2' ]"
-check "workflow: the cache is restored and saved only for components with a key, saved only after a successful PUBLISHING build and never on a pull request, the directory is mounted into podman build, the actions are the pinned ones; no dnf or target directory is cached" python3 -I - "$here" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); steps = w["jobs"]["build"]["steps"]
-text = open(sys.argv[1] + "/.github/workflows/binaries-component.yml").read()
-r = [s for s in steps if "cache/restore" in s.get("uses", "") and s.get("id") == "depcache"][0]
-sv = [s for s in steps if "cache/save" in s.get("uses", "") and "dep-" in s["with"]["key"]][0]
-assert r["uses"].startswith("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9") and sv["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
-c = sv["if"]
-for n in ("steps.build.outcome == 'success'", "steps.channel.outputs.publish == 'true'", "github.event_name != 'pull_request'", "cache-hit != 'true'", "key != ''"):
-    assert n in c, n
-assert '--volume "${RUNNER_TEMP}/dep-cache:/dep-cache"' in text
-assert "dnf" not in sv["with"]["path"] and "target" not in sv["with"]["path"] and sv["with"]["path"].endswith("dep-cache")
-PY
 
 # ---- ghostty-check.sh: the version selection, with a stub gh and index.json data
 cr="$root/crepo"; mkdir -p "$cr/binaries/lib" "$cr/binaries/ghostty" "$cr/.github/scripts"

@@ -19,7 +19,7 @@ step lists, the recipes explain themselves), then the closing block Contributing
 (personal project assisted by Claude, tested only on the owner's setup, not actively maintained beyond the owner's needs,
 forks encouraged; its `### Fork it` heading is linked from `AGENTS.md`), disclaimer last. No design rationale, process
 history, CI or branching internals, agent instructions or recipe step lists in it. American English throughout. Checked
-against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale sections).
+against the repo by `tests/readme-defaults.sh` (recipes, variant URLs, no stale sections); that test is the last one that reads README prose and goes once `tests/run-tests.sh` no longer needs it (see "What the tests may assert").
 
 ## Layout
 
@@ -457,6 +457,10 @@ Test: `tests/test-workflow.sh`.
 Status: done in two parts. The `testing` ruleset requires `test` and `secrets`, and `build.yml` has no `pull_request`
 trigger, so the image builds only on `testing` and `main` pushes, the schedule and a manual dispatch.
 
+## What the tests may assert (Kevin, 2026-11-16: "many of the tests are over-sensitive to things that will not result in a failed build; we should be okay with the actual error revealing itself at build-time; the initial CI should be for just obvious sanity checks")
+
+The initial CI keeps only syntax, lint and parse checks, cheap obvious smoke checks, and behavior tests with stubs for logic that first executes on main, schedule or publish and could not otherwise be seen before it breaks production (promotion retag, publish-latest ordering and pairing, prune-daily deletion rules, sign and verify decisions, the luks-tpm-unlock SIGPIPE case, registry-read behavior). Tests must NOT assert workflow YAML text, README or doc prose, comment content, exact messages, file lists, or version, digest and count literals. When such an assertion fails, delete or loosen it (never move content to satisfy it, never add code to satisfy it); an error that a real build shows by itself needs no test.
+
 ## Keeping the tests fast (2026-11-16)
 
 The suite is one 4-way parallel run, so its length is the longest test plus whatever is left over. Three tests used to take 76, 48-62 and 37 s in CI; measured with `PS4='+T${EPOCHREALTIME} ' bash -x tests/<name>.sh` and a look at the biggest gaps between traced lines, nearly all of it was waiting, not work. Rules that came out of it: a test exports `RETRY_DELAY=0` whenever a stub makes `registry-read.sh`, `cosign-check.sh` or `retry.sh` fail (their pauses are 5 s, then 10 s, per call), sets `OCTARINE_SCX_VERIFY_SECONDS=0` for `scx-verify` (one probe instead of a 1 to 2 s wait; `tests/schedulers.sh` 35 s to 7 s), and runs an independent matrix of many `just` starts four at a time with `xargs -P` and one private HOME per combination (the niri keybind matrix, `tests/niri-keybinds.sh`: 18 s to 6 s on 16 cores, the same CPU time, so on the 4-core runner it only helps when other tests are done). Nothing shipped changed.
@@ -802,7 +806,7 @@ signed and the dx image was built on exactly that default digest.
   image's digest, the default image built from main, digests preserved with a read-back, dx first and the default image LAST, nothing signed, no `signing` environment, the
   concurrency group `publish-latest`); only the ordering guard is skipped and the summary says `ROLLBACK`. With no dx image built on that default image it REFUSES unless `default_only`
   (dx `latest` then stays behind, as publish-latest's vanilla-only). A failed rollback raises no issue (the red run is the signal). The next green dx run on main moves `latest`
-  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry), `tests/rollback-latest.sh` (the shape).
+  forward again to the newest pair: after a rollback fix main, or hold the daily build. Tests: `tests/publish-latest.sh` (decision cases with the fake registry).
   UNVERIFIED: a real rollback. GitHub only runs `workflow_dispatch` for a workflow file that exists on the default branch, so the first dry run is possible after the promotion that
   carries the file: `gh workflow run rollback-latest.yml --ref main -f vanilla_tag=latest-<date>-<sha7> -f reason=trial -f dry_run=true`.
 

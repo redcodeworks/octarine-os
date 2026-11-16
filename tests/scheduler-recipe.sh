@@ -128,8 +128,6 @@ conf="$SCHEDULER_USER_CONF"
 # ---- shape
 reset; run '' --help
 check "help: usage text, exit 0, names every flag" bash -c "[ $rc = 0 ] && grep -q -- '--boot' '$root/out' && grep -q -- '--gamemode' '$root/out' && grep -q -- '--status' '$root/out' && grep -q -- '--list' '$root/out' && grep -q -- '--yes' '$root/out' && grep -q -- '--no' '$root/out'"
-check "recipe: just lists scheduler with a description" bash -c "just --justfile '$justfile' --list 2>&1 | grep -qE '^ +scheduler .*# ?.+'"
-check "recipe: no sudo outside the one boot step, none after the toolbox recipe from this change" bash -c "! sed -n '/^toolbox \\*args:/,\$p' '$justfile' | grep -q 'scx@'"
 reset; run '' --bogus
 check "unknown option: exit 2 with usage" test "$rc" = 2
 reset; run '' --boot nosuch
@@ -300,7 +298,6 @@ run '' --boot rusty
 check "flags: a named choice opens no menu even on a terminal" notlogged "ugum choose"
 unset OCTARINE_MENU_FORCE_TTY
 
-check "the recipe is not part of hardware-setup and never calls it" bash -c "! sed -n '/^scheduler \\*args:/,/^# Create and manage toolboxes/p' '$justfile' | grep -q 'hardware-setup'"
 
 echo
 echo "passed: $pass, failed: $failn"

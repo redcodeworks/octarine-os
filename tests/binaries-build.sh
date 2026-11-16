@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the build side of binaries/ (sched_ext schedulers and extest, built in this repository): the upstream.env parser, the
 # commit-SHA verification of the checkout (local git repositories, no network), stage.sh, the scheduler list driving scx/build.sh,
-# and the real files (pins, builder digest, tsv shape, cargo commands). Nothing is built. Needs: bash, git, python3, readelf and ldd.
+# and that every script under binaries/ parses (pins, digests and recipe text are not asserted). Nothing is built. Needs: bash, git, python3, readelf and ldd.
 # Run: tests/binaries-build.sh
 # shellcheck disable=SC2001,SC2013,SC2015,SC2016,SC2034
 set -uo pipefail
@@ -19,31 +19,9 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid GIT_COMMITTER_NAME=t
 sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 # shellcheck source=/dev/null
 . "${src}/binaries/lib/upstream-env.sh"
+tsv="${src}/binaries/scx/schedulers.tsv"
 
 # --- the real files
-tsv="${src}/binaries/scx/schedulers.tsv"
-upstream_env_load "${src}/binaries/scx/upstream.env" && [[ "${UPSTREAM_REPO}" == sched-ext/scx && -n "${UPSTREAM_TAG}" && "${UPSTREAM_COMMIT}" == e7b3a219617472cf78880ac424714e52c932db61 ]] && ok "scx pins the tag of sched-ext/scx and its peeled commit" || bad "scx upstream.env"
-upstream_env_load "${src}/binaries/scx/upstream.env" && [[ "${UPSTREAM_WATCH}" == "${UPSTREAM_REPO}" ]] && ok "scx watches the repository it builds from (no fork)" || bad "scx watch"
-upstream_env_load "${src}/binaries/extest/upstream.env" && [[ "${UPSTREAM_REPO}" == redcodeworks/extest && "${UPSTREAM_WATCH}" == Supreeeme/extest && -z "${UPSTREAM_TAG}" && "${UPSTREAM_COMMIT}" == cb77cd4f80f83393a24bae17dd975e14fa6eb1b2 ]] && ok "extest builds from the fork redcodeworks/extest at cb77cd4f, follows Supreeeme/extest" || bad "extest upstream.env"
-[[ "$(grep -vE '^[[:space:]]*(#|$)' "${tsv}" | cut -f1 | tr '\n' ' ')" == "scx_rusty scx_lavd scx_cake scx_bpfland scx_cosmos scx_flash scx_p2dq " ]] && ok "schedulers.tsv lists the seven schedulers" || bad "schedulers.tsv names"
-badrows=$(grep -vE '^[[:space:]]*(#|$)' "${tsv}" | awk -F'\t' 'NF != 3 || $3 == "" || length($3) > 120 || ($2 != "" && $2 !~ /^[0-9]+\.[0-9]+$/) {print $1}')
-[[ -z "${badrows}" ]] && ok "schedulers.tsv: three fields per row, a description of at most 120 characters, a MAJOR.MINOR kernel or none" || bad "schedulers.tsv rows: ${badrows}"
-grep -q '^(cd "${srcdir}" && cargo build --release --locked "${pkgs\[@\]}")$' "${src}/binaries/scx/build.sh" && ok "scx builds its schedulers with cargo build --release --locked -p <each>" || bad "scx cargo command"
-eb="${src}/binaries/extest/build.sh"
-grep -q 'cargo build --release --locked --target x86_64-unknown-linux-gnu' "${eb}" && grep -q 'cargo build --release --locked --target i686-unknown-linux-gnu' "${eb}" && ok "extest builds both targets with --locked" || bad "extest cargo commands"
-grep -q 'x86_64-unknown-linux-gnu/release/libextest.so:lib64/libextest.so' "${eb}" && grep -q 'i686-unknown-linux-gnu/release/libextest.so:lib/libextest.so' "${eb}" && grep -q -- '--elf-x86-64 lib64/libextest.so --elf-i386 lib/libextest.so' "${eb}" && ok "extest: x86_64 build is lib64, i686 build is lib, ELF class of each is checked" || bad "extest install paths"
-bf="${src}/binaries/builder.env"
-[[ "$(grep -E '^BUILDER=' "${bf}")" =~ ^BUILDER=registry.fedoraproject.org/fedora:45@sha256:[0-9a-f]{64}$ ]] && ok "the builder is Fedora 45 pinned by digest (binaries/builder.env, shared by every component)" || bad "builder pin"
-[[ "$(grep -vE '^[[:space:]]*(#|$)' "${src}/binaries/components.tsv" | tr '\t' ':' | tr '\n' ' ')" == "scx:required extest:required ghostty:optional " ]] && ok "components.tsv: scx and extest required, ghostty optional" || bad "components.tsv"
-for c in scx extest ghostty; do
-    cf="${src}/binaries/${c}/Containerfile"
-    [[ "$(head -n 30 "${cf}" | grep -E '^ARG BUILDER$')" == "ARG BUILDER" ]] && grep -qx 'FROM ${BUILDER} AS build' "${cf}" && [[ "$(grep -E '^FROM ' "${cf}" | tail -n1)" == "FROM scratch" ]] && grep -qx "COPY --from=build /out /${c}" "${cf}" && ok "${c}/Containerfile: builder from builder.env (no digest of its own), a build stage, a FROM scratch image holding only /${c}" || bad "${c} Containerfile stages"
-    grep -q "^COPY ${c} /binaries/${c}\$" "${cf}" && grep -q "fetch-source.sh /binaries/${c}/upstream.env /src" "${cf}" && ok "${c}: the source comes through the commit-verifying fetch" || bad "${c} fetch-source"
-    grep -q "org.octarineos.binaries-component=\"${c}\"" "${cf}" && ok "${c}: the image carries its component label" || bad "${c} label"
-done
-grep -q 'git-core rust cargo clang llvm lld libbpf-devel elfutils-libelf-devel zlib-devel libzstd-devel' "${src}/binaries/scx/Containerfile" && grep -q 'rust-std-static-i686-unknown-linux-gnu glibc-devel.i686 libgcc.i686' "${src}/binaries/extest/Containerfile" && ok "build dependencies of both components" || bad "build dependencies"
-[[ ! -e "${src}/binaries/Containerfile" && ! -e "${src}/binaries/Containerfile.dockerignore" ]] && ok "no stray ignore file and no shared Containerfile: the context is binaries/" || bad "ignore file"
-[[ -z "$(find "${src}/binaries" -type f ! -path '*/lib/*' ! -name Containerfile ! -name 'upstream.env' ! -name schedulers.tsv ! -name build.sh ! -name components.tsv ! -name builder.env ! -name zig.env ! -name fetch-zig.sh)" ]] && ok "binaries/ holds only components.tsv, builder.env, lib/, and per-component Containerfile, upstream.env, build.sh, schedulers.tsv" || bad "unexpected file in binaries/"
 for f in "${src}"/binaries/lib/*.sh "${src}"/binaries/*/build.sh; do bash -n "${f}" && [[ -x "${f}" ]] || bad "script ${f} not parsing or not executable"; done; ok "every script under binaries/ parses and is executable"
 
 # --- the parser

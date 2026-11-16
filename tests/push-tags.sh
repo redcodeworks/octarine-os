@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests .github/scripts/push-tags.sh (one podman push, every other tag a registry-side copy of its digest) with stub
-# podman and skopeo, and that the four image workflows publish through it and never push an image twice.
+# podman and skopeo.
 # Run: tests/push-tags.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -78,12 +78,4 @@ BREAK_COPY=1 run local:build ghcr.io/o/img a b
 run local:build ghcr.io/o/img
 [[ $? -ne 0 ]] && pass "no tag: fails" || bad "no tag"
 
-echo "== workflows"
-for wf in build build-dx build-nvidia; do
-    f="$here/.github/workflows/$wf.yml"
-    [[ "$(grep -c 'podman push' "$f")" == 0 ]] && pass "$wf.yml: no podman push in the workflow (a second push of one image gives another digest)" || bad "$wf.yml: podman push"
-    [[ "$(grep -c '\.github/scripts/push-tags.sh ' "$f")" == 1 ]] && pass "$wf.yml: pushes once through push-tags.sh" || bad "$wf.yml: push-tags.sh"
-    grep -q 'for digest in \${DIGESTS}' "$f" && pass "$wf.yml: the sign job still signs the digests output" || bad "$wf.yml: sign loop"
-done
-grep -q 'push-tags.sh "${IMAGE_NAME}:${first}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}' "$here/.github/workflows/build.yml" && pass "build.yml: first alias tag is the local image, all alias tags are published" || bad "build.yml call"
 exit "${fail}"

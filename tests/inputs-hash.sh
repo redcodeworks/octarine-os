@@ -66,11 +66,6 @@ ne "a new vanilla file changes vanilla_inputs" "$(v)" "$(v HEAD~1)"
 git mv variants/dx/f variants/dx/f2; commit rename
 eq "renaming inside variants/dx leaves vanilla_inputs equal" "$(v)" "$(v HEAD~1)"; ne "...and changes dx_inputs" "$(d)" "$(d HEAD~1)"
 
-# every literal path of is_dx_only that is not a glob exists in the real repository (a rename must update the list)
-for f in .github/workflows/build-dx.yml .github/scripts/dx-smoke.sh .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub; do
-    [[ -f "${here}/${f}" ]] && pass "dx-only path exists: ${f}" || bad "dx-only path missing: ${f}"
-    ( source "${hash}"; is_dx_only "${f}" ) && pass "is_dx_only ${f}" || bad "is_dx_only ${f}"
-done
 ( source "${hash}"; is_dx_only .github/workflows/build.yml || is_dx_only Justfile || is_dx_only tests/inputs-hash.sh || is_dx_only build_files/build.sh ) && bad "a default-image file is listed as dx-only" || pass "default-image files are not dx-only"
 "${hash}" sideways > /dev/null 2>&1; [[ $? -eq 2 ]] && pass "unknown kind: usage, exit 2" || bad "unknown kind"
 "${hash}" vanilla nosuchrev > /dev/null 2>&1; [[ $? -ne 0 ]] && pass "unknown revision fails" || bad "unknown revision"
