@@ -228,7 +228,7 @@ echo 'FLAGS=' >/dev/null
 printf 'NAME=scx_rusty\nINSTANCE=rusty\nBINARY=/usr/bin/scx_rusty\nDESCRIPTION=rusty test\nMIN_KERNEL=\nFLAGS=\n' >"$root/reg/rusty.conf"
 
 # verify: success, failures, threshold, reset, interrupts
-export OCTARINE_SCX_VERIFY_SECONDS=1
+export OCTARINE_SCX_VERIFY_SECONDS=0  # one probe, no waiting: the failure paths still run (the real unit waits 5 s); a wait of 1 s made each of the ~25 failure and busy cases cost 1 to 2 s
 ver() { bash "$lib/scx-verify" "$@" >"$root/run" 2>&1; rc=$?; }
 set_active() { echo enabled >"$root/sys/state"; echo "${1}_1.1.4_x86_64_unknown_linux_gnu" >"$root/sys/root/ops"; }
 set_inactive() { echo disabled >"$root/sys/state"; rm -f "${root:?}/sys/root/ops"; }
@@ -283,7 +283,7 @@ bash "$lib/scx-verify" rusty >"$root/run" 2>&1 &
 vp=$!
 sleep 1
 kill -TERM "$vp"; wait "$vp"; rc=$?
-export OCTARINE_SCX_VERIFY_SECONDS=1
+export OCTARINE_SCX_VERIFY_SECONDS=0
 check "verify: a stop during the wait (SIGTERM) is not a failure: exit 143, nothing counted, nothing written" bash -c "[ $rc = 143 ] && [ -z \"\$(find '$root/state' -type f)\" ] && grep -q 'not counted' '$LOGF'"
 check "verify: the threshold defaults to three failures" bash -c "grep -q 'SCX_MAX_FAILURES=\\\${OCTARINE_SCX_MAX_FAILURES:-3}' '$lib/scx-lib.sh'"
 

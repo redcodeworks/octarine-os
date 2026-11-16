@@ -28,6 +28,7 @@ echo "cosign $*" >> "$LOG"
 F
 chmod +x "$bin"/*
 export LOG="$root/log" REG="$reg" REPO_ROOT="$here"
+export RETRY_DELAY=0  # the stub failures take the retry path (3 tries); the pauses (5+10 s per lookup) would only slow the test, like the other tests
 img=ghcr.io/o/octarine-os-binaries
 comps=$("$here/.github/scripts/binaries-key.sh" --components | tr '\n' ' ')
 mk() { for c in $comps; do printf 'manifest of %s' "$c" > "$reg/c-$c-$("$here/.github/scripts/binaries-key.sh" "$c")"; done; }
