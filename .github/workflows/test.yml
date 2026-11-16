@@ -46,6 +46,14 @@ jobs:
       - name: Sanity checks
         run: .github/scripts/sanity.sh
 
+      - name: Set up just
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: just
+
+      - name: Check Just format
+        run: just check
+
   # The behavior tests (tests/*.sh) on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a script shows here). NOT a required check: it is
   # informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and `secrets` pass). Not run for the dispatched
   # bump runs (they only need `test` and `secrets`).
