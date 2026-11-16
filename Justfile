@@ -135,9 +135,9 @@ build $target_image=image_name $tag=default_tag:
     # The prebuilt binaries image this build installed from (digest reference in CI, assembled-key tag locally)
     LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-key-$(.github/scripts/binaries-key.sh)}")
 
-    # Machine-readable: a build that used degraded binaries (a component's last good image, or an optional component left out) instead of binaries/ of its own commit
-    if [[ -n "${BINARIES_FALLBACK_TREE:-}" ]]; then
-        LABELS+=("--label" "org.octarineos.binaries-fallback=true" "--label" "org.octarineos.binaries-tree=${BINARIES_FALLBACK_TREE}")
+    # Machine-readable: a build that left an optional binaries component out (the scheduled skip check never keeps such an image)
+    if [[ -n "${BINARIES_DEGRADED:-}" ]]; then
+        LABELS+=("--label" "org.octarineos.binaries-degraded=${BINARIES_DEGRADED}")
     fi
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images

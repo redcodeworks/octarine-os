@@ -87,7 +87,7 @@ lt "$lay/comps" "$tsvf" scx extest
 check "layout: complete component directories pass, for all seven schedulers of the real manifest" test "$rc" = 0
 grep -v '^extest/' "$lay/comps" >"$lay/scxonly"
 lt "$lay/scxonly" "$tsvf" scx
-check "layout: a single component image (what a component build and a last-good check export) passes with its own name" test "$rc" = 0
+check "layout: a single component image (what a component build exports) passes with its own name" test "$rc" = 0
 lt "$lay/scxonly" "$tsvf" scx extest
 check "layout: naming a component the image does not hold fails" test "$rc" != 0
 lt --assembled "$lay/full" "$tsvf" scx extest
@@ -182,20 +182,19 @@ PY
 # ---- the binaries workflow and its place in the image builds
 wfb="$here/.github/workflows/binaries.yml"
 wfc="$here/.github/workflows/binaries-component.yml"
-check "binaries.yml: reusable (workflow_call with digest, image, action, hash and the fallback outputs) and dispatchable, nothing else" python3 -I - "$wfb" <<'PY'
+check "binaries.yml: reusable (workflow_call with digest, image, action, hash and degraded outputs, no inputs) and dispatchable, nothing else" python3 -I - "$wfb" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); on = w.get(True) or w.get("on")
 assert set(on) == {"push", "schedule", "workflow_call", "workflow_dispatch"}, set(on)
-assert set(on["workflow_call"]["inputs"]) == {"allow_fallback"}
-assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "fallback", "fallback_hash", "fallback_created", "degraded"}, set(on["workflow_call"]["outputs"])
-assert set(on["workflow_dispatch"]["inputs"]) == {"simulate_build_failure", "validate_only", "fallback_dry_run"}
-assert on["workflow_dispatch"]["inputs"]["simulate_build_failure"]["type"] == "string", "rehearsals work per component: a list of components"
+assert "inputs" not in on["workflow_call"]
+assert set(on["workflow_call"]["outputs"]) == {"digest", "image", "action", "hash", "degraded"}, set(on["workflow_call"]["outputs"])
+assert not on["workflow_dispatch"], "a dispatch has no inputs: no rehearsal modes"
 PY
-check "binaries.yml: a matrix over components.tsv calls binaries-component.yml (fail-fast off), then assemble, sign, result and track; the signing environment is only on the sign jobs" python3 -I - "$wfb" "$wfc" <<'PY'
+check "binaries.yml: a matrix over components.tsv calls binaries-component.yml (fail-fast off), then assemble, sign and result; the signing environment is only on the sign jobs" python3 -I - "$wfb" "$wfc" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); c = yaml.safe_load(open(sys.argv[2]))
 j = w["jobs"]
-assert set(j) == {"plan", "component", "assemble", "sign", "result", "track"}, set(j)
+assert set(j) == {"plan", "component", "assemble", "sign", "result"}, set(j)
 assert j["component"]["uses"] == "./.github/workflows/binaries-component.yml"
 assert j["component"]["strategy"]["fail-fast"] is False and "fromJSON(needs.plan.outputs.matrix)" in j["component"]["strategy"]["matrix"]
 assert j["component"]["secrets"] == {"SIGNING_SECRET": "${{ secrets.SIGNING_SECRET }}"}
@@ -205,28 +204,22 @@ assert not names & {"test", "secrets", "Build and push image", "Sign and verify 
 assert [k for k, x in j.items() if x.get("environment") == "signing"] == ["sign"]
 assert [k for k, x in c["jobs"].items() if x.get("environment") == "signing"] == ["sign"]
 PY
-check "binaries-component.yml: jobs check, build, sign, fallback, result; the key is binaries-key.sh, the tag c-<component>-<key>, the builder digest comes from builder.env, one push through push-tags.sh" bash -c "
+check "binaries-component.yml: jobs check, build, sign, result; the key is binaries-key.sh, the tag c-<component>-<key>, the builder digest comes from builder.env, one push through push-tags.sh" bash -c "
   python3 -I - '$wfc' <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1]))
-assert list(w['jobs']) == ['check', 'build', 'sign', 'fallback', 'result'], list(w['jobs'])
+assert list(w['jobs']) == ['check', 'build', 'sign', 'result'], list(w['jobs'])
 PY
   grep -q 'binaries-key.sh \"\${COMPONENT}\"' '$wfc' && grep -q 'tag=c-\${COMPONENT}-\${key}' '$wfc' && grep -q 'binaries-lookup.sh' '$wfc' &&
   grep -q 'builder.env' '$wfc' && grep -q -- '--file \"binaries/\${COMPONENT}/Containerfile\" binaries' '$wfc' && grep -q 'org.octarineos.binaries-component-key=' '$wfc' &&
   grep -q 'binaries-layout.sh' '$wfc' && grep -q 'push-tags.sh \"\${IMAGE_NAME}:\${TAG}\" \"\${IMAGE}\" \"\${TAG}\"' '$wfc'"
-check "binaries-component.yml: a failed build never fails the build job (continue-on-error step, an ok record), sign runs only for a built and published component, the fallback runs only after a failed build and only for the cases of the design" python3 -I - "$wfc" <<'PY'
+check "binaries-component.yml: a failed build never fails the build job (continue-on-error step, an ok record), sign runs only for a built and published component, and no job reads a last good image" python3 -I - "$wfc" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1])); j = w["jobs"]
 b = {s.get("id"): s for s in j["build"]["steps"]}
 assert b["build"]["continue-on-error"] is True and b["record"]["if"] == "always()"
 assert "steps.build.outcome == 'success'" in b["push"]["if"]
 assert "needs.build.outputs.ok == 'true'" in j["sign"]["if"] and "needs.build.outputs.published == 'true'" in j["sign"]["if"]
-f = " ".join(j["fallback"]["if"].split())
-for n in ("needs.build.outputs.ok == 'false'", "inputs.optional && needs.check.outputs.nopublish != 'true'", "inputs.allow_fallback && github.event_name == 'schedule' && github.ref == 'refs/heads/main'", "github.event_name == 'workflow_dispatch' && inputs.fallback_dry_run"):
-    assert n in f, n
-assert "sign" not in j["fallback"]["needs"], "a failed signing must not reach the fallback"
-p = [s for s in j["fallback"]["steps"] if s.get("id") == "pick"][0]
-assert p["continue-on-error"] is True and "binaries-fallback.sh" in p["run"] and "last-good-${COMPONENT}" in p["run"]
 r = j["result"]; assert r["if"] == "always()"
 assert "binaries-decide.sh" in str(r["steps"]) and "upload-artifact" in str(r["steps"]) and "binres-" in str(r["steps"])
 PY
@@ -237,16 +230,7 @@ check "binaries.yml: only testing and main publish, the assembled image is tagge
   grep -q 'COSIGN_PRIVATE_KEY: \${{ secrets.SIGNING_SECRET }}' '$wfb' && grep -q -- 'cosign sign -y --new-bundle-format=false --use-signing-config=false --key env://COSIGN_PRIVATE_KEY' '$wfb' &&
   grep -q 'cosign verify --key cosign.pub \"\${IMAGE}@\${DIGEST}\"' '$wfb' && grep -q 'cosign verify --key cosign.pub \"\${IMAGE}:\${KEY}\"' '$wfb'"
 check "binaries.yml: the result job takes the digest from exactly one producer per case (the lookup of an existing image, the sign job, or nothing for a validation) and the outputs say action built, reused or validated" bash -c "grep -q 'digest=\${REUSE_DIGEST}' '$wfb' && grep -q 'digest=\${SIGN_DIGEST}' '$wfb' && grep -q 'action=reused' '$wfb' && grep -q 'action=built' '$wfb' && grep -q 'action=validated' '$wfb'"
-check "binaries.yml: the track job moves last-good-<component> only on main, never for an own or validation run" python3 -I - "$wfb" <<'PY'
-import sys, yaml
-w = yaml.safe_load(open(sys.argv[1])); t = w["jobs"]["track"]
-assert t.get("continue-on-error") is True
-assert "needs.assemble.outputs.nopublish != 'true'" in t["if"]
-s = str(t["steps"])
-assert "refs/heads/main" in s and "last-good-${name}" in s
-assert "last-good\"" not in s.replace("last-good-", ""), "no assembled last-good pointer any more"
-PY
-check "the run summary says what each component and the assembled image did (reused, built and signed, validation only, fallback, omitted)" bash -c "grep -q 'Binaries image: reused' '$wfb' && grep -q 'Binaries image: assembled .*signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && grep -q 'Component \${comp}: reused' '$here/.github/scripts/binaries-decide.sh' && grep -q 'OMITTED' '$here/.github/scripts/binaries-decide.sh' && grep -q 'FALLBACK: component' '$here/.github/scripts/binaries-decide.sh'"
+check "the run summary says what each component and the assembled image did (reused, built and signed, validation only, omitted)" bash -c "grep -q 'Binaries image: reused' '$wfb' && grep -q 'Binaries image: assembled .*signed and published' '$wfb' && grep -q 'for validation only' '$wfb' && grep -q 'Component \${comp}: reused' '$here/.github/scripts/binaries-decide.sh' && grep -q 'OMITTED' '$here/.github/scripts/binaries-decide.sh'"
 check "build.yml says which path the binaries image took in its own summary, and still gates on binaries-use.sh" bash -c "for f in build.yml; do grep -q 'Say which path the binaries image took' '$here/.github/workflows/'\$f && grep -q 'needs.binaries.outputs.action' '$here/.github/workflows/'\$f && grep -q 'binaries-use.sh' '$here/.github/workflows/'\$f || exit 1; done"
 check "a signature that fails on an existing tag is not reused: the lookup reports usable=false (badsignature) and the build path rebuilds and signs; the reuse job needs usable=true" bash -c "grep -q 'badsignature' '$here/.github/scripts/binaries-lookup.sh' && grep -q 'usable false' '$here/.github/scripts/binaries-lookup.sh'"
 check "build.yml: a binaries job uses the reusable workflow before the image build, the build needs it and verifies its digest" python3 -I - "$here" <<'PY'
