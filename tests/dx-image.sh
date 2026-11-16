@@ -226,7 +226,7 @@ assert d[0]['type'] == 'sigstoreSigned' and d[0]['signedIdentity'] == {'type': '
     check "policy ($n image): the catch-all stays last" python3 -c "import json; d=json.load(open('$root/pol-$n/etc/containers/policy.json'))['transports']['docker']; assert list(d)[-1]==''"
     check "policy ($n image): sigstore attachments enabled for the namespace" grep -q 'use-sigstore-attachments: true' "$root"/pol-$n/etc/containers/registries.d/*.yaml
 done
-check "smoke tests of the default and beta builds assert the dx rule" bash -c "grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/workflows/build.yml' && grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/workflows/build-beta.yml'"
+check "the default smoke test asserts the dx rule" bash -c "grep -q 'covers the dx variant repository\" \"grep -q \$REF-dx' '$here/.github/scripts/default-smoke.sh'"
 
 # ---- the in-image smoke script with stub tools
 smoke="$here/.github/scripts/dx-smoke.sh"

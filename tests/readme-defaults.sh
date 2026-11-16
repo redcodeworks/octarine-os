@@ -96,25 +96,13 @@ check "the README does not say VS Code or virt-manager is preinstalled" bash -c 
 
 check "the blur-my-shell extension is not in the package lists (build.sh, smoke test optional lists)" bash -c "! grep -rq 'gnome-shell-extension-blur-my-shell' '$repo/build_files' '$repo/.github/workflows' '$repo/variants'"
 
-# ---- iommu=pt: no image ships it (opt-in through ujust virthost-setup)
-check "the default image tree ships no kargs.d file with iommu" bash -c "! grep -rqs iommu '$repo/system_files/usr/lib/bootc'"
-check "the default image tree has no 10-iommu.toml" test ! -e "$repo/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-check "the dx image tree has no kargs.d file at all" test ! -e "$repo/variants/dx/system_files/usr/lib/bootc/kargs.d/10-iommu.toml"
-for wf in build.yml build-beta.yml; do
-    check "$wf smoke test asserts the karg file is ABSENT" grep -qF '! test -e /usr/lib/bootc/kargs.d/10-iommu.toml' "$repo/.github/workflows/$wf"
-    check "$wf smoke test no longer requires the karg file" bash -c "! grep -qF 'test -f /usr/lib/bootc/kargs.d/10-iommu.toml' '$repo/.github/workflows/$wf'"
-done
-check "dx-smoke.sh asserts that no kargs.d file mentions iommu" grep -q 'no image ships an iommu kernel argument' "$repo/.github/scripts/dx-smoke.sh"
+# ---- iommu=pt: no image ships it (opt-in through ujust virthost-setup): asserted in the image by the smoke tests (default-smoke.sh, dx-smoke.sh)
 check "the README does not claim iommu=pt for the default image" bash -c "! grep -E 'zram swap tuning.*iommu' '$readme'"
 
 # ---- zsh: installed, not the default of new users
 check "build.sh still installs zsh and lists it in /etc/shells (the shell step needs it)" bash -c "grep -q 'steam-devices zsh' '$repo/build_files/build.sh' && grep -q 'echo /usr/bin/zsh >> /etc/shells' '$repo/build_files/build.sh'"
 check "build.sh does not rewrite /etc/default/useradd" bash -c "! grep -E '^[^#]*(sed|echo|cat|tee).*useradd' '$repo/build_files/build.sh'"
 check "build.sh fails the build if zsh were the default" grep -q "must not be the default shell" "$repo/build_files/build.sh"
-for wf in build.yml build-beta.yml; do
-    check "$wf smoke test asserts zsh is not the default" grep -qF '! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd' "$repo/.github/workflows/$wf"
-    check "$wf smoke test still checks zsh is in /etc/shells" grep -qF 'zsh in /etc/shells' "$repo/.github/workflows/$wf"
-done
 check "dx-smoke.sh asserts zsh is not the default" grep -q 'new users do not default to zsh' "$repo/.github/scripts/dx-smoke.sh"
 check "the opt-in path exists: user-setup has the shell step" grep -q '"shell^Login shell zsh' "$repo/system_files/usr/share/ublue-os/just/60-custom.just"
 check "no file ships a useradd default" test ! -e "$repo/system_files/etc/default/useradd"

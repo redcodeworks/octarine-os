@@ -54,9 +54,7 @@ assert "optional-packages-missing" in j and 'org.octarineos.optional-packages-mi
 assert "LATEST_MISSING" in open(h + "/.github/scripts/plan-skip.sh").read()
 b = open(h + "/.github/workflows/build.yml").read()
 assert "label org.octarineos.optional-packages-missing" in b and 'LATEST_MISSING="${latest_missing}"' in b
-for f in ("build.yml", "build-beta.yml"):
-    t = open(h + "/.github/workflows/" + f).read()
-    assert "cat /usr/share/octarine-os/optional-packages-missing" in t, f
+assert "cat /usr/share/octarine-os/optional-packages-missing" in open(h + "/.github/scripts/default-smoke.sh").read()
 PY
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

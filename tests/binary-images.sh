@@ -163,23 +163,19 @@ check "install: no MIT text fails" bash -c "[ $rc != 0 ] && grep -q 'no MIT text
 mk_images "$imgs"; rm "$imgs/extest/lib/libextest.so"; inst
 check "install: a missing 32-bit library fails" test "$rc" != 0
 
-# ---- the smoke assertions are in build.yml and build-beta.yml, identical
-check "smoke: ldd, --version and ELF class assertions in both workflows, same text" python3 -I - "$here" <<'PY'
-import re, sys
+# ---- the smoke assertions are in default-smoke.sh (one copy; build.yml and build-beta.yml run it)
+check "smoke: ldd, ldd -r, --version and ELF class assertions are in default-smoke.sh, and both workflows run that script" python3 -I - "$here" <<'PY'
+import sys
 root = sys.argv[1]
-blocks = []
-for w in ("build.yml", "build-beta.yml"):
-    s = open(f"{root}/.github/workflows/{w}").read()
-    a = s.index("# prebuilt binaries (binaries/: scx, extest)")
-    b = s.index("\n", s.index("source and build records ship for both binary images"))
-    blocks.append(s[a:b])
-assert blocks[0] == blocks[1], "the smoke assertions drifted between build.yml and build-beta.yml"
-t = blocks[0]
+s = open(f"{root}/.github/scripts/default-smoke.sh").read()
+a = s.index("# prebuilt binaries (binaries/: scx, extest)")
+t = s[a:s.index("\n", s.index("source and build records ship for both binary images"))]
 for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-bit", "/usr/lib/extest/lib/libextest.so",
                "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
                "ldd -r /usr/bin/", "undefined symbol", "libraries the shipped binaries link", "BUILDINFO of the binaries image"):
     assert needle in t, needle
-assert "'" not in t, "a single quote would end the podman run bash -c string"
+for w in ("build.yml", "build-beta.yml"):
+    assert "default-smoke.sh" in open(f"{root}/.github/workflows/{w}").read(), w
 PY
 
 
