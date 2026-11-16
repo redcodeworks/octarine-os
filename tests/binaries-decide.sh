@@ -6,6 +6,7 @@
 # shellcheck disable=SC2016
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$here/tests/lib/components.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
@@ -62,6 +63,16 @@ asm() { : >"$root/gho"; env GITHUB_OUTPUT="$root/gho" bash "$here/.github/script
 rm -f "$root/res2"/*; res scx built $D1 $K1 ""; res extest reused $D2 $K2 ""; res ghostty built $D3 $K3 ""
 asm
 check "assemble: every component built or reused: action assemble, three components" bash -c "[ $rc = 0 ] && grep -qx 'action=assemble' '$root/gho' && [ \$(wc -l < '$root/out2/COMPONENTS') = 3 ]"
+# the REAL COMPONENTS (binaries-assemble.sh above) through the REAL read loop of the assemble step in binaries.yml: it must hand every component's digest to cosign
+python3 -I - "$here" "$root" <<'PY'
+import sys, yaml
+here, root = sys.argv[1:3]
+w = yaml.safe_load(open(f"{here}/.github/workflows/binaries.yml"))
+run = [s for s in w["jobs"]["assemble"]["steps"] if s.get("id") == "assemble"][0]["run"]
+open(f"{root}/assemble-loop.sh", "w").write(run.split("binaries/lib/assemble.sh")[0])
+PY
+mkdir -p "$root/loopimg"; cp "$root/out2/COMPONENTS" "$root/loopimg/COMPONENTS"
+check "assemble step: the read loop of binaries.yml gets the digest of every component from the real COMPONENTS file" bash -c "cosign() { echo \"\$@\" >> '$root/cosign.log'; }; podman() { case \$1 in create) echo id ;; esac; }; tar() { :; }; export -f cosign podman tar; RUNNER_TEMP='$root/loopimg-tmp'; mkdir -p \$RUNNER_TEMP; cd '$root'; IMAGE=img RUNNER_TEMP='$root' bash -c 'mkdir -p image; cp loopimg/COMPONENTS image/COMPONENTS; . ./assemble-loop.sh' && [ \$(wc -l < '$root/cosign.log') = 3 ] && grep -q '@$D1' '$root/cosign.log' && grep -q '@$D3' '$root/cosign.log'"
 key3=$(grep '^key=' "$root/gho" | cut -d= -f2)
 check "assemble: the assembled key is binaries-key.sh --assembled over the included name=key pairs, order independent, and differs when a key differs" bash -c "[ '$key3' = \"\$('$here/.github/scripts/binaries-key.sh' --assembled ghostty=$K3 scx=$K1 extest=$K2)\" ] && [ '$key3' != \"\$('$here/.github/scripts/binaries-key.sh' --assembled scx=$K1 extest=$K2 ghostty=$K1)\" ] && [[ '$key3' =~ ^[0-9a-f]{40}\$ ]]"
 res scx failed "" "" ""; asm
@@ -102,11 +113,7 @@ mkghostty() { # dir: a staged ghostty component (root/usr tree, FILES, LICENSES,
 mkimg() { # dir: every component (unless WITH_GHOSTTY=0 for ghostty), with their COMPONENTS
     local d=$1; shift
     mkfix "$d.scx" scx; mkfix "$d.ext" extest; rm -rf "$d"; mkdir -p "$d/LICENSES"; cp -a "$d.scx/scx" "$d/"; cp -a "$d.ext/extest" "$d/"; echo gpl >"$d/LICENSES/scx-LICENSE"; echo src >"$d/SOURCE"; echo build >"$d/BUILDINFO"   # the top-level union and records of an assembled image
-    printf 'scx\t%s\tbuilt\tsha256:%s\nextest\t%s\treused\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$d/COMPONENTS"
-    if [ "${WITH_GHOSTTY:-1}" = 1 ]; then
-        mkghostty "$d"
-        printf 'ghostty\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$d/COMPONENTS"
-    fi
+    if [ "${WITH_GHOSTTY:-1}" = 1 ]; then mkghostty "$d"; write_components "$d" scx extest ghostty; else write_components "$d" scx extest; fi
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"
@@ -114,7 +121,7 @@ mkimg "$root/img"; rm -r "$root/img/extest"; sed -i '/^extest/d' "$root/img/COMP
 check "installer: a missing component fails the build" bash -c "[ $rc != 0 ] && grep -q 'required component extest is not in the binaries image' '$root/run'"
 mkimg "$root/img"; mkdir -p "$root/img/stray"; inst X=1
 check "installer: a component directory that COMPONENTS does not list is refused" bash -c "[ $rc != 0 ] && grep -q 'not in COMPONENTS' '$root/run'"
-mkimg "$root/img"; printf 'nosuch\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$root/img/COMPONENTS"; mkdir -p "$root/img/nosuch"; inst X=1
+mkimg "$root/img"; write_components "$root/img" scx extest ghostty nosuch; mkdir -p "$root/img/nosuch"; inst X=1
 check "installer: a component this installer does not know is refused (an image newer than the installer)" bash -c "[ $rc != 0 ] && grep -q 'does not know' '$root/run'"
 mkimg "$root/img"; rm "$root/img/COMPONENTS"; inst X=1
 check "installer: an image without COMPONENTS is not an assembled binaries image: refused" bash -c "[ $rc != 0 ] && grep -q 'COMPONENTS is missing' '$root/run'"

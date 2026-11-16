@@ -5,6 +5,7 @@
 # shellcheck disable=SC2016,SC2034
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$here/tests/lib/components.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
@@ -90,9 +91,8 @@ mkimg() { # dir
     printf 'MIT License\n' >"$1/ghostty/LICENSES/l"
     (cd "$1/ghostty/root" && find . -type f | sed 's#^\./##' | sort) >"$1/ghostty/FILES"
     for c in scx extest ghostty; do echo src >"$1/$c/SOURCE"; echo build >"$1/$c/BUILDINFO"; done
-    printf 'scx\t%s\tbuilt\tsha256:%s\nextest\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" >"$1/COMPONENTS"
     [ "${NO_GHOSTTY:-0}" != 1 ] || rm -rf "$1/ghostty"
-    [ "${NO_GHOSTTY:-0}" = 1 ] || printf 'ghostty\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'c%.0s' {1..64})" >>"$1/COMPONENTS"
+    if [ "${NO_GHOSTTY:-0}" = 1 ]; then write_components "$1" scx extest; else write_components "$1" scx extest ghostty; fi
 }
 inst() { rm -rf "$dest"; env "$@" BINARIES_ROOT="$root/img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh" >"$root/run" 2>&1; rc=$?; }
 dest="$root/dest"; lic="$dest/usr/share/licenses/octarine-binaries"

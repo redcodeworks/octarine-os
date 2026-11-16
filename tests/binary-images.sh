@@ -9,6 +9,7 @@ set -uo pipefail
 export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+source "$here/tests/lib/components.sh"
 keys_doc=$here/docs/signing-keys.md   # the one place that names the keys document
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
@@ -135,7 +136,7 @@ mk_images() { # dir
     for i in scx extest; do echo src >"$1/$i/SOURCE"; echo build >"$1/$i/BUILDINFO"; done
     mkdir -p "$1/ghostty/root/usr/bin" "$1/ghostty/LICENSES"; printf '#!/bin/sh\n' >"$1/ghostty/root/usr/bin/ghostty"; chmod +x "$1/ghostty/root/usr/bin/ghostty"
     echo usr/bin/ghostty >"$1/ghostty/FILES"; echo MIT >"$1/ghostty/LICENSES/ghostty-LICENSE"; echo src >"$1/ghostty/SOURCE"; echo build >"$1/ghostty/BUILDINFO"
-    printf 'scx\t%s\tbuilt\tsha256:%s\nextest\t%s\treused\tsha256:%s\nghostty\t%s\tbuilt\tsha256:%s\n' "$H40" "$(printf 'a%.0s' {1..64})" "$H40" "$(printf 'b%.0s' {1..64})" "$H40" "$(printf 'c%.0s' {1..64})" >"$1/COMPONENTS"
+    write_components "$1" scx extest ghostty
 }
 imgs="$root/imgs"; dest="$root/dest"
 inst() { rm -rf "$dest"; (BINARIES_ROOT="$imgs" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") >"$root/run" 2>&1; rc=$?; }

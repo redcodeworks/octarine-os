@@ -171,7 +171,7 @@ jobs:
           set -euo pipefail
           content="${RUNNER_TEMP}/image"
           names=()
-          while IFS=$'\t' read -r name _ _ digest; do
+          while IFS=$'\t' read -r name digest; do
               [[ -n "${name}" ]] || continue
               [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no digest for ${name}"; exit 1; }
               cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null

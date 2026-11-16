@@ -10,7 +10,7 @@
 # The license texts, source and build records go to /usr/share/licenses/octarine-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
-# Which components are present is told by /binaries/COMPONENTS (name, key, origin built or reused, digest). Every component is required: the list
+# Which components are present is told by /binaries/COMPONENTS (name and digest, tab separated; only the name is read here). Every component is required: the list
 # below must match binaries/components.tsv (a test checks it), and a component that is missing or cannot be installed fails the build.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must

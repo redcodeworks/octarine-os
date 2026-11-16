@@ -4,7 +4,7 @@
 #   binaries-assemble.sh <components.tsv> <results dir> <output dir>
 #
 # Writes <output dir>/COMPONENTS (tab separated, no header, one line per component that is IN the image:
-# name, key, origin built|reused, digest) and prints key=value lines (also to GITHUB_OUTPUT when set):
+# name, digest; the keys stay in the `components` output and the image label, nothing reads them from this file) and prints key=value lines (also to GITHUB_OUTPUT when set):
 #   action     assemble   every included component has a digest: the image can be assembled (or reused)
 #              validated  a component was only built for validation (no digest): nothing can be assembled or published
 #              failed     a component is failed or has no result line (exit 1)
@@ -29,7 +29,7 @@ while IFS=$'\t' read -r name _; do
     case "${st}" in
         reused | built)
             [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ && "${key}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::component ${name}: result ${st} without a valid digest or key"; status=1; continue; }
-            printf '%s\t%s\t%s\t%s\n' "${name}" "${key}" "${st}" "${digest}" >> "${outdir}/COMPONENTS"
+            printf '%s\t%s\n' "${name}" "${digest}" >> "${outdir}/COMPONENTS"
             pairs+=("${name}=${key}") ;;
         validated) [[ "${action}" == failed ]] || action=validated ;;
         *) echo "::error::component ${name} ended as '${st}'"; status=1 ;;
