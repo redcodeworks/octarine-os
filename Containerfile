@@ -11,8 +11,8 @@ ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # Wayland (32-bit and 64-bit, MIT) and Ghostty. Pinned by DIGEST like the brew image above: it changes only through a bump PR
 # (the weekly bump-pins.yml or `just bins-bump [tag]`, which resolve the digest and verify it with cosign before writing it); CI
 # verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr.
-ARG BINS_TAG=20261116-274070e
-ARG BINS_DIGEST=sha256:36266da9630cd034f0e0f5fb9535fbe6524f10b59150121ecd21455019a2e6d8
+ARG BINS_TAG=20261116-b8e18a7
+ARG BINS_DIGEST=sha256:348d0d6c198f6e7468fa2d0d6626f3f5afadc2970dbc48bdd31da86237e49d8a
 ARG BINS_IMAGE=ghcr.io/redcodeworks/octarine-bins:${BINS_TAG}@${BINS_DIGEST}
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
