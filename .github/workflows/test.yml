@@ -21,8 +21,9 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.ref || github.ref }}
-  # a newer push to a feature branch replaces the older run; the runs on the testing tip all finish (each merge deserves its own result)
-  cancel-in-progress: ${{ github.event_name != 'push' || github.ref != 'refs/heads/testing' }}
+  # a newer push to a branch (testing included) replaces the older run of that ref; only the tip's result matters. A dispatched run is grouped by the
+  # commit it tests (inputs.ref), so a push never cancels it and it never cancels a push run.
+  cancel-in-progress: true
 
 permissions:
   contents: read
