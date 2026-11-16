@@ -12,12 +12,16 @@ ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/out" ] && sed 's/^/     /' "$root/out"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
 
-check "test.yml: no pull_request trigger, and a run on the testing tip is never cancelled" python3 - "$here" <<'PY'
+check "test.yml: no pull_request trigger, a dispatched run is never in the group of a branch push, and a newer push supersedes an older run of the same ref" python3 - "$here" <<'PY'
 import sys, yaml
 w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/test.yml"))
 on = w.get(True) or w.get("on")
 assert "pull_request" not in on and "pull_request_target" not in on, set(on)
-assert "refs/heads/testing" in w["concurrency"]["cancel-in-progress"], w["concurrency"]
+c = w["concurrency"]
+# the group is keyed by the dispatched input first, so a dispatch (inputs.ref = a commit) and a push (github.ref) never share a group
+assert c["group"].index("inputs.ref") < c["group"].index("github.ref"), c
+# a newer run of a group must replace the older one on every ref, the testing tip included (the tip's newest run is never cancelled: nothing newer exists)
+assert c["cancel-in-progress"] is True, c
 PY
 check "test.yml: test and secrets keep their required names, secrets needs nothing, test runs inside the base the images are built on, and only a documentation scope skips base and test (never a failed scope)" python3 - "$here" <<'PY'
 import sys, yaml

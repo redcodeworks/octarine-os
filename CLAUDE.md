@@ -461,9 +461,9 @@ integration branch (GitLab's "main"); `main` is the production branch.
 ## Test workflow
 
 `.github/workflows/test.yml` (name `Test`) is the fast lane for dev branches (the image build takes about ten
-minutes). Triggers: `push` with `branches-ignore: [main]` (testing included since 2026-11-15: a non-required result on the tip that never cancels an earlier one) and `workflow_dispatch` (input `ref`: the bump workflow tests a bump commit from the testing ref); no `pull_request`
+minutes). Triggers: `push` with `branches-ignore: [main]` (testing included since 2026-11-15: a non-required result; since 2026-11-16 a newer push to testing cancels the older still-running Test run, so a burst of merges leaves one run on the final tip) and `workflow_dispatch` (input `ref`: the bump workflow tests a bump commit from the testing ref); no `pull_request`
 (the push check run is reported on the commit, so the pull request shows it and nothing runs twice) and nothing on
-`testing` or `main` (those run `build.yml`). One concurrency group per ref, cancel in progress, `contents: read`.
+`testing` or `main` (those run `build.yml`). One concurrency group per ref (a dispatched run: per tested commit, so a push never cancels it and it never cancels a push), cancel in progress, `contents: read`.
 Jobs `scope`, `base`, `test` and `secrets`; `test` and `secrets` have these exact names because they are required checks (`scope` is not required):
 
 - `test` (2026-11-15: INSIDE THE BASE THE IMAGES ARE BUILT ON): the job `base` resolves `${BASE_IMAGE}:${FEDORA_VERSION}` (the same defaults and repository variables as `build.yml`) to a digest with `base-pin.sh` (cosign-verified, retried) and `test` runs as `container: ${{ needs.base.outputs.image }}`, so the tests see the Fedora, niri, fish and shellcheck of the image build; the steps live in the shared action `.github/actions/test-suite` The action installs only the tools the base lacks (`rpm -q`, then a retried `dnf install`), PRINTS every tool's version (`Versions of the environment`: read it first when a run is red), then
