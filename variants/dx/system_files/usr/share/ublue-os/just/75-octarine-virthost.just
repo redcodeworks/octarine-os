@@ -346,4 +346,3 @@ virthost-setup *args:
     echo "To undo (per step):"
     for k in "${!names[@]}"; do [ "${undos[$k]}" != - ] && echo "  ${names[$k]}: ${undos[$k]}"; done
     exit "$failed"
-
