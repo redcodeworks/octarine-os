@@ -7,13 +7,9 @@ name: dx image (reusable)
 # or builds by comparing the labels of the published image; build -> sign as before; promote only when the plan finds a tested testing image
 # (promote_from_testing). The `summary` job hands the results of the jobs to the caller (a caller sees only one job result for a called
 # workflow, and .github/scripts/aggregate-dx.sh needs each). The signing key is the `signing` ENVIRONMENT secret of the `sign` job: nothing
-# is passed in. Design in CLAUDE.md ("dx image").
+# is passed in and the workflow declares no `secrets:` for it (a declared but unpassed workflow_call secret reached the sign job empty in the run of ee077f8, so the environment secret of the same name never showed). Design in CLAUDE.md ("dx image").
 on:
   workflow_call:
-    secrets:
-      SIGNING_SECRET:
-        description: "not passed by the callers: the sign job reads it from its `signing` environment"
-        required: false
     inputs:
       base_name:
         description: "Base image name under ghcr.io/<owner>/ (octarine-os or octarine-os-nvidia)"
