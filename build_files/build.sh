@@ -65,14 +65,16 @@ echo "::group::Container signature policy"
 # Everything is derived from them, so a fork only changes config/image.env and cosign.pub. The default image and
 # the NVIDIA variant (<name>-nvidia, built weekly from the same files) and the developer image (<name>-dx, built from
 # the published default image) and the NVIDIA developer image (<name>-nvidia-dx, the dx layer on the NVIDIA variant) all
-# get a rule for ALL FOUR repositories, so a machine on any of them can switch to another with
+# get a rule for ALL FIVE repositories (the fifth is the gamer variant <name>-gx, which is not published yet: its rule makes a machine that boots
+# this image able to switch to it later), so a machine on any of them can switch to another with
 # --enforce-container-sigpolicy. A machine can switch to a repository only once it has booted an image that carries its rule.
 if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
     org="${IMAGE_ORG,,}"
     name="${IMAGE_NAME,,}"
     base_name="${name%-dx}"
+    base_name="${base_name%-gx}"
     base_name="${base_name%-nvidia}"
-    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx ghcr.io/${org}/${base_name}-nvidia-dx"
+    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx ghcr.io/${org}/${base_name}-nvidia-dx ghcr.io/${org}/${base_name}-gx"
     key="/etc/pki/containers/${org}-${name}.pub"
     install -Dm644 /ctx/cosign.pub "${key}"
     printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
@@ -128,10 +130,11 @@ echo "::endgroup::"
 # shell; zsh is installed but opt-in: `ujust user-setup` offers it). A user who configures their own terminal to
 # start fish needs it installed, which is their own setting.
 
-# Packages can be installed from any enabled yum repo on the image.
-# RPMfusion repos are available by default in ublue main images
-# List of rpmfusion packages can be found here:
-# https://mirrors.rpmfusion.org/mirrorlist?path=free/fedora/updates/<release>/x86_64/repoview/index.html&protocol=https&redirect=1
+# Packages can be installed from any ENABLED yum repo on the image: Fedora's own, negativo17 and the base's akmods COPR (the list validate-repos.sh
+# allows). No RPM Fusion repository is installed or enabled in the base (checked 2026-11-16 against the booted image: /usr/etc/yum.repos.d holds only
+# the akmods COPR, negativo17 and the rok-cdemu COPR file). A build that needs RPM Fusion must add it itself, enable it for its own transaction only
+# and disable it again, or validate-repos.sh fails the build (Fedora's `fedora-workstation-repositories` package carries a disabled
+# rpmfusion-nonfree-steam.repo under /usr/share/dnf5/repos.d).
 
 # distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips them; solaar-udev is listed anyway so it stays
 # if the base drops it). solaar-udev (the Logitech udev rules) stays for the Solaar Flatpak and any host-side Solaar; the Solaar GUI package is NOT in the image.

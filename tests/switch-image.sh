@@ -105,6 +105,15 @@ FAKE_SKOPEO_DOWN=1 run "$base" dx --yes
 check "an unreachable registry is reported, not treated as unpublished" bash -c "[ $rc = 1 ] && grep -q 'Could not reach the registry' '$root/out'"
 check "an unreachable registry runs nothing" notlogged "bootc"
 
+# ---- gx (the gamer image): known by name, not published yet
+run "$base" gx --yes
+check "gx is refused as not published (exit 1), nothing runs, the target is the gx repository" bash -c "[ $rc = 1 ] && grep -q 'octarine-os-gx:latest is not published' '$root/out'"
+check "gx not published: bootc is not called" notlogged "bootc"
+FAKE_PUBLISHED="$pub_all octarine-os-gx:latest" run "$base" gx --yes
+check "gx published: the switch runs with the enforced signature policy" logged "sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-gx:latest"
+run "$base" --list
+check "--list has a gx row that says not published" bash -c "grep -E '^gx +not published +not published' '$root/out'"
+
 # ---- nvidia images on a machine without an NVIDIA GPU
 pubnv="$pub_all octarine-os-nvidia-dx:latest"
 OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia --yes

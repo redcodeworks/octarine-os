@@ -114,7 +114,7 @@ check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' ${os_release}"
 check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-dx}\"' ${os_release}"
 check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"
-for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx; do
+for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx; do
     check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
 done
 check "sudoers valid" "visudo -c"
