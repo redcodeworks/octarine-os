@@ -132,6 +132,10 @@ jobs:
         with:
           tool: just
 
+      # ojust.sh runs the launcher, which calls /usr/bin/just (the test-suite action installs the pinned binary there as well)
+      - name: Put just where the launcher expects it
+        run: sudo install -m 0755 "$(command -v just)" /usr/bin/just && just --version
+
       - name: Run the tests that read the documentation
         run: |
           mapfile -t doc_tests < <(.github/scripts/test-scope.sh --doc-tests)
