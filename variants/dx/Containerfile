@@ -11,7 +11,7 @@ ARG BASE_TAG=latest
 ARG BASE_DIGEST=
 
 # The shared developer package list: a tiny signed FROM scratch image (/dev.txt, /install.sh, /README) built from the
-# fedora-toolbox repository. It floats at its promoted `latest`: CI resolves ghcr.io/redcodeworks/dev-packages:latest to a digest once,
+# octarine-images repository (renamed from fedora-toolbox). It floats at its promoted `latest`: CI resolves ghcr.io/redcodeworks/dev-packages:latest to a digest once,
 # verifies it with keys/redcodeworks-toolbox-cosign.pub (.github/scripts/latest-ref.sh) and passes <image>@<digest> as DEV_PACKAGES_REF, which the
 # image records in its dev-packages label. There is no default: a build without it fails.
 ARG DEV_PACKAGES_REF

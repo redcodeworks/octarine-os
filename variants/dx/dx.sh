@@ -16,7 +16,7 @@ echo "Kernel of the base image: ${before}"
 test -f /dev-packages/install.sh
 # ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) stays in the shared list, which also
 # builds the owner's fedora-toolbox, but is NOT part of the dx images: `ujust hardware-setup` (step rocm) provides it in a
-# rootless distrobox instead. EXCLUDE takes exact package names (see dev-packages/install.sh in the fedora-toolbox repo).
+# rootless distrobox instead. EXCLUDE takes exact package names (see dev-packages/install.sh in the octarine-images repo).
 EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc" bash /dev-packages/install.sh
 for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
@@ -52,7 +52,7 @@ grep -qxF "${dev_import}" "${ujust_main}"
 chmod 0755 /usr/bin/sdk
 
 # `ujust datastore-install`, `datastore` and `datastore-setup`: the thin recipes of the opt-in datastore (the signed bundle is fetched on demand; the image ships no
-# datastore unit). Their container signature policy: the key of the fedora-toolbox repository, which signs the bundle, for exactly that repository.
+# datastore unit). Their container signature policy: the key of the octarine-images repository, which signs the bundle, for exactly that repository.
 # --- datastore bundle signature policy ---
 test -s /ctx/toolbox-cosign.pub
 bundle_ref=ghcr.io/redcodeworks/datastore-images
