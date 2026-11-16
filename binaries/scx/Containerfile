@@ -1,4 +1,4 @@
-# Component scx of the prebuilt binaries (the sched_ext schedulers): published as ghcr.io/redcodeworks/octarine-os-binaries:c-scx-<key>, a
+# Component scx of the prebuilt binaries (the sched_ext schedulers): published as ghcr.io/redcodeworks/octarine-binaries:c-scx-<key>, a
 # FROM scratch image that holds only /scx (bin/<name>, schedulers.tsv, LICENSES/, SOURCE, BUILDINFO). Build context: binaries/. The key is
 # made by .github/scripts/binaries-key.sh (this directory, lib/ and builder.env). Built in the Fedora 45 builder pinned by digest in
 # builder.env (CI passes it as --build-arg BUILDER); the source is fetched at the pinned commit and the build fails unless the checkout
@@ -34,7 +34,7 @@ COPY --from=build /out /scx
 LABEL maintainer="redcodeworks/octarine-os" \
       org.opencontainers.image.authors="redcodeworks" \
       org.opencontainers.image.vendor="redcodeworks" \
-      org.opencontainers.image.title="octarine-os-binaries (component scx)" \
+      org.opencontainers.image.title="octarine-binaries (component scx)" \
       org.opencontainers.image.description="sched_ext schedulers (scx) built from a pinned upstream tag" \
       org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
       org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \

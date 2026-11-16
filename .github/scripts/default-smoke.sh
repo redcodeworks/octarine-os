@@ -27,18 +27,18 @@ done
 check "ghostty: no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
 echo "== libraries the shipped binaries link: the builder (BUILDINFO of the binaries image) next to this image"
 for p in glibc gtk4 libadwaita gtk4-layer-shell; do echo "  image: $p $(rpm -q --qf %{VERSION}-%{RELEASE} $p 2>/dev/null || echo not installed)"; done
-grep -hiE "^(glibc|gtk4|libadwaita|gtk4-layer-shell)" /usr/share/licenses/octarine-os-binaries/*/BUILDINFO 2>/dev/null | sed "s/^/  builder: /" || true
+grep -hiE "^(glibc|gtk4|libadwaita|gtk4-layer-shell)" /usr/share/licenses/octarine-binaries/*/BUILDINFO 2>/dev/null | sed "s/^/  builder: /" || true
 check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
 check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
 check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
-check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-os-binaries/scx"
-check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-os-binaries/extest"
+check "GPL-2.0 text ships with the schedulers" "grep -rqF \"GNU GENERAL PUBLIC LICENSE\" /usr/share/licenses/octarine-binaries/scx"
+check "MIT text ships with extest" "grep -rqF \"MIT License\" /usr/share/licenses/octarine-binaries/extest"
 check "scheduler units: the template and the polkit rule ship, the helpers and the GameMode hooks are executable" "test -f /usr/lib/systemd/system/scx@.service && test -f /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for f in scx-preflight scx-wait-idle scx-run scx-verify gamemode-start gamemode-end; do test -x /usr/libexec/octarine-os/\$f || exit 1; done"
 check "polkit rule: generated from the registry (every instance in the unit regex, no generic character class) and the scx@ template it depends on exists" "test -f /usr/lib/systemd/system/scx@.service && ! grep -q A-Za-z0-9 /usr/share/polkit-1/rules.d/50-octarine-scx.rules && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); grep -Eq \"scx@.*[(|]\$i[|)]\" /usr/share/polkit-1/rules.d/50-octarine-scx.rules || exit 1; done"
 check "scheduler registry: one file per manifest line, every instance has a conflicts drop-in" "test \"\$(ls /usr/share/octarine-os/schedulers.d | wc -l)\" = \"\$(wc -l < /usr/share/octarine-os/schedulers.tsv)\" && for c in /usr/share/octarine-os/schedulers.d/*.conf; do i=\$(basename \$c .conf); test -s /usr/lib/systemd/system/scx@\$i.service.d/10-conflicts.conf || exit 1; done"
 check "no scheduler is enabled or started by the image (preset disables, no wants link)" "grep -qx \"disable scx@\\*.service\" /usr/lib/systemd/system-preset/00-octarine-scx.preset && ! ls /etc/systemd/system/*.wants/ 2>/dev/null | grep -q ^scx@"
 check "ghostty: installed with its desktop file, an icon the hicolor cache lists, a working --version and its libraries resolved" "test -x /usr/bin/ghostty && test -f /usr/share/applications/com.mitchellh.ghostty.desktop && test -f /usr/share/icons/hicolor/256x256/apps/com.mitchellh.ghostty.png && grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache && /usr/bin/ghostty --version >/dev/null && out=\$(ldd /usr/bin/ghostty) && ! grep -q \"not found\" <<<\"\$out\""
-check "source and build records ship for every binary component" "for i in scx extest ghostty; do test -s /usr/share/licenses/octarine-os-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-os-binaries/\$i/BUILDINFO || exit 1; done"
+check "source and build records ship for every binary component" "for i in scx extest ghostty; do test -s /usr/share/licenses/octarine-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-binaries/\$i/BUILDINFO || exit 1; done"
 # pcp is an optional package: its units are enabled only when it is installed
 check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"

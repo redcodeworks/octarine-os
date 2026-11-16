@@ -99,9 +99,8 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a registry or localhost/ prefix
     # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
-    # The prebuilt binaries image: CI passes the verified <image>@<digest>; locally the tag is the assembled key of binaries/
-    # (binaries-key.sh; published by the binaries workflow when that content reached testing or main,)
-    BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-os-binaries:$(.github/scripts/binaries-key.sh)}")
+    # The prebuilt binaries image: CI passes the verified <image>@<digest> of octarine-binaries:latest (latest-ref.sh); locally the floating latest tag
+    BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-binaries:latest}")
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
@@ -132,8 +131,8 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(.github/scripts/inputs-hash.sh vanilla)")
     fi
 
-    # The prebuilt binaries image this build installed from (digest reference in CI, assembled-key tag locally)
-    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-binaries-key-$(.github/scripts/binaries-key.sh)}")
+    # The prebuilt binaries image this build installed from (digest reference in CI: the exact binaries of this image, for a rollback; the floating tag locally)
+    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-binaries:latest}")
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
     # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.
@@ -347,34 +346,6 @@ brew-bump tag="":
     cosign verify --key keys/ublue-os-brew-cosign.pub "${ref}" > /dev/null || { echo "cosign verification failed for ${ref}; the Containerfile is unchanged" >&2; exit 1; }
     sed -i -e "s/^ARG BREW_TAG=.*/ARG BREW_TAG=${tag}/" -e "s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ghcr.io/ublue-os/brew:${tag}@sha256:${digest} (signature valid)"
-
-# Bump the pinned dev-packages digest in the dx Containerfile (verified)
-[group('Image')]
-dev-packages-bump tag="latest": (_list-image-bump "dev-packages" "DEV_PACKAGES" tag)
-
-# The body of the list image bump (dev-packages): resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
-[private]
-_list-image-bump name prefix tag:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    tag="{{ tag }}"
-    [[ "${tag}" =~ ^(latest|latest-[0-9]{8}-[0-9a-f]{7})$ ]] || { echo "tag must be latest or latest-YYYYMMDD-<short sha>, got '${tag}'" >&2; exit 1; }
-    repo=ghcr.io/redcodeworks/{{ name }}
-    prefix={{ prefix }}
-    file=variants/dx/Containerfile
-    digest=$(skopeo inspect --raw "docker://${repo}:${tag}" | sha256sum | sed 's/ .*//')
-    [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ${repo}:${tag}" >&2; exit 1; }
-    ref="${repo}@sha256:${digest}"
-    cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null || { echo "cosign verification failed for ${ref}; ${file} is unchanged" >&2; exit 1; }
-    # the pin records a dated tag for humans: when asked for latest, find the dated tag that points at the same digest
-    if [[ "${tag}" == latest ]]; then
-        for t in $(skopeo list-tags "docker://${repo}" | python3 -c 'import json,re,sys; print("\n".join(sorted((t for t in json.load(sys.stdin)["Tags"] if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", t)), reverse=True)[:10]))'); do
-            d=$(skopeo inspect --raw "docker://${repo}:${t}" | sha256sum | sed 's/ .*//')
-            if [[ "${d}" == "${digest}" ]]; then tag="${t}"; break; fi
-        done
-    fi
-    sed -i -e "s/^ARG ${prefix}_TAG=.*/ARG ${prefix}_TAG=${tag}/" -e "s/^ARG ${prefix}_DIGEST=.*/ARG ${prefix}_DIGEST=sha256:${digest}/" "${file}"
-    echo "${file} now pins ${repo}:${tag}@sha256:${digest} (signature valid)"
 
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]

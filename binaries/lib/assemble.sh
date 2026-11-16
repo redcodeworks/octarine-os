@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # Put the staged components together into the content of the published image:
 #
-#   assemble.sh <dir>        <dir> holds COMPONENTS (written by binaries-assemble.sh: name, key, origin,
-#                            digest per component that is in the image) and one directory per listed component, each with LICENSES/,
+#   assemble.sh <dir>        <dir> holds COMPONENTS (written by binaries-assemble.sh: name and digest
+#                            per component that is in the image) and one directory per listed component, each with LICENSES/,
 #                            SOURCE and BUILDINFO from stage.sh
 #
 # Each component directory stays as it is (the image installer reads them). On top, /LICENSES/ is the union of the license
 # directories and /SOURCE and /BUILDINFO are the components' files one after the other, each under a [name] heading, so a reader of
-# the bare image sees everything in one place. COMPONENTS stays in the image: it tells the installer what is present and where each
-# component came from (built or reused).
+# the bare image sees everything in one place. COMPONENTS stays in the image: it tells the installer what is present.
 set -euo pipefail
 dir="${1:?directory}"
 [[ -s "${dir}/COMPONENTS" ]] || { echo "assemble.sh: ${dir}/COMPONENTS is missing or empty" >&2; exit 1; }
 comps=()
-while IFS=$'\t' read -r name _; do [[ -z "${name}" || "${name}" == \#* ]] || comps+=("${name}"); done < "${dir}/COMPONENTS"
+mapfile -t comps < <(jq -r .name "${dir}/COMPONENTS")
 for c in "${comps[@]}"; do
     for f in LICENSES SOURCE BUILDINFO; do
         [[ -e "${dir}/${c}/${f}" ]] || { echo "assemble.sh: ${dir}/${c}/${f} is missing" >&2; exit 1; }

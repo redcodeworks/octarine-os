@@ -29,10 +29,12 @@ is_dx_only() {
 
 # The pipeline-only paths: the files that decide how images are PUBLISHED, not what is in them (the dispatch of the dx run, the publication of
 # `latest`, the failure issue) and their tests. Neither hash counts them: changing one rebuilds neither image. (build.yml and build-dx.yml
-# still count: they contain the builds.)
+# still count: they contain the builds.) The prebuilt binaries (binaries/, their workflows and scripts) are in this list too: the image installs from
+# octarine-binaries:latest, so a change to the sources reaches the image only when the binaries workflow has promoted it, which starts the image build itself.
 is_pipeline_only() {
     case "$1" in
         .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/workflows/publish-latest.yml) return 0 ;;
+        binaries/* | .github/workflows/binaries.yml | .github/workflows/binaries-component.yml | .github/scripts/binaries-*.sh) return 0 ;;
         tests/dispatch-dx.sh | tests/publish-latest.sh | tests/publish-latest-workflow.sh | tests/ci-issue.sh) return 0 ;;
         *) return 1 ;;
     esac

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Installs the prebuilt binaries into the image tree. Run by build.sh; the Containerfile bind-mounts the published
-# octarine-os-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
+# octarine-binaries image (assembled from the components of binaries/, see binaries.yml) at /binaries (BINARIES_ROOT overrides the
 # source, DESTDIR the target; both only for the tests).
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest
 #   ghostty root/usr/... (the whole tree Ghostty's `zig build --prefix /usr` installed, listed in FILES), LICENSES/, SOURCE,
 #           BUILDINFO  ->  /usr (never over a file the image already has: a conflict fails the build)
-# The license texts, source and build records go to /usr/share/licenses/octarine-os-binaries/<component>/ (the GPL-2.0 and MIT
+# The license texts, source and build records go to /usr/share/licenses/octarine-binaries/<component>/ (the GPL-2.0 and MIT
 # texts must ship with the binaries). Nothing is enabled or started.
 #
-# Which components are present is told by /binaries/COMPONENTS (name, key, origin built or reused, digest). Every component is required: the list
+# Which components are present is told by /binaries/COMPONENTS (one JSON object per line with name and digest, read with jq by name). Every component is required: the list
 # below must match binaries/components.tsv (a test checks it), and a component that is missing or cannot be installed fails the build.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
@@ -26,7 +26,7 @@ trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
 required="scx extest ghostty"
-lic=${dest}/usr/share/licenses/octarine-os-binaries
+lic=${dest}/usr/share/licenses/octarine-binaries
 err() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*"; echo "::warning::$*"; }
 
@@ -88,12 +88,11 @@ declare -A installed_note
 # ---- which components
 want=()
 test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
-while IFS=$'\t' read -r name _; do
-    [[ -n "${name}" && "${name}" != \#* ]] || continue
+while read -r name; do
     [[ " ${required} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
     test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
     want+=("${name}")
-done < "${root}/COMPONENTS"
+done < <(jq -r .name "${root}/COMPONENTS")
 for d in "${root}"/*/; do
     # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
     [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"

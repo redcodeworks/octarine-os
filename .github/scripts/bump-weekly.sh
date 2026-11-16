@@ -12,7 +12,7 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "${REPO_ROOT:-${here}/../..}" || exit 1
 base="${BUMP_BASE:-testing}"
-read -ra pins <<<"${BUMP_PINS:-scx extest ghostty chunkah dev-packages brew builder}"  # BUMP_PINS: a subset, by hand or for the tests
+read -ra pins <<<"${BUMP_PINS:-scx extest ghostty chunkah brew builder}"  # BUMP_PINS: a subset, by hand or for the tests
 summary() { echo "$*"; [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "$*" >> "${GITHUB_STEP_SUMMARY}" || true; }
 
 git fetch -q origin "${base}" || { echo "::error::cannot fetch ${base}"; exit 1; }

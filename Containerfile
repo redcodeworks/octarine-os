@@ -6,12 +6,11 @@
 ARG BREW_TAG=20261115
 ARG BREW_DIGEST=sha256:9e0492dbc471258657564c94dae18b58dd96ddb998a06f2b15e8209efb48042b
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
-# Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-os-binaries is a FROM scratch image built from the binaries/
-# directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, and libextest.so for Steam Input on Wayland, 32-bit and
-# 64-bit, MIT) and signed with this image's key. Its tag is the assembled key of its components (.github/scripts/binaries-key.sh), so a change to one
-# component builds only that component and everything else reuses the rest. The reference has no default: CI passes BINARIES_IMAGE as <image>@<digest> (the binaries
-# workflow resolves and verifies it before the image build), and `just build` defaults to the assembled-key tag of the checked-out
-# tree (see "Prebuilt binaries" in CLAUDE.md). build.sh installs the files under /usr.
+# Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-binaries is a FROM scratch image built from the binaries/
+# directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, libextest.so for Steam Input on Wayland, 32-bit and
+# 64-bit, MIT, and Ghostty) and signed with this image's key. It floats at its promoted `latest`: CI passes BINARIES_IMAGE as <image>@<digest>
+# (.github/scripts/latest-ref.sh resolves `latest` to a digest and verifies the signature first) and the digest is recorded in an image label;
+# `just build` defaults to the floating tag. There is no default here. build.sh installs the files under /usr.
 ARG BINARIES_IMAGE
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
@@ -69,7 +68,7 @@ COPY --from=brew /system_files /
 
 # The prebuilt binaries image is bind-mounted, not copied, so build.sh installs exactly what it checks (scx/bin,
 # scx/schedulers.tsv, extest/lib, extest/lib64, and LICENSES/, SOURCE, BUILDINFO of each component)
-# Which components the image holds and where each came from is in /binaries/COMPONENTS: install-binaries.sh installs them
+# Which components the image holds (name and digest) is in /binaries/COMPONENTS: install-binaries.sh installs them
 # from it and checks that the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \

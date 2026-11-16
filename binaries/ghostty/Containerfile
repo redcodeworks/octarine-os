@@ -1,4 +1,4 @@
-# Component ghostty of the prebuilt binaries (the Ghostty terminal emulator, a required component like the others: a failed build fails the run): published as ghcr.io/redcodeworks/octarine-os-binaries:c-ghostty-<key>, a FROM scratch image that holds only /ghostty
+# Component ghostty of the prebuilt binaries (the Ghostty terminal emulator, a required component like the others: a failed build fails the run): published as ghcr.io/redcodeworks/octarine-binaries:c-ghostty-<key>, a FROM scratch image that holds only /ghostty
 # (root/usr/..., FILES, LICENSES/, SOURCE, BUILDINFO). Build context: binaries/. Built from the git tag pinned in ghostty/upstream.env (tag and
 # peeled commit, fetch-source.sh fails if the tag moved) with the Zig tarball pinned in ghostty/zig.env (ghostty/fetch-zig.sh: size, sha256,
 # ziglang.org index.json and the minisign signature are checked). The builder is the Fedora 45 image of builder.env; CI passes it as --build-arg BUILDER.
@@ -37,7 +37,7 @@ COPY --from=build /out /ghostty
 LABEL maintainer="redcodeworks/octarine-os" \
       org.opencontainers.image.authors="redcodeworks" \
       org.opencontainers.image.vendor="redcodeworks" \
-      org.opencontainers.image.title="octarine-os-binaries (component ghostty)" \
+      org.opencontainers.image.title="octarine-binaries (component ghostty)" \
       org.opencontainers.image.description="the Ghostty terminal emulator built from a pinned upstream tag with a pinned Zig" \
       org.opencontainers.image.url="https://github.com/redcodeworks/octarine-os" \
       org.opencontainers.image.source="https://github.com/redcodeworks/octarine-os" \

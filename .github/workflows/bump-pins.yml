@@ -5,7 +5,7 @@ name: Bump pins
 # that has the file (`gh workflow run bump-pins.yml --ref testing`; with `-f dry_run=true` it prints the would-be pull request and pushes and opens nothing, and may
 # be dispatched from any branch to try its scripts).
 #
-# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (scx, extest, ghostty with its Zig pin, chunkah, dev-packages, brew, builder; the
+# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (scx, extest, ghostty with its Zig pin, chunkah, brew, builder; the
 # decision scripts per kind and the pin writers), each pin that moved becomes a commit, then the pull request is opened and every older open weekly one is closed with a
 # pointer to it. A failing pin (a registry that cannot be reached, a signature that does not verify) changes nothing and turns the run red, which scripts/scheduled-runs.sh
 # reports; the other pins still go in. Stay manual by the owner's decision: the tool versions (cosign, just, gitleaks, zizmor), the runner label, the repository
