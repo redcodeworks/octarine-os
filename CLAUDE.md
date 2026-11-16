@@ -1215,7 +1215,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - fastfetch: OUR build does not install it and must not (owner's rule; a Homebrew install is the owner's way); only a default configuration ships. On the owner's machine `/usr/bin/fastfetch` exists anyway (fastfetch-2.68.1-1.fc45, not layered): it is not in `build.sh`, the dx lists or the `packages.json` of ublue-os/main, so it comes with the upstream Fedora Silverblue set that the base image carries (to confirm with `rpm -qf /usr/bin/fastfetch`: open item for the hub); the motd script works with and without it. Default configuration:
   `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
   so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
-  they are missing, and `n/a` elsewhere. Test: `tests/fastfetch-default.sh` (strips the `//` lines, then `jq`). Never add fastfetch to
+  they are missing, and `n/a` elsewhere. Check: `default-smoke.sh` parses it in the built image (strips the `//` lines, then `jq`); the separate test file was removed (it could not catch a wrong command). Never add fastfetch to
   `build.sh` or a Brewfile.
 
 ## The motd: one script, one switch for every shell
