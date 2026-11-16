@@ -176,7 +176,8 @@ for w in ("build.yml", "build-beta.yml"):
 assert blocks[0] == blocks[1], "the smoke assertions drifted between build.yml and build-beta.yml"
 t = blocks[0]
 for needle in ("--version", "ldd /usr/bin/", "not found", "ELF 32-bit", "ELF 64-bit", "/usr/lib/extest/lib/libextest.so",
-               "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv"):
+               "/usr/lib/extest/lib64/libextest.so", "GNU GENERAL PUBLIC LICENSE", "MIT License", "schedulers.tsv",
+               "ldd -r /usr/bin/", "undefined symbol", "libraries the shipped binaries link", "BUILDINFO of the binaries image"):
     assert needle in t, needle
 assert "'" not in t, "a single quote would end the podman run bash -c string"
 PY
