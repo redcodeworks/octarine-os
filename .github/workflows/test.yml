@@ -56,91 +56,58 @@ jobs:
           echo "scope=${scope}" >> "${GITHUB_OUTPUT}"
           echo "Test scope: ${scope}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
-  test:
-    name: test
-    needs: scope
-    # always: a failed scope job means the full run, never a missing required check
-    if: always()
+  # The base the images are built on, resolved ONCE per run to a digest and signature-checked (base-pin.sh, the same script and the same BASE_IMAGE/FEDORA_VERSION
+  # defaults and repository variables as build.yml): the test job runs inside that image, so the tests see the Fedora, the niri, fish and shellcheck the image build sees
+  # (and a Fedora update that breaks them shows here before the image build does). build-beta.yml runs the same tests (the test-suite action) on ITS base.
+  base:
+    name: base
     runs-on: ubuntu-26.04
-    timeout-minutes: 20
-    container: fedora:45
+    timeout-minutes: 10
     env:
-      DOCS_ONLY: ${{ needs.scope.outputs.scope == 'docs' }}
+      BASE_IMAGE: ${{ vars.BASE_IMAGE || 'ghcr.io/ublue-os/silverblue-main' }}
+      FEDORA_VERSION: ${{ vars.FEDORA_VERSION || '45' }}
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
     steps:
-      - name: Install the tools the tests need
-        run: |
-          for attempt in 1 2 3; do
-            dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
-              just jq fish zsh niri git python3 python3-pyyaml shellcheck gawk dconf bash-completion \
-              findutils diffutils which tar gzip zstd curl ca-certificates util-linux shadow-utils binutils nodejs openssl && exit 0
-            echo "::warning::dnf install failed (attempt ${attempt}); retrying in 20 s"
-            sleep 20
-          done
-          echo "::error::dnf install failed three times"
-          exit 1
-
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
-      # The container runs as root, but recipes and tests check that they are not run as root (no session bus), so
-      # everything after the install runs as an ordinary user, like on the desktop.
-      - name: Create the ordinary user the checks run as
-        run: |
-          useradd --create-home ci
-          git config --system --add safe.directory "${GITHUB_WORKSPACE}"
-          chown -R ci: "${GITHUB_WORKSPACE}"
-
-      - name: Install the pinned just
+      - name: Set up cosign
         uses: ./.github/actions/setup-tool
         with:
-          tool: just
+          tool: cosign
 
-      - name: Make the pinned just usable by that user
-        run: install -m 0755 "$(command -v just)" /usr/local/bin/just && just --version
-
-      - name: just check
-        if: env.DOCS_ONLY != 'true'
-        run: runuser -u ci -- just check
-
-      - name: bash -n on every script
-        if: env.DOCS_ONLY != 'true'
+      - name: Resolve the base image to a digest and verify it
+        id: pin
         run: |
-          fail=0
-          while IFS= read -r f; do
-            if ! bash -n "$f"; then echo "FAIL bash -n $f"; fail=1; fi
-          done < <(git ls-files '*.sh' githooks/pre-push)
-          # shell blocks of the workflows are checked by the tests that read them; scripts only here
-          [ "$fail" = 0 ] && echo "bash -n: all scripts parse"
-          exit "$fail"
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          echo "image=${BASE_IMAGE}@${BASE_PIN}" >> "${GITHUB_OUTPUT}"
+          echo "Tests run on ${BASE_IMAGE}:${FEDORA_VERSION} = ${BASE_PIN}" | tee -a "${GITHUB_STEP_SUMMARY}"
 
-      # four at a time, output buffered per test, results in a fixed order (.github/scripts/run-tests.sh)
-      - name: Run every tests/*.sh
-        if: env.DOCS_ONLY != 'true'
-        shell: runuser -u ci -- bash -e {0}
-        run: .github/scripts/run-tests.sh --jobs 4
+  test:
+    name: test
+    needs: [scope, base]
+    # always: a failed scope job means the full run, never a missing required check
+    if: always()
+    runs-on: ubuntu-26.04
+    timeout-minutes: 25
+    container: ${{ needs.base.outputs.image }}
+    env:
+      DOCS_ONLY: ${{ needs.scope.outputs.scope == 'docs' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
 
-      # documentation-only push: the tests that read the documentation (derived by grep, never a fixed list) and a quick sanity check of the text
-      - name: Run the tests that read the documentation
-        if: env.DOCS_ONLY == 'true'
-        shell: runuser -u ci -- bash -e {0}
-        run: |
-          mapfile -t doc_tests < <(.github/scripts/test-scope.sh --doc-tests)
-          echo "Documentation only: running ${#doc_tests[@]} tests that read the documentation"
-          .github/scripts/run-tests.sh --jobs 4 "${doc_tests[@]}"
-
-      - name: Sanity check of the documentation text
-        if: env.DOCS_ONLY == 'true'
-        run: |
-          bad=0
-          for f in *.md docs/*.md; do
-            [ -f "$f" ] || continue
-            if [ ! -s "$f" ]; then echo "::error file=$f::empty"; bad=1; fi
-            if grep -qE '^(<<<<<<<|=======|>>>>>>>)( |$)' "$f"; then echo "::error file=$f::merge conflict marker"; bad=1; fi
-          done
-          exit "$bad"
+      - name: Run the tests
+        uses: ./.github/actions/test-suite
 
   secrets:
     name: secrets

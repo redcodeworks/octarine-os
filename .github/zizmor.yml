@@ -7,6 +7,7 @@ rules:
   # this repository or tested; changing 31 call sites to an unverified syntax would risk every build for a style finding (severity: help).
   self-repository:
     ignore:
+      - action.yml
       - binaries-component.yml
       - binaries.yml
       - build-beta.yml
@@ -35,3 +36,9 @@ rules:
   dangerous-triggers:
     ignore:
       - build-nvidia-dx.yml
+  # The container of the test jobs is `${{ needs.base.outputs.image }}`: a digest resolved and cosign-verified by base-pin.sh in the job before (the base the images are built
+  # on, which floats on purpose: the tests should see what the next image build sees), so there is no literal pin to write; zizmor cannot see through the expression.
+  unpinned-images:
+    ignore:
+      - test.yml
+      - build-beta.yml
