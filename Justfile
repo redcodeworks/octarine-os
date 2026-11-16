@@ -644,11 +644,7 @@ brew-bump tag="":
 [group('Image')]
 dev-packages-bump tag="latest": (_list-image-bump "dev-packages" "DEV_PACKAGES" tag)
 
-# Bump the pinned datastore-images digest (the list of the datastore container images) in the dx Containerfile (verified)
-[group('Image')]
-datastore-images-bump tag="latest": (_list-image-bump "datastore-images" "DATASTORE_IMAGES" tag)
-
-# The shared body of the two list image bumps: resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
+# The body of the list image bump (dev-packages): resolve the digest, verify it with the fedora-toolbox key, write the tag and digest lines
 [private]
 _list-image-bump name prefix tag:
     #!/usr/bin/env bash

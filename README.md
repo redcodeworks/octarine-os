@@ -74,7 +74,7 @@ Added by this image:
 | Image | Description | URL |
 |---|---|---|
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
-| dx | Developer image: the full developer toolchain (Clang, CMake, Ninja, Meson, gdb), `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
+| dx | Developer image: the full developer toolchain (Clang, CMake, Ninja, Meson, gdb), `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore-install`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built weekly; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built weekly, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 
@@ -138,7 +138,8 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust sensors-setup [--yes\|--no]` | Detects the fan and temperature chip of your board and loads its driver at boot, so the fan headers show up in `sensors` |
 | `ujust gnome-candy <recipe>` | Themes and icons from [candy-for-gnome](https://github.com/redcodeworks/candy-for-gnome), installed into your home directory |
 | `ujust virthost-setup` (DX only) | Turn the machine into a KVM/libvirt host: check the CPU, verify the libvirt daemons, optional IOMMU kernel arguments for device passthrough, libvirt group and default connection, VM image directory, virtio driver ISO, a LAN bridge |
-| `ujust datastore start\|stop\|status\|logs` (DX only) | Start and stop the opt-in rootless datastore containers (PostgreSQL, Valkey, SeaweedFS; Kafka on request), all stopped until you start them |
+| `ujust datastore-install` (DX only) | Download the signed datastore bundle (PostgreSQL, Valkey, SeaweedFS, Kafka as rootless containers) and set up its user units |
+| `ujust datastore start\|stop\|status\|logs` (DX only) | Start and stop the datastore containers (Kafka on request), all stopped until you start them |
 | `ujust datastore-setup` (DX only) | Create the datastore secrets, pin or update image versions, and back up the volumes |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |
 

@@ -1,6 +1,0 @@
-[Unit]
-Description=Kafka log directories
-
-[Volume]
-VolumeName=kafka-data
-Driver=local
