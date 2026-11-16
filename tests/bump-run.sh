@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the consolidated weekly bump: the shared pull request helper (.github/scripts/bump-pr.sh), the runner of one pin (bump-run.sh: the new
-# Homebrew files image and Fedora builder kinds with stub registry answers), the summary table and the workflow (the pins it lists are the pins CLAUDE.md
+# Tests for the combined weekly bump: the runner of one pin (bump-run.sh: the Homebrew files image and Fedora builder kinds with stub registry answers, one
+# commit per moved pin), the orchestrator (bump-weekly.sh: ONE branch and ONE pull request, a commit per pin, an older weekly PR superseded, nothing moved means
+# no branch and no PR, a same-day rerun gets a new branch, never a force-push, a dry run opens nothing) and the workflow (the pins it runs are the pins CLAUDE.md
 # documents). A local origin, stub gh, skopeo, just and cosign; no network. Needs: bash, git, jq, python3 with PyYAML. Run: tests/bump-run.sh
 # shellcheck disable=SC2016
 set -uo pipefail
@@ -19,12 +20,14 @@ cat >"$bin/gh" <<'F'
 #!/usr/bin/env bash
 echo "gh $*" >>"$GH_LOG"
 case "$1 $2" in
-    "pr list") cat "${PR_LIST:-/dev/null}" ;;
+    "pr list") [ -z "${STALE_PRS:-}" ] || printf '%s\n' "$STALE_PRS" ;;
     "pr create") echo "https://github.com/o/r/pull/${NEW_PR:-77}" ;;
-    "pr edit") exit 0 ;;
-    "pr view") if [[ "$*" == *statusCheckRollup* ]]; then echo "${ROLLUP_N:-}"; else echo "https://github.com/o/r/pull/$3"; fi ;;
+    "pr close") exit 0 ;;
     "workflow run") [ -z "${GH_WF_FAIL:-}" ] ;;
-    "api repos/o/r/commits/"*) echo "${SUITES_N:-}" ;;
+    "run list") exit 0 ;;
+    "api repos/o/p/releases/latest") echo "${REL:-v1.1.5}" ;;
+    "api repos/o/p/commits/"*) printf '%s\n' "$(printf 'b%.0s' {1..40})" ;;
+    "api repos/o/r/commits/"*) exit 0 ;;
     *) exit 99 ;;
 esac
 F
@@ -34,46 +37,18 @@ mkrepo() { # dir: a working copy with a bare origin, the scripts, a builder.env 
     local wc=$1
     rm -rf "$wc" "$root/origin.git"; git init -q --bare -b testing "$root/origin.git"
     mkdir -p "$wc/.github/scripts" "$wc/binaries/lib" "$wc/keys"
-    cp "$here"/.github/scripts/bump-pr.sh "$here"/.github/scripts/bump-checks.sh "$here"/.github/scripts/bump-run.sh "$wc/.github/scripts/"
+    cp "$here"/.github/scripts/bump-weekly.sh "$here"/.github/scripts/bump-checks.sh "$here"/.github/scripts/bump-run.sh "$here"/.github/scripts/upstream-check.sh "$wc/.github/scripts/"
+    cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; mkdir -p "$wc/binaries/scx"
+    printf "UPSTREAM_REPO=o/p\nUPSTREAM_TAG=v1.1.4\nUPSTREAM_COMMIT=%s\n" "$(printf 'a%.0s' {1..40})" >"$wc/binaries/scx/upstream.env"
     printf 'BUILDER=registry.fedoraproject.org/fedora:45@sha256:%s\n' "$(printf 'a%.0s' {1..64})" >"$wc/binaries/builder.env"
     printf 'ARG BREW_TAG=20261108\nARG BREW_DIGEST=sha256:%s\nFROM x\n' "$(printf 'b%.0s' {1..64})" >"$wc/Containerfile"
     git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$root/origin.git"; git -C "$wc" push -q origin testing
 }
 wc="$root/wc"
-# ---- the shared helper
-mkrepo "$wc"; : >"$GH_LOG"; printf 'body text\n' >"$root/body.md"; : >"$root/prlist"
-pr() { (cd "$wc" && PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash .github/scripts/bump-pr.sh "$@") >"$root/run" 2>&1; rc=$?; }
-w1="sed -i s/^BUILDER=.*/BUILDER=new1/ binaries/builder.env"
-pr --branch bump/builder --title "Bump the builder to one" --body-file "$root/body.md" --message "m1" --file binaries/builder.env -- $w1
-check "helper, new PR: the branch is pushed with ONE commit that changes only the listed pin file, the PR is created into testing with the body and the by-hand note, Test is dispatched on the branch, action=opened" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/builder)\" = binaries/builder.env ] && [ \$(git -C '$root/origin.git' log --format=%s testing..bump/builder | wc -l) = 1 ] && grep -q '^gh pr create --base testing --head bump/builder --title Bump the builder to one' '$GH_LOG' && grep -q 'body text' '$GH_LOG' && grep -qE 'gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}' '$GH_LOG' && grep -qx 'action=opened' '$root/run'"
-printf '{"number":5,"title":"Bump the builder to one"}\n' >"$root/prlist"; : >"$GH_LOG"
-pr --branch bump/builder --title "Bump the builder to one" --body-file "$root/body.md" --message "m1" --file binaries/builder.env -- $w1
-check "helper, same title already open: nothing happens (no commit, no PR call, no dispatch), action=noop" bash -c "[ $rc = 0 ] && ! grep -qE '^gh (pr (create|edit)|workflow run)' '$GH_LOG' && grep -qx 'action=noop' '$root/run' && grep -qx 'pr_number=5' '$root/run'"
-wr="sed -i s/^BUILDER=.*/BUILDER=repair1/ binaries/builder.env"
-: >"$root/prlist"; pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
-before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
-printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
-ROLLUP_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
-check "helper, same title open but the PR has no test check (its commit already had a check suite): one EMPTY commit on the branch (no force-push, pin unchanged) and the checks are dispatched for the new commit" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $((before + 1)) ] && [ -z \"\$(git -C '$root/origin.git' diff --name-only bump/repair~1 bump/repair)\" ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG' && ! grep -qE '^gh pr (create|edit)' '$GH_LOG'"
-before=$(git -C "$root/origin.git" rev-list --count testing..bump/repair)
-printf '{"number":5,"title":"Bump the builder to repair"}\n' >"$root/prlist"; : >"$GH_LOG"
-ROLLUP_N=0 SUITES_N=0 pr --branch bump/repair --title "Bump the builder to repair" --body-file "$root/body.md" --message "mr" --file binaries/builder.env -- $wr
-check "helper, same title open, no test check and the tip has no Actions suite (an earlier repair commit): NO new commit, the checks are dispatched for the existing tip" bash -c "[ $rc = 0 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/repair) = $before ] && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}\$' '$GH_LOG'"
-w2="sed -i s/^BUILDER=.*/BUILDER=new2/ binaries/builder.env"
-printf '{"number":5,"title":"Bump the builder to one"}\n' >"$root/prlist"; : >"$GH_LOG"
-pr --branch bump/builder --title "Bump the builder to two" --body-file "$root/body.md" --message "m2" --file binaries/builder.env -- $w2
-check "helper, an older version open: the PR is edited (not duplicated), the branch gets a second commit, never a force-push, the new pin is on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr edit 5 --title Bump the builder to two' '$GH_LOG' && ! grep -q 'pr create' '$GH_LOG' && [ \$(git -C '$root/origin.git' log --format=%s testing..bump/builder | wc -l) = 2 ] && git -C '$root/origin.git' show bump/builder:binaries/builder.env | grep -qx BUILDER=new2 && grep -qx 'action=updated' '$root/run'"
-: >"$root/prlist"; : >"$GH_LOG"
-pr --branch bump/builder --title "Bump the builder to two" --body-file "$root/body.md" --message "m2" --file binaries/builder.env -- $w2
-check "helper, the branch exists without a PR: it is brought current, no new commit when it already carries the pin, a PR is opened" bash -c "[ $rc = 0 ] && grep -q '^gh pr create' '$GH_LOG' && [ \$(git -C '$root/origin.git' log --format=%s testing..bump/builder | wc -l) = 2 ]"
-pr --branch bump/x --title t --body-file "$root/body.md" --message m --file binaries/builder.env -- sed -i 's/^ARG BREW_TAG=.*/ARG BREW_TAG=1/' Containerfile
-check "helper: a writer that changes a file other than the listed pin files is refused and nothing is pushed" bash -c "[ $rc != 0 ] && grep -q 'not one of the pin files' '$root/run' && ! git -C '$root/origin.git' rev-parse --verify bump/x"
-: >"$GH_LOG"; GH_WF_FAIL=1 pr --branch bump/y --title ty --body-file "$root/body.md" --message m --file binaries/builder.env -- sed -i 's/^BUILDER=.*/BUILDER=y/' binaries/builder.env
-check "helper: a failed Test dispatch is a warning, not a failure" bash -c "[ $rc = 0 ] && grep -q 'Could not dispatch the Test workflow on bump/y' '$root/run'"
-pr --branch main --title t --body-file "$root/body.md" --message m --file f -- true
-check "helper: only bump/ branches are accepted" test "$rc" = 2
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ); old10=$(date -u -d '10 days ago' +%Y-%m-%dT%H:%M:%SZ); young2=$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)
+day=$(date -u +%Y%m%d)
 
-# ---- stub registry tools for the runner
+# ---- stub registry tools
 cat >"$bin/skopeo" <<'F'
 #!/usr/bin/env bash
 echo "skopeo $*" >>"$GH_LOG"
@@ -92,75 +67,107 @@ echo "just $*" >>"$GH_LOG"
 sed -i "s/^ARG BREW_TAG=.*/ARG BREW_TAG=$2/; s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:$(printf 'c%.0s' {1..64})/" Containerfile
 F
 chmod +x "$bin/skopeo" "$bin/just"
-run() { local pin=$1; shift; mkdir -p "$root/rows"; rm -f "$root/rows/$pin.tsv"; (cd "$wc" && env "$@" PR_LIST="$root/prlist" PATH="$bin:$PATH" BUMP_ROW_DIR="$root/rows" bash .github/scripts/bump-run.sh "$pin") >"$root/run" 2>&1; rc=$?; row=$(cat "$root/rows/$pin.tsv" 2>/dev/null); }
-now=$(date -u +%Y-%m-%dT%H:%M:%SZ); old10=$(date -u -d '10 days ago' +%Y-%m-%dT%H:%M:%SZ); young2=$(date -u -d '2 days ago' +%Y-%m-%dT%H:%M:%SZ)
-fresh() { mkrepo "$wc"; : >"$GH_LOG"; : >"$root/prlist"; }
+fresh() { mkrepo "$wc"; : >"$GH_LOG"; }
+# one pin on a clean testing checkout: the working tree is left with the pin commit (or nothing)
+run() { local pin=$1; shift; (cd "$wc" && env "$@" PATH="$bin:$PATH" bash .github/scripts/bump-run.sh "$pin") >"$root/run" 2>&1; rc=$?; }
+last() { git -C "$wc" log -1 --format=%B; }
+moved() { [ "$(git -C "$wc" rev-list --count origin/testing..HEAD)" = "$1" ]; }
+clean() { git -C "$wc" diff --quiet && [ -z "$(git -C "$wc" status --porcelain)" ]; }
+
+# ---- a source pin (scx: the release check, the pin writer and the row with the compare link)
+fresh; run scx
+check "scx, a newer release: ONE commit changing only binaries/scx/upstream.env (tag and commit), the row links the compare view of the followed project" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$wc' show --name-only --format= HEAD)\" = binaries/scx/upstream.env ] && grep -qx 'UPSTREAM_TAG=v1.1.5' '$wc/binaries/scx/upstream.env' && grep -qx 'UPSTREAM_COMMIT=$(printf 'b%.0s' {1..40})' '$wc/binaries/scx/upstream.env' && [[ \"\$(git -C '$wc' log -1 --format=%b | sed -n 1p)\" == 'scx | v1.1.4 | v1.1.5 | https://github.com/o/p/compare/v1.1.4...v1.1.5 | '* ]]"
+fresh; run scx REL=v1.1.4
+check "scx, the pin is the latest release: nothing to bump, no commit" moved 0
 
 # ---- the Homebrew files image
 fresh; run brew TAGS='"20261108","20261115","latest","20261101"'
-check "brew, a newer dated tag: just brew-bump <that tag> (the recipe is the pin writer: its cosign check runs) decides, ONE PR on bump/brew changes only the Containerfile pin lines, the row says ok with the PR" bash -c "[ $rc = 0 ] && grep -q '^just brew-bump 20261115' '$GH_LOG' && grep -q '^gh pr create --base testing --head bump/brew' '$GH_LOG' && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/brew)\" = Containerfile ] && git -C '$root/origin.git' show bump/brew:Containerfile | grep -qx 'ARG BREW_TAG=20261115' && [[ \"$row\" == brew*20261108*20261115*'#77'*ok* ]]"
+check "brew, a newer dated tag: just brew-bump <that tag> (the recipe is the pin writer: its cosign check runs) decides, ONE commit changes only the Containerfile pin lines and ends with the table row" bash -c "[ $rc = 0 ] && grep -q '^just brew-bump 20261115' '$GH_LOG' && [ \"\$(git -C '$wc' show --name-only --format= HEAD)\" = Containerfile ] && grep -qx 'ARG BREW_TAG=20261115' '$wc/Containerfile' && [[ \"\$(git -C '$wc' log -1 --format=%b | sed -n 1p)\" == 'brew | 20261108 | 20261115 | ghcr.io/ublue-os/brew:20261115'*'| unknown' ]] && [ \$(git -C '$wc' rev-list --count origin/testing..HEAD) = 1 ]"
 fresh; run brew TAGS='"20261108","20261101"'
-check "brew, the pin is already the newest tag: nothing to bump, no PR, status ok" bash -c "[ $rc = 0 ] && ! grep -q 'pr create' '$GH_LOG' && [[ \"$row\" == *'nothing to bump'*ok* ]]"
+check "brew, the pin is already the newest tag: nothing to bump, no commit" bash -c "[ $rc = 0 ] && ! grep -q 'brew-bump' '$GH_LOG' && grep -q 'nothing to bump' '$root/run'" && moved 0
 fresh; run brew TAGS='"20261001","20261101"'
-check "brew, an OLDER newest tag than the pin is never proposed" bash -c "[ $rc = 0 ] && ! grep -q 'brew-bump' '$GH_LOG' && ! grep -q 'pr create' '$GH_LOG'"
+check "brew, an OLDER newest tag than the pin is never proposed" bash -c "[ $rc = 0 ] && ! grep -q 'brew-bump' '$GH_LOG'"
 fresh; run brew TAGS='"20261115"' JUST_FAIL=1
-check "brew, the signature (or digest) does not verify: the pin job FAILS (exit 1), no branch, no PR, the row says failed" bash -c "[ $rc = 1 ] && ! grep -q 'pr create' '$GH_LOG' && ! git -C '$root/origin.git' rev-parse --verify bump/brew && [[ \"$row\" == *failed* ]]"
+check "brew, the signature (or digest) does not verify: the pin FAILS (exit 1), no commit, the tree is clean" bash -c "[ $rc = 1 ] && grep -q 'FAILED' '$root/run'" && moved 0 && clean
 fresh; run brew SKOPEO_FAIL=1
-check "brew, the registry cannot be reached: the pin job fails and changes nothing" bash -c "[ $rc = 1 ] && [[ \"$row\" == *failed*'cannot list the tags'* ]] && ! grep -q 'pr create' '$GH_LOG'"
+check "brew, the registry cannot be reached: the pin fails and changes nothing" bash -c "[ $rc = 1 ] && grep -q 'cannot list the tags' '$root/run'" && moved 0
 
 # ---- the Fedora builder digest
 fresh; run builder MANIFEST=new CREATED="$old10"
-check "builder, a new digest of the same major that is 10 days old: ONE PR on bump/builder changing only builder.env, the major stays 45, the body says every component rebuilds" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/builder)\" = binaries/builder.env ] && git -C '$root/origin.git' show bump/builder:binaries/builder.env | grep -q '^BUILDER=registry.fedoraproject.org/fedora:45@sha256:[0-9a-f]\{64\}\$' && ! git -C '$root/origin.git' show bump/builder:binaries/builder.env | grep -q aaaaaaaa && grep -q 'EVERY binaries component' '$GH_LOG' && [[ \"$row\" == builder*ok* ]]"
+check "builder, a new digest of the same major that is 10 days old: ONE commit changing only builder.env, the major stays 45, the row carries the age (10)" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$wc' show --name-only --format= HEAD)\" = binaries/builder.env ] && grep -q '^BUILDER=registry.fedoraproject.org/fedora:45@sha256:[0-9a-f]\{64\}\$' '$wc/binaries/builder.env' && ! grep -q aaaaaaaa '$wc/binaries/builder.env' && [[ \"\$(git -C '$wc' log -1 --format=%b | sed -n 1p)\" == 'builder | 45@sha256:aaaa'*'| registry.fedoraproject.org/fedora:45 | 10' ]]"
 fresh; run builder MANIFEST=new CREATED="$young2"
-check "builder, the new digest is only 2 days old (cooldown 7 days): nothing is proposed yet, the row says why, no PR" bash -c "[ $rc = 0 ] && ! grep -q 'pr create' '$GH_LOG' && [[ \"$row\" == *'nothing to bump yet'*ok*'2 days ago'* ]]"
+check "builder, the new digest is only 2 days old (cooldown 7 days): nothing is proposed yet, the line says why, no commit" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump yet.*2 days ago' '$root/run'" && moved 0
 fresh; run builder MANIFEST=new CREATED="$young2" MIN_AGE_DAYS=1
-check "builder, the cooldown is MIN_AGE_DAYS" bash -c "[ $rc = 0 ] && grep -q 'pr create' '$GH_LOG'"
+check "builder, the cooldown is MIN_AGE_DAYS" moved 1
 fresh; mfdigest=$(printf 'manifest-new' | sha256sum | cut -d' ' -f1); sed -i "s/^BUILDER=.*/BUILDER=registry.fedoraproject.org\/fedora:45@sha256:$mfdigest/" "$wc/binaries/builder.env"; git -C "$wc" commit -q -am same; git -C "$wc" push -q origin testing; : >"$GH_LOG"
 run builder MANIFEST=new CREATED="$old10"
-check "builder, the pin is already the current digest: nothing to bump, no PR" bash -c "[ $rc = 0 ] && ! grep -q 'pr create' '$GH_LOG' && [[ \"$row\" == *'nothing to bump'*ok* ]]"
+check "builder, the pin is already the current digest: nothing to bump" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run'" && moved 0
 fresh; run builder SKOPEO_FAIL=1 CREATED="$old10"
-check "builder, the registry cannot be reached: the pin job fails and changes nothing" bash -c "[ $rc = 1 ] && [[ \"$row\" == *failed* ]] && ! grep -q 'pr create' '$GH_LOG'"
+check "builder, the registry cannot be reached: the pin fails and changes nothing" bash -c "[ $rc = 1 ]" && moved 0
 fresh; echo 'BUILDER=registry.fedoraproject.org/fedora:45' >"$wc/binaries/builder.env"; git -C "$wc" commit -q -am bad; git -C "$wc" push -q origin testing
 run builder MANIFEST=new CREATED="$old10"
-check "builder, a builder.env without a digest pin fails" bash -c "[ $rc = 1 ] && [[ \"$row\" == *'digest-pinned'* ]]"
+check "builder, a builder.env without a digest pin fails" bash -c "[ $rc = 1 ] && grep -q 'digest-pinned' '$root/run'"
 run nosuchpin
 check "an unknown pin fails" test "$rc" = 1
+fresh; echo dirty >>"$wc/Containerfile"; run brew TAGS='"20261115"'
+check "a dirty working tree is refused before anything is written" bash -c "[ $rc = 1 ] && ! grep -q 'brew-bump' '$GH_LOG'"
 
-# ---- the summary table
-rows="$root/rows2"; mkdir -p "$rows"
-printf 'scx\tv1\tv2\t#9\tok\t\n' >"$rows/scx.tsv"; printf 'brew\t1\t2\t-\tfailed\tcannot list the tags\n' >"$rows/brew.tsv"
-(bash "$here/.github/scripts/bump-summary.sh" "$rows" scx extest brew) >"$root/run" 2>&1; rc=$?
-check "summary: one table pin | current | proposed | PR | status, a failed row and a pin without a row (its job did not finish) make the run fail" bash -c "[ $rc = 1 ] && grep -q '^| pin | current | proposed | PR | status |' '$root/run' && grep -q '^| scx | v1 | v2 | #9 | ok |' '$root/run' && grep -q 'failed: cannot list the tags' '$root/run' && grep -q '^| extest .*failed: no result' '$root/run'"
-printf 'extest\tx\tnothing to bump\t-\tok\tnote\n' >"$rows/extest.tsv"; printf 'brew\t1\t1\t-\tok\t\n' >"$rows/brew.tsv"
-(bash "$here/.github/scripts/bump-summary.sh" "$rows" scx extest brew) >"$root/run" 2>&1; rc=$?
-check "summary: all rows ok: exit 0" test "$rc" = 0
+# ---- the weekly orchestrator: pins brew and builder with stub registries
+weekly() { (cd "$wc" && env "$@" BUMP_PINS="${PINS:-brew builder}" PATH="$bin:$PATH" bash .github/scripts/bump-weekly.sh) >"$root/run" 2>&1; rc=$?; }
+heads() { git -C "$root/origin.git" for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing$'; }
+fresh; weekly TAGS='"20261108","20261115"' MANIFEST=new CREATED="$old10"
+check "weekly, two pins moved: ONE branch bump/weekly-<day> (no per-pin branch) with ONE commit per pin, each touching only its own pin file" bash -c "[ $rc = 0 ] && [ \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" = bump/weekly-$day ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/weekly-$day) = 2 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/weekly-$day | LC_ALL=C sort | tr '\n' ' ')\" = 'Containerfile binaries/builder.env ' ] && for c in \$(git -C '$root/origin.git' rev-list testing..bump/weekly-$day); do [ \$(git -C '$root/origin.git' show --name-only --format= \$c | wc -l) = 1 ] || exit 1; done"
+check "weekly: exactly ONE pull request, into testing, titled with the date and the pins, body = the table with a row per pin and how to drop a pin" bash -c "[ \$(grep -c '^gh pr create' '$GH_LOG') = 1 ] && grep -q '^gh pr create --base testing --head bump/weekly-$day --title Weekly pin bumps $(date -u +%F): brew, builder' '$GH_LOG' && grep -q '| pin | from | to | what changed upstream | days the new value has existed |' '$GH_LOG' && grep -q '| brew | 20261108 | 20261115 |' '$GH_LOG' && grep -q '| builder | 45@sha256:' '$GH_LOG' && grep -q 'revert its commit' '$GH_LOG'"
+check "weekly: the checks are made for the TIP of the one branch (Test dispatched on testing with ref=<tip sha>)" bash -c "tip=\$(git -C '$root/origin.git' rev-parse bump/weekly-$day) && grep -qx \"gh workflow run test.yml --ref testing -f ref=\$tip\" '$GH_LOG'"
+tip1=$(git -C "$root/origin.git" rev-parse "bump/weekly-$day")
+: >"$GH_LOG"; git -C "$wc" checkout -q testing; weekly TAGS='"20261108","20261115"' MANIFEST=new CREATED="$old10" STALE_PRS="9 bump/weekly-20260101
+$(printf '5 bump/weekly-%s\n' "$day")"
+check "weekly, a run of the same day: a NEW branch bump/weekly-<day>-2 (the first branch keeps its tip: nothing is force-pushed or rewritten)" bash -c "[ $rc = 0 ] && git -C '$root/origin.git' rev-parse --verify bump/weekly-$day-2 && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/weekly-$day-2) = 2 ] && [ \"\$(git -C '$root/origin.git' rev-parse bump/weekly-$day)\" = $tip1 ]"
+check "weekly, older weekly PRs still open are closed with a comment that points at the new PR (the new branch is never closed); the new PR re-applied every pending pin" bash -c "grep -q '^gh pr close 9 --delete-branch --comment Superseded by https://github.com/o/r/pull/77' '$GH_LOG' && grep -q '^gh pr close 5 ' '$GH_LOG' && [ \$(grep -c '^gh pr close' '$GH_LOG') = 2 ] && ! grep -q 'pr close.*weekly-$day-2' '$GH_LOG'"
+fresh; weekly TAGS='"20261108"' MANIFEST=x CREATED="$young2" STALE_PRS="9 bump/weekly-20260101"
+check "weekly, nothing moved: no branch (local or on origin), no PR, exit 0; a stale weekly PR whose pins are all in testing is closed" bash -c "[ $rc = 0 ] && [ -z \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" ] && ! grep -q '^gh pr create' '$GH_LOG' && grep -q '^gh pr close 9 .*No pin is pending' '$GH_LOG' && grep -q 'Nothing moved' '$root/run'"
+fresh; weekly TAGS='"20261115"' JUST_FAIL=1 MANIFEST=new CREATED="$old10" STALE_PRS="9 bump/weekly-20260101"
+check "weekly, one pin fails and one moves: the PR carries the moved pin only, the run is RED (exit 1) so the failure is reported, the failed pin changed nothing" bash -c "[ $rc = 1 ] && [ \$(git -C '$root/origin.git' rev-list --count testing..bump/weekly-$day) = 1 ] && [ \"\$(git -C '$root/origin.git' diff --name-only testing bump/weekly-$day)\" = binaries/builder.env ] && grep -q 'Weekly pin bumps .*: builder --body' '$GH_LOG'"
+fresh; weekly TAGS='"20261108"' JUST_FAIL=1 SKOPEO_FAIL=1 STALE_PRS="9 bump/weekly-20260101"
+check "weekly, nothing moved and a pin failed: a stale weekly PR is NOT closed (the failed pin may still be pending there)" bash -c "[ $rc = 1 ] && ! grep -q '^gh pr close' '$GH_LOG'"
+fresh; weekly DRY_RUN=1 TAGS='"20261108","20261115"' MANIFEST=new CREATED="$old10"
+check "weekly, dry run: prints the would-be title, branch, commits and table; nothing is pushed, no PR, no dispatch, no close" bash -c "[ $rc = 0 ] && grep -q 'Weekly pin bumps $(date -u +%F): brew, builder' '$root/run' && grep -q '| pin | from | to |' '$root/run' && grep -q -- '- [0-9a-f]* Bump the Homebrew' '$root/run' && [ -z \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" ] && ! grep -qE '^gh (pr|workflow)' '$GH_LOG'"
+fresh; git -C "$wc" commit -q --allow-empty -m "feature work"; weekly TAGS='"20261115"'
+check "weekly, a real run from a checkout that is not origin/testing is refused (a feature commit must never ride into a bump PR); nothing is pushed" bash -c "[ $rc = 1 ] && grep -q 'must start from origin/testing' '$root/run' && [ -z \"\$(git -C '$root/origin.git' for-each-ref --format='%(refname:short)' refs/heads/ | grep -v '^testing\$')\" ]"
+fresh; git -C "$wc" commit -q --allow-empty -m "feature work"; PINS=brew weekly DRY_RUN=1 TAGS='"20261115"'
+check "weekly, dry run from a branch with other commits: only the pin commits are listed and tabled, never the feature commit or an empty row" bash -c "[ $rc = 0 ] && grep -q 'Weekly pin bumps .*: brew\$' '$root/run' && ! grep -q 'feature work' '$root/run' && ! grep -q '^|  |' '$root/run'"
+fresh; weekly GH_WF_FAIL=1 TAGS='"20261115"' MANIFEST=new CREATED="$old10"
+check "weekly, a failed Test dispatch is a warning, not a failure" bash -c "[ $rc = 0 ] && grep -q 'Could not dispatch the Test workflow' '$root/run'"
 
-# ---- the workflow and the documentation
-check "bump-pins.yml: ONE workflow, Monday 07:00 UTC plus workflow_dispatch, jobs sources, digests, external and a summary that runs always; every matrix has fail-fast off, checks out testing, permissions are minimal per job, the default token only; upstream-check.yml is gone; the pins of the matrices are the pins of the summary and of CLAUDE.md" python3 -I - "$here" <<'PY'
+# ---- the workflow, the scripts and the documentation
+check "no script forces a push (no --force, --force-with-lease, or a + refspec), none keeps per-pin branches or per-pin PR lookups" bash -c "! grep -nE -- '--force|git push.* \+|bump/<name>|--head bump/|gh pr list --head' '$here'/.github/scripts/bump-*.sh '$here/.github/workflows/bump-pins.yml'"
+check "bump-pins.yml: Monday 07:00 UTC plus workflow_dispatch with a dry_run input; ONE job that checks out testing (dry run: the dispatched ref), fail-fast matrices and artifact plumbing are gone, minimal permissions, the default token only; upstream-check.yml is gone; the pins bump-weekly.sh runs are known to bump-run.sh and are the pins CLAUDE.md documents" python3 -I - "$here" <<'PY'
 import sys, yaml, re, os
 root = sys.argv[1]
 t = open(root + "/.github/workflows/bump-pins.yml").read(); w = yaml.safe_load(t)
 on = w.get(True) or w.get("on")
-assert on["schedule"] == [{"cron": "0 7 * * 1"}] and "workflow_dispatch" in on and set(on) == {"schedule", "workflow_dispatch"}
+assert on["schedule"] == [{"cron": "0 7 * * 1"}] and set(on) == {"schedule", "workflow_dispatch"}
+assert on["workflow_dispatch"]["inputs"]["dry_run"]["type"] == "boolean"
 assert not os.path.exists(root + "/.github/workflows/upstream-check.yml")
-j = w["jobs"]; assert set(j) == {"sources", "digests", "external", "summary"}, set(j)
-pins = []
-for k in ("sources", "digests", "external"):
-    assert j[k]["strategy"]["fail-fast"] is False
-    assert any("ref" in s.get("with", {}) and s["with"]["ref"] == "testing" for s in j[k]["steps"] if "checkout" in s.get("uses", ""))
-    assert j[k]["permissions"]["contents"] == "write" and j[k]["permissions"]["pull-requests"] == "write"
-    pins += j[k]["strategy"]["matrix"]["pin"]
-assert j["summary"]["if"] == "always()" and j["summary"]["permissions"] == {"contents": "read"}
-call = [s for s in j["summary"]["steps"] if "bump-summary.sh" in s.get("run", "")][0]["run"]
-assert call.split("bump-summary.sh")[1].split()[1:] == pins, (call, pins)
+j = w["jobs"]; assert set(j) == {"bump"}, set(j)
+b = j["bump"]
+assert "strategy" not in b and "upload-artifact" not in t and "download-artifact" not in t
+co = [s for s in b["steps"] if "checkout" in s.get("uses", "")][0]
+assert "'testing'" in co["with"]["ref"] and co["with"]["fetch-depth"] == 0
+assert b["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write", "checks": "write", "packages": "read"}
+assert "bump-weekly.sh" in " ".join(s.get("run", "") for s in b["steps"])
 assert "BUMP_TOKEN" not in t and "secrets." not in t and "GH_TOKEN: ${{ github.token }}" in t
 assert w["permissions"] == {"contents": "read"}
+sh = open(root + "/.github/scripts/bump-weekly.sh").read()
+pins = re.search(r'BUMP_PINS:-([a-z -]+)\}', sh).group(1).split()
+run = open(root + "/.github/scripts/bump-run.sh").read()
+for p in pins:
+    assert re.search(r'(\s|\| )%s( \||\))' % re.escape(p), run, re.M), p
 doc = open(root + "/CLAUDE.md").read()
 m = re.search(r"Pins bumped by bump-pins\.yml: ([a-z, -]+)\.", doc)
 assert m and [p.strip() for p in m.group(1).split(",")] == pins, (m and m.group(1), pins)
-assert "bump/brew" in doc and "bump/builder" in doc
 PY
-check "every script parses and the runner knows exactly the pins of the workflow" bash -c "for f in bump-pr bump-run bump-summary; do bash -n '$here/.github/scripts/'\$f.sh || exit 1; done"
+check "every bump script parses" bash -c "for f in bump-weekly bump-run bump-checks bump-ghostty bump-pin; do bash -n '$here/.github/scripts/'\$f.sh || exit 1; done"
 echo
 echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

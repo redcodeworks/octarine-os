@@ -5,7 +5,7 @@ Everything that builds, tests, signs and publishes the images runs from here.
 - `workflows/` has the GitHub Actions workflows. `test.yml` runs the tests on every branch; `build.yml` builds the default
   image on `testing` and `main` and every day; `build-dx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml`
   build the variants; `binaries.yml` builds the prebuilt programs; `publish-latest.yml` moves the
-  `latest` tag; `bump-pins.yml` opens the weekly pull requests that move pinned versions; the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
+  `latest` tag; `bump-pins.yml` opens ONE weekly pull request that moves the pinned versions (one commit per pin that moved, so a pin you do not want is dropped with `git revert <its commit>`; a newer weekly pull request closes an unmerged older one; rerun by hand with `gh workflow run bump-pins.yml --ref testing`, add `-f dry_run=true` to only print what it would open); the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
 - `scripts/` has the shell and Python helpers the workflows call (planning which builds are needed, registry and signature
   checks, smoke tests, pin bumps). `actions/` has two small shared steps (tool install and the test suite).
 - `dependabot.yml` and `zizmor.yml` configure dependency updates and the workflow audit.
