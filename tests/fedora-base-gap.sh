@@ -146,6 +146,21 @@ check "issue: creates the label, opens ONE issue labelled gap-fedora-base, and c
   grep -q 'label create gap-fedora-base' '$root/ghlog' && [ \$(grep -c 'issue create' '$root/ghlog') = 1 ] && grep -q 'issue create.*--label gap-fedora-base' '$root/ghlog' &&
   grep -q 'issue comment 4.*Superseded by https://github.com/o/r/issues/9' '$root/ghlog' && grep -q 'issue close 7' '$root/ghlog' && ! grep -q 'issue close 9' '$root/ghlog'"
 
+# build.sh tolerance for the official base: the "System files" loop and the policy.json start, run against a temp tree
+check "build.sh: a base without the ublue-os-just files fails the build, except in the gap analysis (GAP_ANALYSIS=1), where an empty <name>-base.just keeps the imports valid; the Universal Blue base behaves the same either way" bash -c "
+  loop=\$(sed -n '/^for f in 00-default 10-update 30-distrobox; do/,/^done/p' '$here/build_files/build.sh' | sed \"s#/usr/share/ublue-os#$root/ub/usr/share/ublue-os#g\") &&
+  [ -n \"\$loop\" ] &&
+  mkdir -p '$root/ub/usr/share/ublue-os/just' && for f in 00-default 10-update 30-distrobox; do echo \"base \$f\" > '$root/ub/usr/share/ublue-os/just/'\$f.just; done &&
+  bash -c \"\$loop\" && grep -q 'base 10-update' '$root/ub/usr/share/ublue-os/just/10-update-base.just' && [ ! -e '$root/ub/usr/share/ublue-os/just/10-update.just' ] &&
+  rm -rf '$root/ub' && mkdir -p '$root/ub' &&
+  ! bash -c \"\$loop\" >/dev/null 2>&1 && (GAP_ANALYSIS=1 bash -c \"\$loop\") && for f in 00-default 10-update 30-distrobox; do test -e '$root/ub/usr/share/ublue-os/just/'\$f-base.just && [ ! -s '$root/ub/usr/share/ublue-os/just/'\$f-base.just ] || exit 1; done &&
+  rm -rf '$root/ub' && mkdir -p '$root/ub/usr/share/ublue-os/just' && for f in 00-default 10-update 30-distrobox; do echo x > '$root/ub/usr/share/ublue-os/just/'\$f.just; done &&
+  (GAP_ANALYSIS=1 bash -c \"\$loop\") && grep -qx x '$root/ub/usr/share/ublue-os/just/00-default-base.just'"
+check "build.sh: the policy.json start from containers-common's copy is guarded by GAP_ANALYSIS=1 and by the file being absent" grep -q 'if \[\[ ! -f /etc/containers/policy.json && "\${GAP_ANALYSIS:-}" == 1 \]\]' "$here/build_files/build.sh"
+check "gap analysis: only the gap workflow sets GAP_ANALYSIS (the Justfile passes it on, the Containerfile declares it empty), no other workflow does" bash -c "
+  grep -q 'GAP_ANALYSIS: \"1\"' '$wf' && grep -q 'GAP_ANALYSIS=\"\"' '$here/Containerfile' && grep -q 'GAP_ANALYSIS=\${GAP_ANALYSIS}' '$here/Justfile' &&
+  ! grep -rl GAP_ANALYSIS '$here/.github/workflows' | grep -v build-fedora-base.yml | grep -q ."
+
 echo
 echo "${pass} passed, ${failn} failed"
 [ "$failn" -eq 0 ]

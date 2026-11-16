@@ -38,6 +38,8 @@ ARG IMAGE_ORG
 ARG IMAGE_NAME
 # The build's channel-neutral version (beta builds: `beta-` prefix), written to os-release IMAGE_VERSION by build.sh
 ARG IMAGE_VERSION
+# Set to 1 only by the monthly gap analysis (build-fedora-base.yml): lets build.sh tolerate what the official Fedora base lacks; empty on every real build
+ARG GAP_ANALYSIS=""
 ## Other possible base images include:
 # FROM ghcr.io/ublue-os/bazzite:stable
 # FROM ghcr.io/ublue-os/bazzite:testing

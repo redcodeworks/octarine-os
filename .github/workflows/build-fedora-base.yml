@@ -157,6 +157,7 @@ jobs:
         env:
           BASE_IMAGE: ${{ env.OFFICIAL_IMAGE }}
           FEDORA_VERSION: ${{ env.OFFICIAL_TAG }}
+          GAP_ANALYSIS: "1"
         run: |
           set +e
           mkdir -p gap

@@ -35,9 +35,19 @@ echo "::group::System files"
 
 # Base recipe files that our own file of the same name wraps: keep the base copy as <name>-base.just. Our file imports it and
 # overrides single recipes (between two imported files the FIRST import wins, so a later file could not override them).
-# A missing base file fails the build, which is the signal that the base changed its layout.
+# On the Universal Blue base a missing base file fails the build, which is the signal that the base changed its layout. The official
+# Fedora base (the monthly gap analysis, build-fedora-base.yml) has no ublue-os-just at all: there an empty <name>-base.just keeps our
+# import lines valid so the build goes on and reports the next gap (the result has no base recipes, which that analysis is about).
 for f in 00-default 10-update 30-distrobox; do
-    mv "/usr/share/ublue-os/just/${f}.just" "/usr/share/ublue-os/just/${f}-base.just"
+    if [[ -f "/usr/share/ublue-os/just/${f}.just" ]]; then
+        mv "/usr/share/ublue-os/just/${f}.just" "/usr/share/ublue-os/just/${f}-base.just"
+    elif [[ "${GAP_ANALYSIS:-}" == 1 ]]; then
+        mkdir -p /usr/share/ublue-os/just
+        : > "/usr/share/ublue-os/just/${f}-base.just"
+    else
+        echo "ERROR: the base has no /usr/share/ublue-os/just/${f}.just (the base changed its layout)"
+        exit 1
+    fi
 done
 
 # Copy the contents of system_files/ of the git repo to /
@@ -77,6 +87,10 @@ if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
     install -Dm644 /ctx/cosign.pub "${key}"
     printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
         >"/etc/containers/registries.d/${org}-${name}.yaml"
+    # The official Fedora base has no /etc/containers/policy.json (only containers-common's /usr/share copy): start from that one
+    if [[ ! -f /etc/containers/policy.json && "${GAP_ANALYSIS:-}" == 1 ]]; then
+        install -Dm644 /usr/share/containers/policy.json /etc/containers/policy.json
+    fi
     python3 - "${key}" ${refs} <<'PY'
 import json
 import sys

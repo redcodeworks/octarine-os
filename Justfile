@@ -114,6 +114,8 @@ build $target_image=image_name $tag=default_tag:
     if [[ -n "${FEDORA_VERSION:-}" ]]; then BUILD_ARGS+=("--build-arg" "FEDORA_VERSION=${FEDORA_VERSION}"); fi
     # CI resolves the floating base to a digest once and verifies its signature (base-pin.sh): the build is FROM that digest
     if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
+    # the gap analysis (build-fedora-base.yml) sets GAP_ANALYSIS=1 so build.sh tolerates what the official Fedora base lacks
+    if [[ -n "${GAP_ANALYSIS:-}" ]]; then BUILD_ARGS+=("--build-arg" "GAP_ANALYSIS=${GAP_ANALYSIS}"); fi
     # os-release IMAGE_VERSION: the build's version, `beta-` prefixed when the beta workflow sets IMAGE_VERSION_PREFIX
     BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=${IMAGE_VERSION_PREFIX:-}$(.github/scripts/image-version.sh)")
     LABELS=()
