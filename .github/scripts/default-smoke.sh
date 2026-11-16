@@ -17,7 +17,7 @@ systemctl --global list-unit-files --state=enabled --no-legend --no-pager || tru
 echo "== checks"
 
 check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! systemctl is-enabled flatpak-preinstall.service 2>/dev/null"
-# prebuilt binaries (binaries/: scx, extest, ghostty): installed only; whether a scheduler loads is for a real machine to say
+# prebuilt binaries (the pinned octarine-bins image: scx, extest, ghostty): installed only; whether a scheduler loads is for a real machine to say
 check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
 for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
     check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"

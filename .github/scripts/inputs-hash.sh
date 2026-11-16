@@ -29,13 +29,12 @@ is_dx_only() {
 
 # The pipeline-only paths: files that run in CI but are not read by any image build, so changing one rebuilds neither image: the publication of `latest`
 # and the rollback, the dx dispatch, the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan
-# config, the git hooks, and the NVIDIA variant (built by its own workflow from the published default image). (build.yml, build-dx.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries (binaries/, their
-# workflows and scripts) are NOT in this list since 2026-11-16: a testing build reads octarine-binaries:testing, so a binaries change must rebuild the image on testing.
-# On main the same hash decides promotion of the tested testing image (which holds those binaries), so nothing else changes there.
+# config, the git hooks, and the NVIDIA variant (built by its own workflow from the published default image). (build.yml, build-dx.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries are no special case any more
+# (2026-11-16): the digest pin of octarine-bins in the Containerfile is an ordinary image input, so a bump rebuilds the image on testing.
 is_pipeline_only() {
     case "$1" in
         .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
-        .github/scripts/bump-*.sh | .github/scripts/upstream-check.sh | .github/scripts/ghostty-check.sh) return 0 ;;
+        .github/scripts/bump-*.sh) return 0 ;;
         .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
         .github/workflows/require-testing-branch.yml | .github/workflows/test.yml | .github/workflows/zizmor.yml) return 0 ;;
         .github/workflows/build-nvidia.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;

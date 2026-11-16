@@ -1,4 +1,0 @@
-# component   (one stage each in binaries/Containerfile; every component is required, see CLAUDE.md "Prebuilt binaries")
-scx
-extest
-ghostty

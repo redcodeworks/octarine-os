@@ -6,12 +6,14 @@
 ARG BREW_TAG=20261115
 ARG BREW_DIGEST=sha256:9e0492dbc471258657564c94dae18b58dd96ddb998a06f2b15e8209efb48042b
 ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
-# Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-binaries is a FROM scratch image built from the binaries/
-# directory of this repository (the sched_ext schedulers scx_*, GPL-2.0, libextest.so for Steam Input on Wayland, 32-bit and
-# 64-bit, MIT, and Ghostty) and signed with this image's key. It floats at its promoted `latest`: CI passes BINARIES_IMAGE as <image>@<digest>
-# (.github/scripts/latest-ref.sh resolves `latest` to a digest and verifies the signature first) and the digest is recorded in an image label;
-# `just build` defaults to the floating tag. There is no default here. build.sh installs the files under /usr.
-ARG BINARIES_IMAGE
+# Prebuilt binaries, as files only: ghcr.io/redcodeworks/octarine-bins is a FROM scratch image built and signed (with its OWN key,
+# keys/octarine-bins.pub) by the octarine-bins repository: the sched_ext schedulers scx_* (GPL-2.0), libextest.so for Steam Input on
+# Wayland (32-bit and 64-bit, MIT) and Ghostty. Pinned by DIGEST like the brew image above: it changes only through a bump PR
+# (the weekly bump-pins.yml or `just bins-bump [tag]`, which resolve the digest and verify it with cosign before writing it); CI
+# verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr.
+ARG BINS_TAG=20261116-274070e
+ARG BINS_DIGEST=sha256:36266da9630cd034f0e0f5fb9535fbe6524f10b59150121ecd21455019a2e6d8
+ARG BINS_IMAGE=ghcr.io/redcodeworks/octarine-bins:${BINS_TAG}@${BINS_DIGEST}
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
 ARG FEDORA_VERSION=45
@@ -19,7 +21,7 @@ ARG FEDORA_VERSION=45
 # `just build`, which then builds on the floating tag as before.
 ARG BASE_PIN=""
 FROM ${BREW_IMAGE} AS brew
-FROM ${BINARIES_IMAGE} AS binaries
+FROM ${BINS_IMAGE} AS binaries
 
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
@@ -66,10 +68,9 @@ ARG IMAGE_VERSION
 # Brew's files go in first; build.sh then copies system_files over them, so our presets and files win
 COPY --from=brew /system_files /
 
-# The prebuilt binaries image is bind-mounted, not copied, so build.sh installs exactly what it checks (scx/bin,
-# scx/schedulers.tsv, extest/lib, extest/lib64, and LICENSES/, SOURCE, BUILDINFO of each component)
-# Which components the image holds (name and digest) is in /binaries/COMPONENTS: install-binaries.sh installs them
-# from it and checks that the shared libraries the binaries need are in this image
+# The pinned octarine-bins image is bind-mounted, not copied, so build.sh installs exactly what it checks (layout and contract:
+# the header of install-binaries.sh). /binaries/COMPONENTS names the components; install-binaries.sh installs them and checks that
+# the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \
     --mount=type=cache,dst=/var/cache \

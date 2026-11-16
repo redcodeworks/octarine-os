@@ -99,8 +99,7 @@ build $target_image=image_name $tag=default_tag:
     BUILD_ARGS+=("--build-arg" "IMAGE_NAME=${target_image##*/}")  # strip a registry or localhost/ prefix
     # BREW_IMAGE overrides the Containerfile's digest-pinned default (for a local experiment); CI uses the default
     if [[ -n "${BREW_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BREW_IMAGE=${BREW_IMAGE}"); fi
-    # The prebuilt binaries image: CI passes the verified <image>@<digest> of octarine-binaries:latest (latest-ref.sh); locally the floating latest tag
-    BUILD_ARGS+=("--build-arg" "BINARIES_IMAGE=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-binaries:latest}")
+    # The prebuilt binaries image is pinned by digest in the Containerfile (BINS_DIGEST); nothing to pass
     # CI sets BASE_IMAGE and FEDORA_VERSION (workflow env, optionally from repository variables); locally they are
     # optional (`FEDORA_VERSION=46 just build`) and the Containerfile defaults apply when unset
     if [[ -n "${BASE_IMAGE:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_IMAGE=${BASE_IMAGE}"); fi
@@ -131,8 +130,8 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(.github/scripts/inputs-hash.sh vanilla)")
     fi
 
-    # The prebuilt binaries image this build installed from (digest reference in CI: the exact binaries of this image, for a rollback; the floating tag locally)
-    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=${BINARIES_IMAGE:-ghcr.io/{{ repo_organization }}/octarine-binaries:latest}")
+    # The pinned prebuilt binaries image this build installed from (the digest reference: the exact binaries of this image, for a rollback)
+    LABELS+=("--label" "io.github.redcodeworks.octarine-os.binaries=ghcr.io/{{ repo_organization }}/octarine-bins@$(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile)")
 
     # Image metadata for https://artifacthub.io/ - This is optional but is highly recommended so we all can get a index of all the custom images
     # The metadata by itself is not going to do anything, you choose if you want your image to be on ArtifactHub or not.
@@ -346,6 +345,20 @@ brew-bump tag="":
     cosign verify --key keys/ublue-os-brew-cosign.pub "${ref}" > /dev/null || { echo "cosign verification failed for ${ref}; the Containerfile is unchanged" >&2; exit 1; }
     sed -i -e "s/^ARG BREW_TAG=.*/ARG BREW_TAG=${tag}/" -e "s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ghcr.io/ublue-os/brew:${tag}@sha256:${digest} (signature valid)"
+
+# Bump the octarine-bins pin: resolve the digest of a tag (default: latest), verify its cosign signature with keys/octarine-bins.pub, write tag and digest into the Containerfile
+[group('Image')]
+bins-bump tag="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ref="ghcr.io/redcodeworks/octarine-bins"
+    digest=$(skopeo inspect --raw "docker://${ref}:{{ tag }}" | sha256sum | sed 's/ .*//')
+    [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ${ref}:{{ tag }}" >&2; exit 1; }
+    cosign verify --key keys/octarine-bins.pub "${ref}@sha256:${digest}" > /dev/null || { echo "cosign verification failed for ${ref}@sha256:${digest}; the Containerfile is unchanged" >&2; exit 1; }
+    version=$(skopeo inspect --config "docker://${ref}@sha256:${digest}" | jq -r '.config.Labels["org.opencontainers.image.version"] // empty')
+    [[ "${version}" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || { echo "the image has no usable org.opencontainers.image.version label ('${version}')" >&2; exit 1; }
+    sed -i -e "s/^ARG BINS_TAG=.*/ARG BINS_TAG=${version}/" -e "s/^ARG BINS_DIGEST=.*/ARG BINS_DIGEST=sha256:${digest}/" Containerfile
+    echo "Containerfile now pins ${ref}:${version}@sha256:${digest} (signature valid)"
 
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]

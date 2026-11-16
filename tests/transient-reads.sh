@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests the two readers that keep "could not read" apart from "is not there" (registry-read.sh, cosign-check.sh) with fake skopeo and cosign, and the wiring of the
-# rule in the workflows. The behavior of the callers is tested next to them (plan-promote, plan-dx, publish-latest, base-pin, binary-images). Run: tests/transient-reads.sh
+# rule in the workflows. The behavior of the callers is tested next to them (plan-promote, plan-dx, publish-latest, base-pin). Run: tests/transient-reads.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 root=$(mktemp -d)

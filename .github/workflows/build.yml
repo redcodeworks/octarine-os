@@ -331,8 +331,9 @@ jobs:
           .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
-      # The prebuilt binaries image (octarine-binaries, built and promoted by binaries.yml, a package this project owns) floats at its channel tag: resolved to a digest once,
-      # verified with this repository's key, passed to the build as BINARIES_IMAGE and recorded in an image label (the exact binaries of this image)
+      # The prebuilt binaries image (octarine-bins, built and signed by the octarine-bins repository with its own key) is pinned by digest in the Containerfile
+      # (ARG BINS_DIGEST, changed only by a bump PR). Every build verifies the PINNED digest with keys/octarine-bins.pub, logs the reference and sets the
+      # image label to it (`just build` reads the pin itself): a hand-edited digest cannot ship unverified. No `latest` is read here.
       - name: Set up cosign (binaries image)
         uses: ./.github/actions/setup-tool
         with:
@@ -345,19 +346,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # testing builds read octarine-binaries:testing (the binaries this commit will promote), every other build (main, schedule, a dispatch) reads latest and never testing
-      - name: Resolve and verify the binaries image
-        env:
-          BINARIES_TAG: ${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}
-        run: .github/scripts/latest-ref.sh "${IMAGE_REGISTRY}/octarine-binaries" cosign.pub BINARIES_IMAGE "${BINARIES_TAG}"
-
-      # The testing binaries must be the build of THIS commit's binaries/ tree (the same rule the promotion applies); no fallback to an older image
-      - name: Check the testing binaries match this commit
-        if: github.ref == 'refs/heads/testing'
+      - name: Verify the pinned binaries image
         run: |
-          want=$(.github/scripts/binaries-key.sh)
-          have=$(.github/scripts/registry-read.sh config "${BINARIES_IMAGE}" | jq -r '.config.Labels["org.opencontainers.image.version"] // empty')
-          [[ "${have}" == "${want}" ]] || { echo "::error::octarine-binaries:testing is key ${have:-unknown}, this commit's binaries/ tree is ${want}: the binaries build on testing has not finished or failed; fix it, then re-run"; exit 1; }
+          tag=$(sed -n 's/^ARG BINS_TAG=//p' Containerfile)
+          digest=$(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile)
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BINS_DIGEST in the Containerfile is missing or malformed"; exit 1; }
+          ref="ghcr.io/redcodeworks/octarine-bins@${digest}"
+          .github/scripts/retry.sh cosign verify --key keys/octarine-bins.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/octarine-bins.pub"; exit 1; }
+          echo "Binaries image pinned: ghcr.io/redcodeworks/octarine-bins:${tag}@${digest} (signature valid)"
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
       - name: Check the base image can be pulled
