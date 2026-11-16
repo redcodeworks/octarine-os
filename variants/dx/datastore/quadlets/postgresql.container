@@ -7,7 +7,7 @@ After=network-online.target
 Pod=datastore.pod
 # `pgsql`, the pod's short host name: podman exec pgsql psql ...
 ContainerName=pgsql
-# An exact tag and its digest from variants/dx/datastore/datastore.env, never a floating tag, and no AutoUpdate= on purpose:
+# An exact tag and its digest from images.txt of the datastore-images image (fedora-toolbox repository), never a floating tag, and no AutoUpdate= on purpose:
 # a database does not change image unattended. A major version (PG_VERSION of the data) is never changed by an image update.
 Image=@POSTGRESQL_IMAGE@
 

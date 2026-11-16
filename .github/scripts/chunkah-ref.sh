@@ -17,9 +17,12 @@ image=${v[CHUNKAH_IMAGE]:-}; digest=${v[CHUNKAH_DIGEST]:-}
 [[ "${image}" =~ ^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$ ]] || { echo "::error::bad CHUNKAH_IMAGE '${image}'" >&2; exit 1; }
 [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad CHUNKAH_DIGEST '${digest}'" >&2; exit 1; }
 ref="${image}@${digest}"
-cosign verify \
+retry="$(dirname "${BASH_SOURCE[0]}")/retry.sh"
+"${retry}" cosign verify \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     --certificate-identity-regexp '^https://github.com/coreos/chunkah/' \
     "${ref}" > /dev/null \
     || { echo "::error::cosign verification of ${ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)" >&2; exit 1; }
+# pull it now (with retries) so `just rechunk` does not pull inside its single `podman run`
+"${retry}" podman pull "${ref}" > /dev/null || { echo "::error::could not pull ${ref}" >&2; exit 1; }
 echo "${ref}"

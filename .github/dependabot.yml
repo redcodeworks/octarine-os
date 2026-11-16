@@ -6,7 +6,11 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # the workflows (/) and the composite action setup-tool, whose `uses:` lines Dependabot does not look at otherwise
+    directories:
+      - "/"
+      - "/.github/actions/setup-tool"
+      - "/.github/actions/test-suite"
     target-branch: "testing"
     schedule:
       interval: "weekly"

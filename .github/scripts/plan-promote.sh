@@ -18,7 +18,8 @@
 #   * walking first-parent history back from <after>^2, the nearest commit C that has a published
 #     `testing-<short sha>` image is reached without crossing a commit whose vanilla_inputs differ (so a docs-only
 #     or dx-only testing tip, which has no image of its own, promotes the image of the commit behind it).
-# Anything else (schedule, dispatch, non-merge push, differing inputs, no image, disabled) means build.
+# Anything else (schedule, dispatch, non-merge push, differing inputs, no image, disabled) means build. EXCEPT a registry that cannot be read (REGISTRY_LOOKUP exits other
+# than 0 or 3): that fails the plan, because "unreadable" is not "no tested image" and a rebuild on main would publish something that was never tested.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/inputs-hash.sh"
 
@@ -38,7 +39,14 @@ tip=$(git rev-parse "${after}^2")
 
 err=$(mktemp)
 trap 'rm -f "${err}"' EXIT
-found=$(nearest_image_for_inputs "${tip}" 2> "${err}") || no "$(cat "${err}")"
+rc=0
+found=$(nearest_image_for_inputs "${tip}" 2> "${err}") || rc=$?
+if [[ "${rc}" == 2 ]]; then
+    # a registry read error is not "no tested image": falling back to a rebuild would put an UNTESTED build on latest. Fail the plan; a re-run decides again.
+    echo "::error::cannot decide whether a tested testing image exists for ${tip}: $(cat "${err}")" >&2
+    exit 1
+fi
+[[ "${rc}" == 0 ]] || no "$(cat "${err}")"
 read -r tag digest <<< "${found}"
 echo "promote: ${tag} (${digest}) covers ${tip}" >&2
 printf 'promote=true\nsource_tag=%s\nsource_digest=%s\n' "${tag}" "${digest}"

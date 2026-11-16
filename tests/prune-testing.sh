@@ -18,7 +18,13 @@ echo "${out}"
 fail=0
 grep -q "DELETE image id=3 " <<< "${out}" && echo "PASS old testing-only build is deleted" || { echo "FAIL old testing-only build kept"; fail=1; }
 if grep -E "DELETE image id=(1|2) " <<< "${out}"; then echo "FAIL a version with a latest tag would be deleted"; fail=1; else echo "PASS versions with latest tags are kept"; fi
-# the safety cap: a plan over MAX_DELETES is refused (exit non-zero), and the default is large enough for a week of builds
-if MAX_DELETES=0 KEEP=1 DRY_RUN=true python3 -I "${py}" <<< "${json}" >/dev/null 2>&1; then echo "FAIL a plan over MAX_DELETES was not refused"; fail=1; else echo "PASS a plan over MAX_DELETES is refused"; fi
+# the safety cap: a LIVE plan over MAX_DELETES is refused (exit non-zero) before anything is deleted; a DRY run over the limit prints the plan, warns and exits 0
+# (it deletes nothing, and a red dry run stopped the passes after it); the default is large enough for a week of builds
+ghdir=$(mktemp -d); printf '#!/usr/bin/env bash\necho "gh $*" >> "%s/calls"\n' "${ghdir}" > "${ghdir}/gh"; chmod +x "${ghdir}/gh"
+if MAX_DELETES=0 KEEP=1 DRY_RUN=false API_BASE=users/o/packages/container/i PATH="${ghdir}:${PATH}" python3 -I "${py}" <<< "${json}" >/dev/null 2>&1; then echo "FAIL a live plan over MAX_DELETES was not refused"; fail=1; else echo "PASS a live plan over MAX_DELETES is refused"; fi
+[[ ! -e "${ghdir}/calls" ]] && echo "PASS ...and nothing was deleted" || { echo "FAIL the refused live run called gh"; fail=1; }
+dry=$(MAX_DELETES=0 KEEP=1 DRY_RUN=true python3 -I "${py}" <<< "${json}" 2>&1); rc=$?
+[[ ${rc} == 0 && "${dry}" == *"Dry run:"* && "${dry}" == *"::warning::the plan has"* ]] && echo "PASS a dry run over MAX_DELETES prints the plan, warns and exits 0" || { echo "FAIL dry run over the limit (rc ${rc}): ${dry}"; fail=1; }
+rm -rf "${ghdir}"
 grep -q 'or 400)' "${py}" && echo "PASS the default cap is 400" || { echo "FAIL the default cap is not 400"; fail=1; }
 exit "${fail}"

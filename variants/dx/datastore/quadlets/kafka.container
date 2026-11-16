@@ -4,7 +4,7 @@ Description=Kafka broker (KRaft, single node)
 [Container]
 Pod=kafka.pod
 ContainerName=kafka
-# Exact tag and digest from variants/dx/datastore/datastore.env; no AutoUpdate= (see postgresql.container).
+# Exact tag and digest from images.txt of the datastore-images image (fedora-toolbox repository); no AutoUpdate= (see postgresql.container).
 Image=@KAFKA_IMAGE@
 
 Volume=kafka-data.volume:/var/lib/kafka/data

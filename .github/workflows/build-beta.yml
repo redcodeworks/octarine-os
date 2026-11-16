@@ -44,9 +44,53 @@ jobs:
     secrets:
       SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
 
+  # The repository's own tests, run INSIDE the beta base the image is built on (the same test-suite action as the required `test` check, which runs on the stable base): a
+  # change that only a coming Fedora or a new Universal Blue beta breaks fails here, in that Fedora, BEFORE the expensive build, and blocks the beta publish (the build job
+  # needs this job). The base is resolved by the same base-pin.sh as the build step below (one beta base per run except in the rare race of a base published between the two).
+  base:
+    name: Beta base for the tests
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.pin.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Resolve the beta base to a digest and verify it
+        id: pin
+        run: |
+          pin_line=$(.github/scripts/base-pin.sh)
+          BASE_PIN=${pin_line#BASE_PIN=}
+          [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
+          echo "image=${BASE_IMAGE}@${BASE_PIN}" >> "${GITHUB_OUTPUT}"
+          echo "Tests run on ${BASE_IMAGE}:${FEDORA_VERSION} = ${BASE_PIN}" | tee -a "${GITHUB_STEP_SUMMARY}"
+
+  tests:
+    name: Tests on the beta base
+    needs: base
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    container: ${{ needs.base.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run the tests
+        uses: ./.github/actions/test-suite
+
   build:
     name: Build beta image
-    needs: binaries
+    needs: [binaries, tests]
     runs-on: ubuntu-26.04
 
     outputs:
@@ -121,7 +165,7 @@ jobs:
 
       - name: Verify the brew image signature
         run: |
-          cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
       # The prebuilt binaries image (octarine-os-binaries, built from binaries/ by the binaries job): verify the digest it
@@ -160,7 +204,7 @@ jobs:
           pin_line=$(.github/scripts/base-pin.sh)
           BASE_PIN=${pin_line#BASE_PIN=}
           [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
-          if ! podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
+          if ! .github/scripts/retry.sh podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
@@ -212,7 +256,12 @@ jobs:
             for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
                 check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
                 check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
+                check "scheduler $n has no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/$n 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
             done
+            check "optional ghostty, when installed: no undefined symbol against this image (ldd -r)" "! test -x /usr/bin/ghostty || { out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\"; }"
+            echo "== libraries the shipped binaries link: the builder (BUILDINFO of the binaries image) next to this image"
+            for p in glibc gtk4 libadwaita gtk4-layer-shell; do echo "  image: $p $(rpm -q --qf %{VERSION}-%{RELEASE} $p 2>/dev/null || echo not installed)"; done
+            grep -hiE "^(glibc|gtk4|libadwaita|gtk4-layer-shell)" /usr/share/licenses/octarine-os-binaries/*/BUILDINFO 2>/dev/null | sed "s/^/  builder: /" || true
             check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
             check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
             check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
@@ -269,6 +318,8 @@ jobs:
             # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
             check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
             check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
+            echo "== optional packages missing (written by build.sh, empty is good)"
+            cat /usr/share/octarine-os/optional-packages-missing 2>/dev/null || true
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
@@ -358,7 +409,7 @@ jobs:
             for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
               check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
             done
-            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
 
@@ -388,8 +439,8 @@ jobs:
       # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
       - name: Secure Boot check of the kernel
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/retry.sh sudo apt-get update -qq
+          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
           .github/scripts/secureboot-check.sh "${IMAGE_NAME}:${DEFAULT_TAG}"
 
       - name: Check the version is channel-neutral
@@ -474,7 +525,7 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
 
@@ -499,3 +550,41 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
         run: .github/scripts/dispatch-dx.sh beta "${GITHUB_SHA}"
+
+  # A failed weekly beta image build: ONE issue (label ci-failure-beta, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly beta image build
+    needs: [binaries, tests, build, sign]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-beta
+          LABEL_DESC: the weekly beta image build failed (one open issue at a time)
+          ISSUE_TITLE: "The beta image build failed"
+          ISSUE_BODY: "The weekly build of octarine-os:beta failed: a coming Fedora release or a new Universal Blue beta base may break the image. See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, Beta channel."
+          FAIL_COMMENT: "weekly beta image build failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.sign.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-beta
+          RECOVER_COMMENT: "the next weekly beta image build succeeded"
+        run: .github/scripts/ci-issue.sh recover

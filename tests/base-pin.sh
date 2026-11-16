@@ -15,7 +15,8 @@ bin="$root/bin"; mkdir -p "$bin"
 cat >"$bin/skopeo" <<'F'
 #!/usr/bin/env bash
 echo "skopeo $*" >>"$LOG"
-[ "${NO_TAG:-0}" = 1 ] && exit 1
+[ "${READ_ERROR:-0}" = 1 ] && { echo "dial tcp: i/o timeout" >&2; exit 1; }
+[ "${NO_TAG:-0}" = 1 ] && { echo "Error: manifest unknown" >&2; exit 1; }
 printf '%s' "${MANIFEST}"
 F
 cat >"$bin/cosign" <<'F'
@@ -24,10 +25,13 @@ echo "cosign $*" >>"$LOG"
 ref="${@: -1}"
 # SIGNED lists the digests that carry a valid signature
 case " ${SIGNED:-} " in *" ${ref#*@} "*) exit 0 ;; esac
+[ "${COSIGN_ERR:-}" = timeout ] && { echo "Error: GET https://ghcr.io: TLS handshake timeout" >&2; exit 1; }
+[ "${COSIGN_ERR:-}" = nosig ] && { echo "Error: no signatures found" >&2; exit 1; }
+echo "Error: no matching signatures: failed to verify signature" >&2
 exit 1
 F
 chmod +x "$bin"/*
-export LOG="$root/log" BASE_IMAGE=ghcr.io/ublue-os/silverblue-main FEDORA_VERSION=45
+export RETRY_DELAY=0 LOG="$root/log" BASE_IMAGE=ghcr.io/ublue-os/silverblue-main FEDORA_VERSION=45
 echo key >"$root/key.pub"
 CHILD="sha256:$(printf 'c%.0s' {1..64})"
 LIST="{\"manifests\":[{\"digest\":\"sha256:$(printf 'e%.0s' {1..64})\",\"platform\":{\"os\":\"linux\",\"architecture\":\"arm64\"}},{\"digest\":\"$CHILD\",\"platform\":{\"os\":\"linux\",\"architecture\":\"amd64\"}}]}"
@@ -46,8 +50,18 @@ bp MANIFEST="$LIST" SIGNED="sha256:$(printf 'e%.0s' {1..64})"
 check "a signature on the arm64 child does not count: fails" bash -c "[ $rc = 1 ]"
 bp NO_TAG=1 MANIFEST=x SIGNED=x
 check "a tag that cannot be resolved fails before any verification" bash -c "[ $rc = 1 ] && grep -q 'cannot resolve' '$root/run' && ! grep -q '^cosign' '$LOG'"
+bp READ_ERROR=1 MANIFEST=x SIGNED=x
+check "a registry that cannot be read is a read error (re-run), not a missing tag, and nothing is verified" bash -c "[ $rc = 1 ] && grep -q 'registry read error' '$root/run' && ! grep -q 'cannot resolve' '$root/run' && ! grep -q '^cosign' '$LOG'"
+bp COSIGN_ERR=timeout MANIFEST="$LIST" SIGNED=""
+check "a cosign check that cannot be completed says TRANSIENT (a read error, not a wrong key) and fails" bash -c "[ $rc = 1 ] && grep -q 'could not be checked after the retries' '$root/run' && ! grep -q 'rotated its signing key' '$root/run'"
+bp COSIGN_ERR=nosig MANIFEST="$LIST" SIGNED=""
+check "no signature visible yet says so (a later re-run usually passes), not 'wrong key'" bash -c "[ $rc = 1 ] && grep -q 'no signature is visible' '$root/run' && ! grep -q 'rotated its signing key' '$root/run'"
 bp FEDORA_VERSION=latest MANIFEST="$SINGLE" SIGNED="$P"
 check "a FEDORA_VERSION that is not a number is refused" bash -c "[ $rc = 1 ]"
+bp FEDORA_VERSION=beta MANIFEST="$SINGLE" SIGNED="$P"
+check "FEDORA_VERSION=beta (the beta channel base, build-beta.yml) is accepted" bash -c "[ $rc = 0 ] && grep -q '^BASE_PIN=sha256:' '$root/run'"
+bp FEDORA_VERSION=rawhide MANIFEST="$SINGLE" SIGNED="$P"
+check "other words stay refused (rawhide is not a Universal Blue tag)" bash -c "[ $rc = 1 ]"
 check "keys/ublue-os-main-cosign.pub is the default key of the script and is in the repository with its source documented" bash -c "grep -q 'keys/ublue-os-main-cosign.pub' '$here/.github/scripts/base-pin.sh' && test -s '$here/keys/ublue-os-main-cosign.pub' && grep -q 'ublue-os/main' '$here/keys/README.md'"
 check "Containerfile builds FROM the pinned digest when BASE_PIN is set and on the tag otherwise; the Justfile passes it and records the new labels without touching the dx ones" bash -c "
   grep -qx 'ARG BASE_PIN=\"\"' '$here/Containerfile' && grep -qx 'FROM \${BASE_IMAGE}:\${FEDORA_VERSION}\${BASE_PIN:+@}\${BASE_PIN}' '$here/Containerfile'

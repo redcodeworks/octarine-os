@@ -63,17 +63,23 @@ jobs:
           export KEEP="${INPUT_KEEP:-10}"
           echo "Package ${API_BASE}, keep ${KEEP}, dry run: ${DRY_RUN}"
 
-          gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-testing.py
+          # every pass runs even when an earlier one failed (a refusal above the limit in one kind must not skip the others); the run fails at the end
+          failed=0
+          pass() { # description, then env assignments for the pass (PRUNE_KIND=..., KEEP=...)
+            local d=$1; shift
+            echo "Package ${API_BASE}: ${d}, dry run: ${DRY_RUN}"
+            if ! gh api --paginate "${API_BASE}/versions?per_page=100" | env "$@" python3 .github/scripts/prune-testing.py; then echo "::error::the prune pass '${d}' of ${API_BASE} failed"; failed=1; fi
+          }
+
+          pass "testing builds, keep ${KEEP}" PRUNE_KIND=testing
 
           # The beta channel (same package): keep the newest three dated beta-* builds, never the one with the beta tag
-          echo "Package ${API_BASE}, beta channel, keep 3, dry run: ${DRY_RUN}"
-          gh api --paginate "${API_BASE}/versions?per_page=100" | PRUNE_KIND=beta KEEP=3 python3 .github/scripts/prune-testing.py
+          pass "beta channel, keep 3" PRUNE_KIND=beta KEEP=3
 
           # The NVIDIA variant has no testing tags: prune its old released tags with the same keep-newest rule
           export API_BASE="${scope}/packages/container/${image}-nvidia"
           if gh api "${API_BASE}" > /dev/null 2>&1; then
-            echo "Package ${API_BASE}, keep ${KEEP}, dry run: ${DRY_RUN}"
-            gh api --paginate "${API_BASE}/versions?per_page=100" | PRUNE_KIND=released python3 .github/scripts/prune-testing.py
+            pass "released tags, keep ${KEEP}" PRUNE_KIND=released
           else
             echo "No ${image}-nvidia package yet; nothing to prune there"
           fi
@@ -83,10 +89,47 @@ jobs:
           export API_BASE="${scope}/packages/container/${image}-dx"
           if gh api "${API_BASE}" > /dev/null 2>&1; then
             # the dx testing builds (`testing`, `testing-<sha>`): the same rule and count as the default package
-            echo "Package ${API_BASE}, testing builds, keep ${KEEP}, dry run: ${DRY_RUN}"
-            gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-testing.py
-            echo "Package ${API_BASE}, keep 3 per channel, dry run: ${DRY_RUN}"
-            gh api --paginate "${API_BASE}/versions?per_page=100" | PRUNE_KIND=dx KEEP=3 python3 .github/scripts/prune-testing.py
+            pass "testing builds, keep ${KEEP}" PRUNE_KIND=testing
+            pass "keep 3 per channel" PRUNE_KIND=dx KEEP=3
           else
             echo "No ${image}-dx package yet; nothing to prune there"
           fi
+          exit "${failed}"
+
+  # A failed weekly prune of old images: ONE issue (label ci-failure-prune, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed weekly prune of old images
+    needs: [prune]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-prune
+          LABEL_DESC: the weekly prune of old images failed (one open issue at a time)
+          ISSUE_TITLE: "The weekly image prune failed"
+          ISSUE_BODY: "The prune of old testing, beta and dx images failed or refused to delete more than its limit (the repository variable PRUNE_ENABLED makes scheduled runs delete). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, the prune workflow."
+          FAIL_COMMENT: "weekly prune of old images failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.prune.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-prune
+          RECOVER_COMMENT: "the next weekly prune of old images succeeded"
+        run: .github/scripts/ci-issue.sh recover

@@ -180,7 +180,15 @@ for entry in "${optional_groups[@]}"; do
         echo "::endgroup::"
         continue
     fi
-    echo "WARNING: optional group ${group} failed as a whole, retrying its packages one by one"
+    # one more try of the WHOLE group first: a mirror hiccup should not leave the image without its packages for up to a week (SCHEDULED_REBUILD_MAX_AGE_DAYS)
+    echo "WARNING: optional group ${group} failed, retrying it once as a whole"
+    sleep 20
+    dnf5 clean expire-cache > /dev/null 2>&1 || true
+    if dnf5 install -y "${pkgs[@]}"; then
+        echo "::endgroup::"
+        continue
+    fi
+    echo "WARNING: optional group ${group} failed as a whole twice, retrying its packages one by one"
     for pkg in "${pkgs[@]}"; do
         if ! dnf5 install -y "${pkg}"; then
             echo "${pkg}" >> "${missing_file}"
@@ -191,6 +199,11 @@ for entry in "${optional_groups[@]}"; do
 done
 echo "== optional packages missing:"
 cat "${missing_file}"
+# The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a beta on a coming Fedora
+# that no longer has them fails here too, which is what it is for). The rest of the list stays soft.
+for pkg in niri noctalia; do
+    if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
+done
 
 # Beyond the compilers and linker above (critical list) there are no build tools here (cmake, ninja, meson, the development-tools
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from

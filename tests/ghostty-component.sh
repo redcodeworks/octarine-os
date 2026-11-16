@@ -19,12 +19,24 @@ sha() { local s='' i; for i in {1..40}; do s+=$1; done; echo "${s}"; }
 g="$here/binaries/ghostty"
 
 # ---- the pins and the recipe
-check "upstream.env: Ghostty v1.4.0 pinned by tag AND peeled commit (the build fails if the tag moved)" bash -c "grep -qx 'UPSTREAM_REPO=ghostty-org/ghostty' '$g/upstream.env' && grep -qx 'UPSTREAM_TAG=v1.4.0' '$g/upstream.env' && grep -qx 'UPSTREAM_COMMIT=83fb95624b0439ee660c2679b43b38c8b63769cd' '$g/upstream.env' && source '$here/binaries/lib/upstream-env.sh' && upstream_env_load '$g/upstream.env' && [ \"\$UPSTREAM_WATCH\" = ghostty-org/ghostty ]"
-check "zig.env: Zig 0.17.0 (the version Ghostty 1.4.0 builds with), the official ziglang.org URL, a sha256, no pinned size and the minisign key, and nothing else" bash -c "
-  grep -qx 'ZIG_VERSION=0.17.0' '$g/zig.env' && grep -qx 'ZIG_URL=https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz' '$g/zig.env' &&
-  grep -qx 'ZIG_SHA256=1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026' '$g/zig.env' && ! grep -q '^ZIG_SIZE' '$g/zig.env' &&
-  grep -qx 'ZIG_SIGNATURE_URL=https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz.minisig' '$g/zig.env' && grep -qx 'ZIG_MINISIGN_KEY=RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U' '$g/zig.env' &&
-  [ \"\$(grep -vE '^[[:space:]]*(#|\$)' '$g/zig.env' | wc -l)\" = 5 ]"
+check "upstream.env: the repo, a stable v<semver> tag AND a 40-hex peeled commit (the build fails if the tag moved); the loader accepts it (format only: a bump PR moves the values)" bash -c "grep -qx 'UPSTREAM_REPO=ghostty-org/ghostty' '$g/upstream.env' && grep -qE '^UPSTREAM_TAG=v[0-9]+\\.[0-9]+\\.[0-9]+\$' '$g/upstream.env' && grep -qE '^UPSTREAM_COMMIT=[0-9a-f]{40}\$' '$g/upstream.env' && source '$here/binaries/lib/upstream-env.sh' && upstream_env_load '$g/upstream.env' && [ \"\$UPSTREAM_WATCH\" = ghostty-org/ghostty ]"
+check "zig.env: exactly the five keys, consistent with each other (URL and signature URL name the version, the signature URL is the tarball URL plus .minisig, the official ziglang.org host), a 64-hex sha256, no pinned size, a minisign key (format only: a Zig or Ghostty bump PR moves the values)" python3 -I - "$g/zig.env" <<'PY'
+import re, sys
+kv = {}
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if line and not line.startswith("#"):
+        k, v = line.split("=", 1)
+        assert k not in kv, "duplicate " + k
+        kv[k] = v
+assert set(kv) == {"ZIG_VERSION", "ZIG_URL", "ZIG_SHA256", "ZIG_SIGNATURE_URL", "ZIG_MINISIGN_KEY"}, sorted(kv)
+v = kv["ZIG_VERSION"]
+assert re.fullmatch(r"\d+\.\d+\.\d+", v), v
+assert kv["ZIG_URL"] == "https://ziglang.org/download/%s/zig-x86_64-linux-%s.tar.xz" % (v, v), kv["ZIG_URL"]
+assert kv["ZIG_SIGNATURE_URL"] == kv["ZIG_URL"] + ".minisig", kv["ZIG_SIGNATURE_URL"]
+assert re.fullmatch(r"[0-9a-f]{64}", kv["ZIG_SHA256"]), kv["ZIG_SHA256"]
+assert re.fullmatch(r"RW[A-Za-z0-9+/]{40,}={0,2}", kv["ZIG_MINISIGN_KEY"]), kv["ZIG_MINISIGN_KEY"]
+PY
 check "Containerfile: builder from builder.env, the Zig and the source are fetched and verified before the build, a FROM scratch image holds only /ghostty, the packages include gtk4-layer-shell-devel, blueprint-compiler and minisign" bash -c "
   cf='$g/Containerfile'; grep -qx 'FROM \${BUILDER} AS build' \$cf && grep -q 'fetch-zig.sh /binaries/ghostty/zig.env /opt/zig' \$cf && grep -q 'fetch-source.sh /binaries/ghostty/upstream.env /src' \$cf &&
   grep -q 'gtk4-layer-shell-devel' \$cf && grep -q 'blueprint-compiler' \$cf && grep -qw 'minisign' \$cf && grep -q 'libadwaita-devel' \$cf && grep -qx 'COPY --from=build /out /ghostty' \$cf &&
@@ -195,6 +207,65 @@ printf '#!/usr/bin/env bash\n[ "$1" = fetch ] && [ "$2" != --help ] && exit 1; e
 env PATH="$root/zb2:$PATH" ZSTUB_TMP="$root/ztmp" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?
 check "build.sh: a failed zig fetch (a package that does not verify against its hash) fails the build and names the URL" bash -c "[ $rc != 0 ] && grep -q 'zig fetch failed for https://d.example/a.tar.gz' '$root/run'"
 
+# ---- the downloaded-package cache of build.sh (DEP_CACHE_DIR): hit verified, miss downloaded and saved, a poisoned entry discarded
+cat >"$zb/zig" <<'F'
+#!/usr/bin/env bash
+case "$1" in
+    version) echo 0.17.0 ;;
+    fetch)
+        [ "$2" = "--help" ] && exit 0
+        mkdir -p "$ZIG_GLOBAL_CACHE_DIR/p"
+        if [ -f "$2" ]; then
+            # a local tarball: the hash is recomputed from the bytes (here: the first line of the file inside)
+            h=$(tar -xzOf "$2" --wildcards '*/id' 2>/dev/null | head -n1); [ -n "$h" ] || exit 1
+            cp "$2" "$ZIG_GLOBAL_CACHE_DIR/p/$h.tar.gz"; echo "$h"; echo "local $2" >>"$ZSTUB_TMP/calls"; exit 0
+        fi
+        h="hash-$(basename "$2" .tar.gz)"; mkdir -p "$ZSTUB_TMP/t/$h"; echo "$h" >"$ZSTUB_TMP/t/$h/id"; echo x >"$ZSTUB_TMP/t/$h/build.zig"
+        tar -C "$ZSTUB_TMP/t" -czf "$ZIG_GLOBAL_CACHE_DIR/p/$h.tar.gz" "$h"; echo "$h"; echo "url $2" >>"$ZSTUB_TMP/calls" ;;
+    build)
+        mkdir -p "$DESTDIR/usr/bin" "$DESTDIR/usr/share/applications"; echo bin >"$DESTDIR/usr/bin/ghostty"; chmod +x "$DESTDIR/usr/bin/ghostty"; echo d >"$DESTDIR/usr/share/applications/com.mitchellh.ghostty.desktop" ;;
+esac
+F
+mkcachesrc() { mksrc https://d.example/a.tar.gz https://d.example/b.tar.gz; printf '{"hash-a":{"name":"a","url":"https://d.example/a.tar.gz","hash":"x"},"hash-b":{"name":"b","url":"https://d.example/b.tar.gz","hash":"x"}}\n' >"$root/zsrc/build.zig.zon.json"; : >"$root/ztmp/calls"; }
+zcrun() { env PATH="$zb:$PATH" ZSTUB_TMP="$root/ztmp" DEP_CACHE_DIR="$root/dc" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?; }
+rm -rf "$root/dc"; mkdir -p "$root/dc"; mkcachesrc; zcrun
+check "package cache, empty cache: both packages are downloaded and their tarballs saved under their hashes" bash -c "[ $rc = 0 ] && [ \$(grep -c '^url ' '$root/ztmp/calls') = 2 ] && [ -f '$root/dc/ghostty-packages/hash-a.tar.gz' ] && [ -f '$root/dc/ghostty-packages/hash-b.tar.gz' ] && grep -q '0 verified from the cache, 2 downloaded, 0 cached entries discarded' '$root/run'"
+mkcachesrc; zcrun
+check "package cache, warm cache: nothing is downloaded, each cached tarball is re-hashed by zig fetch and matches the hash the pinned source expects, the build succeeds" bash -c "[ $rc = 0 ] && ! grep -q '^url ' '$root/ztmp/calls' && [ \$(grep -c '^local ' '$root/ztmp/calls') = 2 ] && grep -q '2 verified from the cache, 0 downloaded' '$root/run'"
+# poison one entry: a valid tarball of ANOTHER package under the name of hash-a
+mkdir -p "$root/pz/hash-z"; echo hash-z >"$root/pz/hash-z/id"; tar -C "$root/pz" -czf "$root/dc/ghostty-packages/hash-a.tar.gz" hash-z
+mkcachesrc; zcrun
+check "package cache, a poisoned entry (the bytes hash to another package): discarded with a warning, the package is downloaded, the other entry is still used, the result is the correct one" bash -c "[ $rc = 0 ] && grep -q 'did not verify' '$root/run' && grep -q '^url https://d.example/a.tar.gz' '$root/ztmp/calls' && ! grep -q '^url https://d.example/b.tar.gz' '$root/ztmp/calls' && grep -q '1 verified from the cache, 1 downloaded, 1 cached entries discarded' '$root/run' && [ \"\$(tar -xzOf '$root/dc/ghostty-packages/hash-a.tar.gz' --wildcards '*/id')\" = hash-a ]"
+printf 'garbage' >"$root/dc/ghostty-packages/hash-b.tar.gz"
+mkcachesrc; zcrun
+check "package cache, a corrupt entry (not a tarball): discarded and downloaded, never a build failure" bash -c "[ $rc = 0 ] && grep -q '^url https://d.example/b.tar.gz' '$root/ztmp/calls'"
+mkcachesrc; printf '{"hash-WRONG":{"name":"a","url":"https://d.example/a.tar.gz","hash":"x"},"hash-b":{"name":"b","url":"https://d.example/b.tar.gz","hash":"x"}}\n' >"$root/zsrc/build.zig.zon.json"; rm -rf "$root/dc"; mkdir -p "$root/dc"; zcrun
+check "package cache: a downloaded package whose hash is not the one the pinned source expects FAILS the build" bash -c "[ $rc != 0 ] && grep -q 'the pinned source expects hash-WRONG' '$root/run'"
+rm -rf "$root/dc"; mkcachesrc; env PATH="$zb:$PATH" ZSTUB_TMP="$root/ztmp" DEP_CACHE_DIR="$root/none" STAGE_SH="$root/stage-stub.sh" bash "$g/build.sh" "$g/upstream.env" "$root/zsrc" "$root/zout" >"$root/run" 2>&1; rc=$?
+check "package cache: with no cache directory (a local build) the build works as before and creates nothing" bash -c "[ $rc = 0 ] && [ ! -e '$root/none' ] && grep -q '0 verified from the cache, 2 downloaded' '$root/run'"
+# the key
+kr2="$root/keyrepo2"; mkdir -p "$kr2/binaries/ghostty" "$kr2/.github/scripts"; cp "$here/.github/scripts/binaries-dep-key.sh" "$kr2/.github/scripts/"; cp "$g/upstream.env" "$g/zig.env" "$g/build.sh" "$kr2/binaries/ghostty/"
+DK() { REPO_ROOT="$kr2" bash "$kr2/.github/scripts/binaries-dep-key.sh" "$@"; }
+k0=$(DK ghostty)
+check "dependency cache key: 40 hex, the same pin files give the same key; scx and extest have no cache (empty)" bash -c "[[ '$k0' =~ ^[0-9a-f]{40}\$ ]] && [ '$(DK ghostty)' = '$k0' ] && [ -z '$(DK scx)' ] && [ -z '$(DK extest)' ]"
+echo "UPSTREAM_COMMIT=changed" >>"$kr2/binaries/ghostty/upstream.env"; k1=$(DK ghostty); cp "$g/upstream.env" "$kr2/binaries/ghostty/"
+echo "# recipe change" >>"$kr2/binaries/ghostty/build.sh"; k2=$(DK ghostty); cp "$g/build.sh" "$kr2/binaries/ghostty/"
+echo "# zig" >>"$kr2/binaries/ghostty/zig.env"; k3=$(DK ghostty)
+check "dependency cache key: a changed tag/commit, a changed fetch recipe (build.sh) and a changed Zig pin each change the key" bash -c "[ '$k1' != '$k0' ] && [ '$k2' != '$k0' ] && [ '$k3' != '$k0' ] && [ '$k1' != '$k2' ]"
+check "workflow: the cache is restored and saved only for components with a key, saved only after a successful PUBLISHING build and never on a pull request, the directory is mounted into podman build, the actions are the pinned ones; no dnf or target directory is cached" python3 -I - "$here" <<'PY'
+import sys, yaml
+w = yaml.safe_load(open(sys.argv[1] + "/.github/workflows/binaries-component.yml")); steps = w["jobs"]["build"]["steps"]
+text = open(sys.argv[1] + "/.github/workflows/binaries-component.yml").read()
+r = [s for s in steps if "cache/restore" in s.get("uses", "") and s.get("id") == "depcache"][0]
+sv = [s for s in steps if "cache/save" in s.get("uses", "") and "dep-" in s["with"]["key"]][0]
+assert r["uses"].startswith("actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9") and sv["uses"].startswith("actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9")
+c = sv["if"]
+for n in ("steps.build.outcome == 'success'", "steps.channel.outputs.publish == 'true'", "github.event_name != 'pull_request'", "cache-hit != 'true'", "key != ''"):
+    assert n in c, n
+assert '--volume "${RUNNER_TEMP}/dep-cache:/dep-cache"' in text
+assert "dnf" not in sv["with"]["path"] and "target" not in sv["with"]["path"] and sv["with"]["path"].endswith("dep-cache")
+PY
+
 # ---- ghostty-check.sh: the version selection, with a stub gh and index.json data
 cr="$root/crepo"; mkdir -p "$cr/binaries/lib" "$cr/binaries/ghostty" "$cr/.github/scripts"
 cp "$here/binaries/lib/upstream-env.sh" "$cr/binaries/lib/"; cp "$here/.github/scripts/ghostty-check.sh" "$cr/.github/scripts/"
@@ -211,6 +282,7 @@ f="$GH_DIR/$(printf '%s' "$path" | tr '/?=&' '____')"
 F
 chmod +x "$bin/gh"
 export GH_LOG="$root/gh.log" GH_DIR="$root/gh"
+export GITHUB_REPOSITORY=o/r BUMP_CHECKS_WAIT=0
 reply() { rm -rf "$GH_DIR"; mkdir -p "$GH_DIR"; : >"$GH_LOG"; }
 put() { printf '%s\n' "$2" >"$GH_DIR/$1"; }
 zon() { printf '.{ .name = .ghostty, .version = "x", .minimum_zig_version = "%s", }\n' "$1" | base64 -w0; echo; }
@@ -263,7 +335,7 @@ check "check: an unreadable index.json is unreachable" bash -c "[[ \"$out\" == u
 # ---- bump-ghostty.sh: a local origin and a stub gh
 origin="$root/origin.git"; git init -q --bare -b testing "$origin"
 wc="$root/wc"; mkdir -p "$wc/binaries/lib" "$wc/binaries/ghostty" "$wc/.github/scripts"
-cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$wc/.github/scripts/"
+cp "$here/binaries/lib/upstream-env.sh" "$wc/binaries/lib/"; cp "$here/.github/scripts/bump-ghostty.sh" "$here/.github/scripts/bump-pr.sh" "$here/.github/scripts/bump-checks.sh" "$wc/.github/scripts/"
 cp "$g/upstream.env" "$g/zig.env" "$wc/binaries/ghostty/"
 git -C "$wc" init -q -b testing; git -C "$wc" add -A; git -C "$wc" commit -q -m base; git -C "$wc" remote add origin "$origin"; git -C "$wc" push -q origin testing
 cat >"$bin/gh" <<'F'
@@ -280,7 +352,7 @@ Z2=https://ziglang.org/download/0.17.2/zig-x86_64-linux-0.17.2.tar.xz; Z3=https:
 bump() { PR_LIST="$root/prlist" PATH="$bin:$PATH" REPO_ROOT="$wc" bash "$wc/.github/scripts/bump-ghostty.sh" "$@" >"$root/run" 2>&1; rc=$?; }
 : >"$root/prlist"; : >"$GH_LOG"
 bump ghostty v1.5.0 "$(sha d)" 0.18.0 "$Z3" "$(printf 'e%.0s' {1..64})" 777
-check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qx 'gh workflow run test.yml --ref bump/ghostty' '$GH_LOG'"
+check "bump ghostty: one PR from bump/ghostty into testing, titled with the tag and the Zig version; the Test workflow is dispatched on the branch" bash -c "[ $rc = 0 ] && grep -q '^gh pr create --base testing --head bump/ghostty --title Bump ghostty to v1.5.0 (Zig 0.18.0)' '$GH_LOG' && grep -qE '^gh workflow run test.yml --ref testing -f ref=[0-9a-f]{40}$' '$GH_LOG'"
 check "bump ghostty: upstream.env AND zig.env change in the same branch (tag, peeled commit, Zig version, URL, sha256, size, signature URL; the minisign key and the comments stay), nothing else" bash -c "
   [ \"\$(git -C '$origin' diff --name-only testing bump/ghostty | sort | tr '\n' ' ')\" = 'binaries/ghostty/upstream.env binaries/ghostty/zig.env ' ] &&
   z=\$(git -C '$origin' show bump/ghostty:binaries/ghostty/zig.env) && grep -qx 'ZIG_VERSION=0.18.0' <<<\"\$z\" && grep -qx 'ZIG_URL=$Z3' <<<\"\$z\" && grep -qx 'ZIG_SHA256=$(printf 'e%.0s' {1..64})' <<<\"\$z\" &&
@@ -301,15 +373,9 @@ check "bump: Zig arguments that are not an official ziglang.org x86_64-linux ent
 check "bump: an unknown mode is refused" test "$rc" = 2
 
 # ---- the workflow and the documentation of the update path
-check "upstream-check.yml: the generic loop skips ghostty, which has its own step (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump), a wait is a notice and says so in the summary, nothing is published" python3 -I - "$here" <<'PY'
-import sys, yaml
-t = open(sys.argv[1] + "/.github/workflows/upstream-check.yml").read()
-assert "[[ \"${dir}\" != binaries/ghostty ]] || continue" in t
-for n in ("ghostty-check.sh", "bump-ghostty.sh ghostty", "bump-ghostty.sh zig", "wait)", "unreachable)", "echo \"- \\`binaries/ghostty\\`: ${decision}\" >> \"${GITHUB_STEP_SUMMARY}\""):
-    assert n in t, n
-assert "packages: write" not in t and "podman" not in t and "cosign" not in t
-yaml.safe_load(t)
-PY
+ghostty_in_bump_runner() { local r="$here/.github/scripts/bump-run.sh" w="$here/.github/workflows/bump-pins.yml"
+    grep -q 'ghostty-check.sh' "$r" && grep -q 'bump-ghostty.sh" ghostty' "$r" && grep -q 'bump-ghostty.sh" zig' "$r" && grep -q 'wait)' "$r" && grep -q 'pin: \[scx, extest, ghostty\]' "$w" && ! grep -q 'packages: write\|podman' "$w"; }
+check "bump-pins.yml: ghostty is one of the source pins (ghostty-check.sh, bump-ghostty.sh for a Ghostty bump and a Zig bump through bump-run.sh), a wait is not a failure, nothing is published" ghostty_in_bump_runner
 check "CLAUDE.md documents the update path: the Ghostty tag decides the Zig minor, a patch bump is separate and low priority, a missing Zig tarball opens nothing" bash -c "grep -q 'Ghostty tag decides the Zig minor' '$here/CLAUDE.md' && grep -q 'bump/zig' '$here/CLAUDE.md' && grep -q 'ghostty-check.sh' '$here/CLAUDE.md'"
 
 echo

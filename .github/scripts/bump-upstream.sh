@@ -36,51 +36,14 @@ title="Bump ${name} to ${new_tag}"
 fork_note=""
 if [[ "${repo}" != "${fork}" ]]; then fork_note=" The build source is the fork \`${fork}\`: the pin is its commit \`${new_commit:0:7}\`, \`${new_tag}\` is only a label."; fi
 
-open=$(gh pr list --head "${branch}" --base "${base}" --state open --json number,title --jq '.[0] // empty')
-if [[ -n "${open}" && "$(jq -r .title <<<"${open}")" == "${title}" ]]; then
-    echo "A bump PR for ${name} ${new_tag} is already open (#$(jq -r .number <<<"${open}")): nothing to do"
-    exit 0
-fi
-
-git fetch -q origin
-if git rev-parse -q --verify "origin/${branch}" > /dev/null; then
-    git checkout -q -B "${branch}" "origin/${branch}"
-    # testing may have moved on (even in upstream.env): take its content on conflicts, the bump is applied again below
-    git merge -q --no-edit -X theirs "origin/${base}" || { echo "::error::cannot merge ${base} into ${branch}"; exit 1; }
-else
-    git checkout -q -B "${branch}" "origin/${base}"
-fi
-upstream_env_set "${file}" "${new_tag}" "${new_commit}"
-git add -- "${file}"
-if git diff --cached --quiet; then echo "${branch} already carries this pin"; else
-    git commit -q -m "Bump ${name} to ${new_tag}: upstream released it; the build checks the tag still resolves to ${new_commit:0:7}"
-fi
-git push -q origin "refs/heads/${branch}:refs/heads/${branch}"
-
-from=${old_tag:-${old_commit}}
 body="Upstream ${repo} has a newer release than the pin of \`${name}\`.
 
 - Pin: \`${old_tag:-commit ${old_commit:0:7}}\` to \`${new_tag}\` (commit \`${new_commit}\`)
 - Release notes: https://github.com/${repo}/releases/tag/${new_tag}
-- Changes: https://github.com/${repo}/compare/${from}...${new_tag}
+- Changes: https://github.com/${repo}/compare/${old_tag:-${old_commit}}...${new_tag}
 
 Only \`${file}\` changes.${fork_note} The merge into \`${base}\` changes the content key of this component, so the build after it builds, signs and publishes the new component image and the binaries image assembled from it; the build fails if the source does not resolve to the pinned commit. Check the scheduler READMEs when the scx pin moves (\`binaries/scx/schedulers.tsv\`). Not verified: nothing is built or run by this PR; a BPF scheduler can only be loaded on a real machine."
-body+="
-
-Checks: the upstream-check workflow dispatches the \`Test\` workflow on the branch \`${branch}\`, so \`test\` and \`secrets\` run on this PR's head commit. If they do not appear, start them by hand: \`gh workflow run test.yml --ref ${branch}\`. (Unverified until the first real bump: whether a dispatched run satisfies the required checks.)"
-
-if [[ -n "${open}" ]]; then
-    gh pr edit "$(jq -r .number <<<"${open}")" --title "${title}" --body "${body}"
-    echo "Updated the open bump PR #$(jq -r .number <<<"${open}") to ${new_tag}"
-else
-    gh pr create --base "${base}" --head "${branch}" --title "${title}" --body "${body}"
-fi
-
-# start the required checks on the branch tip (events made with GITHUB_TOKEN start none by themselves)
-if gh workflow run test.yml --ref "${branch}"; then
-    echo "Dispatched the Test workflow on ${branch}"
-else
-    msg="Could not dispatch the Test workflow on ${branch}: start it by hand with: gh workflow run test.yml --ref ${branch}"
-    echo "::warning::${msg}"
-    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "- ${msg}" >> "${GITHUB_STEP_SUMMARY}" || true
-fi
+bodyfile=$(mktemp); trap 'rm -f "${bodyfile}"' EXIT
+printf '%s\n' "${body}" > "${bodyfile}"
+BUMP_BASE="${base}" REPO_ROOT="${root}" "${here}/bump-pr.sh" --branch "${branch}" --title "${title}" --body-file "${bodyfile}" \
+    --message "Bump ${name} to ${new_tag}: upstream released it; the build checks the tag still resolves to ${new_commit:0:7}" --file "${file}" -- bash -c "source '${root}/binaries/lib/upstream-env.sh'; upstream_env_set '${file}' '${new_tag}' '${new_commit}'"

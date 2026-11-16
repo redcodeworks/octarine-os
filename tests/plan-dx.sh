@@ -33,19 +33,21 @@ echo "$*" >> "${SK_LOG:-/dev/null}"
 case "$1 $2" in
     "inspect --raw")
         ref="${ref#docker://}"
-        ! grep -qxF "${ref}" "${MISSING}" || exit 1
+        [[ -z "${SK_READ_ERROR:-}" ]] || { echo "dial tcp: i/o timeout" >&2; exit 1; }
+        ! grep -qxF "${ref}" "${MISSING}" || { echo "Error: reading manifest: manifest unknown" >&2; exit 1; }
         to=$(awk -v r="${ref}" '$1 == r { print $2 }' "${ALIAS}"); printf 'manifest of docker://%s' "${to:-${ref}}" ;;
-    "inspect --config") tag="${ref##*:}"; [[ ( "${ref}" == *octarine-os-dx:* || "${ref}" == *octarine-os-nvidia-dx:* ) && -f "${CFG}/${tag}" ]] && { cat "${CFG}/${tag}"; exit 0; }; exit 1 ;;
+    "inspect --config") tag="${ref##*:}"; [[ -z "${SK_READ_ERROR_DX:-}" || "${ref}" != *octarine-os-dx:* ]] || { echo "dial tcp: i/o timeout" >&2; exit 1; }; [[ ( "${ref}" == *octarine-os-dx:* || "${ref}" == *octarine-os-nvidia-dx:* ) && -f "${CFG}/${tag}" ]] && { cat "${CFG}/${tag}"; exit 0; }; [[ -z "${SK_READ_ERROR:-}" ]] || { echo "dial tcp: i/o timeout" >&2; exit 1; }; echo "Error: manifest unknown" >&2; exit 1 ;;
 esac
 F
 cat > "$root/bin/cosign" <<'F'
 #!/usr/bin/env bash
 ref="${@: -1}"
-[[ "${COSIGN_BASE_FAIL:-}" != 1 || "${ref}" != *octarine-os@* ]] || exit 1
-! grep -qxF "${ref}" "${UNSIGNED}"
+[[ "${COSIGN_BASE_FAIL:-}" != 1 || "${ref}" != *octarine-os@* ]] || { echo "Error: no matching signatures" >&2; exit 1; }
+[[ -z "${COSIGN_READ_ERROR:-}" ]] || { echo "Error: GET https://ghcr.io/v2/: net/http: TLS handshake timeout" >&2; exit 1; }
+! grep -qxF "${ref}" "${UNSIGNED}" || { echo "Error: no signatures found" >&2; exit 1; }
 F
 chmod +x "$root/bin"/*
-export CFG="$root/cfg" UNSIGNED="$root/unsigned" MISSING="$root/missing" ALIAS="$root/alias"
+export RETRY_DELAY=0 CFG="$root/cfg" UNSIGNED="$root/unsigned" MISSING="$root/missing" ALIAS="$root/alias"
 : > "$UNSIGNED"; : > "$MISSING"; : > "$ALIAS"
 
 dig() { printf 'manifest of %s' "$1" | sha256sum | sed 's/ .*//'; }
@@ -125,6 +127,10 @@ cfg testing "${built_on}" "$(get dx_inputs)"                                  # 
 echo "ghcr.io/redcodeworks/octarine-os:latest ghcr.io/redcodeworks/octarine-os:testing-${sha7}" > "$ALIAS"   # step 2: the default promote retags testing-<sha7> (one digest)
 run latest; expect "step 3, dx plan on latest after the default promote: promote the tested dx image" false true testing
 [[ "$(get base_digest)" == "${built_on}" ]] && pass "...latest and the base the dx testing image was built on share one digest" || bad "digests differ"
+# a registry that cannot be read is an ERROR wherever "missing" would take another path; it never means absent
+if SK_READ_ERROR_DX=1 run latest; then bad "read error on the dx candidates: the plan must FAIL (got exit 0: build=$(get build))"; else grep -q 'not building instead of promoting' "$root/log" && pass "a read error on a promotion candidate fails the plan (no untested rebuild instead of the promotion)" || bad "read error message: $(cat "$root/log")"; fi
+if SK_READ_ERROR=1 run latest; then bad "read error on the base: the plan must FAIL"; else grep -q 'Cannot read' "$root/log" && pass "an unreadable base fails the plan" || bad "base read error message"; fi
+if COSIGN_READ_ERROR=1 run latest; then bad "cosign read error on the base: the plan must FAIL"; else grep -q 'did not verify (or could not be checked' "$root/log" && pass "a cosign check that cannot complete fails the plan (it is not read as a bad signature)" || bad "cosign read error message"; fi
 echo "ghcr.io/redcodeworks/octarine-os:latest ghcr.io/redcodeworks/octarine-os:testing" > "$ALIAS"   # the old behavior: latest = the floating tag's digest
 run latest; expect "contrast: latest equal to the floating tag only, not to testing-<sha7>: no promotion (the bug)" true false ""
 : > "$ALIAS"

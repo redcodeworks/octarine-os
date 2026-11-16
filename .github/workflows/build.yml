@@ -116,6 +116,7 @@ jobs:
           cfg=$(skopeo inspect --config "docker://${IMAGE}:latest" 2>/dev/null)
           latest_base=$(label io.github.redcodeworks.octarine-os.base-index-digest)
           latest_fallback=$(label org.octarineos.binaries-fallback)
+          latest_missing=$(label org.octarineos.optional-packages-missing)
           revision=$(label org.opencontainers.image.revision)
           created=$(label org.opencontainers.image.created)
           repo_same=false
@@ -131,7 +132,7 @@ jobs:
           fi
           decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
             REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
-            LATEST_FALLBACK="${latest_fallback}" .github/scripts/plan-skip.sh)
+            LATEST_FALLBACK="${latest_fallback}" LATEST_MISSING="${latest_missing}" .github/scripts/plan-skip.sh)
           echo "${decision}"
           echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
@@ -184,11 +185,17 @@ jobs:
           REUSE: ${{ steps.reuse.outputs.reuse }}
         run: |
           set -euo pipefail
-          cosign verify --key cosign.pub "${IMAGE}@${DIGEST}" > /dev/null
+          # exit 5 of cosign-check.sh = cosign said the signature is missing or wrong (building instead is the intended path); exit 4 = the registry could not be
+          # read after the retries: that must NOT turn into a rebuild of untested content, so the Final decision fails the plan (unreadable=true)
+          rc=0
+          .github/scripts/cosign-check.sh --key cosign.pub "${IMAGE}@${DIGEST}" || rc=$?
+          if [[ "${rc}" == 4 ]]; then echo "unreadable=true" >> "${GITHUB_OUTPUT}"; fi
+          [[ "${rc}" == 0 ]] || exit 1
           echo "signature of ${DIGEST} is valid"
           # a reused image must not carry a different inputs label (an image from before the label has none: the commit decides)
           if [[ "${REUSE}" == true ]]; then
-            have=$(skopeo inspect --config "docker://${IMAGE}@${DIGEST}" | jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty')
+            cfg=$(.github/scripts/registry-read.sh config "${IMAGE}@${DIGEST}") || { echo "unreadable=true" >> "${GITHUB_OUTPUT}"; exit 1; }
+            have=$(jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty' <<<"${cfg}")
             [[ -z "${have}" || "${have}" == "${REUSE_INPUTS}" ]] || { echo "::error::${DIGEST} carries vanilla-inputs ${have}, this commit has ${REUSE_INPUTS}"; exit 1; }
           fi
 
@@ -200,7 +207,12 @@ jobs:
           CANDIDATE: ${{ steps.promote.outputs.promote }}
           REUSE: ${{ steps.reuse.outputs.reuse }}
           VERIFY: ${{ steps.verify.outcome }}
+          UNREADABLE: ${{ steps.verify.outputs.unreadable }}
         run: |
+          if [[ "${UNREADABLE}" == true ]]; then
+            echo "::error::The registry could not be read while verifying the image to promote or reuse (a read error, not a bad signature): failing the plan instead of building something untested. Re-run the workflow."
+            exit 1
+          fi
           if [[ "${CANDIDATE}" == true && "${VERIFY}" == success ]]; then
             build=false; promote=true
           elif [[ "${REUSE}" == true && "${VERIFY}" == success ]]; then
@@ -344,7 +356,7 @@ jobs:
       - name: Verify the brew image signature (the pin changed)
         if: needs.plan.outputs.brew_pin_changed == 'true'
         run: |
-          cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
+          .github/scripts/retry.sh cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
       # The prebuilt binaries image (octarine-os-binaries, built from binaries/ by the binaries job): verify the digest it
@@ -395,7 +407,7 @@ jobs:
           pin_line=$(.github/scripts/base-pin.sh)
           BASE_PIN=${pin_line#BASE_PIN=}
           [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base-pin.sh"; exit 1; }
-          if ! podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
+          if ! .github/scripts/retry.sh podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
@@ -449,7 +461,12 @@ jobs:
             for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
                 check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
                 check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
+                check "scheduler $n has no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/$n 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
             done
+            check "optional ghostty, when installed: no undefined symbol against this image (ldd -r)" "! test -x /usr/bin/ghostty || { out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\"; }"
+            echo "== libraries the shipped binaries link: the builder (BUILDINFO of the binaries image) next to this image"
+            for p in glibc gtk4 libadwaita gtk4-layer-shell; do echo "  image: $p $(rpm -q --qf %{VERSION}-%{RELEASE} $p 2>/dev/null || echo not installed)"; done
+            grep -hiE "^(glibc|gtk4|libadwaita|gtk4-layer-shell)" /usr/share/licenses/octarine-os-binaries/*/BUILDINFO 2>/dev/null | sed "s/^/  builder: /" || true
             check "extest 32-bit library is a 32-bit ELF" "file -L /usr/lib/extest/lib/libextest.so | grep -q \"ELF 32-bit\""
             check "extest 64-bit library is a 64-bit ELF" "file -L /usr/lib/extest/lib64/libextest.so | grep -q \"ELF 64-bit\""
             check "extest libraries are executable files" "test -x /usr/lib/extest/lib/libextest.so && test -x /usr/lib/extest/lib64/libextest.so"
@@ -506,6 +523,8 @@ jobs:
             # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
             check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
             check "extensions are not enabled by default" "! grep -q just-perfection\\|ddterm\\|freon /etc/dconf/db/distro.d/90-octarine-os"
+            echo "== optional packages missing (written by build.sh, empty is good)"
+            cat /usr/share/octarine-os/optional-packages-missing 2>/dev/null || true
             check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
             check "zsh in /etc/shells" "grep -qx /usr/bin/zsh /etc/shells"
             check "new users do not default to zsh (opt-in through ujust user-setup)" "! grep -qx SHELL=/usr/bin/zsh /etc/default/useradd"
@@ -595,7 +614,7 @@ jobs:
             for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
               check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
             done
-            check "flatpak preinstall list""test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
+            check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
             exit $fail
           '
 
@@ -645,8 +664,8 @@ jobs:
       # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
       - name: Secure Boot check of the kernel
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends sbsigntool
+          .github/scripts/retry.sh sudo apt-get update -qq
+          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
           .github/scripts/secureboot-check.sh "${IMAGE_NAME}:${DEFAULT_TAG}"
 
       # A promoted image keeps its build's version, so no version may name a channel
@@ -763,11 +782,25 @@ jobs:
           now=$("${lookup}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
-            after=$("${lookup}" "${tag}")
-            [[ "${after}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${tag} is ${after}, expected ${SOURCE_DIGEST}"; exit 1; }
-            echo "promoted ${tag} -> ${after}"
+            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
+            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
+
+      # Arms the daily's fallback: last-good-<component> of the binaries image -> the signed c-<component>-<key> images of this tree (the `track` job of
+      # binaries.yml only runs when main BUILDS, and a promotion never calls it). Never fails the promotion.
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
+      - name: Arm the binaries fallback (last-good tags)
+        continue-on-error: true
+        env:
+          BIN_IMAGE: ${{ needs.plan.outputs.image }}
+        run: |
+          .github/scripts/binaries-arm.sh "${BIN_IMAGE%/*}/octarine-os-binaries"
 
   # The required check, last in the graph (plan -> build or promote -> sign -> this). It always runs and passes when the build passed (or the tested image was
   # promoted) or was skipped as docs-only, and fails when the plan, the build or the promotion failed
@@ -838,7 +871,7 @@ jobs:
         run: |
           set -euo pipefail
           for digest in ${DIGESTS}; do
-            cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
             echo "signed: ${digest}"
           done
 
@@ -866,7 +899,7 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
 
@@ -897,3 +930,41 @@ jobs:
           # merge or an unchanged scheduled run); dx builds on exactly that digest, and `latest` is moved only after dx passed
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
         run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+
+  # A failed daily or promotion build of the default image: ONE issue (label ci-failure-default, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
+  alert:
+    name: Report a failed daily or promotion build of the default image
+    needs: [plan, build_push, promote, build_result]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-default
+          LABEL_DESC: the default image build on main failed (one open issue at a time)
+          ISSUE_TITLE: "The default image build on main failed"
+          ISSUE_BODY: "The scheduled or promotion build of octarine-os on main failed, so latest may be stale (the daily rebuild refreshes it). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, CI and signing flow."
+          FAIL_COMMENT: "daily or promotion build of the default image failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.build_result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          LABEL: ci-failure-default
+          RECOVER_COMMENT: "the next daily or promotion build of the default image succeeded"
+        run: .github/scripts/ci-issue.sh recover
