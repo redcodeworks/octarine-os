@@ -6,7 +6,7 @@ A personal [bootc](https://github.com/bootc-dev/bootc) image: Fedora Silverblue 
 `silverblue-main`, with the niri compositor and Noctalia shell, Cockpit, backup tools and a set of
 hardening and tuning defaults. It is built daily and signed. It makes one desktop reproducible and is shared in case
 parts of it are useful to you. It is one person's configuration with no promises: read what it changes before you run it.
-The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md).
+The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the rest of the documentation is indexed in [`docs/README.md`](docs/README.md).
 
 ## Build status
 

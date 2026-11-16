@@ -1,4 +1,4 @@
-# Git hooks
+# Git hooks (`githooks/`)
 
 Optional hooks for a local clone. `pre-push` scans the commits about to be pushed for secrets with
 [gitleaks](https://github.com/gitleaks/gitleaks) and stops the push if it finds any; it only warns if gitleaks is not installed.

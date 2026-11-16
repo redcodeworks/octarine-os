@@ -1,4 +1,4 @@
-# Build configuration
+# Build configuration (`config/`)
 
 Small `KEY=VALUE` files that name things the build needs in one place, so scripts and workflows do not repeat them.
 
