@@ -55,6 +55,10 @@ for p in $CRITICAL; do
   # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
   check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
 done
+# Solaar is opt-in (ujust hardware-setup --only solaar): no system-wide autostart entry, the template and the application's menu entry stay
+check "Solaar has no system-wide autostart entry" "! test -e /etc/xdg/autostart/solaar.desktop"
+check "the Solaar autostart template ships" "grep -q '^Exec=' /usr/share/octarine-os/solaar-autostart.desktop"
+check "the Solaar menu entry stays" "test -f /usr/share/applications/solaar.desktop"
 # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
 for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
   check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"

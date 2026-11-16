@@ -2776,7 +2776,7 @@ hardware-setup *args:
     if ! declare -F kargs_notice >/dev/null; then kargs_notice() { :; }; kargs_pending_arg() { return 1; }; kargs_pending_change() { return 1; }; kargs_confirm_update() { return 0; }; fi
     ujust_cmd=${OCTARINE_UJUST:-ujust}
     drm=${OCTARINE_SYSFS_DRM:-/sys/class/drm}
-    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan "
+    valid_steps=" sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan solaar "
     mode=ask
     list=0
     only_list=""
@@ -2786,7 +2786,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan), solaar (opt-in: start Solaar at login by copying its autostart entry into ~/.config/autostart; no sudo; hidden when solaar is not installed). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2837,7 +2837,7 @@ hardware-setup *args:
     cmdline_file=${HW_CMDLINE:-/proc/cmdline}
     gm_ini="${XDG_CONFIG_HOME:-$HOME/.config}/gamemode.ini"
 
-    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan)
+    step_ids=(sensors amd-gpu amd-kargs amd-cpu-gaming rocm rocm-export nvidia cuda cuda-export secure-boot tpm-luks fido-key iommu wake-on-lan solaar)
     declare -A text=(
         [sensors]="Fan and temperature chip driver (sensors-detect; sudo)"
         [amd-gpu]="AMD GPU: LACT Flatpak and its daemon lactd"
@@ -2853,7 +2853,10 @@ hardware-setup *args:
         [fido-key]="Security key: register it for sudo and polkit (touch)"
         [iommu]="Passthrough: kernel argument iommu=pt (optional; sudo, reboot)"
         [wake-on-lan]="Wake-on-LAN for the wired NIC (sudo)"
+        [solaar]="Logitech: start Solaar (tray icon and background service) at login (no sudo)"
     )
+    solaar_tpl=${HW_SOLAAR_TEMPLATE:-/usr/share/octarine-os/solaar-autostart.desktop}
+    solaar_auto="${XDG_CONFIG_HOME:-$HOME/.config}/autostart/solaar.desktop"
 
     # Wake-on-LAN helpers: the physical NIC (the port when the default route is a bridge), its capability, the active profile
     wol_nic() {
@@ -2919,6 +2922,9 @@ hardware-setup *args:
                 [ -n "$(ls -A "${HW_IOMMU_DIR:-/sys/class/iommu}" 2>/dev/null)" ] || echo "no IOMMU found (enable VT-d or AMD-Vi in the UEFI firmware)" ;;
             wake-on-lan)
                 if ! wol_capable; then echo "no wired NIC that reports magic-packet wake"; fi ;;
+            solaar)
+                if ! command -v "${HW_SOLAAR_CMD:-solaar}" >/dev/null 2>&1; then echo "solaar is not installed"
+                elif [ ! -r "$solaar_tpl" ]; then echo "the image's Solaar autostart template $solaar_tpl is missing"; fi ;;
         esac
     }
     fido_present() {
@@ -2961,6 +2967,7 @@ hardware-setup *args:
             fido-key) [ -s "$u2f_file" ] ;;
             iommu) grep -qw 'iommu=pt' "$cmdline_file" 2>/dev/null || rpm-ostree kargs 2>/dev/null | grep -qw 'iommu=pt' ;;
             wake-on-lan) [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(wol_profile)" 2>/dev/null | head -n1)" = magic ] ;;
+            solaar) [ -e "$solaar_auto" ] ;;
         esac
     }
     default_of() { # 1 when ticked by default
@@ -2989,6 +2996,7 @@ hardware-setup *args:
             fido-key) echo "rm $u2f_file" ;;
             iommu) echo "sudo rpm-ostree kargs --delete-if-present=iommu=pt (and --delete-if-present=intel_iommu=on on Intel) and reboot" ;;
             wake-on-lan) echo "ujust wake-on-lan --off" ;;
+            solaar) echo "rm $solaar_auto" ;;
         esac
     }
     ppfm_arg() { printf 'amdgpu.ppfeaturemask=0x%x' "$(($(cat "$ppfm_param") | 0x4000))"; }
@@ -3062,6 +3070,12 @@ hardware-setup *args:
                 ;;
             iommu) "$ujust_cmd" virthost-setup --only iommu "${yes[@]}" ;;
             wake-on-lan) "$ujust_cmd" wake-on-lan "${yes[@]}" ;;
+            solaar)
+                echo "Copies the image's Solaar autostart entry ($solaar_tpl, the entry the package ships) to $solaar_auto. No sudo; it starts at your next login."
+                mkdir -p "$(dirname "$solaar_auto")" || return 1
+                install -m 0644 "$solaar_tpl" "$solaar_auto" || return 1
+                echo "The tray icon on GNOME needs an AppIndicator extension; the image ships and enables gnome-shell-extension-appindicator. Start it now with: solaar --window=hide &"
+                ;;
         esac
     }
 

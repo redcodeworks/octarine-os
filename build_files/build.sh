@@ -154,6 +154,14 @@ dnf5 install -y \
     gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar solaar-udev \
     gcc gcc-c++ make binutils
 
+# Solaar must not start for every user: the RPM ships /etc/xdg/autostart/solaar.desktop (the tray and background service at login). The image keeps the
+# file as a TEMPLATE that `ujust hardware-setup --only solaar` copies into the user's ~/.config/autostart (opt-in), and removes the autostart entry; the
+# application's menu entry /usr/share/applications/solaar.desktop stays. A missing file fails the build: the recipe has nothing to copy without it.
+solaar_autostart=/etc/xdg/autostart/solaar.desktop
+[[ -f "${solaar_autostart}" ]] || { echo "ERROR: ${solaar_autostart} is not in the solaar package any more: update build.sh and the hardware-setup solaar step"; exit 1; }
+install -Dm0644 "${solaar_autostart}" /usr/share/octarine-os/solaar-autostart.desktop
+rm -f "${solaar_autostart}"
+
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
 if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi

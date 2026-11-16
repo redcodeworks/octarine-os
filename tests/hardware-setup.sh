@@ -43,6 +43,7 @@ mk pamu2fcfg 'echo "pamu2fcfg $*" >>"$LOG"; [ "${FAKE_PAM_FAIL:-}" = 1 ] && exit
 mk systemd-detect-virt '[ "${FAKE_VM:-}" = 1 ]'
 mk sensors-detect 'exit 0'
 mk distrobox 'exit 0'
+mk solaar 'exit 0'
 export HW_EXPORT_DIR="$root/exportbin" HW_KFD="$root/m/kfd" OCTARINE_BOX_EXPORT_LIB="$here/system_files/usr/share/octarine-os/lib/box-export.sh"
 export OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh"
 export OCTARINE_UJUST="$bin/ujust" HW_RETRY_WAIT=0
@@ -96,5 +97,21 @@ echo 'IMAGE_ID="octarine-os-nvidia"' >"$root/os-release-nv"
 card card1 0x10de
 OCTARINE_OS_RELEASE="$root/os-release-nv" run --yes
 check "NVIDIA image: --yes enrolls the Secure Boot key when it is not enrolled" logged "ujust enroll-secure-boot-key"
+# the Solaar opt-in: a copy of the template into the (stubbed) user autostart directory, no sudo, never ticked by --yes, done when the file exists, hidden without solaar
+tpl="$root/m/solaar-autostart.desktop"
+printf '[Desktop Entry]\nName=Solaar\nExec=solaar --window=hide --battery-icon=regular\nType=Application\n' >"$tpl"
+export HW_SOLAAR_TEMPLATE="$tpl"
+run --yes
+check "--yes never opts in to Solaar" bash -c "[ ! -e '$root/home/.config/autostart/solaar.desktop' ]"
+run --only solaar
+check "solaar: the template is copied to ~/.config/autostart, no sudo, the undo is printed" bash -c "cmp -s '$tpl' '$root/home/.config/autostart/solaar.desktop' && ! grep -q '^sudo' '$LOG' && grep -q 'rm $root/home/.config/autostart/solaar.desktop' '$root/out'"
+run --only solaar
+check "solaar: a second run says already done and changes nothing" bash -c "grep -q 'Already done' '$root/out' && [ $rc = 0 ]"
+rm -f "$root/home/.config/autostart/solaar.desktop"; run --list
+check "solaar: --list shows it available, then done" bash -c "[ \"\$(grep -E '^solaar ' '$root/out' | sed -E 's/^solaar +//')\" = available ]"
+run --only solaar --no
+check "solaar: --no plans only and creates no file" bash -c "grep -q 'Plan: would run' '$root/out' && [ ! -e '$root/home/.config/autostart/solaar.desktop' ]"
+HW_SOLAAR_CMD=solaar-not-here run --only solaar
+check "solaar not installed: the step is hidden (not applicable), exit 0, nothing created" bash -c "[ $rc = 0 ] && grep -q 'not applicable: solaar' '$root/out' && [ ! -e '$root/home/.config/autostart/solaar.desktop' ]"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
