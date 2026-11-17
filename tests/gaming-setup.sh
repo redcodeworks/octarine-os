@@ -27,7 +27,7 @@ check "steam RPM installed: the three Flatpak Steam steps run, exit 0" test "$rc
 check "...each says Steam comes from the image and is recorded as skipped" test "$(grep -c 'skipped (Steam is installed from the image)' "$root/out")" = 3
 check "...and nothing is installed or overridden with flatpak" bash -c "! grep -qE '^flatpak (install|override|remote-add)' '$LOG'"
 
-FAKE_STEAM_RPM=1 run --yes --no
+FAKE_STEAM_RPM=1 run steam extensions desktop --no
 check "steam RPM installed, plan only: steam is a skip, no install" bash -c "test $rc = 0 && ! grep -qE '^flatpak (install|override)' '$LOG'"
 
 FAKE_STEAM_RPM=0 run steam --yes
