@@ -1,4 +1,4 @@
-# The NVIDIA variant of octarineOS (published as octarine-os-nvidia, built weekly, see CLAUDE.md "NVIDIA variant").
+# The NVIDIA variant of octarineOS (published as octarine-os-nvidia, built on request, see CLAUDE.md "NVIDIA variant").
 # It starts FROM the published default image and adds only the proprietary NVIDIA driver: the akmods image carries
 # prebuilt, Universal Blue signed kernel modules for ONE kernel, and nvidia-install.sh (inside it) installs them with
 # the userspace driver from negativo17. Both references are digests resolved by the workflow:

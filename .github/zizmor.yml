@@ -12,6 +12,7 @@ rules:
       - build-gx.yml
       - dx-image.yml
       - build-nvidia-dx.yml
+      - build-nvidia-gx.yml
       - build-nvidia.yml
       - build.yml
       - bump-pins.yml
@@ -24,13 +25,15 @@ rules:
     ignore:
       - bump-pins.yml
   # The only writes to $GITHUB_PATH/$GITHUB_ENV: setup-tool adds its own pinned tool directory under $HOME to PATH (no input reaches the value).
-  # build-nvidia-dx.yml exports values it computed itself (digests, tags, image names from its own scripts and `skopeo inspect`), never text of a pull request.
+  # build-nvidia-dx.yml and build-nvidia-gx.yml export values it computed itself (digests, tags, image names from its own scripts and `skopeo inspect`), never text of a pull request.
   github-env:
     ignore:
       - action.yml
       - build-nvidia-dx.yml
-  # build-nvidia-dx.yml starts on `workflow_run` of "Build NVIDIA variant", restricted to branches [main], i.e. after a build of this
+      - build-nvidia-gx.yml
+  # build-nvidia-dx.yml and build-nvidia-gx.yml start on `workflow_run` of "Build NVIDIA variant", restricted to branches [main], i.e. after a build of this
   # repository's own main finished; nothing from a fork or a pull request reaches it, and it checks out `inputs.sha`/main commits of this repository only.
   dangerous-triggers:
     ignore:
       - build-nvidia-dx.yml
+      - build-nvidia-gx.yml

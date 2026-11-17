@@ -85,7 +85,7 @@ set_os_release_field() { # key value: replace the line when it exists, append it
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
 image_id="${GX_IMAGE_ID:-octarine-os-gx}"
-[[ "${image_id}" == octarine-os-gx ]] || { echo "ERROR: GX_IMAGE_ID '${image_id}' is not octarine-os-gx"; exit 1; }
+[[ "${image_id}" =~ ^octarine-os(-nvidia)?-gx$ ]] || { echo "ERROR: GX_IMAGE_ID '${image_id}' is not octarine-os-gx or octarine-os-nvidia-gx"; exit 1; }
 set_os_release_field IMAGE_ID "${image_id}"
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
 IMAGE_ID_EXPECTED="${image_id}" bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == "${IMAGE_ID_EXPECTED}" ]]'
