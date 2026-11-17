@@ -106,6 +106,7 @@ check "signature policy also covers the NVIDIA variant repository" "grep -q $REF
 check "signature policy also covers the dx variant repository" "grep -q $REF-dx /etc/containers/policy.json"
 check "signature policy also covers the NVIDIA dx repository" "grep -q $REF-nvidia-dx /etc/containers/policy.json"
 check "signature policy also covers the gx variant repository (not published yet)" "grep -q $REF-gx /etc/containers/policy.json"
+check "signature policy also covers the NVIDIA gx repository" "grep -q $REF-nvidia-gx /etc/containers/policy.json"
 check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
 check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
 check "sudoers valid" "visudo -c"

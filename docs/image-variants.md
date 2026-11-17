@@ -11,7 +11,7 @@ Build recipes for the images that sit on top of the default `octarine-os` image.
   The build adds RPM Fusion only for the Steam transaction and leaves no third-party repository enabled.
 - `nvidia/` adds the NVIDIA driver build.
 
-Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, and `dx/` and `gx/` a `packages/` extras list (gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml` and `build-nvidia-dx.yml` workflows build them from the published
+Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, and `dx/` and `gx/` a `packages/` extras list (gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml` and `build-nvidia-gx.yml` workflows build them from the published
 default image; dx and gx are built by the same reusable workflow and are dispatched in parallel after the default image.
 
 Before editing: a variant only adds to the default image, so anything every user needs belongs in `build_files/` and
