@@ -4,6 +4,12 @@ name: Prune daily images
 # newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/prune-daily.py). Testing builds, the
 # NVIDIA images, the bare `latest` and anything else are never touched. Scheduled runs delete for real; start it by hand with dry_run on
 # (the default) to see the plan: `gh workflow run prune-daily.yml -f dry_run=true`. A failed run is just a red scheduled run.
+#
+# Two jobs. `plan` is the ONE place that lists the package names: it reads what must survive (the digest behind each image's own `latest`, and the default image that each
+# variant's `latest` stands on, any failed lookup stops the run) and passes the names and that protect list on. `prune` is a matrix with ONE JOB PER PACKAGE (a new image is
+# one more name in `plan`; a name the prune script cannot read turns only its own job red). Each job lists and deletes only its own package, so they share nothing; each makes a
+# few list calls and at most 30 deletes, so parallel runs stay far from the rate limits (the `gh` calls are not retried: a failed one fails that job; the registry reads in
+# `plan` are retried by registry-read.sh).
 on:
   schedule:
     - cron: '0 5 * * 0'  # Sundays 05:00 UTC (scheduled runs come from the default branch)
@@ -22,37 +28,35 @@ permissions:
   contents: read
 
 jobs:
-  prune:
-    name: Prune old daily images
+  plan:
+    name: Plan the prune
     runs-on: ubuntu-26.04
     permissions:
       contents: read
-      packages: write
+      packages: read
+    outputs:
+      names: ${{ steps.plan.outputs.names }}
+      protect: ${{ steps.plan.outputs.protect }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Prune
+      - name: List the packages and what must survive
+        id: plan
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
-          EVENT: ${{ github.event_name }}
-          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           owner="${OWNER,,}"
-          kind=$(gh api "users/${OWNER}" --jq '.type')
-          if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi
-          if [[ "${EVENT}" == "workflow_dispatch" ]]; then export DRY_RUN="${INPUT_DRY_RUN}"; else export DRY_RUN=false; fi
-
+          # The only list of packages to prune.
+          names="octarine-os octarine-os-dx octarine-os-gx"
           # Images that must survive: the digest behind each image's own `latest`, and the default images that the variants' `latest` stand on (the base digest
           # is a label of the variant). The images publish independently, so these are different digests. Any failed lookup stops the run: never prune without
           # knowing what is live.
           protect=""
-          prune_names="octarine-os octarine-os-dx octarine-os-gx"
-          for name in ${prune_names}; do
+          for name in ${names}; do
             image="ghcr.io/${owner}/${name}"
             rc=0; digest=$(IMAGE="${image}" .github/scripts/registry-digest.sh latest) || rc=$?
             [[ "${rc}" == 0 && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read ${image}:latest (status ${rc})"; exit 1; }
@@ -63,13 +67,42 @@ jobs:
               protect="${protect} ${base}"
             fi
           done
-          export PROTECT="${protect# }"
-          echo "Protected: ${PROTECT}"
+          echo "Protected: ${protect# }"
+          echo "names=$(jq -cn --arg n "${names}" '$n | split(" ")')" >> "${GITHUB_OUTPUT}"
+          echo "protect=${protect# }" >> "${GITHUB_OUTPUT}"
 
-          failed=0
-          for name in ${prune_names}; do
-            export API_BASE="${scope}/packages/container/${name}"
-            echo "== ${API_BASE}, dry run: ${DRY_RUN}"
-            if ! gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-daily.py; then echo "::error::the prune of ${API_BASE} failed"; failed=1; fi
-          done
-          exit "${failed}"
+  prune:
+    name: Prune ${{ matrix.name }}
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJSON(needs.plan.outputs.names) }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      OWNER: ${{ github.repository_owner }}
+      NAME: ${{ matrix.name }}
+      PROTECT: ${{ needs.plan.outputs.protect }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Prune
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          kind=$(gh api "users/${OWNER}" --jq '.type')
+          if [[ "${kind}" == "Organization" ]]; then scope="orgs/${OWNER}"; else scope="users/${OWNER}"; fi
+          if [[ "${EVENT}" == "workflow_dispatch" ]]; then export DRY_RUN="${INPUT_DRY_RUN}"; else export DRY_RUN=false; fi
+          export API_BASE="${scope}/packages/container/${NAME}"
+          echo "== ${API_BASE}, dry run: ${DRY_RUN}"
+          echo "Protected: ${PROTECT}"
+          gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-daily.py
