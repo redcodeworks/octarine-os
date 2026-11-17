@@ -126,8 +126,11 @@ dev *args:
     }
     # ask <default y|n> <question>: sets $answer. --yes takes the default, --no never applies.
     ask() {
-        local def=$1 q=$2 reply hint="[Y/n]"
-        [ "$def" = n ] && hint="[y/N]"
+        local def=$1 q=$2 reply idef hint="[y/N]"
+        # def "s" = a step question: --yes runs it, an interactive run starts at no (nothing is pre-chosen)
+        idef=$def
+        if [ "$def" = s ]; then def=y; idef=n; fi
+        [ "$idef" = y ] && hint="[Y/n]"
         case "$mode" in
             yes) answer=$def; return ;;
             no) answer=n; return ;;
@@ -137,7 +140,7 @@ dev *args:
         case "$reply" in
             [Yy]*) answer=y ;;
             [Nn]*) answer=n ;;
-            *) answer=$def ;;
+            *) answer=$idef ;;
         esac
     }
     # gate <step> <undo-unused>: the "Apply?" question of a step that has work to do. Returns 0 to go on; otherwise it has
@@ -145,7 +148,7 @@ dev *args:
     gate() {
         if [ "$mode" = no ]; then record "$1" "planned"; return 1; fi
         if [ "$preconfirmed" = 1 ]; then return 0; fi
-        ask y "Apply?"
+        ask s "Apply?"
         if [ "$answer" != y ]; then record "$1" "skipped (not applied)"; return 1; fi
         return 0
     }
@@ -311,7 +314,7 @@ dev *args:
         need_brew tools || return
         for g in "${tool_groups[@]}"; do
             IFS='^' read -r id label pkgs <<<"$g"
-            items+=("$id^$label ($pkgs)^1")
+            items+=("$id^$label ($pkgs)^0")
         done
         if [ "$mode" = ask ]; then
             if menu_ready; then
@@ -321,7 +324,7 @@ dev *args:
             else
                 for g in "${tool_groups[@]}"; do
                     IFS='^' read -r id label pkgs <<<"$g"
-                    ask y "Install $label ($pkgs)?"
+                    ask s "Install $label ($pkgs)?"
                     [ "$answer" = y ] && chosen+=("$id")
                 done
                 if [ "${#chosen[@]}" -eq 0 ]; then record tools "skipped (nothing chosen)"; return; fi
