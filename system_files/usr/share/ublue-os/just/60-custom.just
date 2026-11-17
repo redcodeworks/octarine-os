@@ -2822,7 +2822,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image; it keeps the layer you run, dx or gx, but on an fx (dx-gx) machine it moves to nvidia-dx and drops the gx layer, because nvidia-dx-gx does not exist), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. The menu starts with nothing ticked (a finished step is only marked done): you tick what you want to run. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image; it keeps the layer you run, dx or gx, but on an fx (dx-gx) machine it moves to nvidia-dx and drops the gx layer, because nvidia-dx-gx does not exist), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is on its recommended list (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2999,7 +2999,7 @@ hardware-setup *args:
             wake-on-lan) [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(wol_profile)" 2>/dev/null | head -n1)" = magic ] ;;
         esac
     }
-    default_of() { # 1 when ticked by default
+    default_of() { # 1 when plain --yes runs it (never a menu or prompt default: those start empty)
         case "$1" in
             sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
             iommu | wake-on-lan) echo 0 ;;
@@ -3162,10 +3162,9 @@ hardware-setup *args:
     elif [ "$mode" = ask ] && menu_ready; then
         items=()
         for s in "${avail[@]}"; do
-            sel=$(default_of "$s")
             label=${text[$s]}
-            if [ "${isdone[$s]}" = 1 ]; then sel=0; label+=" (done)"; fi
-            items+=("$s^$label^$sel")
+            if [ "${isdone[$s]}" = 1 ]; then label+=" (done)"; fi
+            items+=("$s^$label^0")
         done
         menu_title "octarineOS hardware setup"
         menu_multi "Hardware setup: choose the steps (only what this machine has is listed)" "${items[@]}"
@@ -3178,11 +3177,9 @@ hardware-setup *args:
         # no terminal menu: ask one question per available step
         for s in "${avail[@]}"; do
             [ "${isdone[$s]}" = 1 ] && continue
-            def=$(default_of "$s")
-            hint="[y/N]"; [ "$def" = 1 ] && hint="[Y/n]"
-            printf '%s %s ' "${text[$s]}?" "$hint"
+            printf '%s [y/N] ' "${text[$s]}?"
             read -r reply || reply=""
-            case "$reply" in [Yy]*) chosen+=("$s") ;; [Nn]*) ;; *) [ "$def" = 1 ] && chosen+=("$s") ;; esac
+            case "$reply" in [Yy]*) chosen+=("$s") ;; esac
         done
     fi
 
