@@ -8,17 +8,26 @@
 # The files are PARSED, never sourced: only the variables below are taken, `export ` and one pair of quotes are accepted, anything else is ignored.
 # The process environment is not read for these names (an ambient SCREEN_WIDTH cannot leak in). A variable that is unset or empty omits its flag, so
 # gamescope uses the output's preferred mode instead of a size baked into the image.
-# For tests only: OCTARINE_GAMESCOPE_DEFAULTS, OCTARINE_GAMESCOPE_SYSTEM_DIR, OCTARINE_GAMESCOPE_USER_DIR.
+# GAMESCOPE_SESSION_SCHED (default lavd, skip turns it off) runs a sched_ext scheduler only while the session lasts, through the same helpers GameMode
+# uses (gamemode-lib.sh: `systemctl start scx@lavd.service`, allowed for the active local user by the image's polkit rule; the boot choice is restored when
+# gamescope ends, also on a signal; a machine without sched_ext or a failing scheduler only logs and the session goes on).
+# For tests only: OCTARINE_GAMESCOPE_DEFAULTS, OCTARINE_GAMESCOPE_SYSTEM_DIR, OCTARINE_GAMESCOPE_USER_DIR, OCTARINE_GAMESCOPE_LIBEXEC (and the OCTARINE_SCX_* of gamemode-lib.sh).
 set -uo pipefail
 
 tag=octarine-gamescope-session
+libexec=${OCTARINE_GAMESCOPE_LIBEXEC:-/usr/libexec/octarine-os}
+# the scheduler helpers of the GameMode hooks (shipped by the image for every variant); without them the session simply has no scheduler step
+sched_lib=false
+# shellcheck source=/dev/null
+if [[ -r "${libexec}/gamemode-lib.sh" ]] && . "${libexec}/gamemode-lib.sh"; then sched_lib=true; fi
+# one log tag for the whole session, also for what the library logs
 log() { logger -t "${tag}" -- "$*" 2> /dev/null || true; echo "${tag}: $*" >&2; }
 
 defaults=${OCTARINE_GAMESCOPE_DEFAULTS:-/usr/share/octarine-os/gamescope-session.conf}
 system_dir=${OCTARINE_GAMESCOPE_SYSTEM_DIR:-/etc/environment.d}
 user_dir=${OCTARINE_GAMESCOPE_USER_DIR:-${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/environment.d}
 
-known=" SCREEN_WIDTH SCREEN_HEIGHT INTERNAL_WIDTH INTERNAL_HEIGHT CUSTOM_REFRESH_RATES ADAPTIVE_SYNC DRM_MODE OUTPUT_CONNECTOR ORIENTATION ENABLE_GAMESCOPE_HDR GAMESCOPE_HDR_NITS REFRESH_RATE MOUSE_SENSITIVITY UPSCALER GAMESCOPE_EXTRA_ARGS "
+known=" SCREEN_WIDTH SCREEN_HEIGHT INTERNAL_WIDTH INTERNAL_HEIGHT CUSTOM_REFRESH_RATES ADAPTIVE_SYNC DRM_MODE OUTPUT_CONNECTOR ORIENTATION ENABLE_GAMESCOPE_HDR GAMESCOPE_HDR_NITS REFRESH_RATE MOUSE_SENSITIVITY UPSCALER GAMESCOPE_EXTRA_ARGS GAMESCOPE_SESSION_SCHED "
 for k in ${known}; do unset "${k}"; done
 
 # load_file FILE: take the known variables out of one file
@@ -86,6 +95,47 @@ args+=(-e)
 # Not set by anything else: this is the --backend drm case, with no Wayland compositor behind gamescope's own surface (the image's /etc/profile.d/proton.sh says 1)
 export PROTON_ENABLE_WAYLAND=0
 
+# The session scheduler: the library's `chosen` reads the user's GameMode file; here the choice is GAMESCOPE_SESSION_SCHED (skip, none or a registered scheduler)
+session_sched=skip
+if [[ "${sched_lib}" == true ]]; then
+    chosen() {
+        local v=${GAMESCOPE_SESSION_SCHED-}
+        case "${v}" in
+            "" | skip) echo skip ;;
+            none) echo none ;;
+            *) if registered "${v}"; then echo "${v}"; else log "ignoring GAMESCOPE_SESSION_SCHED='${v}' (not a registered scheduler)"; echo skip; fi ;;
+        esac
+    }
+    session_sched=$(chosen)
+    if [[ "${session_sched}" != skip && ! -d "${SCX_SYSFS}" ]]; then log "no sched_ext in this kernel: no scheduler for the session"; session_sched=skip; fi
+fi
+
 # Steam in gamepad mode (-steamos3 -gamepadui); Bazzite adds -steampal -steamdeck for the Steam Deck look and its settings
-log "starting: gamescope ${args[*]} -- /usr/bin/steam -steamos3 -gamepadui"
-exec gamescope "${args[@]}" -- /usr/bin/steam -steamos3 -gamepadui
+log "starting: gamescope ${args[*]} -- /usr/bin/steam -steamos3 -gamepadui (scheduler: ${session_sched})"
+
+if [[ "${session_sched}" == skip ]]; then
+    exec gamescope "${args[@]}" -- /usr/bin/steam -steamos3 -gamepadui
+fi
+
+# the end: the library's scheduler_end puts the boot choice back when the start left its marker; when the start was cut short (a signal reached both the switch and
+# this script) but our scheduler is loaded and is not the boot choice, it is put back as well
+session_end() {
+    if [[ -f "$(marker)" ]]; then scheduler_end; return 0; fi
+    if [[ "${session_sched}" != none && "$(active_instance)" == "${session_sched}" && "$(boot_instance)" != "${session_sched}" ]]; then restore_boot; fi
+}
+
+# gamescope is a child, so the scheduler can be put back when it ends: the switch runs beside it (a slow systemctl never delays the picture), and a signal to
+# this script is passed on to gamescope. A killed script (SIGKILL) leaves the scheduler running: `ujust scheduler --restore` puts the boot choice back.
+with_lock scheduler_start &
+sched_pid=$!
+gamescope "${args[@]}" -- /usr/bin/steam -steamos3 -gamepadui &
+child=$!
+trap 'kill -TERM "${child}" 2> /dev/null' TERM INT HUP
+wait "${child}"
+rc=$?
+while kill -0 "${child}" 2> /dev/null; do wait "${child}"; rc=$?; done
+trap - TERM INT HUP
+log "gamescope ended (exit ${rc}); restoring the scheduler"
+wait "${sched_pid}" 2> /dev/null
+with_lock session_end || true
+exit "${rc}"
