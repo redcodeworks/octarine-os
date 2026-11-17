@@ -29,7 +29,7 @@ COPY variants/gx/gx.sh /gx.sh
 COPY build_files/final-cleanup.sh /final-cleanup.sh
 COPY build_files/validate-repos.sh /validate-repos.sh
 COPY build_files/install-binaries.sh /install-binaries.sh
-# (no system_files tree: the packages bring their own units, rules and firewall services; add one here and a `cp -a` in gx.sh when a file is ever needed)
+COPY variants/gx/system_files /system_files
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 

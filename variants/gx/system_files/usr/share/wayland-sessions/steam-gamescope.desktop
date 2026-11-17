@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Steam Big Picture (gamescope)
+Comment=Steam in gamepad mode inside gamescope as the compositor (octarineOS gamer image). Settings: /usr/share/octarine-os/gamescope-session.conf
+Exec=/usr/libexec/octarine-os/gamescope-session
+TryExec=/usr/bin/gamescope
+Type=Application
+DesktopNames=gamescope
