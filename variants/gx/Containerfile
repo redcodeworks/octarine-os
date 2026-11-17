@@ -1,0 +1,46 @@
+# The gamer image of octarineOS (published as octarine-os-gx, see CLAUDE.md "gx image"): the published default image plus the gaming
+# packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends). The same lineage and build strategy as the dx image (variants/dx):
+#   silverblue-main:45   -> octarine-os:latest -> octarine-os-gx:latest
+# The workflow resolves the base by DIGEST (and verifies its signature) and passes it in, so the build, the labels and the kernel check all
+# talk about the same base:
+#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os
+#   BASE_TAG     latest (only names the channel in the labels; the digest decides)
+#   BASE_DIGEST  sha256:... of that tag when the build started (empty only for a bare local `podman build`)
+ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
+ARG BASE_TAG=latest
+ARG BASE_DIGEST=
+
+# The gaming package lists: a tiny signed FROM scratch image (/fedora.txt, /rpmfusion.txt, /copr.txt, /install.sh, /install-copr.sh, /README) built from the
+# octarine-images repository. PINNED by digest, like dev-packages in the dx Containerfile: GAMING_PACKAGES_DIGEST changes only through the weekly bump pull
+# request (bump-run.sh, kind gaming-packages), the gx build verifies the pinned digest with keys/redcodeworks-toolbox-cosign.pub on every build
+# (dx-image.yml) and records it in the gaming-packages label. GAMING_PACKAGES_TAG is only for humans. The pin covers the LISTS and installers only
+# (the package names, the exact Sunshine version of the COPR list); the other packages still float through dnf.
+ARG GAMING_PACKAGES_TAG=latest-20261116-39ab64d
+ARG GAMING_PACKAGES_DIGEST=sha256:4b65361ea50f4c2eb7dc5a800376f3d41837566c031b3bcb9ae032712bded9c9
+ARG GAMING_PACKAGES_REF=ghcr.io/redcodeworks/gaming-packages:${GAMING_PACKAGES_TAG}@${GAMING_PACKAGES_DIGEST}
+
+FROM ${GAMING_PACKAGES_REF} AS gamingpkgs
+# (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
+
+FROM scratch AS ctx
+COPY variants/gx/gx.sh /gx.sh
+COPY build_files/final-cleanup.sh /final-cleanup.sh
+COPY build_files/validate-repos.sh /validate-repos.sh
+COPY variants/gx/packages/extras.txt /extras.txt
+# (no system_files tree: the packages bring their own units, rules and firewall services; add one here and a `cp -a` in gx.sh when a file is ever needed)
+
+FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
+
+# os-release IMAGE_VERSION of this build (set by the workflow), written by gx.sh
+ARG IMAGE_VERSION
+# os-release IMAGE_ID: octarine-os-gx
+ARG GX_IMAGE_ID=octarine-os-gx
+
+# The shared lists through a bind mount, one dnf5 call per source class, then the extras, in gx.sh (which also keeps the kernel unchanged)
+RUN --mount=type=bind,from=gamingpkgs,source=/,target=/gaming-packages \
+    --mount=type=bind,from=ctx,source=/,target=/ctx \
+    --mount=type=cache,dst=/var/cache \
+    --mount=type=cache,dst=/var/log \
+    /ctx/gx.sh
+
+RUN --network=none bootc container lint --fatal-warnings --no-truncate
