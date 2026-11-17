@@ -1005,13 +1005,13 @@ gaming-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     steps=""
-    valid=" steam protonup lutris extensions extest desktop gamemode reset "
-    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|reset ...] [--yes|--no]"
+    valid=" steam protonup lutris extensions extest desktop gamemode gamescope-session reset "
+    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|gamescope-session|reset ...] [--yes|--no]"
     for a in "$@"; do
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step (on a terminal with gum it starts with nothing ticked; without gum each question defaults to no), or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step (on a terminal with gum it starts with nothing ticked; without gum each question defaults to no), or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), gamescope-session (gx image only, never part of --yes: writes the output size and refresh rate of your display into a marked block of ~/.config/environment.d/10-gamescope-session.conf, for the "Steam Big Picture (gamescope)" session in the GDM gear menu; lines you add outside the block are kept, a block you changed is shown as a diff and replaced only after a yes with a timestamped backup; every setting is documented in /usr/share/octarine-os/gamescope-session.conf; ending that session returns to the GDM login screen: leave Steam from its power menu or run steam -shutdown), reset (undo: generated launchers, the PATH line, optionally the extest library, the gamemode file and the gamescope-session block). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -1031,6 +1031,11 @@ gaming-setup *args:
     ext_lib32="$ext_dest/lib/libextest.so"
     ext_so="$ext_dest/lib64/libextest.so"
     marker="X-Octarine-Generated=ujust gaming-setup"
+    gs_src="${GAMING_SETUP_GAMESCOPE_SRC:-/usr/share/octarine-os/gamescope-session.conf}"
+    gs_dest="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/10-gamescope-session.conf"
+    gs_begin="# >>> octarine-os: ujust gaming-setup gamescope-session (managed lines; the command rewrites only this block, lines outside it are yours)"
+    gs_end="# <<< octarine-os: ujust gaming-setup gamescope-session"
+    menu_chosen=0
     names=()
     results=()
     undos=()
@@ -1065,6 +1070,24 @@ gaming-setup *args:
         echo "== $1"
         echo "Steam is installed from the image (the steam RPM), so the Flatpak Steam steps do not apply: nothing to do."
         record "$1" "skipped (Steam is installed from the image)"
+    }
+
+    # detect_res: the current display mode as WIDTHxHEIGHT@HZ in $res (GAMING_SETUP_RES first, then Mutter, then niri); empty when it cannot tell
+    # (shared by the desktop and gamescope-session steps)
+    detect_res() {
+        local st cur_mode r
+    res=${GAMING_SETUP_RES:-}
+    if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
+        st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
+        cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
+        if [ -n "$cur_mode" ]; then
+            res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
+        fi
+    fi
+    if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
+        [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
+    fi
     }
 
     app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
@@ -1137,7 +1160,8 @@ gaming-setup *args:
                 "^Steam extras^0" \
                 "extest^extest libraries (Steam Input on Wayland)^0" \
                 "^Tuning^0" \
-                "gamemode^GameMode tuning in ~/.config/gamemode.ini^0"
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^0" \
+                "gamescope-session^Steam Big Picture session: your display's size and refresh rate^0"
         else
             menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
                 "^Apps^0" \
@@ -1153,6 +1177,7 @@ gaming-setup *args:
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
         steps=" ${MENU_RESULT[*]}"
+        menu_chosen=1
     fi
 
     if selected steam && ! explicit reset; then
@@ -1264,18 +1289,7 @@ gaming-setup *args:
         # is quoted and the dollar sign escaped (the desktop entry spec: \\$ in the file is \$ after unescaping, $ after
         # quoting); the shell must not see it, hence single quotes here.
         if [ -f "$ext_lib32" ] && [ -f "$ext_so" ]; then hook=' --filesystem='"$ext_dest"':ro "--env=LD_PRELOAD='"$ext_dest"'/\\$LIB/libextest.so"'; label="extest"; fi
-        res=${GAMING_SETUP_RES:-}
-        if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
-            st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
-            cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
-            if [ -n "$cur_mode" ]; then
-                res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
-            fi
-        fi
-        if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-            r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
-            [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
-        fi
+        detect_res
         if [ -z "$res" ] && [ "$mode" = ask ] && ! explicit desktop; then
             printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip the gamescope launcher): '
             read -r res || res=""
@@ -1377,6 +1391,91 @@ gaming-setup *args:
     fi
     fi
 
+    # gamescope-session (gx image): the display's size and refresh rate for the Steam Big Picture (gamescope) GDM session, as a marked block in
+    # ~/.config/environment.d/10-gamescope-session.conf. Opt-in only (named or ticked; under --yes it needs to be named). Detection is the one of the desktop step.
+    if selected gamescope-session && ! explicit reset; then
+    cur=gamescope-session
+    echo
+    echo "== gamescope-session (display settings of the Steam Big Picture session)"
+    if [ ! -f "$gs_src" ]; then
+        echo "Skipped: this image has no Steam Big Picture (gamescope) session ($gs_src is missing; it is part of the gx image)."
+        record "gamescope-session" "skipped (not a gx image)"
+    else
+        detect_res
+        if [ -z "$res" ] && [ "$mode" = ask ] && { ! explicit gamescope-session || [ "$menu_chosen" = 1 ]; }; then
+            printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip): '
+            read -r res || res=""
+        fi
+        if [ -n "$res" ] && ! [[ "$res" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]]; then
+            echo "Ignoring '$res': not WIDTHxHEIGHT@HZ."
+            res=""
+        fi
+        if [ -z "$res" ]; then
+            echo "No display mode found, nothing written (set GAMING_SETUP_RES=WIDTHxHEIGHT@HZ to give it)."
+            record "gamescope-session" "skipped (no display mode)"
+        else
+            gw=${res%%x*}; rest=${res#*x}; gh=${rest%%@*}; ghz=${rest#*@}; ghz=$(printf '%.0f' "$ghz")
+            gs_block() { printf '%s\n' "$gs_begin" "SCREEN_WIDTH=$gw" "SCREEN_HEIGHT=$gh" "REFRESH_RATE=$ghz" "$gs_end"; }
+            gs_current() { awk -v b="$gs_begin" -v e="$gs_end" '$0 == b { p = 1 } p { print } $0 == e { p = 0 }' "$1"; }
+            has_b=0; has_e=0
+            if [ -f "$gs_dest" ]; then
+                grep -qxF "$gs_begin" "$gs_dest" && has_b=1
+                grep -qxF "$gs_end" "$gs_dest" && has_e=1
+            fi
+            if [ "$has_b" != "$has_e" ]; then
+                echo "Failed: $gs_dest has only one of the two marker lines of the managed block; fix or remove it by hand, nothing was changed." >&2
+                failed=1
+                record "gamescope-session" FAILED
+            elif [ "$has_b" = 1 ] && [ "$(gs_current "$gs_dest")" = "$(gs_block)" ]; then
+                echo "$gs_dest already has ${gw}x${gh} at ${ghz} Hz."
+                record "gamescope-session" "already done"
+            else
+                echo "Writes SCREEN_WIDTH=$gw SCREEN_HEIGHT=$gh REFRESH_RATE=$ghz (your display's current mode) into a marked block of $gs_dest. The output name (OUTPUT_CONNECTOR) is not detected: add it yourself if you need one. All settings: $gs_src."
+                if [ "$has_b" = 1 ]; then
+                    echo "The block in the file differs (another display, or an edit of yours):"
+                    diff -u <(gs_current "$gs_dest") <(gs_block)
+                    echo "Replacing the block keeps a timestamped backup of the file; lines outside the block are not touched."
+                    ask_noexplicit=1 ask n "Replace the block?"
+                elif [ -f "$gs_dest" ]; then
+                    echo "The file exists without the block; the block is appended at the end, so its lines win over the same names above it. Your lines stay; a timestamped backup is kept."
+                    ask_noexplicit=1 ask n "Append the block?"
+                else
+                    ask n "Apply?"
+                fi
+                if [ "$answer" != y ]; then
+                    record "gamescope-session" "$(skipped_result)"
+                else
+                    mkdir -p "$(dirname "$gs_dest")"
+                    backup=""
+                    if [ -f "$gs_dest" ]; then
+                        backup="$gs_dest.bak-$(date +%Y%m%d%H%M%S)"
+                        cp -p -- "$gs_dest" "$backup"
+                    fi
+                    tmp=$(mktemp "$gs_dest.XXXXXX")
+                    blockfile=$(mktemp)
+                    gs_block >"$blockfile"
+                    if [ "$has_b" = 1 ]; then
+                        awk -v b="$gs_begin" -v e="$gs_end" -v nf="$blockfile" '$0 == b { while ((getline l < nf) > 0) print l; skip = 1; next } skip && $0 == e { skip = 0; next } skip { next } { print }' "$gs_dest" >"$tmp"
+                    elif [ -f "$gs_dest" ]; then
+                        { cat -- "$gs_dest"; [ -z "$(tail -c1 "$gs_dest")" ] || echo; echo; cat -- "$blockfile"; } >"$tmp"
+                    else
+                        { echo "# Settings of the Steam Big Picture (gamescope) session; every variable is documented in $gs_src. Add your own lines outside the managed block."; cat -- "$blockfile"; } >"$tmp"
+                    fi
+                    if [ -s "$tmp" ] && chmod 644 "$tmp" && mv -f -- "$tmp" "$gs_dest"; then
+                        echo "Wrote $gs_dest${backup:+ (previous file saved as $backup)}. Pick \"Steam Big Picture (gamescope)\" in the GDM gear menu at the next login screen."
+                        record "gamescope-session" applied "ujust gaming-setup reset removes the block (or delete $gs_dest)"
+                    else
+                        rm -f -- "$tmp"
+                        failed=1
+                        record "gamescope-session" FAILED
+                    fi
+                    rm -f -- "$blockfile"
+                fi
+            fi
+        fi
+    fi
+    fi
+
     # reset: undo what this recipe did; installed Flatpaks stay
     if explicit reset; then
     cur=reset
@@ -1438,6 +1537,25 @@ gaming-setup *args:
     else
         record "reset: gamemode file" "$(skipped_result)"
     fi
+    fi
+
+    # reset (continued): the managed block of the gamescope session settings (the rest of the file is yours)
+    if explicit reset; then
+        ask y "Remove the managed gamescope session block from $gs_dest?"
+        if [ "$answer" = y ]; then
+            if [ -f "$gs_dest" ] && grep -qxF "$gs_begin" "$gs_dest" && grep -qxF "$gs_end" "$gs_dest"; then
+                tmp=$(mktemp "$gs_dest.XXXXXX")
+                awk -v b="$gs_begin" -v e="$gs_end" '$0 == b { skip = 1; next } skip && $0 == e { skip = 0; next } skip { next } { print }' "$gs_dest" >"$tmp"
+                # only our header comment (and blank lines) left: remove the file
+                if ! grep -qvE '^[[:space:]]*(#.*)?$' "$tmp"; then rm -f -- "$tmp" "$gs_dest"; echo "Removed $gs_dest (nothing of yours was in it)."; else chmod 644 "$tmp" && mv -f -- "$tmp" "$gs_dest"; echo "Removed the block from $gs_dest; your lines stay."; fi
+                record "reset: gamescope session" applied
+            else
+                echo "No managed block in $gs_dest; left alone."
+                record "reset: gamescope session" "skipped (none found)"
+            fi
+        else
+            record "reset: gamescope session" "$(skipped_result)"
+        fi
     fi
 
     echo
