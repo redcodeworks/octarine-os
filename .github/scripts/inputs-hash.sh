@@ -28,7 +28,7 @@ is_dx_only() {
 }
 is_gx_only() {
     case "$1" in
-        variants/gx/* | .github/workflows/build-gx.yml | .github/scripts/gx-smoke.sh) return 0 ;;
+        variants/gx/* | .github/workflows/build-gx.yml | .github/scripts/gx-smoke.sh | .github/workflows/build-nvidia-gx.yml) return 0 ;;
         *) return 1 ;;
     esac
 }

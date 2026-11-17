@@ -1,7 +1,7 @@
 ---
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-dx.yml (octarine-os-dx), build-gx.yml (octarine-os-gx, the gamer image:
-# input `variant: gx`) and build-nvidia-dx.yml (octarine-os-nvidia-dx). The variant selects the Containerfile (variants/<variant>/Containerfile), the
+# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx). The variant selects the Containerfile (variants/<variant>/Containerfile), the
 # inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned list image that is verified (dx: dev-packages, gx: gaming-packages) and the smoke
 # script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job
 # and RESULT job: the required check `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry
@@ -20,7 +20,7 @@ on:
         type: string
         required: true
       dx_name:
-        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx or octarine-os-gx)"
+        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx, octarine-os-gx or octarine-os-nvidia-gx)"
         type: string
         required: true
       variant:
@@ -405,7 +405,7 @@ jobs:
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
   promote:
-    name: Promote tested ${{ inputs.variant }} image
+    name: Promote tested image
     needs: plan
     if: needs.plan.outputs.promote == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04

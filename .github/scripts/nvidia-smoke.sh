@@ -4,7 +4,7 @@
 #   nvidia-smoke.sh present   the variant: driver, kernel module, initramfs, kernel arguments, SELinux module
 #   nvidia-smoke.sh absent    the default image: no NVIDIA driver packages or kernel modules
 #
-# The NVIDIA developer image (octarine-os-nvidia-dx) runs the same `present` checks with EXPECT_IMAGE_ID=octarine-os-nvidia-dx.
+# The NVIDIA developer image (octarine-os-nvidia-dx) runs the same `present` checks with EXPECT_IMAGE_ID=octarine-os-nvidia-dx; the NVIDIA gamer image (octarine-os-nvidia-gx) the same with EXPECT_IMAGE_ID=octarine-os-nvidia-gx.
 # Environment: EXPECT_IMAGE_ID (present: the os-release IMAGE_ID, default octarine-os-nvidia), BASE_KERNEL (present: the kernel release of the base image, which must be unchanged), and for tests
 # MODULES_DIR, KARGS_FILE, MODPROBE_FILE, OS_RELEASE. Package names are not hard-coded: any installed package with "nvidia" in its
 # name counts as the driver, except the firmware package (nvidia-gpu-firmware ships with Fedora's linux-firmware).

@@ -33,7 +33,7 @@ FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
 # os-release IMAGE_VERSION of this build (set by the workflow), written by gx.sh
 ARG IMAGE_VERSION
-# os-release IMAGE_ID: octarine-os-gx
+# os-release IMAGE_ID: octarine-os-gx, or octarine-os-nvidia-gx when the base is the NVIDIA variant (same layer, same packages)
 ARG GX_IMAGE_ID=octarine-os-gx
 
 # The shared lists through a bind mount, one dnf5 call per source class, then the extras, in gx.sh (which also keeps the kernel unchanged)

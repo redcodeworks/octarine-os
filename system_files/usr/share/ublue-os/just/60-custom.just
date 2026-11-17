@@ -2310,7 +2310,7 @@ gnome-candy *args:
     fi
     exec just --justfile "$dir/justfile" --working-directory "$dir" "$@"
 
-# Switch between the octarineOS images (default, dx, nvidia, nvidia-dx) and channels (latest, testing)
+# Switch between the octarineOS images (default, dx, gx, nvidia, nvidia-dx, nvidia-gx) and channels (latest, testing)
 [group('Setup')]
 [positional-arguments]
 switch-image *args:
@@ -2331,15 +2331,15 @@ switch-image *args:
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), gx (gamer image; a machine can name it before it is published, and the switch then says it is not published), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), gx (gamer image; a machine can name it before it is published, and the switch then says it is not published), nvidia (proprietary NVIDIA driver), nvidia-dx, nvidia-gx (the gamer image on the NVIDIA driver). Channels: latest (the default), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
             --force) force=1 ;;
-            default | dx | gx | nvidia | nvidia-dx) image=$a ;;
+            default | dx | gx | nvidia | nvidia-dx | nvidia-gx) image=$a ;;
             latest | testing) channel=$a ;;
             -*) echo "Unknown option: $a (use --yes, --no, --force or --list)" >&2; exit 2 ;;
-            *) echo "Unknown image or channel: $a (images: default, dx, gx, nvidia, nvidia-dx; channels: latest, testing)" >&2; exit 2 ;;
+            *) echo "Unknown image or channel: $a (images: default, dx, gx, nvidia, nvidia-dx, nvidia-gx; channels: latest, testing)" >&2; exit 2 ;;
         esac
     done
     name_of() {
@@ -2349,6 +2349,7 @@ switch-image *args:
             gx) echo octarine-os-gx ;;
             nvidia) echo octarine-os-nvidia ;;
             nvidia-dx) echo octarine-os-nvidia-dx ;;
+            nvidia-gx) echo octarine-os-nvidia-gx ;;
         esac
     }
     # The running image, from the booted deployment: transport prefix and digest stripped
@@ -2365,7 +2366,7 @@ switch-image *args:
         cur_name=${name_tag%%:*}
         cur_tag=latest
         case "$name_tag" in *:*) cur_tag=${name_tag#*:} ;; esac
-        for k in default dx gx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx nvidia-gx; do
             if [ "$cur_name" = "$(name_of "$k")" ]; then cur_image=$k; registry=${cur%/*}; fi
         done
         case "$cur_tag" in latest | testing) cur_channel=$cur_tag ;; esac
@@ -2389,14 +2390,14 @@ switch-image *args:
     if [ "$list" = 1 ]; then
         tmp=$(mktemp -d)
         trap 'rm -rf -- "$tmp"' EXIT
-        for k in default dx gx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx nvidia-gx; do
             for c in latest testing; do
                 (probe "$k" "$c"; echo $? >"$tmp/$k.$c") &
             done
         done
         wait
         printf '%-12s %-18s %-18s\n' IMAGE latest testing
-        for k in default dx gx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx nvidia-gx; do
             row=$(printf '%-12s' "$k")
             for c in latest testing; do
                 case "$(cat "$tmp/$k.$c" 2>/dev/null)" in 0) s=published ;; 1) s="not published" ;; *) s=unknown ;; esac
@@ -2414,10 +2415,11 @@ switch-image *args:
                 "dx^dx: developer tools, compilers and virtualization" \
                 "gx^gx: gamer image" \
                 "nvidia^nvidia: proprietary NVIDIA driver" \
-                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen; nothing changed."; exit 0; }
+                "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" \
+                "nvidia-gx^nvidia-gx: NVIDIA driver and gamer image" || { echo "No image chosen; nothing changed."; exit 0; }
             image=$MENU_ONE
         else
-            echo "Name an image: default, dx, gx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
+            echo "Name an image: default, dx, gx, nvidia, nvidia-dx or nvidia-gx (ujust switch-image --help)" >&2
             exit 2
         fi
     fi
@@ -2451,7 +2453,7 @@ switch-image *args:
     if [ -n "$staged" ]; then echo "Note: $staged is staged and waiting for a reboot; this switch replaces it."; fi
     # nvidia images on a machine without an NVIDIA GPU: say so and ask (--yes alone does not bypass it, --force does)
     case "$image" in
-        nvidia | nvidia-dx)
+        nvidia | nvidia-dx | nvidia-gx)
             has_nvidia=0
             for v in "${OCTARINE_SYSFS_DRM:-/sys/class/drm}"/card*/device/vendor; do
                 [ -r "$v" ] && [ "$(cat "$v" 2>/dev/null)" = 0x10de ] && has_nvidia=1
@@ -2477,10 +2479,10 @@ switch-image *args:
         *) echo "Could not reach the registry to check $ref. Check the network and try again." >&2; exit 1 ;;
     esac
     case "$image" in
-        nvidia | nvidia-dx) echo "With Secure Boot, run 'ujust enroll-secure-boot-key' first if you have not enrolled the key." ;;
+        nvidia | nvidia-dx | nvidia-gx) echo "With Secure Boot, run 'ujust enroll-secure-boot-key' first if you have not enrolled the key." ;;
     esac
     case "$image" in
-        nvidia-dx) echo "If bootc refuses with a signature-policy error, update to the newest image of your current line, reboot, and run this again (this image's signature rule only exists on images built after it was added)." ;;
+        nvidia-dx | nvidia-gx) echo "If bootc refuses with a signature-policy error, update to the newest image of your current line, reboot, and run this again (this image's signature rule only exists on images built after it was added)." ;;
     esac
     case "$channel" in
         testing) echo "The $channel channel is not tested for daily use." ;;
@@ -3065,7 +3067,7 @@ hardware-setup *args:
             rocm-export) run_export rocm "${rocm_bins[@]}" ;;
             cuda-export) run_export cuda "${cuda_bins[@]}" ;;
             nvidia)
-                case "$image_id" in *-dx) arg=nvidia-dx ;; *) arg=nvidia ;; esac
+                case "$image_id" in *-dx) arg=nvidia-dx ;; *-gx) arg=nvidia-gx ;; *) arg=nvidia ;; esac
                 "$ujust_cmd" switch-image "$arg" "${yes[@]}"
                 ;;
             cuda) "$ujust_cmd" dev --only cuda "${yes[@]}" ;;
