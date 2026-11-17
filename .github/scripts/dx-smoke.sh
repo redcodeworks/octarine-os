@@ -87,15 +87,19 @@ bundle_scope_ok() { # the policy has a sigstoreSigned rule for the bundle reposi
     python3 -I - "${etc_dir}" "${policy_file}" <<'PY'
 import glob, json, sys
 etc, policy = sys.argv[1:]
-rules = json.load(open(policy))["transports"]["docker"]["ghcr.io/redcodeworks/datastore-images"]
-assert len(rules) == 1 and rules[0]["type"] == "sigstoreSigned" and rules[0]["signedIdentity"] == {"type": "matchRepository"}, rules
+scopes = json.load(open(policy))["transports"]["docker"]
 key = open(etc + "/pki/containers/redcodeworks-toolbox.pub").read()
 assert "BEGIN PUBLIC KEY" in key
-assert rules[0]["keyPath"].endswith("/pki/containers/redcodeworks-toolbox.pub")
-assert any("ghcr.io/redcodeworks/datastore-images" in open(f).read() and "use-sigstore-attachments: true" in open(f).read() for f in glob.glob(etc + "/containers/registries.d/*.yaml"))
+for ref in ("ghcr.io/redcodeworks/datastore-images", "ghcr.io/redcodeworks/datastore"):
+    rules = scopes[ref]
+    assert len(rules) == 1 and rules[0]["type"] == "sigstoreSigned" and rules[0]["signedIdentity"] == {"type": "matchRepository"}, rules
+    assert rules[0]["keyPath"].endswith("/pki/containers/redcodeworks-toolbox.pub")
+    assert any(ref + ":" in open(f).read() and "use-sigstore-attachments: true" in open(f).read() for f in glob.glob(etc + "/containers/registries.d/*.yaml"))
 PY
 }
-check "policy.json has one sigstoreSigned rule for ghcr.io/redcodeworks/datastore-images with the shipped toolbox key, and registries.d reads its signature attachments" bundle_scope_ok
+check "policy.json has one sigstoreSigned rule each for ghcr.io/redcodeworks/datastore-images and ghcr.io/redcodeworks/datastore (the box) with the shipped toolbox key, and registries.d reads its signature attachments" bundle_scope_ok
+
+check "the datastore box recipe file and its assemble file ship" "test -s ${share_dir}/ublue-os/just/73-octarine-datastore-box.just && grep -qx 'image=ghcr.io/redcodeworks/datastore:latest' ${share_dir}/octarine-os/datastore/datastore.ini"
 
 echo "== services and Flatpak"
 check "podman.socket enabled" "systemctl is-enabled podman.socket"

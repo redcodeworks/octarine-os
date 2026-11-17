@@ -142,6 +142,8 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust datastore-install` (DX only) | Download the signed datastore bundle (PostgreSQL, Valkey, SeaweedFS, Kafka as rootless containers) and set up its user units |
 | `ujust datastore start\|stop\|status\|logs` (DX only) | Start and stop the datastore containers (Kafka on request), all stopped until you start them |
 | `ujust datastore-setup` (DX only) | Create the datastore secrets, pin or update image versions, and back up the volumes |
+| `ujust datastore-box-create` (DX only) | Create the newer datastore box: one distrobox with its own systemd that runs PostgreSQL 17, Valkey, SeaweedFS and Kafka, as an alternative to the container recipes above (do not run both at once) |
+| `ujust datastore-box VERB` (DX only) | Run a datastore box command: `setup`, `start\|stop\|restart`, `status`, `logs`, `psql`, `valkey-cli`, `secrets export`, `backup`, `restore` (`--help` lists them) |
 | `ujust dev` (DX only) | Developer setup checklist: libvirt, Homebrew tools, VS Code, JetBrains Toolbox, Rust, Java, Node, Python and, on an NVIDIA machine, the CUDA toolkit in a container |
 
 ## Contributing
