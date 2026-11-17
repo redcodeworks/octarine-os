@@ -16,8 +16,8 @@ ARG BASE_DIGEST=
 # BINS_GX_DIGEST changes only through the weekly bump pull request (bump-run.sh, kind bins-gx), the gx build verifies the pinned digest on every build (dx-image.yml) and
 # records it in the bins-gx label. BINS_GX_TAG is only for humans. The pin covers the lists and the installer (the package names, the exact Sunshine version); the
 # other packages still float through dnf.
-ARG BINS_GX_TAG=20261117-5d8004e
-ARG BINS_GX_DIGEST=sha256:b42ec74964e445327d662485bed163b33ac7c39b348b7661d2ec41b517836074
+ARG BINS_GX_TAG=20261117-5cf8fd9
+ARG BINS_GX_DIGEST=sha256:b5109842bfd7b446b90acfe261637ade182ad2dbc11b2279200362585deb81a0
 ARG BINS_GX_REF=ghcr.io/redcodeworks/octarine-bins-gx:${BINS_GX_TAG}@${BINS_GX_DIGEST}
 
 FROM ${BINS_GX_REF} AS binsgx
