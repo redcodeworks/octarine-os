@@ -47,22 +47,26 @@ chmod 0755 /usr/bin/sdk
 
 # `ujust datastore-install`, `datastore` and `datastore-setup`: the thin recipes of the opt-in datastore (the signed bundle is fetched on demand; the image ships no
 # datastore unit). Their container signature policy: the key of the octarine-images repository, which signs the bundle, for exactly that repository.
+# The same key signs the datastore box image (`ujust datastore-box-create`), so its repository gets the same rule.
 # --- datastore bundle signature policy ---
 test -s /ctx/toolbox-cosign.pub
 bundle_ref=ghcr.io/redcodeworks/datastore-images
+box_ref=ghcr.io/redcodeworks/datastore
 bundle_key=/etc/pki/containers/redcodeworks-toolbox.pub
 install -Dm644 /ctx/toolbox-cosign.pub "${bundle_key}"
 printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "${bundle_ref}" >/etc/containers/registries.d/redcodeworks-datastore-images.yaml
-python3 - "${bundle_key}" "${bundle_ref}" <<'PY'
+printf 'docker:\n  %s:\n    use-sigstore-attachments: true\n' "${box_ref}" >/etc/containers/registries.d/redcodeworks-datastore.yaml
+python3 - "${bundle_key}" "${bundle_ref}" "${box_ref}" <<'PY'
 import json
 import sys
 
-key, ref = sys.argv[1:]
+key, *refs = sys.argv[1:]
 path = "/etc/containers/policy.json"
 policy = json.load(open(path))
 scopes = policy["transports"]["docker"]
 catch_all = scopes.pop("", None)
-scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
+for ref in refs:
+    scopes[ref] = [{"type": "sigstoreSigned", "keyPath": key, "signedIdentity": {"type": "matchRepository"}}]
 if catch_all is not None:
     scopes[""] = catch_all
 with open(path, "w") as f:
@@ -74,6 +78,11 @@ store_import='import? "/usr/share/ublue-os/just/72-octarine-datastore.just"'
 test -s /usr/share/ublue-os/just/72-octarine-datastore.just
 if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >> "${ujust_main}"; fi
 grep -qxF "${store_import}" "${ujust_main}"
+box_import='import? "/usr/share/ublue-os/just/73-octarine-datastore-box.just"'
+test -s /usr/share/ublue-os/just/73-octarine-datastore-box.just
+test -s /usr/share/octarine-os/datastore/datastore.ini
+if ! grep -qxF "${box_import}" "${ujust_main}"; then echo "${box_import}" >> "${ujust_main}"; fi
+grep -qxF "${box_import}" "${ujust_main}"
 virthost_import='import? "/usr/share/ublue-os/just/75-octarine-virthost.just"'
 test -s /usr/share/ublue-os/just/75-octarine-virthost.just
 if ! grep -qxF "${virthost_import}" "${ujust_main}"; then echo "${virthost_import}" >> "${ujust_main}"; fi

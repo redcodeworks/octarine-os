@@ -32,5 +32,6 @@ skip any step:
 - `ujust toggle-updates`, then `ujust update`: choose which sources update automatically, and update them.
 - `ujust dev` (dx image only): developer setup checklist.
 - `ujust datastore-install` (dx image only): optional, downloads the signed datastore bundle (PostgreSQL, Valkey, SeaweedFS, Kafka as rootless containers).
+- `ujust datastore-box-create` (dx image only): optional, the newer alternative: the same four services as units inside one distrobox (`ujust datastore-box setup`, then `start`). Pick one of the two; they use the same ports. Moving from the container recipes to the box is a manual cutover, see "Datastore box" in `docs/image-variants.md`.
 
 `ujust --list` shows every recipe.
