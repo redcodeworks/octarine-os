@@ -20,12 +20,30 @@ echo "PROTON_ENABLE_WAYLAND=${PROTON_ENABLE_WAYLAND-unset}"
 F
 chmod +x "$bin/gamescope"
 printf '#!/bin/sh\nexit 0\n' >"$bin/logger"; chmod +x "$bin/logger"
+# the scheduler side: a fake systemctl that logs and loads or unloads a fake scheduler (the ops file of a fake sched_ext sysfs), a registry with lavd and rusty, and
+# a sysfs that does not exist for every run that is not about the scheduler (so no run here can touch the real systemctl)
+cat >"$bin/systemctl" <<'F'
+#!/usr/bin/env bash
+echo "systemctl $*" >>"$SCXLOG"
+case "$1" in
+    is-enabled) echo disabled; exit 1 ;;
+    start) mkdir -p "$OCTARINE_SCX_SYSFS/root"; n=${2#scx@}; echo "${n%.service}_1.1.4_x86_64" >"$OCTARINE_SCX_SYSFS/root/ops" ;;
+    stop) rm -f "$OCTARINE_SCX_SYSFS/root/ops" ;;
+esac
+exit 0
+F
+chmod +x "$bin/systemctl"
+mkdir -p "$root/registry"; : >"$root/registry/lavd.conf"; : >"$root/registry/rusty.conf"
+export SCXLOG="$root/scxlog"
 empty="$root/empty.conf"; : >"$empty"
 
 # run_wrapper DEFAULTS_FILE: runs the wrapper with the fixture dirs; output in $root/out, the argv line in $argv
 run_wrapper() {
+    : >"$SCXLOG"
     env -i PATH="$bin:/usr/bin:/bin" HOME="$root/home" OCTARINE_GAMESCOPE_DEFAULTS="$1" OCTARINE_GAMESCOPE_SYSTEM_DIR="$root/sys" OCTARINE_GAMESCOPE_USER_DIR="$root/user" \
-        "${@:2}" bash "$wrapper" >"$root/out" 2>&1 </dev/null
+        OCTARINE_GAMESCOPE_LIBEXEC="$here/system_files/usr/libexec/octarine-os" OCTARINE_SCX_REGISTRY="$root/registry" OCTARINE_SCX_SYSFS="${SYSFS:-$root/nosys}" OCTARINE_SCX_RUN_DIR="$root/run" \
+        OCTARINE_SCX_ACTIVE_WAIT=2 SCXLOG="$SCXLOG" "${@:2}" bash "$wrapper" >"$root/out" 2>&1 </dev/null
+    wrc=$?
     argv=$(sed -n 's/^ARGV //p' "$root/out")
 }
 clean() { rm -f "$root"/sys/* "$root"/user/*; }
@@ -83,6 +101,55 @@ check "bad values are left out, files are parsed not sourced (nothing executed),
 clean; printf 'ENABLE_GAMESCOPE_HDR=1\nGAMESCOPE_HDR_NITS=600\n' >"$root/user/10-gamescope-session.conf"
 run_wrapper "$empty"
 check "HDR variables map to the HDR flags" bash -c '[[ " $1 " == *" --hdr-enabled --hdr-itm-enable "* && " $1 " == *" --hdr-itm-target-nits 600 "* ]]' _ "$argv"
+
+# the session scheduler (GAMESCOPE_SESSION_SCHED): lavd while gamescope runs, restored when it ends
+sysfs="$root/sysfs"; mkdir -p "$sysfs"
+steps_of() { sed -n 's/^systemctl //p' "$SCXLOG" | tr '\n' '|'; }
+clean; printf 'GAMESCOPE_SESSION_SCHED=lavd\n' >"$root/user/10-gamescope-session.conf"
+SYSFS="$sysfs" run_wrapper "$empty"
+check "lavd: started for the session, then stopped when gamescope ends (boot choice none: kernel default)" bash -c '[[ "$1" == *"start scx@lavd.service|"*"stop scx@lavd.service|" ]]' _ "$(steps_of)"
+check "...the start comes before the stop and gamescope still got its flags" bash -c '[[ "$1" == "--backend drm -e -- /usr/bin/steam -steamos3 -gamepadui" ]]' _ "$argv"
+check "...nothing is left loaded" test ! -e "$sysfs/root/ops"
+
+clean; printf 'GAMESCOPE_SESSION_SCHED=skip\n' >"$root/user/10-gamescope-session.conf"
+SYSFS="$sysfs" run_wrapper "$empty"
+check "skip: systemctl is never called" test -z "$(steps_of)"
+clean; printf 'GAMESCOPE_SESSION_SCHED=evil\n' >"$root/user/10-gamescope-session.conf"
+SYSFS="$sysfs" run_wrapper "$empty"
+check "an unregistered name is ignored (nothing started) and logged" bash -c '[[ -z "$1" ]]' _ "$(steps_of)" && grep -q "not a registered scheduler" "$root/out"
+clean; printf 'GAMESCOPE_SESSION_SCHED=lavd\n' >"$root/user/10-gamescope-session.conf"
+run_wrapper "$empty"
+check "a kernel without sched_ext: no systemctl call, the session still starts" bash -c '[[ -z "$1" && -n "$2" ]]' _ "$(steps_of)" "$argv"
+clean; printf 'GAMESCOPE_SESSION_SCHED=rusty\n' >"$root/user/10-gamescope-session.conf"
+SYSFS="$sysfs" run_wrapper "$empty"
+check "another registered scheduler can be chosen (rusty)" bash -c '[[ "$1" == *"start scx@rusty.service|"*"stop scx@rusty.service|" ]]' _ "$(steps_of)"
+
+# gamescope that fails: its exit status is the session's, the scheduler is still restored
+cat >"$root/failing" <<'F'
+#!/usr/bin/env bash
+echo "ARGV $*"; exit 7
+F
+mkdir -p "$root/bin2"; cp "$bin"/* "$root/bin2/"; cp "$root/failing" "$root/bin2/gamescope"; chmod +x "$root/bin2/gamescope"
+clean; printf 'GAMESCOPE_SESSION_SCHED=lavd\n' >"$root/user/10-gamescope-session.conf"
+bin_save=$bin; bin="$root/bin2"; SYSFS="$sysfs" run_wrapper "$empty"; bin=$bin_save
+check "gamescope exiting 7: the wrapper exits 7 and the scheduler is stopped" bash -c '[[ "$1" == 7 && "$2" == *"stop scx@lavd.service|" ]]' _ "$wrc" "$(steps_of)"
+
+# a signal to the wrapper ends gamescope and still restores the scheduler
+cat >"$root/bin2/gamescope" <<'F'
+#!/usr/bin/env bash
+touch "$STARTED"; exec sleep 30
+F
+chmod +x "$root/bin2/gamescope"
+clean; printf 'GAMESCOPE_SESSION_SCHED=lavd\n' >"$root/user/10-gamescope-session.conf"; : >"$SCXLOG"
+rm -f "$root/started" "$root/run/switched"
+env -i PATH="$root/bin2:/usr/bin:/bin" HOME="$root/home" OCTARINE_GAMESCOPE_DEFAULTS="$empty" OCTARINE_GAMESCOPE_SYSTEM_DIR="$root/sys" OCTARINE_GAMESCOPE_USER_DIR="$root/user" \
+    OCTARINE_GAMESCOPE_LIBEXEC="$here/system_files/usr/libexec/octarine-os" OCTARINE_SCX_REGISTRY="$root/registry" OCTARINE_SCX_SYSFS="$sysfs" OCTARINE_SCX_RUN_DIR="$root/run" \
+    OCTARINE_SCX_ACTIVE_WAIT=2 SCXLOG="$SCXLOG" STARTED="$root/started" timeout 20 bash "$wrapper" >"$root/out" 2>&1 </dev/null &
+wp=$!
+for _ in $(seq 100); do [[ -e "$root/started" && -e "$root/run/switched" ]] && break; sleep 0.1; done
+pkill -TERM -P "$wp" -x bash 2>/dev/null; kill -TERM "$(pgrep -P "$wp" -x bash | head -1)" 2>/dev/null
+wait "$wp" 2>/dev/null
+check "SIGTERM to the wrapper: gamescope is ended, the scheduler is started and then stopped" bash -c '[[ "$1" == *"start scx@lavd.service|"*"stop scx@lavd.service|" ]]' _ "$(steps_of)"
 
 # the shipped files
 d="$gx/usr/share/octarine-os/gamescope-session.conf"

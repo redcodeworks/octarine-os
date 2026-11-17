@@ -87,6 +87,7 @@ PY
 }
 check "the gamescope session file parses and names the wrapper under /usr/libexec" "session_ok"
 check "the session wrapper is executable and parses (bash -n)" "[ -x ${wrapper} ] && bash -n ${wrapper}"
+check "the scheduler helpers the session wrapper sources are shipped (gamemode-lib.sh)" "bash -n ${LIBEXEC_DIR:-/usr/libexec}/octarine-os/gamemode-lib.sh"
 check "the documented defaults file is shipped" "test -s ${share_dir}/octarine-os/gamescope-session.conf"
 
 echo "== kernel"
