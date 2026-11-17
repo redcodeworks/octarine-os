@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Steam Big Picture as a GDM session: gamescope is the compositor (--backend drm, logind hands it the seat's DRM device), Steam runs inside it.
+# Started by /usr/share/wayland-sessions/steam-gamescope.desktop. Settings are VAR=value lines read from, in this order, later files overriding
+# earlier ones (the scheme of Bazzite and ChimeraOS, so a later switch to their packages keeps your settings):
+#   1. /usr/share/octarine-os/gamescope-session.conf   the image's defaults and the documentation of every variable (read it)
+#   2. /etc/environment.d/*.conf                       system wide, sorted by name
+#   3. ~/.config/environment.d/*.conf                  yours, for example 10-gamescope-session.conf (ujust gaming-setup gamescope-session writes it)
+# The files are PARSED, never sourced: only the variables below are taken, `export ` and one pair of quotes are accepted, anything else is ignored.
+# The process environment is not read for these names (an ambient SCREEN_WIDTH cannot leak in). A variable that is unset or empty omits its flag, so
+# gamescope uses the output's preferred mode instead of a size baked into the image.
+# For tests only: OCTARINE_GAMESCOPE_DEFAULTS, OCTARINE_GAMESCOPE_SYSTEM_DIR, OCTARINE_GAMESCOPE_USER_DIR.
+set -uo pipefail
+
+tag=octarine-gamescope-session
+log() { logger -t "${tag}" -- "$*" 2> /dev/null || true; echo "${tag}: $*" >&2; }
+
+defaults=${OCTARINE_GAMESCOPE_DEFAULTS:-/usr/share/octarine-os/gamescope-session.conf}
+system_dir=${OCTARINE_GAMESCOPE_SYSTEM_DIR:-/etc/environment.d}
+user_dir=${OCTARINE_GAMESCOPE_USER_DIR:-${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/environment.d}
+
+known=" SCREEN_WIDTH SCREEN_HEIGHT INTERNAL_WIDTH INTERNAL_HEIGHT CUSTOM_REFRESH_RATES ADAPTIVE_SYNC DRM_MODE OUTPUT_CONNECTOR ORIENTATION ENABLE_GAMESCOPE_HDR GAMESCOPE_HDR_NITS REFRESH_RATE MOUSE_SENSITIVITY UPSCALER GAMESCOPE_EXTRA_ARGS "
+for k in ${known}; do unset "${k}"; done
+
+# load_file FILE: take the known variables out of one file
+load_file() {
+    local line key val
+    [[ -r "$1" ]] || return 0
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+        line=${line#"${line%%[![:space:]]*}"}
+        [[ "${line}" == \#* ]] && continue
+        line=${line#export }
+        line=${line#"${line%%[![:space:]]*}"}
+        [[ "${line}" =~ ^([A-Z_]+)=(.*)$ ]] || continue
+        key=${BASH_REMATCH[1]}
+        val=${BASH_REMATCH[2]}
+        [[ "${known}" == *" ${key} "* ]] || continue
+        val=${val%"${val##*[![:space:]]}"}
+        if [[ "${val}" =~ ^\"(.*)\"$ || "${val}" =~ ^\'(.*)\'$ ]]; then val=${BASH_REMATCH[1]}; fi
+        printf -v "${key}" '%s' "${val}"
+    done < "$1"
+}
+
+load_file "${defaults}"
+for f in "${system_dir}"/*.conf "${user_dir}"/*.conf; do load_file "${f}"; done
+
+args=(--backend drm)
+# num VAR FLAG: a whole number; anything else is reported and left out (a typo must not leave the session without a picture)
+num() {
+    local v=${!1-}
+    [[ -n "${v}" ]] || return 0
+    if [[ "${v}" =~ ^[0-9]+$ ]]; then args+=("$2" "${v}"); else log "ignoring ${1}='${v}' (not a whole number)"; fi
+}
+# word VAR FLAG: one word of letters, digits and _ . , : + -
+word() {
+    local v=${!1-}
+    [[ -n "${v}" ]] || return 0
+    if [[ "${v}" =~ ^[A-Za-z0-9_.,:+-]+$ ]]; then args+=("$2" "${v}"); else log "ignoring ${1}='${v}' (unexpected characters)"; fi
+}
+# on VAR: set and not 0, false, no or off
+on() { local v=${!1-}; [[ -n "${v}" && ! "${v,,}" =~ ^(0|false|no|off)$ ]]; }
+
+word OUTPUT_CONNECTOR --prefer-output
+num SCREEN_WIDTH -W
+num SCREEN_HEIGHT -H
+num INTERNAL_WIDTH -w
+num INTERNAL_HEIGHT -h
+num REFRESH_RATE -r
+word CUSTOM_REFRESH_RATES --custom-refresh-rates
+word DRM_MODE --generate-drm-mode
+word ORIENTATION --force-orientation
+if [[ -n "${MOUSE_SENSITIVITY-}" ]]; then
+    if [[ "${MOUSE_SENSITIVITY}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then args+=(--mouse-sensitivity "${MOUSE_SENSITIVITY}"); else log "ignoring MOUSE_SENSITIVITY='${MOUSE_SENSITIVITY}' (not a number)"; fi
+fi
+word UPSCALER -F
+if on ADAPTIVE_SYNC; then args+=(--adaptive-sync); fi
+if on ENABLE_GAMESCOPE_HDR; then
+    args+=(--hdr-enabled --hdr-itm-enable)
+    num GAMESCOPE_HDR_NITS --hdr-itm-target-nits
+fi
+if [[ -n "${GAMESCOPE_EXTRA_ARGS-}" ]]; then
+    read -r -a extra <<< "${GAMESCOPE_EXTRA_ARGS}"
+    args+=("${extra[@]}")
+fi
+args+=(-e)
+
+# Not set by anything else: this is the --backend drm case, with no Wayland compositor behind gamescope's own surface (the image's /etc/profile.d/proton.sh says 1)
+export PROTON_ENABLE_WAYLAND=0
+
+# Steam in gamepad mode (-steamos3 -gamepadui); Bazzite adds -steampal -steamdeck for the Steam Deck look and its settings
+log "starting: gamescope ${args[*]} -- /usr/bin/steam -steamos3 -gamepadui"
+exec gamescope "${args[@]}" -- /usr/bin/steam -steamos3 -gamepadui
