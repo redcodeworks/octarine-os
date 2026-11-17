@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tests for the sched_ext scheduler runtime (no scheduler is ever loaded here): the generated registry, the polkit rule (node, with simulated actions) and the root-side
 # helpers scx-preflight, scx-run and scx-verify (markers, failure counting). Needs: bash, node, flock, awk.
-# Run: tests/schedulers.sh
+# Run: tests/image/schedulers.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d)
 trap 'rm -rf -- "${root:?}"' EXIT
 pass=0

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Tests for the datastore box recipes (variants/dx/system_files/usr/share/ublue-os/just/73-octarine-datastore-box.just).
 # podman and distrobox are fakes on PATH that log their calls; nothing real is touched. Needs: bash, just.
-# Run: tests/datastore-box.sh
+# Run: tests/recipes/datastore-box.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-justfile="$here/../variants/dx/system_files/usr/share/ublue-os/just/73-octarine-datastore-box.just"
-ini="$here/../variants/dx/system_files/usr/share/octarine-os/datastore/datastore.ini"
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+justfile="$here/variants/dx/system_files/usr/share/ublue-os/just/73-octarine-datastore-box.just"
+ini="$here/variants/dx/system_files/usr/share/octarine-os/datastore/datastore.ini"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0

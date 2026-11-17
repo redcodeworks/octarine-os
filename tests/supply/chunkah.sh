@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests for the chunkah rechunk: the verified pin (.github/scripts/chunkah-ref.sh with a fake cosign), the Justfile recipe and its use in
-# every image workflow. Nothing is pulled or run. Run: tests/chunkah.sh. Needs: bash, python3 with PyYAML.
+# every image workflow. Nothing is pulled or run. Run: tests/supply/chunkah.sh. Needs: bash, python3 with PyYAML.
 set -uo pipefail
 export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }

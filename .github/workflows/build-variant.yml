@@ -1,0 +1,255 @@
+---
+name: Build variant image
+run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.sha }}
+# The two required variant images in ONE parametrized workflow (2026-11-17; it replaced build-dx.yml and build-gx.yml, which differed only in names):
+#   variant dx  ghcr.io/<owner>/octarine-os-dx  the published default image plus the developer toolchain (variants/dx)
+#   variant gx  ghcr.io/<owner>/octarine-os-gx  the published default image plus Steam, gamescope, MangoHud, GameMode and Sunshine (variants/gx)
+# in two channels that follow the default image's own:
+#   octarine-os:testing  -> octarine-os-<variant>:testing   (dispatched by "Build container image" on `testing`)
+#   octarine-os:latest   -> octarine-os-<variant>:latest    (dispatched by "Build container image" on `main`: promotes the tested testing
+#                                                           image when base digest and variant inputs match, else builds)
+# STAGE 1 (2026-11-17): added beside build-dx.yml and build-gx.yml, which still do the real work; nothing dispatches this file yet. GitHub dispatches a workflow only from a file that
+# exists on the default branch, so it must reach `main` BEFORE build.yml dispatches it; stage 2 (after the promotion that carries this file) switches build.yml to it and deletes the
+# two old callers. Until then dispatch it only as a DRY RUN (a real run would use the same concurrency groups and commit statuses as the old callers).
+# EACH VARIANT IS ITS OWN RUN, never one run with two parts: build.yml (from stage 2) dispatches this workflow once per variant (a matrix of dispatch jobs, `fail-fast: false`),
+# so the concurrency group, the sign job, the publish of its own `latest`, the failure issue and the required result belong to one variant and a failed or
+# cancelled gx run can never block or cancel dx, nor the other way round. Find a variant's run by its title (the run-name): `<variant> <channel> <sha>`.
+# A SEPARATE workflow, started by the last jobs of the default pipeline (`gh workflow run build-variant.yml --ref <ref> -f variant=<variant> -f channel=<channel>
+# -f sha=<built commit>`, .github/scripts/dispatch-variant.sh) after the base succeeded, and that can be re-run on its own. A dispatched run uses the file of the ref
+# it was dispatched on and is recorded on that branch, so a change here runs on `testing` before it is promoted and the README can show a badge per branch. It never
+# runs for pull requests or feature branches (the plan job's guard; a DRY RUN is the one exception, it writes nothing). `sha` is the commit the pipeline built: the ref
+# may have moved on since, so every job checks out exactly that commit, and the plan job refuses a commit that is not an ancestor of the ref. The plan job
+# (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
+# <variant>-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and `testing-<sha>`), signed with the repository key in the
+# `signing` environment. The result job is the check `Build <variant> and push image` ONLY when the built commit is the tip of the ref (otherwise it is named `Build
+# <variant> (older commit)`, so a green check can never appear on a commit whose own build has not run); the commit status of the same name is always posted on the
+# built commit and is what a pull request into main can rely on. Both names are required contexts of the main ruleset: do not rename them. Design in CLAUDE.md
+# ("dx image", "gx image").
+# This file is the THIN CALLER: plan, build and promote are the reusable dx-image.yml (shared with build-extra.yml); the triggers, the SIGN job (the `signing`
+# environment secret did not reach a job of a reusable workflow, so signing is here, via .github/actions/sign-images), the concurrency group, the run-name
+# (dispatch-variant.sh finds the run by it), the result job with its required name and commit status, `publish` and `alert` stay here, because only this workflow may
+# post the contexts `Build dx and push image` and `Build gx and push image`.
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Which image: dx (developer) or gx (gamer)"
+        type: choice
+        options:
+          - dx
+          - gx
+        required: true
+      channel:
+        description: "Channel to build: testing (ref testing) or latest (ref main)"
+        type: choice
+        options:
+          - testing
+          - latest
+        default: latest
+      sha:
+        description: "Commit to build (default: the tip of the ref); the pipeline passes the commit it just built"
+        type: string
+        default: ""
+      base_digest:
+        description: "Channel latest on main: the digest of the default image this run is built on (the pipeline passes the one it just published); empty = no new default image"
+        type: string
+        default: ""
+      force:
+        description: "Build even when the base digest is unchanged"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan and report only: nothing is built, pushed or signed, no commit status is posted (allowed on any branch)"
+        type: boolean
+        default: false
+
+env:
+  SHA: ${{ inputs.sha || github.sha }}
+
+# One group per VARIANT (a dx run and a gx run never share one). testing: one group per variant and channel and a newer run CANCELS the older one (a superseded tip
+# needs no variant image; the newest tip's run is the one that counts, and a cancelled run posts no commit status, see the status step). latest on main: one group per
+# COMMIT and never cancelled, because with one group a third run would cancel the PENDING second one, silently dropping a default image that then never gets its
+# variant pair; runs of different commits build side by side and Publish latest serializes the moves of `latest`
+concurrency:
+  group: build-${{ inputs.variant }}-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
+  cancel-in-progress: ${{ inputs.channel == 'testing' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # plan, build and promote: the reusable workflow (see its header). Only `testing` (channel testing) or `main` (channel latest) run it: never a
+  # feature branch; a dispatch is the only trigger. Signing is the `sign` job below.
+  image:
+    name: ${{ inputs.variant }}
+    if: >-
+      inputs.dry_run ||
+      (github.ref == 'refs/heads/testing' && inputs.channel == 'testing') ||
+      (github.ref == 'refs/heads/main' && inputs.channel == 'latest')
+    uses: ./.github/workflows/dx-image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      base_name: octarine-os
+      dx_name: octarine-os-${{ inputs.variant }}
+      variant: ${{ inputs.variant }}
+      channel: ${{ inputs.channel }}
+      sha: ${{ inputs.sha || github.sha }}
+      base_digest: ${{ inputs.base_digest }}
+      force: ${{ inputs.force }}
+      dry_run: ${{ inputs.dry_run }}
+      promote_from_testing: true
+      tags: ${{ inputs.channel == 'testing' && 'testing-{sha} testing' || 'latest-{date}-{sha}' }}
+      description: ${{ inputs.variant == 'gx' && format('octarineOS with Steam, gamescope, MangoHud, GameMode and Sunshine (gamer image, {0} channel)', inputs.channel) || format('octarineOS with the developer toolchain of dev-toolbox, VM tooling and tracing tools (developer image, {0} channel)', inputs.channel) }}
+
+  # Signing lives here, not in the reusable workflow: an environment secret did not reach a job inside dx-image.yml (observed 2026-11-16 on two runs).
+  # A build signs every pushed digest, a promotion only verifies the digest that was signed when the testing image was published; both then
+  # verify every tag. Skipped when nothing was built or promoted (plan skipped, nothing to do, dry run, failures before it).
+  sign:
+    name: Sign and verify ${{ inputs.variant }} image
+    needs: image
+    if: >-
+      always() && needs.image.result == 'success' &&
+      (needs.image.outputs.build == 'success' || needs.image.outputs.promote == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign and verify
+        uses: ./.github/actions/sign-images
+        with:
+          image: ${{ needs.image.outputs.image }}
+          digests: ${{ needs.image.outputs.digests }}
+          tags: ${{ needs.image.outputs.alias_tags }}
+          moving-tags: ${{ needs.image.outputs.moving_tags }}
+          mode: ${{ needs.image.outputs.build == 'success' && 'sign' || 'verify' }}
+          private-key: ${{ secrets.SIGNING_SECRET }}
+
+  # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the variant
+  # image was built, promoted or legitimately skipped (base and variant inputs unchanged). It is the required check
+  # `Build <variant> and push image` only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
+  # that tip): for an older commit it is named `Build <variant> (older commit)`, so a green check never appears on a commit whose
+  # own build has not run. The commit status of the same name on the BUILT commit is always posted (a pull request into
+  # main can require it; both come from this one result, so they never disagree). A plan that was skipped (a ref or channel
+  # that the variant is not built for) posts nothing.
+  result:
+    # a dry run never carries the required name (it must not satisfy the check on the tip)
+    name: ${{ inputs.dry_run && format('Build {0} (dry run)', inputs.variant) || ((inputs.sha || github.sha) == github.sha && format('Build {0} and push image', inputs.variant) || format('Build {0} (older commit)', inputs.variant)) }}
+    needs: [image, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check the result
+        id: result
+        env:
+          # a skipped call (not a ref and channel the variant is built for) means every job was skipped; a call that failed before its summary has no outputs: failure
+          PLAN: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.plan || 'failure' }}
+          BUILD_WANTED: ${{ needs.image.outputs.build_wanted }}
+          PROMOTE_WANTED: ${{ needs.image.outputs.promote_wanted }}
+          BUILD: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.build || 'failure' }}
+          PROMOTE: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.promote || 'failure' }}
+          SIGN: ${{ needs.sign.result }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: .github/scripts/aggregate-dx.sh
+
+      - name: Post the result as a commit status on the built commit
+        # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
+        if: always() && !contains(needs.*.result, 'cancelled') && needs.image.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTCOME: ${{ steps.result.outcome }}
+          VARIANT: ${{ inputs.variant }}
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no valid commit to post a status on (${SHA})"; exit 1; }
+          [[ "${VARIANT}" =~ ^(dx|gx)$ ]] || { echo "::error::unknown variant (${VARIANT})"; exit 1; }
+          state=failure; text="${VARIANT} image build, promotion or check failed"
+          if [[ "${OUTCOME}" == success ]]; then state=success; text="${VARIANT} image built, promoted or unchanged"; fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state="${state}" -f context="Build ${VARIANT} and push image" -f description="${text}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  # Channel latest on main: the variant's OWN `latest` moves to the digest built or promoted here, once it is signed and its base is a signed default image from main.
+  # Independent of the default image and of the other variant (2026-11-16): it neither waits for another `latest` nor gates one. Nothing new (variant unchanged) means no
+  # digest and no publish. Called, not dispatched: the digest is handed over, the job is re-run with "re-run failed jobs" and lives in this run.
+  publish:
+    name: Publish latest
+    needs: [image, sign, result]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run &&
+      needs.image.result == 'success' && needs.result.result == 'success' && needs.image.outputs.digests != ''
+    uses: ./.github/workflows/publish-latest.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: ${{ inputs.variant }}
+      digest: ${{ needs.image.outputs.digests }}
+
+  # A failed run for latest on main: one issue per variant with the label ci-failure-<variant> (dx or gx), a comment per further failure (a run started by a
+  # dispatch with the default token probably e-mails nobody), or a failed publish of the variant's `latest`; a green run closes it.
+  alert:
+    name: Report a failed ${{ inputs.variant }} run
+    needs: [image, sign, result, publish]
+    if: always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha || github.sha }}
+          CHANNEL: latest
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-${{ inputs.variant }}
+          LABEL_DESC: the ${{ inputs.variant }} image build or the move of its latest on main failed (one open issue at a time)
+          ISSUE_TITLE: "The ${{ inputs.variant }} image build on main failed"
+          ISSUE_BODY: "The build or promotion of octarine-os-${{ inputs.variant }} on main (or the move of its latest) failed, so octarine-os-${{ inputs.variant }}:latest stays on the previous image (the other images publish their own latest independently and are not held back). See the run for the failed job and re-run the failed jobs. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, dx image and gx image."
+          FAIL_COMMENT: "${{ inputs.variant }} build or publish failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha || github.sha }}
+          CHANNEL: latest
+          LABEL: ci-failure-${{ inputs.variant }}
+          RECOVER_COMMENT: "the next ${{ inputs.variant }} build or promotion succeeded"
+        run: .github/scripts/ci-issue.sh recover
