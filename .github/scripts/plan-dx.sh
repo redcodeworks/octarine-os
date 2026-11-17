@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The plan of the variant image workflows (build-dx.yml, build-gx.yml, build-nvidia-dx.yml, build-nvidia-gx.yml through the reusable dx-image.yml): decide, for one channel, whether to
+# The plan of the variant image workflows (build-dx.yml, build-gx.yml, build-nvidia-dx.yml, build-nvidia-gx.yml, build-dx-gx.yml through the reusable dx-image.yml): decide, for one channel, whether to
 # skip, promote or build, and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
 # Environment: CHANNEL (latest or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
