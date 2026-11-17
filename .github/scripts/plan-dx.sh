@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# The plan of the developer image workflow (build-dx.yml): decide, for one channel, whether to skip, promote or build,
-# and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
+# The plan of the variant image workflows (build-dx.yml, build-gx.yml, build-nvidia-dx.yml through the reusable dx-image.yml): decide, for one channel, whether to
+# skip, promote or build, and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
 # Environment: CHANNEL (latest or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
-# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (default octarine-os-dx),
+# VARIANT (dx, the default, or gx: which inputs hash and which label are compared; the variant's own files are in inputs-hash.sh),
+# GITHUB_STEP_SUMMARY (optional), MAX_WALK (default 60), BASE_NAME (default octarine-os), DX_NAME (the image built: default octarine-os-<VARIANT>),
 # BASE_DIGEST_PIN (channel latest only: the default image's digest this run is built on, handed over by the pipeline; without it the
 # base is whatever `octarine-os:latest` is now, which is the digest of the published pair),
 # PROMOTE_FROM_TESTING (default true; false skips the search for a tested testing image: the NVIDIA developer image has no
@@ -22,8 +23,9 @@
 # plan independent of the floating tag anyway, and of a newer testing build landing while the dx build runs).
 #
 # The published octarine-os-dx:<channel> carries two labels: org.opencontainers.image.base.digest (the base it was built
-# on) and io.github.redcodeworks.octarine-os.dx-inputs (inputs-hash.sh `dx` of the commit it was built from).
-#   no force, both labels equal the current base digest and the current dx_inputs     -> skip   (build=false promote=false)
+# on) and io.github.redcodeworks.octarine-os.dx-inputs (inputs-hash.sh `dx` of the commit it was built from); the gx image carries
+# gx-inputs (inputs-hash.sh `gx`). Everything below says dx and means the variant.
+#   no force, both labels equal the current base digest and the current variant inputs -> skip   (build=false promote=false)
 #   channel latest, a tested octarine-os-dx testing image with the same two labels   -> promote (retag, no build)
 #   anything else (nothing published, unreadable, a label differs, force)            -> build
 # After a vanilla promote, octarine-os:latest has the digest of the tested octarine-os:testing-<sha>, which is the base
@@ -40,12 +42,14 @@ channel="${CHANNEL:?CHANNEL}"
 force="${FORCE:-false}"
 : "${GITHUB_REPOSITORY_OWNER:?GITHUB_REPOSITORY_OWNER}"
 owner="${GITHUB_REPOSITORY_OWNER,,}"
+variant="${VARIANT:-dx}"
+[[ "${variant}" =~ ^(dx|gx)$ ]] || { echo "::error::Unknown variant '${variant}' (dx or gx)"; exit 1; }
 # The image names are parameters (octarine-os-nvidia-dx sets BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx)
 base="ghcr.io/${owner}/${BASE_NAME:-octarine-os}"
-dx="ghcr.io/${owner}/${DX_NAME:-octarine-os-dx}"
+dx="ghcr.io/${owner}/${DX_NAME:-octarine-os-${variant}}"
 base_tag="${channel}"
 l_base="org.opencontainers.image.base.digest"
-l_inputs="io.github.redcodeworks.octarine-os.dx-inputs"
+l_inputs="io.github.redcodeworks.octarine-os.${variant}-inputs"
 
 tmp=$(mktemp)
 trap 'rm -f "${tmp}"' EXIT
@@ -104,8 +108,8 @@ fi
 verify "${base}@${digest}" || { echo "::error::The base ${base}@${digest} did not verify (or could not be checked: see the message above): nothing is built on it"; exit 1; }
 echo "Base image ${base}:${base_tag} = ${digest} (signature valid)"
 
-inputs=$(dx_inputs HEAD)
-echo "dx inputs of this commit: ${inputs}"
+inputs=$("${variant}_inputs" HEAD)
+echo "${variant} inputs of this commit: ${inputs}"
 
 # labels of a published tag: prints "<base digest> <dx inputs>" (either may be empty) or fails
 labels_of() {
@@ -135,11 +139,11 @@ elif [[ -n "${cur_base}" && "${cur_base}" == "${digest}" && "${cur_inputs}" == "
     # No signature check here: the moving tags (`testing`, and `latest` by Publish latest) are moved only AFTER their digest is signed and verified, so a
     # published tag is always a signed image (a run cancelled earlier leaves the previous one in place)
     build=false
-    decision="skipped: base and dx inputs unchanged (${channel}: ${digest})"
+    decision="skipped: base and ${variant} inputs unchanged (${channel}: ${digest})"
 else
     if [[ -n "${cur_base}" ]]; then
-        [[ "${cur_base}" == "${digest}" ]] || echo "The published dx image was built from ${cur_base}, the base is now ${digest}"
-        [[ "${cur_inputs}" == "${inputs}" ]] || echo "The dx inputs changed since the published dx image (${cur_inputs} -> ${inputs})"
+        [[ "${cur_base}" == "${digest}" ]] || echo "The published ${variant} image was built from ${cur_base}, the base is now ${digest}"
+        [[ "${cur_inputs}" == "${inputs}" ]] || echo "The ${variant} inputs changed since the published ${variant} image (${cur_inputs} -> ${inputs})"
     fi
     decision="building"
     if [[ "${channel}" == latest && "${PROMOTE_FROM_TESTING:-true}" == true ]]; then
@@ -157,17 +161,17 @@ else
             rc=0; verify "${dx}@${d}" 2> /dev/null || rc=$?
             if [[ "${rc}" == 0 ]]; then
                 build=false; promote=true; source_tag="${t}"; source_digest="${d}"
-                decision="promoting ${t} (${source_digest}): same base digest and dx inputs, signed"
+                decision="promoting ${t} (${source_digest}): same base digest and ${variant} inputs, signed"
                 break
             fi
             [[ "${rc}" == 5 ]] || { echo "::error::Could not complete the signature check of ${dx}:${t} (a read error, not a bad signature): not building instead of promoting"; exit 1; }
             echo "::warning::${t} matches but its signature does not verify; not promoting it"
         done
-        [[ "${promote}" == true ]] || decision="building (no tested testing image with this base digest and these dx inputs)"
+        [[ "${promote}" == true ]] || decision="building (no tested testing image with this base digest and these ${variant} inputs)"
     fi
 fi
-echo "dx ${channel}: ${decision}"
-[[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "dx ${channel}: ${decision}" >> "${GITHUB_STEP_SUMMARY}"
+echo "${variant} ${channel}: ${decision}"
+[[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "${variant} ${channel}: ${decision}" >> "${GITHUB_STEP_SUMMARY}"
 if [[ "${build}" == false && "${promote}" == false ]]; then echo "::notice::base unchanged, nothing to build (${channel}: ${digest})"; fi
 {
     echo "build=${build}"
@@ -175,7 +179,7 @@ if [[ "${build}" == false && "${promote}" == false ]]; then echo "::notice::base
     echo "channel=${channel}"
     echo "base_tag=${base_tag}"
     echo "base_digest=${digest}"
-    echo "dx_inputs=${inputs}"
+    echo "inputs=${inputs}"
     echo "source_tag=${source_tag}"
     echo "source_digest=${source_digest}"
 } >> "${GITHUB_OUTPUT:?GITHUB_OUTPUT}"

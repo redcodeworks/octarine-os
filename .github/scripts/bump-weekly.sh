@@ -14,7 +14,7 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "${REPO_ROOT:-${here}/../..}" || exit 1
 base="${BUMP_BASE:-testing}"
-read -ra pins <<<"${BUMP_PINS:-chunkah brew bins dev-packages}"  # BUMP_PINS: a subset, by hand or for the tests
+read -ra pins <<<"${BUMP_PINS:-chunkah brew bins dev-packages gaming-packages}"  # BUMP_PINS: a subset, by hand or for the tests
 summary() { echo "$*"; [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "$*" >> "${GITHUB_STEP_SUMMARY}" || true; }
 
 git fetch -q origin "${base}" || { echo "::error::cannot fetch ${base}"; exit 1; }
@@ -59,6 +59,7 @@ for p in "${pins[@]}"; do
     if [[ -n "${keep}" ]]; then summary "\`${p}\`: #${keep} already proposes ${to}; nothing new"; continue; fi
     title="Bump ${p}: $(cut -d'|' -f2,3 <<<"${row}" | sed 's/ | / to /; s/^ *//; s/ *$//')"; title=${title:0:140}
     note=""
+    [[ "${p}" != gaming-packages ]] || note=" The new gaming-packages digest (the package LIST image of octarine-images: names, the exact Sunshine version of the COPR list, and the installers; the packages themselves still float through dnf) was verified with \`keys/redcodeworks-toolbox-cosign.pub\`; the gx testing build after the merge is the first gx build with this list."
     [[ "${p}" != dev-packages ]] || note=" The new dev-packages digest (the package LIST image of octarine-images: names and installer; the packages themselves still float through dnf) was verified with \`keys/redcodeworks-toolbox-cosign.pub\`; the dx testing build after the merge is the first dx build with this list."
     [[ "${p}" != bins ]] || note=" The new octarine-bins digest was verified with \`keys/octarine-bins.pub\`; the testing build after the merge is the first OS build with those binaries (its ldd, 32-bit, terminfo and file-conflict checks run there). Check the scheduler READMEs when the schedulers change."
     body="One commit, one pin; this pull request is independent of the other bump pull requests (merge any subset, in any order, and close the rest).

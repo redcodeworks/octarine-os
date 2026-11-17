@@ -9,6 +9,7 @@ rules:
     ignore:
       - action.yml
       - build-dx.yml
+      - build-gx.yml
       - dx-image.yml
       - build-nvidia-dx.yml
       - build-nvidia.yml

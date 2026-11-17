@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests the `dev-packages` kind of bump-run.sh (the weekly pin bump of the dx package list image) with stub skopeo and cosign and a throwaway git repository:
-# an equal pin changes nothing, a newer verified digest is written into variants/dx/Containerfile (digest and a dated tag) as ONE commit with the table row,
+# Tests the `dev-packages` and `gaming-packages` kinds of bump-run.sh (the weekly pin bump of the dx and gx package list images; the same code, run once per kind) with stub skopeo and cosign and a throwaway git repository:
+# an equal pin changes nothing, a newer verified digest is written into the variant's Containerfile (variants/dx for dev-packages, variants/gx for gaming-packages: digest and a dated tag) as ONE commit with the table row,
 # a digest that does not verify fails and leaves the tree as it was. Needs: bash, git, jq. Run: tests/bump-dev-packages.sh
 set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -32,18 +32,22 @@ export RETRY_DELAY=0 LOG="$root/log" PATH="$bin"
 
 old=$(printf 'old' | sha256sum | sed 's/ .*//'); new=$(printf 'new' | sha256sum | sed 's/ .*//')
 setup() {
-    rm -rf "$root/r"; mkdir -p "$root/r/variants/dx" "$root/r/keys" "$root/r/.github/scripts"; : > "$LOG"
+    rm -rf "$root/r"; mkdir -p "$root/r/variants/$variant" "$root/r/keys" "$root/r/.github/scripts"; : > "$LOG"
     cp "$here/.github/scripts/bump-run.sh" "$here/.github/scripts/retry.sh" "$root/r/.github/scripts/"
-    printf 'ARG DEV_PACKAGES_TAG=latest-20261109-0969783\nARG DEV_PACKAGES_DIGEST=sha256:%s\nARG X=1\n' "$old" > "$root/r/variants/dx/Containerfile"
+    printf 'ARG %s_TAG=latest-20261109-0969783\nARG %s_DIGEST=sha256:%s\nARG X=1\n' "$prefix" "$prefix" "$old" > "$root/r/variants/$variant/Containerfile"
     echo k > "$root/r/keys/redcodeworks-toolbox-cosign.pub"
     (cd "$root/r" && git init -q -b testing . && git add -A && git commit -qm init)
 }
-run() { (cd "$root/r" && env "$@" bash .github/scripts/bump-run.sh dev-packages) > "$root/run" 2>&1; rc=$?; }
-setup; run MANIFEST=old
-check "the pin equals latest: nothing changes, no commit, cosign not called" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 1 ] && [ ! -s '$LOG' ]"
-setup; run MANIFEST=new
-check "a newer digest: verified with the toolbox key, written with the dated tag, one commit that changes only the Containerfile and carries the table row" bash -c "[ $rc = 0 ] && grep -q -- '--key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/dev-packages@sha256:$new' '$LOG' && grep -q '^ARG DEV_PACKAGES_DIGEST=sha256:$new\$' '$root/r/variants/dx/Containerfile' && grep -q '^ARG DEV_PACKAGES_TAG=latest-20261120-abcdef1\$' '$root/r/variants/dx/Containerfile' && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 2 ] && [ \"\$(git -C '$root/r' show --name-only --format= HEAD)\" = variants/dx/Containerfile ] && git -C '$root/r' log -1 --format=%b | grep -q '^dev-packages | latest-20261109-0969783 sha256:'"
-setup; run MANIFEST=new COSIGN_FAIL=1
-check "a digest that does not verify fails the run, writes nothing and commits nothing" bash -c "[ $rc != 0 ] && git -C '$root/r' diff --quiet && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 1 ]"
+run() { (cd "$root/r" && env "$@" bash .github/scripts/bump-run.sh $kind) > "$root/run" 2>&1; rc=$?; }
+for kind in dev-packages gaming-packages; do
+    variant=dx; prefix=DEV_PACKAGES
+    [[ "$kind" == dev-packages ]] || { variant=gx; prefix=GAMING_PACKAGES; }
+    setup; run MANIFEST=old
+    check "$kind: the pin equals latest: nothing changes, no commit, cosign not called" bash -c "[ $rc = 0 ] && grep -q 'nothing to bump' '$root/run' && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 1 ] && [ ! -s '$LOG' ]"
+    setup; run MANIFEST=new
+    check "$kind: a newer digest: verified with the toolbox key, written with the dated tag, one commit that changes only the Containerfile and carries the table row" bash -c "[ $rc = 0 ] && grep -q -- '--key keys/redcodeworks-toolbox-cosign.pub ghcr.io/redcodeworks/$kind@sha256:$new' '$LOG' && grep -q '^ARG ${prefix}_DIGEST=sha256:$new\$' '$root/r/variants/$variant/Containerfile' && grep -q '^ARG ${prefix}_TAG=latest-20261120-abcdef1\$' '$root/r/variants/$variant/Containerfile' && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 2 ] && [ \"\$(git -C '$root/r' show --name-only --format= HEAD)\" = variants/$variant/Containerfile ] && git -C '$root/r' log -1 --format=%b | grep -q '^$kind | latest-20261109-0969783 sha256:'"
+    setup; run MANIFEST=new COSIGN_FAIL=1
+    check "$kind: a digest that does not verify fails the run, writes nothing and commits nothing" bash -c "[ $rc != 0 ] && git -C '$root/r' diff --quiet && [ \"\$(git -C '$root/r' rev-list --count HEAD)\" = 1 ]"
+done
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

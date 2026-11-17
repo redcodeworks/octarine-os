@@ -739,6 +739,32 @@ jobs:
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
         run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
 
+  # The same for the gamer image (build-gx.yml, octarine-os-gx): dispatched in PARALLEL with dx, with the same conditions and the same hand-over (the digest of the
+  # default image this run published or promoted), through the same script. Independent of dx: neither waits for the other, a failed dispatch of one leaves the
+  # other running, and re-running this job alone dispatches gx again.
+  dispatch_gx:
+    name: Start the gx build
+    needs: [build_result, build_push, promote]
+    if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch the gx workflow on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+          VARIANT: gx
+          # the same digest as for dx (empty on testing and when nothing new was built)
+          BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+
   # Main only: the default image's OWN `latest` moves to the digest this run built or promoted, after its signature was checked by the sign job (the dated tags
   # exist already). Independent of the dx image (2026-11-16): nothing waits for dx and dx never gates it. Nothing new (a docs-only merge, an unchanged
   # scheduled run) means no digest and no publish. Called, not dispatched: the digest is handed over and the job re-runs with "re-run failed jobs".

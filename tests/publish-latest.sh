@@ -146,6 +146,14 @@ IMAGE=dx run
 check "dx dispatch without a tag is refused (a variant needs its tag)" bash -c "[ $rc = 1 ] && grep -q 'dated tag is required' '$root/out'"
 IMAGE=dx TAG="latest-20261113-${c3:0:7}" run
 check "dx dispatch with its dated tag moves it" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E2' ]"
+# ---- the gx image: the first publication (it has no latest yet), its own latest only
+G=octarine-os-gx; G1=$(dg e)
+reset; newv; mk $G "$G1" "$c3" 2026-11-13T02:00:00Z "$V2" "latest-20261113-${c3:0:7}"
+IMAGE=gx DIGEST=$G1 run
+check "gx: the first publication moves ONLY gx latest; the default and dx latest stay where they were" bash -c "[ $rc = 0 ] && [ \"\$(cat '$root/reg/$G/tag/latest')\" = '$G1' ] && [ \"\$(cat '$root/reg/$D/tag/latest')\" = '$E0' ] && [ \"\$(cat '$root/reg/$V/tag/latest')\" = '$V0' ]"
+reset; newv; mk $G "$G1" "$c3" 2026-11-13T02:00:00Z "$V2"; echo "$G1" > "$root/reg/unsigned"
+IMAGE=gx DIGEST=$G1 run
+check "gx: an unsigned gx image is refused" bash -c "[ $rc = 1 ] && grep -q 'no valid signature' '$root/out' && [ \$(grep -c 'skopeo copy' '$root/log') = 0 ]"
 IMAGE=nvidia run
 check "an unknown image name is refused" bash -c "[ $rc = 2 ]"
 echo; echo "passed: $pass, failed: $failn"
