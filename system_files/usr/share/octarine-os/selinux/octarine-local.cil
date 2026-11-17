@@ -1,0 +1,9 @@
+; octarine-os local SELinux fixes (Fedora 45, selinux-policy 45.24). Verified on nox 2026-11-17: no AVC denials after a reboot.
+; Remove each rule when its upstream fix has reached the image (check by removing the module on a test boot and looking for AVC denials).
+; 1+2: PCP's pmlogger and pmie run `ps`, which resolves user names through nss-systemd and touches the systemd-nsresourced socket.
+;      Same narrow read rule Fedora added for other domains: fedora-selinux/selinux-policy PRs #3469 (cupsd_t, logind), #3456 (polkit), #3495 (dbus-broker, issue #3494). No PCP rule found upstream.
+(allow pcp_pmlogger_t systemd_nsresourced_runtime_t (sock_file (read)))
+(allow pcp_pmie_t systemd_nsresourced_runtime_t (sock_file (read)))
+; 3: tuned 2.28 runs `bootc loader-entries set-options-for-source` at every start (tuned issue #895, fix PR #892 open 2026-11); bootc's selinux probe (crates/lib/src/lsm.rs test_install_t) runs `chcon -t invalid_bootcinstall_testlabel_t` on a temp file, which needs mac_admin and is expected to fail.
+;    Do NOT grant mac_admin (it lets the domain set any label): only stop logging the denial. Drop this rule when tuned no longer starts bootc from tuned_t.
+(dontaudit tuned_t self (capability2 (mac_admin)))
