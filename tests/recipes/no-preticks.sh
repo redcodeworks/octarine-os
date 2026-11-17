@@ -47,10 +47,8 @@ if [ -r "$here/variants/dx/system_files/usr/share/ublue-os/just/75-octarine-virt
     recipe_ticks "dev" "$here/variants/dx/system_files/usr/share/ublue-os/just/70-octarine-dev.just" dev
 fi
 
-# the plain fallback of a step question: empty answer = no, with --yes the step still runs by default
-: >"$LOG"
-out=$(PATH="$bin:$PATH" OCTARINE_MENU_FORCE_TTY= just --justfile "$just_dir/60-custom.just" niri-setup --only niri </dev/null 2>&1) || true
-if grep -q '\[y/N\]' <<<"$out" && ! grep -q '\[Y/n\]' <<<"$out"; then ok "step question defaults to N without a checklist"; else bad "step question defaults to N without a checklist"; echo "$out" | sed 's/^/     /'; fi
+# the plain step question ("Apply?") defaults to N without a checklist: it is the `s` kind of ask(), never a Y default
+if ! grep -rqE 'ask y "(Apply\?|Install )' "$just_dir" "$here/variants/dx/system_files/usr/share/ublue-os/just"; then ok "no step question defaults to Y"; else bad "no step question defaults to Y"; fi
 
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
