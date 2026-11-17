@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Checks run INSIDE the built octarine-os-dx image (build-dx.yml mounts this file and runs it with bash):
+# Checks run INSIDE the built octarine-os-dx image (dx-image.yml mounts this file and runs it with bash):
 # the developer toolchain, the VM tooling, the kernel of the base image, the dx-only Flatpak list, and the checks of the
 # default image's smoke test (build.yml) that still apply to a layer on top of it.
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the dx image must carry exactly that one kernel).
-# EXPECT_IMAGE_ID (default octarine-os-dx; octarine-os-nvidia-dx for the same layer on the NVIDIA variant).
+# EXPECT_IMAGE_ID (default octarine-os-dx; octarine-os-nvidia-dx for the same layer on the NVIDIA variant; octarine-os-dx-gx, where this file is the EXTRA smoke
+# test of dx-gx, run after gx-smoke.sh). octarine-os-nvidia-gx never runs this file: its extra smoke test is nvidia-smoke.sh.
 # For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, BIN_DIR, LIB_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the

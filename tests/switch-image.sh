@@ -105,7 +105,7 @@ FAKE_SKOPEO_DOWN=1 run "$base" dx --yes
 check "an unreachable registry is reported, not treated as unpublished" bash -c "[ $rc = 1 ] && grep -q 'Could not reach the registry' '$root/out'"
 check "an unreachable registry runs nothing" notlogged "bootc"
 
-# ---- gx (the gamer image): known by name, not published yet
+# ---- gx (the gamer image): the fake registry lacks it at first, so the refusal of an unpublished image is tested with it
 run "$base" gx --yes
 check "gx is refused as not published (exit 1), nothing runs, the target is the gx repository" bash -c "[ $rc = 1 ] && grep -q 'octarine-os-gx:latest is not published' '$root/out'"
 check "gx not published: bootc is not called" notlogged "bootc"

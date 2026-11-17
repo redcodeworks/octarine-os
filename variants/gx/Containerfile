@@ -1,9 +1,10 @@
-# The gamer image of octarineOS (published as octarine-os-gx, see CLAUDE.md "gx image"): the published default image plus the gaming
-# packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends). The same lineage and build strategy as the dx image (variants/dx):
+# The gamer image of octarineOS (published as octarine-os-gx, see CLAUDE.md "gx image"): a base image plus the gaming packages (Steam,
+# gamescope, MangoHud, GameMode, Sunshine and friends). The base is the published default image, or the NVIDIA or the dx image (BASE_IMAGE decides; the
+# same layer builds octarine-os-gx, octarine-os-nvidia-gx and octarine-os-dx-gx). The same lineage and build strategy as the dx image (variants/dx):
 #   silverblue-main:45   -> octarine-os:latest -> octarine-os-gx:latest
 # The workflow resolves the base by DIGEST (and verifies its signature) and passes it in, so the build, the labels and the kernel check all
 # talk about the same base:
-#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os
+#   BASE_IMAGE   ghcr.io/redcodeworks/octarine-os (or -nvidia, -dx)
 #   BASE_TAG     latest (only names the channel in the labels; the digest decides)
 #   BASE_DIGEST  sha256:... of that tag when the build started (empty only for a bare local `podman build`)
 ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os

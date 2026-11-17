@@ -20,7 +20,7 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 | NVIDIA gx | [![NVIDIA gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml?query=branch%3Amain) | manual run, main only |
 | dx-gx | [![dx-gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml?query=branch%3Amain) | manual run, main only |
 
-The gx, NVIDIA dx, NVIDIA gx and dx-gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
+The NVIDIA dx, NVIDIA gx and dx-gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
 
 ## Requirements
 

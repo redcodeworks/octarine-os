@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Move the bare `latest` tag of ONE image: the default image (octarine-os) or a variant built on it (dx, later gx). Every image publishes its OWN
+# Move the bare `latest` tag of ONE image: the default image (octarine-os) or a variant built on it (dx or gx). Every image publishes its OWN
 # `latest`, after its own signed build or its own promotion, independently of the others (2026-11-16, Kevin). Builds and promotions on main publish
 # dated tags only (`latest-<sha7>`, `latest-<date>-<sha7>`, `<date>-<sha7>`, and the same-day aliases); this script is the one step that makes an
 # image visible to `bootc upgrade`. A signature belongs to a digest, so a retag needs no new signature.

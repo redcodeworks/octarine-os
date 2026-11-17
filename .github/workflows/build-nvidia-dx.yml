@@ -62,7 +62,7 @@ jobs:
   # A build signs every pushed digest, a promotion only verifies the digest that was signed when the testing image was published; both then
   # verify every tag. Skipped when nothing was built or promoted (plan skipped, nothing to do, dry run, failures before it).
   sign:
-    name: Sign and verify dx image
+    name: Sign and verify nvidia-dx image
     needs: nvidia_dx
     if: >-
       always() && needs.nvidia_dx.result == 'success' &&
