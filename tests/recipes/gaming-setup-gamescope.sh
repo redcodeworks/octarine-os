@@ -30,7 +30,8 @@ SRC="$root/missing" run "" gamescope-session --yes
 check "not a gx image (no defaults file): skipped, nothing written, exit 0" bash -c "test $rc = 0 && ! test -e '$dest'" && has "skipped (not a gx image)"
 
 run "" --yes
-check "--yes without naming the step: opt-in only, nothing written" bash -c "test $rc = 0 && ! test -e '$dest'"
+# (the exit status is not asserted: the other steps of a bare --yes run depend on the machine, for example the extest libraries)
+check "--yes without naming the step: opt-in only, nothing written" bash -c "! test -e '$dest'" && has "gamescope-session            skipped (not applied)"
 
 run "" gamescope-session --no
 check "--no only prints the plan, nothing written" bash -c "test $rc = 0 && ! test -e '$dest'" && has "planned (would ask)"
