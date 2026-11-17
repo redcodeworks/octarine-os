@@ -490,7 +490,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   skips the download on a hit, and on a miss runs the SHA-pinned installer (`sigstore/cosign-installer`,
   `extractions/setup-just`) with `continue-on-error`, waits 60 s and tries once more if it failed (GitHub release
   downloads return 504 now and then), failing only when both attempts fail; the cache is saved after a successful install
-  (the binary is copied there). Cache scoping: a run can read caches of its own branch and of the default branch, but
+  (the binary is copied there). cosign is cached everywhere except the signing steps (input `cache: "false"` in `sign-images`, and the `sign` jobs of `build.yml` and `build-nvidia.yml`): where the signing key is present it is installed and verified fresh, never restored (Kevin, 2026-11-16). Cache scoping: a run can read caches of its own branch and of the default branch, but
   not those of another branch, so `testing` and pull request runs fall back to `main`'s cache and `main` never sees
   `testing`'s: the first run on each branch downloads, then it is a hit. A cached binary that does not run is ignored
   and reinstalled. Bumping a tool means changing the version in the action (and the installer's `with:`).
