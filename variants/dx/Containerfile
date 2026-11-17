@@ -15,8 +15,8 @@ ARG BASE_DIGEST=
 # no binary component (/COMPONENTS is empty). PINNED by digest, like octarine-bins in the default Containerfile: BINS_DX_DIGEST changes only through the weekly bump pull
 # request (bump-run.sh, kind bins-dx), the dx build verifies the pinned digest on every build (dx-image.yml) and records it in the bins-dx label. BINS_DX_TAG is only
 # for humans. The pin covers the lists and the installer; the packages themselves still float through dnf.
-ARG BINS_DX_TAG=20261117-387a89e
-ARG BINS_DX_DIGEST=sha256:d3c804503fee4e13d128a322457ea7e111c99779f18043f47f580a6488efcb46
+ARG BINS_DX_TAG=20261117-11ff8e7
+ARG BINS_DX_DIGEST=sha256:be0a2b23e6594a9359657b6504dcb98c3c0ae3b94e7718ce59c48f31220bb5d6
 ARG BINS_DX_REF=ghcr.io/redcodeworks/octarine-bins-dx:${BINS_DX_TAG}@${BINS_DX_DIGEST}
 
 FROM ${BINS_DX_REF} AS binsdx
