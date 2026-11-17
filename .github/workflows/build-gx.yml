@@ -122,8 +122,8 @@ jobs:
           private-key: ${{ secrets.SIGNING_SECRET }}
 
   # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the gx
-  # image was built, promoted or legitimately skipped (base and gx inputs unchanged). It becomes the required check (the hub adds it to the ruleset after the first green testing run)
-  # `Build gx and push image` only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
+  # image was built, promoted or legitimately skipped (base and gx inputs unchanged). It is the required check
+  # `Build gx and push image` (in the main ruleset) only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
   # that tip): for an older commit it is named `Build gx (older commit)`, so a green check never appears on a commit whose
   # own gx build has not run. The commit status of the same name on the BUILT commit is always posted (a pull request into
   # main can require it; both come from this one result, so they never disagree). A plan that was skipped (a ref or channel

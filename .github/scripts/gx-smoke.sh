@@ -90,7 +90,10 @@ done
 check "sudoers valid" "visudo -c"
 check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd SHELL=/usr/bin/zsh"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
+check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"
+check "menu helper library shipped" "test -s ${share_dir}/octarine-os/lib/menu.sh"
+check "dev-toolbox definition" "has_text ${share_dir}/ublue-os/distrobox/dev-toolbox.ini '[dev-toolbox]'"
 check "the gaming-setup recipe is listed" "o=\$(ujust --summary 2>&1) && [[ \" \${o//\$'\\n'/ } \" == *' gaming-setup '* ]]"
 if [ "${EXPECT_IMAGE_ID:-}" = octarine-os-dx-gx ]; then
     check "the dev recipe of the dx layer below is still imported (octarine-os-dx-gx has both layers)" "grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
@@ -101,6 +104,7 @@ for p in pam-u2f snapper tailscale borgbackup zsh distrobox; do
     check "package ${p}" "rpm -q ${p}"
 done
 check "firefox removed" "! rpm -q firefox"
+check "toolbox removed" "! rpm -q toolbox"
 check "gnome-software removed" "! rpm -q gnome-software"
 for p in fwupd flatpak gnome-shell; do check "package ${p} still installed" "rpm -q ${p}"; done
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delete old daily images of ONE container package (octarine-os or octarine-os-dx) and their cosign signatures.
+"""Delete old daily images of ONE container package (octarine-os, octarine-os-dx or octarine-os-gx) and their cosign signatures.
 
 Reads the package versions (the output of `gh api --paginate <package>/versions?per_page=100`, one or several JSON arrays) on stdin.
 

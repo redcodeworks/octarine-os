@@ -297,8 +297,8 @@ integration branch (GitLab's "main"); `main` is the production branch.
   would rewrite them and the next promotion would replay commits that are already applied. No back-merge of `main`
   into `testing` is needed: `main` only gains the promotion merge commits that `testing` lacks, which is harmless.
 - **Who merges.** Direct pushes to `testing` and `main` are blocked and there is no bypass. Required checks (rulesets): into
-  `testing`, `test` and `secrets`; into `main`, `Build and push image`, `require-testing-branch` and
-  `Sign and verify images`. Agents may merge their own feature pull request into `testing` once the required checks
+  `testing`, `test` and `secrets`; into `main`, `Build and push image`, `require-testing-branch`,
+  `Sign and verify images`, `Build dx and push image` and `Build gx and push image` (the live main ruleset, checked 2026-11-16). Agents may merge their own feature pull request into `testing` once the required checks
   are green (Kevin, 2026-11-09; GitHub does not let an author approve their own pull request, so this means
   merging). Merging into `main` is the owner's only.
 - **Promotion.** Pull request `testing` -> `main` (`require-testing-branch.yml` runs on pull requests into `main`
@@ -655,7 +655,7 @@ main); the images never wait for each other.** The default image (`octarine-os`)
   `latest`. The hub's `scripts/scheduled-runs.sh` judges the newest `build-dx.yml` run on main and the age of `latest`.
 - **Pipeline-only files** (`dispatch-dx.sh`, `publish-latest.sh`, `ci-issue.sh`, `publish-latest.yml` and their tests) are in neither input hash
   (`is_pipeline_only` in `inputs-hash.sh`): changing them rebuilds neither image. The prebuilt binaries are no special case: the octarine-bins digest pin in the Containerfile is an ordinary default-image input, so a bump rebuilds the image on testing (the hash is the same one main compares to promote the tested image, so main only promotes it; `latest` of the binaries moves only in the promote job).
-- **Prune.** `prune-daily.yml` protects the digest behind EACH image's own `latest` (octarine-os, -dx, -gx when it exists) and the default digests that the variants' `latest`
+- **Prune.** `prune-daily.yml` protects the digest behind EACH image's own `latest` (octarine-os, -dx, -gx) and the default digests that the variants' `latest`
   stand on (their base label); a failed lookup stops the run.
 - **Unverified until a real run:** every publish on main (first run of the single-image rule and the per-image groups), that `workflow_call` with `inputs.image` in the
   concurrency group works as expected, the alert and recover steps, and the dispatch inputs.
@@ -1010,7 +1010,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
 - Checks: the smoke tests of `build.yml`, `dx-smoke.sh` and
   `nvidia-smoke.sh present` assert `PRETTY_NAME="octarineOS"`, the right `IMAGE_ID` and the `IMAGE_VERSION` format
   (`[0-9]{8}-[0-9a-f]{7,}`). `check-version-neutral.sh` also reads the image's os-release
-  `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`. Tests: `tests/image-version.sh`, `dx-image.sh`, `nvidia-variant.sh`.
+  `IMAGE_VERSION` (the workflows append it to the label lines): required, no `testing`/`latest`. The format is checked by the smoke scripts (the test files `image-version.sh`, `dx-image.sh` and `nvidia-variant.sh` were deleted on 2026-11-16).
 - fastfetch: OUR build does not install it and must not (owner's rule; a Homebrew install is the owner's way); only a default configuration ships. On the owner's machine `/usr/bin/fastfetch` exists anyway (fastfetch-2.68.1-1.fc45, not layered): it is not in `build.sh`, the dx lists or the `packages.json` of ublue-os/main, so it comes with the upstream Fedora Silverblue set that the base image carries (to confirm with `rpm -qf /usr/bin/fastfetch`: open item for the hub); the motd script works with and without it. Default configuration:
   `system_files/etc/xdg/fastfetch/config.jsonc` (a plain file; fastfetch reads `~/.config/fastfetch/` first, then `/etc/xdg/fastfetch/`,
   so the user's own file wins). Its `Image` line prints `IMAGE_ID IMAGE_VERSION`, falls back to the booted rpm-ostree deployment where
@@ -1185,8 +1185,8 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 
 ## `ujust switch-image`
 
-- One recipe in `60-custom.just` switches between the images (`default` = `octarine-os`, `dx` = `octarine-os-dx`, `gx` = `octarine-os-gx` (gamer; the recipe probes the registry, so it is refused as "not published" until the first gx `latest` exists and selectable after), `nvidia` =
-  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`) and the channels `latest`, `testing`. It replaces the
+- One recipe in `60-custom.just` switches between the images (`default` = `octarine-os`, `dx` = `octarine-os-dx`, `gx` = `octarine-os-gx` (gamer), `nvidia` =
+  `octarine-os-nvidia`, `nvidia-dx` = `octarine-os-nvidia-dx`, `nvidia-gx` = `octarine-os-nvidia-gx`, `dx-gx` = `octarine-os-dx-gx` (experimental, `latest` only; alias `fx`); the recipe probes the registry and refuses an image that is not published) and the channels `latest`, `testing`. It replaces the
   base image's `toggle-nvk` (Universal Blue's `40-nvidia.just`), which derived names by string substitution
   (`octarine-os-dx-nvidia-open` does not exist) and rebased without enforcing the signature policy; our `40-nvidia.just`
   overwrites that file and is empty, so `toggle-nvk` is gone (build.sh fails if a `toggle-nvk` recipe is still installed, the
@@ -1197,10 +1197,10 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   keeps the current channel, `latest` when the tag is pinned. Availability is checked with `skopeo inspect --raw` before
   anything runs: a missing manifest is "not published", a network failure is reported separately and never treated as
   missing. The switch is `sudo bootc switch --enforce-container-sigpolicy <ref>`, the form the README documents.
-  `--list` probes all ten combinations in parallel (gx is shown as not published until it exists); `--yes` skips the question, `--no` prints the plan.
-- Which combinations exist is not hard-coded: `nvidia` and `nvidia-dx` have only `latest` (no `testing` tag). `octarine-os-nvidia-dx` is
+  `--list` probes all 14 combinations (7 image kinds times the channels latest and testing) in parallel and shows an unpublished one as such; `--yes` skips the question, `--no` prints the plan.
+- Which combinations exist is not hard-coded: `nvidia`, `nvidia-dx`, `nvidia-gx` and `dx-gx` have only `latest` (no `testing` tag). `octarine-os-nvidia-dx` is
   built by `build-nvidia-dx.yml` (see "NVIDIA dx image"); its repository is in the signature policy that `build_files/build.sh` generates
-  (`tests/nvidia-variant.sh` and `tests/dx-image.sh` check the policy for each repository), so the recipe needed no change except a hint
+  (the smoke tests `dx-smoke.sh`, `gx-smoke.sh` and `build.yml`'s check the policy for each repository), so the recipe needed no change except a hint
   printed for `nvidia-dx` (a machine whose image predates the rule gets a signature-policy error from bootc).
 - Staged images: the recipe also reads the STAGED deployment (`rpm-ostree status --json`, `staged: true`; test hook `OCTARINE_SWITCH_STAGED_REF`). When it equals the target (digest ignored) it says "already staged: reboot to use it" and calls nothing (no second `bootc switch`, no second security-key touch); a different staged image is named and replaced. The hardware-setup `nvidia` step goes through this recipe, so its probe (`/sys/module/nvidia`, false until the reboot) cannot cause a second switch.
 - Tests: `tests/switch-image.sh` (fake `skopeo`, `sudo`, `bootc`; the running image from `OCTARINE_SWITCH_CURRENT_REF`).
@@ -1257,7 +1257,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `dev-toolbox` (so the host has compilers, `-devel` libraries, debuggers, `uv`, `rustup`, `fish`; no ROCm, see below), VM tooling,
   tracing tools and a few extras; the VS Code Flatpak is not preinstalled (`ujust dev` installs it on request; Kevin 2026-11-10). Opt-in, for the owner's own
   use. The default image has only gcc, g++, make and binutils (see "Image build steps added 2026-11-14"), not the dx toolchain; nothing in `Containerfile` or `build.sh` installs the dx
-  set, `tests/dx-image.sh` asserts that.
+  set (the dx smoke test shows a missing package, `default-smoke.sh` has no dx packages).
 - **Lineage (the `latest` channel; `testing` follows the testing default image).**
 
   | Base | Default image | dx image |
@@ -1271,7 +1271,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   the only one) (the dx package lists, the old `variants/dx/packages/extras.txt` included, are `dx/packages/` in octarine-bins since 2026-11-16),
   `.github/workflows/build-dx.yml` (the dx-only `dx.preinstall` was removed 2026-11-10 and `variants/dx/system_files/usr/share/flatpak`
   with it; a dx-only Flatpak drop-in would need no recipe change, `ujust flatpak-preinstall` reads every `*.preinstall` there),
-  `.github/scripts/dx-smoke.sh`, `tests/dx-image.sh`.
+  `.github/scripts/dx-smoke.sh`.
 - **The dx lists (pinned by digest, the octarine-bins-dx image, since 2026-11-16).** `ghcr.io/redcodeworks/octarine-bins-dx` is a signed FROM scratch image from the octarine-bins repository (signed with `keys/octarine-bins.pub`'s key, NOT the toolbox key): `/packages/{required-fedora,optional-fedora}.txt` and `/packages/install.sh` (the same installer as the other two images), and an EMPTY `/COMPONENTS` (no binary yet). It is pinned like the base octarine-bins image: `ARG BINS_DX_TAG` (for humans) and `ARG BINS_DX_DIGEST` in `variants/dx/Containerfile` (`BINS_DX_REF` is built from them, with defaults, and is the `FROM` of the `binsdx` stage), changed only by the weekly `bins-dx` bump PR. `dx-image.yml` verifies the PINNED digest on every dx build with `keys/octarine-bins.pub` (`retry.sh cosign verify`) and records `ghcr.io/redcodeworks/octarine-bins-dx@<digest>` in the label `io.github.redcodeworks.octarine-os.bins-dx`; the NVIDIA dx build shares the step and the pin. The pin covers the lists and the installer only: the packages still float via dnf. The Containerfile mounts it with `RUN --mount=type=bind,from=binsdx,source=/,target=/binaries` and `dx.sh` runs `MISSING_FILE=... bash /binaries/packages/install.sh` (misses are appended to the default image's `optional-packages-missing`) and then `BINARIES_REQUIRED="" /ctx/install-binaries.sh` (zero components accepted; a component dx gets later is unknown to the reader until `install-binaries.sh` learns it). The installer's contract and order: see "Package lists" under the default image. A merged bump makes the dx testing build the first with the new lists. `keys/redcodeworks-toolbox-cosign.pub` stays in the dx image's `ctx` only for the datastore bundle signature policy (`dx.sh`).
 - **Workflow rules (`build-dx.yml`).** Since 2026-11-10 dx also builds on `testing` and promotes on `main`; the flow, the plan decision table, the
   input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/plan-dx.sh`. The text below
@@ -1300,8 +1300,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - **Signature policy.** `build.sh` writes a `sigstoreSigned` rule for `octarine-os`, `octarine-os-nvidia` and `octarine-os-dx` into
   the default image (strips `-nvidia` and `-dx` from `IMAGE_NAME`); the dx image inherits it. A machine therefore switches to
   the dx image only after it runs a default image built with the rule (update first, then
-  `bootc switch --enforce-container-sigpolicy`). Asserted in `tests/nvidia-variant.sh` and `tests/dx-image.sh`, and in the smoke tests of
-  `build.yml`.
+  `bootc switch --enforce-container-sigpolicy`). Asserted in the smoke tests (`default-smoke.sh`, `dx-smoke.sh`, `gx-smoke.sh`, `nvidia-smoke.sh`).
 - **User-facing note (formerly in the README).** Switch with `bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx:latest`
   after updating to the newest default image (it carries the signature policy); undo by switching back to `octarine-os:latest`. The README table and the `ujust dev` text say what `dev` sets up; the step table lived in the README and is now in
   "Developer menu" below.
@@ -1354,13 +1353,13 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - **Pipeline.** `build.yml` has a `dispatch_gx` job beside `dispatch_dx` (same `needs`, same `if`, the same digest hand-over; `VARIANT=gx` for `dispatch-dx.sh`). `build-gx.yml`: dispatch only, run-name
   `gx <channel> <sha>`, the concurrency pattern of dx (testing cancels, latest per commit never), a `gx` job (the reusable workflow), its own `sign` job with `environment: signing` through
   `.github/actions/sign-images`, the result job named `Build gx and push image` only when `inputs.sha == github.sha` (the commit status of the same name is posted on the built commit for `testing`),
-  `publish` (`publish-latest.yml` with `image: gx`) and `alert` (label `ci-failure-gx`). The check `Build gx and push image` is NOT in the main ruleset until the hub adds it after the first green testing run.
+  `publish` (`publish-latest.yml` with `image: gx`) and `alert` (label `ci-failure-gx`). The check `Build gx and push image` is a required check of the main ruleset (like `Build dx and push image`).
   `dx-image.yml` picks the variant's Containerfile, verifies the pinned binaries image of the variant (dx `octarine-bins-dx`, gx `octarine-bins-gx`, with `keys/octarine-bins.pub`; `LIST_REF`), labels `<variant>-tree`, `<variant>-inputs` and `bins-dx`/`bins-gx`, and
-  runs `.github/scripts/<variant>-smoke.sh`. Weekly bump kinds `bins-dx` and `bins-gx` (the same code). `prune-daily.yml` prunes the gx package only once it has a `latest`; `rollback-latest.yml` and the
+  runs `.github/scripts/<variant>-smoke.sh`. Weekly bump kinds `bins-dx` and `bins-gx` (the same code). `prune-daily.yml` treats all three packages (octarine-os, -dx, -gx) alike; `rollback-latest.yml` and the
   `publish-latest.yml` dispatch take `image: gx`.
 - **First publication.** A new GHCR package is created PRIVATE: after the first gx push (testing) the owner sets `octarine-os-gx` to public in the package settings, or `ujust switch-image` and `bootc upgrade`
-  cannot read it (and the package `octarine-os-gx` must allow this repository's workflows: Package settings, Manage Actions access). Until `octarine-os-gx:latest` exists (the first green
-  main run), `ujust switch-image gx` says it is not published.
+  cannot read it (and the package `octarine-os-gx` must allow this repository's workflows: Package settings, Manage Actions access). `octarine-os-gx:latest` exists since the first green
+  main run; before that, `ujust switch-image gx` said it was not published.
 - **Local build result (2026-11-16, podman with a scratch root, base `octarine-os:testing` at 0e63072).** About 1.5 to 1.7 minutes per build with warm layers (pull of the base about 50 s); the image is 11.1 GB
   uncompressed against 7.6 GB for the base; `bootc container lint` 14 checks passed; `gx-smoke.sh` 72 checks passed. UNVERIFIED until CI: the runner build, the signed pin check, sign, promote, publish and the first
   `workflow_run`-free dispatch of `build-gx.yml` (a dispatched run uses the file of the ref, so the first one is on `testing` after the merge).
@@ -1372,7 +1371,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   build is identical for both variants, and NVIDIA's toolkit is a user-side install. No fork of the package list: the workflow passes
   `BASE_IMAGE=ghcr.io/<owner>/octarine-os-nvidia` and `DX_IMAGE_ID=octarine-os-nvidia-dx` (a build argument of the final stage of
   `variants/dx/Containerfile`, default `octarine-os-dx`; `dx.sh` sets `IMAGE_ID` from it and refuses any other value).
-- **Own caller, `build-nvidia-dx.yml` (name "Build NVIDIA dx image"; since 2026-11-16 a thin caller of the reusable `dx-image.yml`, like `build-dx.yml`: the plan, build and promote jobs and their steps live once in `dx-image.yml` (the sign job is the caller's own, see below), with inputs `base_name`, `dx_name`, `channel`, `sha`, `base_digest`, `force`, `dry_run`, `promote_from_testing`, `tags` (a template with `{sha}` and `{date}`), `description` and `extra_smoke`, and outputs the job results for the callers' result jobs; the called workflow has no variant branches).** Not a matrix of `build-dx.yml`: that file posts the REQUIRED
+- **Own caller, `build-nvidia-dx.yml` (name "Build NVIDIA dx image"; since 2026-11-16 a thin caller of the reusable `dx-image.yml`, like `build-dx.yml`: the plan, build and promote jobs and their steps live once in `dx-image.yml` (the sign job is the caller's own, see below), with inputs `base_name`, `dx_name`, `channel`, `sha`, `base_digest`, `force`, `dry_run`, `promote_from_testing`, `tags` (a template with `{sha}` and `{date}`), `description` and `extra_smoke`, and outputs the job results for the callers' result jobs; the called workflow takes a `variant` input (dx or gx) that picks the Containerfile and the smoke script).** Not a matrix of `build-dx.yml`: that file posts the REQUIRED
   check `Build dx and push image` (also the commit status on the tested commit) and its trigger and result logic must not change. The new
   workflow never posts that context: its result job is named `NVIDIA dx build result`, there is no `statuses` permission and no status
   call, so it can neither satisfy nor block a promotion pull request. Trigger: `workflow_run` of "Build NVIDIA variant" (`main`
@@ -1382,7 +1381,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - **Plan.** `plan-dx.sh` with `CHANNEL=latest BASE_NAME=octarine-os-nvidia DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false`
   (the new switch skips the search for a tested testing image: there is no testing channel). Skip when the published
   `octarine-os-nvidia-dx:latest` has the same base digest (raw manifest of the verified `octarine-os-nvidia:latest`) and the same `dx_inputs`
-  as this commit; otherwise build. `is_dx_only` lists the new workflow and `tests/nvidia-dx-image.sh`, so a change to them changes
+  as this commit; otherwise build. `is_dx_only` lists the new workflow (`build-nvidia-dx.yml`; `inputs-hash.sh` lists no tests), so a change to it changes
   `dx_inputs` (dx rebuilds too) and never rebuilds the default image.
 - **Tags.** `latest`, `latest-<sha>`, `latest-<date>-<sha>`, `<date>-<sha>`, `<date>`, `latest-<date>` (the NVIDIA variant's set), one push through
   `push-tags.sh`, signed like the others (`cosign.pub`). No `testing`.

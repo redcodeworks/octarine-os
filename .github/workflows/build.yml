@@ -6,8 +6,8 @@ name: Build container image
 # the plan job skips the heavy build when only docs changed (list in .github/scripts/plan-build.sh) and the
 # aggregate job named "Build and push image" then passes without it. There is no pull_request trigger: a dev branch
 # is checked by test.yml, the image is built when the change is merged into `testing`. A push whose default-image inputs
-# (inputs-hash.sh: everything but docs and the dx-only files) equal those of an already published, signed `testing`
-# image builds nothing (a dx-only change), and on `main` promotes by the same rule. A manual dispatch from any
+# (inputs-hash.sh: everything but docs and the files only the dx or gx images use) equal those of an already published, signed `testing`
+# image builds nothing (a dx-only or gx-only change), and on `main` promotes by the same rule. A manual dispatch from any
 # other branch (`gh workflow run build.yml --ref <branch>`) builds as validation only: nothing is pushed or signed.
 on:
   schedule:
@@ -122,7 +122,7 @@ jobs:
           revision=$(label org.opencontainers.image.revision)
           created=$(label org.opencontainers.image.created)
           repo_same=false
-          # equal default-image inputs count as the same repository (docs-only and dx-only changes do not rebuild it)
+          # equal default-image inputs count as the same repository (docs-only, dx-only and gx-only changes do not rebuild it)
           if [[ -n "${revision}" ]] && git cat-file -e "${revision}^{commit}" 2>/dev/null \
               && [[ "$(.github/scripts/inputs-hash.sh vanilla "${revision}")" == "$(.github/scripts/inputs-hash.sh vanilla HEAD)" ]]; then
             repo_same=true
@@ -154,7 +154,7 @@ jobs:
         run: |
           .github/scripts/plan-promote.sh "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
 
-      # A push to testing whose default-image inputs equal those of a published testing image (a dx-only change) needs no
+      # A push to testing whose default-image inputs equal those of a published testing image (a dx-only or gx-only change) needs no
       # build: the plan ends green and the aggregate check passes (see CLAUDE.md "dx image" and plan-vanilla-reuse.sh)
       - name: Look for an identical default-image build on testing
         id: reuse
