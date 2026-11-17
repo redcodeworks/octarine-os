@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests for the floating base with safeguards (.github/scripts/base-pin.sh): the tag is resolved to a digest once, its signature is verified with the pinned
 # Universal Blue key, a failure stops the build. Fake skopeo and cosign.
-# Run: tests/base-pin.sh. Needs: bash, jq.
+# Run: tests/supply/base-pin.sh. Needs: bash, jq.
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 # the CI runner exports these (root-owned files the test user cannot write): the script must only write where each case points them

@@ -3,9 +3,9 @@
 # repository (octarine-bins builds the image; the contract is mirrored in its CLAUDE.md, section "The image layout"): /binaries/<name>/ per component,
 # COMPONENTS (names, one per line), LICENSES/, SOURCE and BUILDINFO, scx/schedulers.tsv (four tab separated fields), ghostty/FILES. The fixture lives here,
 # so a layout change in octarine-bins must be accepted by the installer first (reader first) and this fixture then follows it.
-# Needs: bash, awk, tar. Run: tests/install-binaries.sh
+# Needs: bash, awk, tar. Run: tests/image/install-binaries.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d)
 trap 'rm -rf -- "${root:?}"' EXIT
 pass=0; failn=0; rc=0

@@ -2,7 +2,7 @@
 # Installs the prebuilt binaries into the image tree. Run by build.sh; the Containerfile bind-mounts the published
 # octarine-bins image (built and signed by the octarine-bins repository, pinned by digest in the Containerfile) at /binaries (BINARIES_ROOT
 # overrides the source, DESTDIR the target; both only for the tests). The layout below is a contract with octarine-bins (its CLAUDE.md, "The image
-# layout"): a change goes reader first, so this installer accepts the new layout before octarine-bins writes it. tests/install-binaries.sh feeds it a fixture.
+# layout"): a change goes reader first, so this installer accepts the new layout before octarine-bins writes it. tests/image/install-binaries.sh feeds it a fixture.
 #   scx     bin/scx_*, schedulers.tsv (name, path, minimum kernel, description; tab separated, no header),
 #           LICENSES/, SOURCE, BUILDINFO  ->  /usr/bin, /usr/share/octarine-os/schedulers.tsv
 #   extest  lib/libextest.so (32-bit), lib64/libextest.so (64-bit), LICENSES/, SOURCE, BUILDINFO  ->  /usr/lib/extest

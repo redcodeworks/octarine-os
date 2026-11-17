@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The three input hashes that decide which image has to be built (one place, tested by tests/inputs-hash.sh).
+# The three input hashes that decide which image has to be built (one place, tested by tests/pipeline/inputs-hash.sh).
 #
 #   inputs-hash.sh vanilla|dx|gx [<rev>]     print the hash of <rev> (default HEAD)
 #

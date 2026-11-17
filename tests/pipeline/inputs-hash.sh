@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests .github/scripts/inputs-hash.sh (the three input hashes: vanilla, dx, gx) and plan-vanilla-reuse.sh (the decision table of a push
-# to testing) in a temporary git repository with a fake registry lookup. Run: tests/inputs-hash.sh
+# to testing) in a temporary git repository with a fake registry lookup. Run: tests/pipeline/inputs-hash.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 hash="$here/.github/scripts/inputs-hash.sh"
 reuse="$here/.github/scripts/plan-vanilla-reuse.sh"
 tmp=$(mktemp -d)

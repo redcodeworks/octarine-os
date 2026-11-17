@@ -2,7 +2,7 @@
 # Tests .github/scripts/ci-issue.sh with a stub `gh`: the first failure opens ONE issue (label ci-failure-dx), every later failure is a
 # comment on it, a recovery comments and closes it, and nothing happens when no issue is open. Deduplication is on the label, not the title.
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 script="$here/.github/scripts/ci-issue.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT

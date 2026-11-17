@@ -2,11 +2,11 @@
 # Tests for `ujust switch-image` (system_files/usr/share/ublue-os/just/60-custom.just).
 # No network and nothing is switched: skopeo, sudo and bootc are fakes, the running image comes from
 # OCTARINE_SWITCH_CURRENT_REF, and the published set from FAKE_PUBLISHED. Needs: bash, just, jq.
-# Run: tests/switch-image.sh
+# Run: tests/recipes/switch-image.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-justdir="$here/../system_files/usr/share/ublue-os/just"
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+justdir="$here/system_files/usr/share/ublue-os/just"
 justfile="$justdir/60-custom.just"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
@@ -82,7 +82,7 @@ chmod +x "$root/kbin/rpm-ostree"
 echo "root=UUID=1 rw quiet" >"$root/cmdline"
 krun() { # args...
     : >"$LOG"
-    PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_KARGS_LIB="$here/../system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline"         OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+    PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline"         OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
     rc=$?
 }
 FAKE_NEXT_EXTRA="iommu=pt" krun dx

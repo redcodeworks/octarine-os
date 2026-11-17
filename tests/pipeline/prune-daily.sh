@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Decision table of .github/scripts/prune-daily.py with a fixture list of package versions (no network, a fake gh):
 # keep the newest 14 daily builds, never the bare latest, testing, other tags or untagged versions, protected digests, signature
-# matching, the 30-version limit, dry run by default. Run: tests/prune-daily.sh
+# matching, the 30-version limit, dry run by default. Run: tests/pipeline/prune-daily.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 prune="$here/.github/scripts/prune-daily.py"
 root=$(mktemp -d); trap 'rm -rf "$root"' EXIT
 pass=0; failn=0

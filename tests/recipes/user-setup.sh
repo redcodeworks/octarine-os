@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Tests for `ujust user-setup` (system_files/usr/share/ublue-os/just/60-custom.just).
 # flatpak, sudo, id, getent and usermod are fakes on PATH; nothing real is changed. Needs: bash, just.
-# Run: tests/user-setup.sh
+# Run: tests/recipes/user-setup.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-justfile="$here/../system_files/usr/share/ublue-os/just/60-custom.just"
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+justfile="$here/system_files/usr/share/ublue-os/just/60-custom.just"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0
@@ -16,8 +16,8 @@ export LOG="$root/log" INSTALLED="$root/installed" OVR="$root/ovr" GROUPS_OF="$r
 export HOME="$root/home"
 mkdir -p "$HOME"
 export BREW_CASKS="$root/casks" FC_FAMILIES="$root/families"
-export USER_SETUP_FONTS_BREWFILE="$here/../system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
-export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/../system_files/usr/share/octarine-os/lib/menu.sh"
+export USER_SETUP_FONTS_BREWFILE="$here/system_files/usr/share/octarine-os/homebrew/fonts.Brewfile"
+export GUMQ="$root/gumq" UGUMQ="$root/ugumq" OCTARINE_MENU_LIB="$here/system_files/usr/share/octarine-os/lib/menu.sh"
 export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
 export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"

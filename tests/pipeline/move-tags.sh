@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests move-tags.sh (the post-signing move of `testing`) with a fake skopeo that keeps tag -> digest in a directory (the raw "manifest" of a tag is its digest string, and
 # `manifest-digest` prints it back): every moving tag ends on the digest, a read-back that still shows another digest fails, a failing copy fails and leaves the tag, no tags is
-# a no-op, a bad digest is refused. The read-back is the real registry-settled.sh over the real registry-digest.sh. Run: tests/move-tags.sh
+# a no-op, a bad digest is refused. The read-back is the real registry-settled.sh over the real registry-digest.sh. Run: tests/pipeline/move-tags.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "${root:?}"' EXIT
 pass=0; failn=0; rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }

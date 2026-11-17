@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests for build_files/validate-repos.sh (the build fails on an enabled repository the image does not expect) with a stub dnf5 and
-# temporary repository directories, and for its wiring in the three image build scripts. Run: tests/validate-repos.sh. Needs: bash, awk.
+# temporary repository directories, and for its wiring in the three image build scripts. Run: tests/image/validate-repos.sh. Needs: bash, awk.
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }

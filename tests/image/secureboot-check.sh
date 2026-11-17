@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests for the Secure Boot check of the kernel (.github/scripts/secureboot-check.sh with a fake sbverify and a stubbed key download) and its wiring in the image workflows. Run: tests/secureboot-check.sh. Needs: bash, openssl, python3 with PyYAML.
+# Tests for the Secure Boot check of the kernel (.github/scripts/secureboot-check.sh with a fake sbverify and a stubbed key download) and its wiring in the image workflows. Run: tests/image/secureboot-check.sh. Needs: bash, openssl, python3 with PyYAML.
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }

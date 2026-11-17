@@ -2,10 +2,10 @@
 # Tests for `ujust luks-tpm-unlock` (60-custom.just) and the recipes the image hides from `ujust --list` (30-distrobox.just,
 # 50-akmods.just). 15-luks.just is empty on purpose (the base's two LUKS recipes are gone).
 # Nothing real changes: sudo, lsblk, cryptsetup and systemd-cryptenroll are fakes; the LUKS state comes from FAKE_TPM
-# (devices that already have a TPM2 key). Needs: bash, just. Run: tests/luks-tpm-unlock.sh
+# (devices that already have a TPM2 key). Needs: bash, just. Run: tests/recipes/luks-tpm-unlock.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 justdir="$here/system_files/usr/share/ublue-os/just"
 justfile="$justdir/60-custom.just"
 root=$(mktemp -d)
