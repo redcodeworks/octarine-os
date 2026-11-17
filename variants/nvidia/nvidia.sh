@@ -34,9 +34,7 @@ set_os_release_field() { # key value: replace the line when it exists, append it
     grep -qx "${key}=\"${value}\"" "${file}"
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
-set_os_release_field IMAGE_ID octarine-os-nvidia
-set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
-bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os-nvidia ]]'
+# the two fields are written after the dracut run below (dracut copies os-release into the initramfs; a per-build IMAGE_VERSION there changed it every build)
 
 after=$(kernel_of)
 [[ "${after}" == "${before}" ]] || { echo "ERROR: the NVIDIA install changed the kernel (${before} -> ${after})"; exit 1; }
@@ -78,6 +76,10 @@ echo "dracut exit status: ${rc}"
 show_img "after dracut"
 [[ "${rc}" == 0 ]] || { echo "ERROR: dracut failed with status ${rc}, the initramfs is not trustworthy"; exit 1; }
 chmod 0600 "${img}"
+
+set_os_release_field IMAGE_ID octarine-os-nvidia
+set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
+bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os-nvidia ]]'
 # The build log itself shows whether the modules landed (listing to a file: no SIGPIPE from head)
 lst=$(mktemp)
 lsinitrd_rc=0

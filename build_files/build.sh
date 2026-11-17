@@ -193,24 +193,7 @@ echo "::group::Branding and image identity"
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="octarineOS"/' /usr/lib/os-release
 grep -qx 'PRETTY_NAME="octarineOS"' /usr/lib/os-release
 
-# Image identity: IMAGE_ID and IMAGE_VERSION (the fields os-release(5) defines for this). The version is the build's own
-# channel-neutral one (<YYYYMMDD>-<short sha>, passed in by `just build`), the same string as the OCI version label; a promoted image (testing -> latest) is the same
-# image, so it keeps exactly these fields.
-set_os_release_field() { # key value: replace the line when it exists, append it otherwise
-    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
-    if grep -q "^${key}=" "${file}"; then
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
-    else
-        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
-        echo "${key}=\"${value}\"" >> "${file}"
-    fi
-    grep -qx "${key}=\"${value}\"" "${file}"
-}
-set_os_release_field IMAGE_ID octarine-os
-set_os_release_field IMAGE_VERSION "${IMAGE_VERSION:-unknown}"
-bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os ]]'
-echo "== resulting os-release"
-cat /usr/lib/os-release
+# Image identity (IMAGE_ID, IMAGE_VERSION): written after the dracut run below, see there.
 
 # --- Branding: logo on the GDM login screen and the Plymouth boot screen ---
 # GDM: system_files ships zz-octarine-login-screen.gschema.override; compile the schemas so it takes effect.
@@ -242,6 +225,26 @@ DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add 
     -f "/usr/lib/modules/${kver}/initramfs.img"
 chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
 lsinitrd "/usr/lib/modules/${kver}/initramfs.img" | grep -F 'usr/share/plymouth/themes/octarine/watermark.png'
+
+# Image identity: IMAGE_ID and IMAGE_VERSION (the fields os-release(5) defines for this), written AFTER dracut: dracut copies os-release into the initramfs
+# (usr/lib/initrd-release), so a per-build IMAGE_VERSION there made the initramfs differ in every build; nothing reads IMAGE_VERSION from the initramfs. The version is the build's own
+# channel-neutral one (<YYYYMMDD>-<short sha>, passed in by `just build`), the same string as the OCI version label; a promoted image (testing -> latest) is the same
+# image, so it keeps exactly these fields.
+set_os_release_field() { # key value: replace the line when it exists, append it otherwise
+    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
+    if grep -q "^${key}=" "${file}"; then
+        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+    else
+        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
+        echo "${key}=\"${value}\"" >> "${file}"
+    fi
+    grep -qx "${key}=\"${value}\"" "${file}"
+}
+set_os_release_field IMAGE_ID octarine-os
+set_os_release_field IMAGE_VERSION "${IMAGE_VERSION:-unknown}"
+bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os ]]'
+echo "== resulting os-release"
+cat /usr/lib/os-release
 # --- end branding ---
 echo "::endgroup::"
 

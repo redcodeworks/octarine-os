@@ -469,6 +469,10 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `${BASE_IMAGE}@${BASE_INDEX_DIGEST}`, `dx-image.yml` (dx, gx, NVIDIA through build-extra) `${BASE_IMAGE}@${BASE_DIGEST}`, our default image, whose Created becomes that same E after the fix. The variable is
   deliberately not `SOURCE_DATE_EPOCH` in the job env (buildah would honor it in `podman build`). UNVERIFIED until a boot-free layer comparison of two same-commit builds. SOURCE_DATE_EPOCH during dnf5
   and dnf history deletion were NOT approved; the commit sha stays in os-release.
+  Second churn source (same day): dracut copies os-release into the initramfs as `usr/lib/initrd-release`, so the per-build `IMAGE_VERSION` made the initramfs (about 85 MB) differ in every build.
+  `build.sh` now writes `IMAGE_ID` and `IMAGE_VERSION` AFTER its dracut run (PRETTY_NAME stays before; the dracut command line is unchanged), and `variants/nvidia/nvidia.sh` does the same after its own
+  dracut run (its initramfs then carries the base image's os-release, constant for one base). Nothing reads IMAGE_VERSION from the initramfs (smoke tests and the version check read `/etc/os-release`).
+  Expected: only `usr/lib/initrd-release` differs from the previous image's initramfs. UNVERIFIED until a boot of the testing image and a member-by-member comparison of the initramfs.
   Undo: `git revert` the commit; `rpm-ostree compose build-chunked-oci` came back from git history.
 - **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
   shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image-version.sh`, never a channel
