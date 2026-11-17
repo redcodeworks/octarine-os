@@ -1154,10 +1154,10 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - One recipe in `60-custom.just` (group Setup, above the `toolbox` recipe: `tests/toolbox.sh` scans everything after it for `sudo`).
   A checklist of hardware steps; each has a detection that HIDES it when the machine lacks the hardware. The standalone recipes it
   calls stay unchanged and visible (it runs `ujust <recipe>`; `OCTARINE_UJUST` replaces the command in tests); only `amd-gpu`,
-  `amd-kargs` and `fido-key` have code of their own (plus the export steps, which use `box-export.sh`). Flags: `--yes` (ticked-by-default available steps that are not done; never
+  `amd-kargs` and `fido-key` have code of their own (plus the export steps, which use `box-export.sh`). Flags: `--yes` (the recommended available steps that are not done; never
   `amd-kargs`), `--no` (plan), `--list` (state per step: `available`, `done`, `not applicable (reason)`), `--only a,b` (a hidden step
   prints `not applicable: <step> (<reason>)` and the run exits 0), `--help`. No terminal and no flag: one question per step; a gum
-  terminal: the shared checklist (done steps unticked and marked); Esc exits 0.
+  terminal: the shared checklist, NOTHING pre-ticked (Kevin, 2026-11-17: why retry what is done; done steps only carry a `(done)` label, selection is opt-in; the no-terminal questions default to N too); Esc exits 0. `--yes` alone still runs the recommended steps (`default_of`) that are not done.
 - Steps and detection (paths are environment variables in tests): `sensors` (not a VM, `sensors-detect` present; done when
   `octarine-sensors.conf` or `nct6775.conf` exists in `/etc/modules-load.d`), `amd-gpu` (vendor `0x1002` and `/sys/module/amdgpu`;
   installs the LACT Flatpak system-wide and runs it with `LACT_UNATTENDED_SETUP=true`, UNVERIFIED without an AMD machine; done when

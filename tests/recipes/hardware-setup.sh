@@ -96,5 +96,12 @@ echo 'IMAGE_ID="octarine-os-nvidia"' >"$root/os-release-nv"
 card card1 0x10de
 OCTARINE_OS_RELEASE="$root/os-release-nv" run --yes
 check "NVIDIA image: --yes enrolls the Secure Boot key when it is not enrolled" logged "ujust enroll-secure-boot-key"
+mk gum 'echo "gum $*" >>"$LOG"; exit 0'
+: >"$LOG"
+OCTARINE_MENU_FORCE_TTY=1 PATH="$bin:$PATH" just --justfile "$justfile" hardware-setup >"$root/out" 2>&1 </dev/null
+rc=$?
+check "checklist: gum is called and nothing is pre-ticked (no --selected)" bash -c "grep -q 'gum choose' '$LOG' && ! grep -q -- '--selected ' '$LOG'"
+check "checklist: an empty result changes nothing and exits 0" test "$rc" = 0
+rm -f "$bin/gum"
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
