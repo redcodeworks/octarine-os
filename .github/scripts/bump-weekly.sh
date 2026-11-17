@@ -14,7 +14,9 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "${REPO_ROOT:-${here}/../..}" || exit 1
 base="${BUMP_BASE:-testing}"
-read -ra pins <<<"${BUMP_PINS:-chunkah brew bins bins-dx bins-gx}"  # BUMP_PINS: a subset, by hand or for the tests
+# BUMP_PINS: the pins to bump, space separated. No default: the matrix of bump-pins.yml is the only list of pins (one job per pin sets it to its own pin).
+read -ra pins <<<"${BUMP_PINS:-}"
+[[ ${#pins[@]} -gt 0 ]] || { echo "::error::BUMP_PINS is empty (the pins to bump, e.g. BUMP_PINS=\"bins bins-dx\")"; exit 1; }
 summary() { echo "$*"; [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "$*" >> "${GITHUB_STEP_SUMMARY}" || true; }
 
 git fetch -q origin "${base}" || { echo "::error::cannot fetch ${base}"; exit 1; }
@@ -23,7 +25,7 @@ if [[ -z "${DRY_RUN:-}" && "${start}" != "$(git rev-parse "origin/${base}")" ]];
     echo "::error::a real run must start from origin/${base} (this checkout is not it); use dry_run to try another ref"; exit 1
 fi
 day=$(date -u +%Y%m%d)
-summary "## Pin bumps"
+summary "## Pin bump: ${pins[*]}"
 failed=0
 
 open_prs() { # <pin>: "<number> <branch>" of every open PR into the base whose branch is bump/<pin>-...
