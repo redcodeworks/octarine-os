@@ -346,7 +346,7 @@ brew-bump tag="":
     sed -i -e "s/^ARG BREW_TAG=.*/ARG BREW_TAG=${tag}/" -e "s/^ARG BREW_DIGEST=.*/ARG BREW_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ghcr.io/ublue-os/brew:${tag}@sha256:${digest} (signature valid)"
 
-# Bump the octarine-bins pin: resolve the digest of a tag (default: latest), verify its cosign signature with keys/octarine-bins.pub, write tag and digest into the Containerfile
+# Bump the octarine-bins pin: resolve the digest of a tag (default: latest), verify its cosign signature with keys/octarine-bins.pub, write tag (the dated registry tag at that digest) and digest into the Containerfile
 [group('Image')]
 bins-bump tag="latest":
     #!/usr/bin/env bash
@@ -355,8 +355,7 @@ bins-bump tag="latest":
     digest=$(skopeo inspect --raw "docker://${ref}:{{ tag }}" | sha256sum | sed 's/ .*//')
     [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || { echo "cannot resolve ${ref}:{{ tag }}" >&2; exit 1; }
     cosign verify --key keys/octarine-bins.pub "${ref}@sha256:${digest}" > /dev/null || { echo "cosign verification failed for ${ref}@sha256:${digest}; the Containerfile is unchanged" >&2; exit 1; }
-    version=$(skopeo inspect --config "docker://${ref}@sha256:${digest}" | jq -r '.config.Labels["org.opencontainers.image.version"] // empty')
-    [[ "${version}" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || { echo "the image has no usable org.opencontainers.image.version label ('${version}')" >&2; exit 1; }
+    version=$(.github/scripts/bins-tag.sh "${ref}" "sha256:${digest}") || { echo "no dated tag (<YYYYMMDD>-<sha7>) of ${ref} points at sha256:${digest}" >&2; exit 1; }
     sed -i -e "s/^ARG BINS_TAG=.*/ARG BINS_TAG=${version}/" -e "s/^ARG BINS_DIGEST=.*/ARG BINS_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ${ref}:${version}@sha256:${digest} (signature valid)"
 

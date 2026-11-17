@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)
+        description: "Build even when the base digest and the gx inputs are unchanged"
         type: boolean
         default: false
 
