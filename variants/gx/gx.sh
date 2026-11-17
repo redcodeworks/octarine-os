@@ -27,7 +27,13 @@ echo "::endgroup::"
 # The binary components of the gx image: none yet (an empty COMPONENTS is valid for an empty required list); the script prints its own log group
 BINARIES_REQUIRED="" /ctx/install-binaries.sh
 
-# (no gx-only files: Sunshine and Steam bring their own units, udev rules and firewall services; a gx `system_files` tree would be copied here)
+echo "::group::gx: files (the Steam Big Picture gamescope session)"
+# gx-only files: the GDM session, its wrapper and the documented defaults (Sunshine and Steam bring their own units, udev rules and firewall services)
+cp -avf /ctx/system_files/. /
+test -x /usr/libexec/octarine-os/gamescope-session
+test -s /usr/share/wayland-sessions/steam-gamescope.desktop
+test -s /usr/share/octarine-os/gamescope-session.conf
+echo "::endgroup::"
 
 echo "::group::gx: image identity and kernel check"
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the

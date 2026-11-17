@@ -59,7 +59,8 @@ toggle-updates *args:
             sel=0; us_on "$id" && sel=1
             items+=("$id^$(us_label "$id")^$sel")
         done
-        menu_multi "Automatic updates: tick the ones that should run" "${items[@]}"
+        # a state editor: the ticks show what is on now (the one checklist that opts in to preselection)
+        MENU_KEEP_SELECTED=1 menu_multi "Automatic updates: tick the ones that should run" "${items[@]}"
         want=("${MENU_RESULT[@]}")
         if [ "${#want[@]}" -eq 0 ]; then
             any=0; for id in "${US_IDS[@]}"; do us_on "$id" && any=1; done

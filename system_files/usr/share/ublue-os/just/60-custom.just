@@ -20,7 +20,7 @@ user-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step. `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), editor (default editor: EDITOR, VISUAL and SUDO_EDITOR in one managed file, ~/.config/environment.d/50-editor.conf, for vi, nano, vim, nvim or hx, whichever are installed; the default answer keeps your current settings, your own startup files are never edited and a value you set there is reported; `--editor NAME` runs just this step without a menu; undo: delete the file), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'One-time user setup, a checklist with one y/n question per step; on a terminal with gum it starts with nothing ticked, and without gum each question defaults to no (--yes still runs the recommended steps). `ujust user-setup [user] [--yes|--no] [--only STEP[,STEP...]]`. Steps in order: groups (gamemode, input and libvirt where it is installed; sudo), shell (login shell zsh; sudo), flatpak (access overrides), fonts (Nerd Fonts from Homebrew casks: a 12-font developer set by default), editor (default editor: EDITOR, VISUAL and SUDO_EDITOR in one managed file, ~/.config/environment.d/50-editor.conf, for vi, nano, vim, nvim or hx, whichever are installed; the default answer keeps your current settings, your own startup files are never edited and a value you set there is reported; `--editor NAME` runs just this step without a menu; undo: delete the file), fish-terminal (Ptyxis fish profile and the starship prompt), search (GNOME search providers). --yes takes every default without asking (steps that need a value are skipped), --no only prints the plan. Sudo is used only by the groups and shell steps.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --only)
@@ -73,8 +73,11 @@ user-setup *args:
     }
     # ask <default y|n> <question>: sets $answer to y or n
     ask() {
-        local def=$1 q=$2 reply hint="[Y/n]"
-        [ "$def" = n ] && hint="[y/N]"
+        local def=$1 q=$2 reply idef hint="[y/N]"
+        # def "s" = a step question: --yes runs it, an interactive run starts at no (nothing is pre-chosen)
+        idef=$def
+        if [ "$def" = s ]; then def=y; idef=n; fi
+        [ "$idef" = y ] && hint="[Y/n]"
         case "$mode" in
             yes) answer=$def; return ;;
             no) answer=n; return ;;
@@ -84,7 +87,7 @@ user-setup *args:
         case "$reply" in
             [Yy]*) answer=y ;;
             [Nn]*) answer=n ;;
-            *) answer=$def ;;
+            *) answer=$idef ;;
         esac
     }
 
@@ -184,12 +187,12 @@ user-setup *args:
         esac
         menu_multi "User setup: choose the steps" \
             "^Account^0" \
-            "groups^Add $user to $menu_groups_text (sudo)^1" \
-            "shell^Login shell zsh (sudo)^1" \
-            "editor^Default editor for terminals and sudoedit (no sudo)^1" \
+            "groups^Add $user to $menu_groups_text (sudo)^0" \
+            "shell^Login shell zsh (sudo)^0" \
+            "editor^Default editor for terminals and sudoedit (no sudo)^0" \
             "^Apps^0" \
-            "flatpak^Flatpak access overrides^1" \
-            "fonts^Nerd Fonts from Homebrew casks^1" \
+            "flatpak^Flatpak access overrides^0" \
+            "fonts^Nerd Fonts from Homebrew casks^0" \
             "^Desktop^0" \
             "fish-terminal^Fish terminal profile with the starship prompt^1" \
             "search^GNOME search providers^1"
@@ -219,7 +222,7 @@ user-setup *args:
         record "groups" "already done"
     else
         echo "Will add $user to: ${groups_todo[*]} (uses sudo; takes effect at next login)."
-        ask y "Apply?"
+        ask s "Apply?"
         if [ "$answer" != y ]; then
             if [ "$mode" = no ]; then record "groups" "planned (would ask)"; else record "groups" "skipped (not applied)"; fi
         else
@@ -264,7 +267,7 @@ user-setup *args:
         record "login-shell" "skipped (not in /etc/shells)"
     else
         echo "Switch $user's login shell from ${cur:-unknown} to zsh? Takes effect at the next login; bash stays installed as the fallback."
-        ask y "Apply?"
+        ask s "Apply?"
         if [ "$answer" != y ]; then
             if [ "$mode" = no ]; then record "login-shell" "planned (would ask)"; else record "login-shell" "skipped (not applied)"; fi
         elif sudo usermod -s "$zsh" "$user"; then
@@ -715,7 +718,7 @@ user-setup *args:
         [ "$b_state" = otherfile ] && echo "Part B skipped: $conf exists with other content; left alone."
         if [ "$a_state" = todo ] || [ "$b_state" = todo ]; then
             echo "Sets up a Ptyxis profile that starts fish (made the default; open new Ptyxis windows to see it) and the starship prompt (brew install starship if needed, hooked into fish through $conf)."
-            ask y "Apply?"
+            ask s "Apply?"
             run_it=$answer
         else
             run_it=n
@@ -845,7 +848,7 @@ user-setup *args:
             record "gnome-search: calculator first" "already done"
         else
             echo "Enables the GNOME search providers for ${to_enable[*]:-(none needed)} and puts the Calculator first in the search order. Entries you already have stay as they are."
-            ask y "Apply?"
+            ask s "Apply?"
             if [ "$answer" != y ]; then
                 if [ "$mode" = no ]; then r="planned (would ask)"; else r="skipped (not applied)"; fi
                 record "gnome-search: providers" "$r"
@@ -1002,13 +1005,13 @@ gaming-setup *args:
     if ! declare -F menu_ready >/dev/null; then menu_ready() { return 1; }; menu_ready_one() { return 1; }; menu_tty() { return 1; }; menu_title() { printf '%s\n' "$1"; }; menu_confirm() { return 1; }; fi
     mode=ask
     steps=""
-    valid=" steam protonup lutris extensions extest desktop gamemode reset "
-    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|reset ...] [--yes|--no]"
+    valid=" steam protonup lutris extensions extest desktop gamemode gamescope-session reset "
+    usage="Usage: ujust gaming-setup [steam|protonup|lutris|extensions|extest|desktop|gamemode|gamescope-session|reset ...] [--yes|--no]"
     for a in "$@"; do
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step (on a terminal with gum it starts with nothing ticked; without gum each question defaults to no), or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), gamescope-session (gx image only, never part of --yes: writes the output size and refresh rate of your display into a marked block of ~/.config/environment.d/10-gamescope-session.conf, for the "Steam Big Picture (gamescope)" session in the GDM gear menu; lines you add outside the block are kept, a block you changed is shown as a diff and replaced only after a yes with a timestamped backup; every setting is documented in /usr/share/octarine-os/gamescope-session.conf, including GAMESCOPE_SESSION_SCHED: the lavd scheduler runs only while the session does, set it to skip to turn that off; ending that session returns to the GDM login screen: leave Steam from its power menu or run steam -shutdown), reset (undo: generated launchers, the PATH line, optionally the extest library, the gamemode file and the gamescope-session block). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -1028,6 +1031,11 @@ gaming-setup *args:
     ext_lib32="$ext_dest/lib/libextest.so"
     ext_so="$ext_dest/lib64/libextest.so"
     marker="X-Octarine-Generated=ujust gaming-setup"
+    gs_src="${GAMING_SETUP_GAMESCOPE_SRC:-/usr/share/octarine-os/gamescope-session.conf}"
+    gs_dest="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/10-gamescope-session.conf"
+    gs_begin="# >>> octarine-os: ujust gaming-setup gamescope-session (managed lines; the command rewrites only this block, lines outside it are yours)"
+    gs_end="# <<< octarine-os: ujust gaming-setup gamescope-session"
+    menu_chosen=0
     names=()
     results=()
     undos=()
@@ -1040,14 +1048,17 @@ gaming-setup *args:
     explicit() { case " $steps " in *" $1 "*) return 0 ;; esac; return 1; }
     # ask <default y|n> <question>: an explicitly named step counts as yes
     ask() {
-        local def=$1 q=$2 reply hint="[Y/n]"
-        [ "$def" = n ] && hint="[y/N]"
+        local def=$1 q=$2 reply idef hint="[y/N]"
+        # def "s" = a step question: --yes runs it, an interactive run starts at no (nothing is pre-chosen)
+        idef=$def
+        if [ "$def" = s ]; then def=y; idef=n; fi
+        [ "$idef" = y ] && hint="[Y/n]"
         if [ "$mode" = no ]; then answer=n; return; fi
         if [ "$cur" != reset ] && [ "${ask_noexplicit:-0}" = 0 ] && explicit "$cur"; then answer=y; return; fi
         if [ "$mode" = yes ]; then answer=$def; return; fi
         printf '%s %s ' "$q" "$hint"
         read -r reply || reply=""
-        case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$def ;; esac
+        case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$idef ;; esac
     }
     skipped_result() { if [ "$mode" = no ]; then echo "planned (would ask)"; else echo "skipped (not applied)"; fi; }
 
@@ -1059,6 +1070,24 @@ gaming-setup *args:
         echo "== $1"
         echo "Steam is installed from the image (the steam RPM), so the Flatpak Steam steps do not apply: nothing to do."
         record "$1" "skipped (Steam is installed from the image)"
+    }
+
+    # detect_res: the current display mode as WIDTHxHEIGHT@HZ in $res (GAMING_SETUP_RES first, then Mutter, then niri); empty when it cannot tell
+    # (shared by the desktop and gamescope-session steps)
+    detect_res() {
+        local st cur_mode r
+    res=${GAMING_SETUP_RES:-}
+    if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
+        st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
+        cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
+        if [ -n "$cur_mode" ]; then
+            res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
+        fi
+    fi
+    if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
+        [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
+    fi
     }
 
     app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
@@ -1119,7 +1148,6 @@ gaming-setup *args:
         echo "$v"
     }
 
-    gm_default=1
     # Terminal with gum and no step named: a checklist of the steps (the chosen ones run as if named, so they count
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
@@ -1128,26 +1156,28 @@ gaming-setup *args:
         if native_steam; then
             menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
                 "^Apps^0" \
-                "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "protonup^ProtonUp-Qt^0" "lutris^Lutris^0" \
                 "^Steam extras^0" \
                 "extest^extest libraries (Steam Input on Wayland)^0" \
                 "^Tuning^0" \
-                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^0" \
+                "gamescope-session^Steam Big Picture session: your display's size and refresh rate^0"
         else
             menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
                 "^Apps^0" \
-                "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "steam^Steam^0" "protonup^ProtonUp-Qt^0" "lutris^Lutris^0" \
                 "^Steam extras^0" \
-                "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
+                "extensions^gamescope, MangoHud, Proton-GE and the PATH override^0" \
                 "extest^extest libraries (Steam Input on Wayland)^0" \
-                "desktop^Generated Steam launchers^1" \
+                "desktop^Generated Steam launchers^0" \
                 "^Tuning^0" \
-                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^0"
         fi
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
         steps=" ${MENU_RESULT[*]}"
+        menu_chosen=1
     fi
 
     if selected steam && ! explicit reset; then
@@ -1183,7 +1213,7 @@ gaming-setup *args:
             record "extensions" "already done"
         else
             echo "Installs (${inst}): ${todo[*]:-nothing new} and sets the Steam PATH override so gamescope and mangohud resolve inside the sandbox. Steam runtime branch: $branch."
-            ask y "Apply?"
+            ask s "Apply?"
             if [ "$answer" != y ]; then
                 record "extensions" "$(skipped_result)"
             else
@@ -1259,18 +1289,7 @@ gaming-setup *args:
         # is quoted and the dollar sign escaped (the desktop entry spec: \\$ in the file is \$ after unescaping, $ after
         # quoting); the shell must not see it, hence single quotes here.
         if [ -f "$ext_lib32" ] && [ -f "$ext_so" ]; then hook=' --filesystem='"$ext_dest"':ro "--env=LD_PRELOAD='"$ext_dest"'/\\$LIB/libextest.so"'; label="extest"; fi
-        res=${GAMING_SETUP_RES:-}
-        if [ -z "$res" ] && command -v gdbus >/dev/null 2>&1; then
-            st=$(gdbus call --session --dest org.gnome.Mutter.DisplayConfig --object-path /org/gnome/Mutter/DisplayConfig --method org.gnome.Mutter.DisplayConfig.GetCurrentState 2>/dev/null | tr -d '\n')
-            cur_mode=$(printf '%s' "$st" | grep -oE "\('[0-9]+x[0-9]+@[0-9.]+', [0-9]+, [0-9]+, [0-9.]+, [^{]*\{[^}]*'is-current': <true>" | head -1)
-            if [ -n "$cur_mode" ]; then
-                res=$(printf '%s' "$cur_mode" | sed -E "s/^\('[0-9]+x[0-9]+@[0-9.]+', ([0-9]+), ([0-9]+), ([0-9.]+),.*/\1x\2@\3/")
-            fi
-        fi
-        if [ -z "$res" ] && command -v niri >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-            r=$(niri msg --json outputs 2>/dev/null | jq -r 'to_entries[0].value | .modes[.current_mode] | "\(.width)x\(.height)@\(.refresh_rate / 1000)"' 2>/dev/null)
-            [[ "$r" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]] && res=$r
-        fi
+        detect_res
         if [ -z "$res" ] && [ "$mode" = ask ] && ! explicit desktop; then
             printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip the gamescope launcher): '
             read -r res || res=""
@@ -1285,7 +1304,7 @@ gaming-setup *args:
             gw=${res%%x*}; rest=${res#*x}; gh=${rest%%@*}; ghz=${rest#*@}; ghz=$(printf '%.0f' "$ghz")
         fi
         echo "Generates Steam launchers in $apps_dir${label:+ with extest hooked in}${res:+, and a gamescope launcher at ${gw}x${gh} ${ghz} Hz}; only files carrying the $marker line are ever overwritten."
-        ask y "Apply?"
+        ask s "Apply?"
         if [ "$answer" != y ]; then
             record "desktop" "$(skipped_result)"
         else
@@ -1345,7 +1364,7 @@ gaming-setup *args:
                 ask_noexplicit=1 ask n "Replace it?"
             else
                 echo "Installs the GameMode tuning (renice=10, desiredgov=performance, tuned latency-performance while a game runs) as $dest_ini."
-                ask y "Apply?"
+                ask s "Apply?"
             fi
             if [ "$answer" != y ]; then
                 record "gamemode" "$(skipped_result)"
@@ -1366,6 +1385,91 @@ gaming-setup *args:
                 else
                     failed=1
                     record "gamemode" FAILED
+                fi
+            fi
+        fi
+    fi
+    fi
+
+    # gamescope-session (gx image): the display's size and refresh rate for the Steam Big Picture (gamescope) GDM session, as a marked block in
+    # ~/.config/environment.d/10-gamescope-session.conf. Opt-in only (named or ticked; under --yes it needs to be named). Detection is the one of the desktop step.
+    if selected gamescope-session && ! explicit reset; then
+    cur=gamescope-session
+    echo
+    echo "== gamescope-session (display settings of the Steam Big Picture session)"
+    if [ ! -f "$gs_src" ]; then
+        echo "Skipped: this image has no Steam Big Picture (gamescope) session ($gs_src is missing; it is part of the gx image)."
+        record "gamescope-session" "skipped (not a gx image)"
+    else
+        detect_res
+        if [ -z "$res" ] && [ "$mode" = ask ] && { ! explicit gamescope-session || [ "$menu_chosen" = 1 ]; }; then
+            printf 'Could not detect the display mode. Enter it as WIDTHxHEIGHT@HZ (empty to skip): '
+            read -r res || res=""
+        fi
+        if [ -n "$res" ] && ! [[ "$res" =~ ^[0-9]+x[0-9]+@[0-9.]+$ ]]; then
+            echo "Ignoring '$res': not WIDTHxHEIGHT@HZ."
+            res=""
+        fi
+        if [ -z "$res" ]; then
+            echo "No display mode found, nothing written (set GAMING_SETUP_RES=WIDTHxHEIGHT@HZ to give it)."
+            record "gamescope-session" "skipped (no display mode)"
+        else
+            gw=${res%%x*}; rest=${res#*x}; gh=${rest%%@*}; ghz=${rest#*@}; ghz=$(printf '%.0f' "$ghz")
+            gs_block() { printf '%s\n' "$gs_begin" "SCREEN_WIDTH=$gw" "SCREEN_HEIGHT=$gh" "REFRESH_RATE=$ghz" "$gs_end"; }
+            gs_current() { awk -v b="$gs_begin" -v e="$gs_end" '$0 == b { p = 1 } p { print } $0 == e { p = 0 }' "$1"; }
+            has_b=0; has_e=0
+            if [ -f "$gs_dest" ]; then
+                grep -qxF "$gs_begin" "$gs_dest" && has_b=1
+                grep -qxF "$gs_end" "$gs_dest" && has_e=1
+            fi
+            if [ "$has_b" != "$has_e" ]; then
+                echo "Failed: $gs_dest has only one of the two marker lines of the managed block; fix or remove it by hand, nothing was changed." >&2
+                failed=1
+                record "gamescope-session" FAILED
+            elif [ "$has_b" = 1 ] && [ "$(gs_current "$gs_dest")" = "$(gs_block)" ]; then
+                echo "$gs_dest already has ${gw}x${gh} at ${ghz} Hz."
+                record "gamescope-session" "already done"
+            else
+                echo "Writes SCREEN_WIDTH=$gw SCREEN_HEIGHT=$gh REFRESH_RATE=$ghz (your display's current mode) into a marked block of $gs_dest. The output name (OUTPUT_CONNECTOR) is not detected: add it yourself if you need one. All settings: $gs_src."
+                if [ "$has_b" = 1 ]; then
+                    echo "The block in the file differs (another display, or an edit of yours):"
+                    diff -u <(gs_current "$gs_dest") <(gs_block)
+                    echo "Replacing the block keeps a timestamped backup of the file; lines outside the block are not touched."
+                    ask_noexplicit=1 ask n "Replace the block?"
+                elif [ -f "$gs_dest" ]; then
+                    echo "The file exists without the block; the block is appended at the end, so its lines win over the same names above it. Your lines stay; a timestamped backup is kept."
+                    ask_noexplicit=1 ask n "Append the block?"
+                else
+                    ask n "Apply?"
+                fi
+                if [ "$answer" != y ]; then
+                    record "gamescope-session" "$(skipped_result)"
+                else
+                    mkdir -p "$(dirname "$gs_dest")"
+                    backup=""
+                    if [ -f "$gs_dest" ]; then
+                        backup="$gs_dest.bak-$(date +%Y%m%d%H%M%S)"
+                        cp -p -- "$gs_dest" "$backup"
+                    fi
+                    tmp=$(mktemp "$gs_dest.XXXXXX")
+                    blockfile=$(mktemp)
+                    gs_block >"$blockfile"
+                    if [ "$has_b" = 1 ]; then
+                        awk -v b="$gs_begin" -v e="$gs_end" -v nf="$blockfile" '$0 == b { while ((getline l < nf) > 0) print l; skip = 1; next } skip && $0 == e { skip = 0; next } skip { next } { print }' "$gs_dest" >"$tmp"
+                    elif [ -f "$gs_dest" ]; then
+                        { cat -- "$gs_dest"; [ -z "$(tail -c1 "$gs_dest")" ] || echo; echo; cat -- "$blockfile"; } >"$tmp"
+                    else
+                        { echo "# Settings of the Steam Big Picture (gamescope) session; every variable is documented in $gs_src. Add your own lines outside the managed block."; cat -- "$blockfile"; } >"$tmp"
+                    fi
+                    if [ -s "$tmp" ] && chmod 644 "$tmp" && mv -f -- "$tmp" "$gs_dest"; then
+                        echo "Wrote $gs_dest${backup:+ (previous file saved as $backup)}. Pick \"Steam Big Picture (gamescope)\" in the GDM gear menu at the next login screen."
+                        record "gamescope-session" applied "ujust gaming-setup reset removes the block (or delete $gs_dest)"
+                    else
+                        rm -f -- "$tmp"
+                        failed=1
+                        record "gamescope-session" FAILED
+                    fi
+                    rm -f -- "$blockfile"
                 fi
             fi
         fi
@@ -1435,6 +1539,25 @@ gaming-setup *args:
     fi
     fi
 
+    # reset (continued): the managed block of the gamescope session settings (the rest of the file is yours)
+    if explicit reset; then
+        ask y "Remove the managed gamescope session block from $gs_dest?"
+        if [ "$answer" = y ]; then
+            if [ -f "$gs_dest" ] && grep -qxF "$gs_begin" "$gs_dest" && grep -qxF "$gs_end" "$gs_dest"; then
+                tmp=$(mktemp "$gs_dest.XXXXXX")
+                awk -v b="$gs_begin" -v e="$gs_end" '$0 == b { skip = 1; next } skip && $0 == e { skip = 0; next } skip { next } { print }' "$gs_dest" >"$tmp"
+                # only our header comment (and blank lines) left: remove the file
+                if ! grep -qvE '^[[:space:]]*(#.*)?$' "$tmp"; then rm -f -- "$tmp" "$gs_dest"; echo "Removed $gs_dest (nothing of yours was in it)."; else chmod 644 "$tmp" && mv -f -- "$tmp" "$gs_dest"; echo "Removed the block from $gs_dest; your lines stay."; fi
+                record "reset: gamescope session" applied
+            else
+                echo "No managed block in $gs_dest; left alone."
+                record "reset: gamescope session" "skipped (none found)"
+            fi
+        else
+            record "reset: gamescope session" "$(skipped_result)"
+        fi
+    fi
+
     echo
     echo "== Summary (mode: $mode)"
     printf '%-28s %s\n' "STEP" "RESULT"
@@ -1500,9 +1623,9 @@ niri-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step. `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed), keybinds (EXPERIMENTAL keybind wizard, never part of the default run: you keep niri'\''s default key bindings unless you start it). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept, the keybind wizard is not started), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'
+            help | --help | -h) printf '%s\n' 'Set up a niri session in your home directory, a checklist with one y/n question per step; on a terminal with gum it starts with nothing ticked, and without gum each question defaults to no (--yes still runs the recommended steps). `ujust niri-setup [--yes|--no] [--only STEP[,STEP...]]`. Steps: niri (copies the image'\''s /etc/niri/*.kdl into ~/.config/niri/: a config.kdl that only lists include lines, plus one small file per topic; they are yours to edit, and deleting an include line from config.kdl drops that part), portals (~/.config/xdg-desktop-portal/niri-portals.conf: the packaged niri portal choices with the Secret portal pointed at oo7, which owns the secret service on this image), polkit (~/.config/noctalia/10-octarine-os.toml: turns on Noctalia'\''s built-in polkit agent, because niri has none; skipped when Noctalia is not installed), keybinds (EXPERIMENTAL keybind wizard, never part of the default run: you keep niri'\''s default key bindings unless you start it). A file that already exists and differs is never replaced silently: you see a diff, the default is keep, and a replacement first saves FILE.bak-YYYYMMDD-HHMMSS. --yes takes the defaults (existing different files are kept, the keybind wizard is not started), --no only prints the plan, --only runs the named steps. No sudo is used. niri applies config changes live; restart Noctalia for the polkit drop-in; the portal file applies at your next login.'
             printf '%s\n' 'Terminal for Mod+T (step terminal): `ujust niri-setup --only terminal --terminal alacritty|ptyxis|ghostty|kitty|wezterm|foot [--force]`, or tick the step in the checklist and pick one from the terminals found on this machine (Alacritty, the default, is always offered; the others only when their program is installed). It rewrites only the Mod+T line of YOUR ~/.config/niri/40-binds.kdl (and of 40-binds-standard.kdl when the keybind wizard made one) and records the choice in ~/.config/octarine-os/niri-terminal, which the keybind wizard reads. A Mod+T line you changed yourself is never touched: the exact line to use is printed instead. A terminal that is not installed asks first (default no) or needs --force, because the key would open nothing. Re-running changes the choice; the shipped /etc/niri files and templates stay as they are. Undo: run it again with --terminal alacritty.'
-            printf '%s\n' 'Keybind wizard (experimental): the layouts and generated files may change between image versions. It validates the result with `niri validate` and restores the previous files on failure, and you can always return to niri'\''s defaults by putting include "40-binds.kdl" back in ~/.config/niri/config.kdl. Questions: the keyboard layout (Standard keys always, plus Compact = vim-style hjkl, or HHKB; the two extras exclude each other), the modifier for switching (focus) columns and workspaces, the modifier for moving them (must differ from the switching one) and the modifier for other actions. Modifiers: ctrl-alt (default for switching), ctrl-super (default for moving), meh (Ctrl+Alt+Shift), hypr (Ctrl+Alt+Shift+Super) and, for other actions only, super (default). MEH and HYPR need keys mapped in your keyboard firmware (a custom QMK mapping); most keyboards do not have them, so they are never preselected. It writes 40-binds-standard.kdl and 41-binds-compact.kdl or 41-binds-hhkb.kdl into ~/.config/niri/ and replaces the include "40-binds.kdl" line of config.kdl. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M] [--move-mod M] [--other-mod M]`; --no-wizard keeps the defaults; unknown names and the same modifier for switching and moving exit 2.'
+            printf '%s\n' 'Keybind wizard (experimental): the layouts and generated files may change between image versions. It validates the result with `niri validate` and restores the previous files on failure, and you can always return to niri'\''s defaults by putting include "40-binds.kdl" back in ~/.config/niri/config.kdl. Questions: the keyboard layout (Standard keys always, plus Compact = vim-style hjkl, or HHKB; the two extras exclude each other), the modifier for switching (focus) columns and workspaces, the modifier for moving them (must differ from the switching one) and the modifier for other actions. Modifiers: ctrl-alt (default for switching), ctrl-super (default for moving), meh (Ctrl+Alt+Shift), hypr (Ctrl+Alt+Shift+Super) and, for other actions only, super (default). MEH and HYPR need keys mapped in your keyboard firmware (a custom QMK mapping); most keyboards do not have them, so they are never offered as a default. It writes 40-binds-standard.kdl and 41-binds-compact.kdl or 41-binds-hhkb.kdl into ~/.config/niri/ and replaces the include "40-binds.kdl" line of config.kdl. Without a menu: `ujust niri-setup --only keybinds --keybinds standard|compact|hhkb [--switch-mod M] [--move-mod M] [--other-mod M]`; --no-wizard keeps the defaults; unknown names and the same modifier for switching and moving exit 2.'
             exit 0 ;;
             --keybinds | --switch-mod | --move-mod | --other-mod)
                 i=$((i + 1))
@@ -1576,8 +1699,11 @@ niri-setup *args:
     }
     # ask <default y|n> <question>: sets $answer. --yes takes the default, --no never applies.
     ask() {
-        local def=$1 q=$2 reply hint="[Y/n]"
-        [ "$def" = n ] && hint="[y/N]"
+        local def=$1 q=$2 reply idef hint="[y/N]"
+        # def "s" = a step question: --yes runs it, an interactive run starts at no (nothing is pre-chosen)
+        idef=$def
+        if [ "$def" = s ]; then def=y; idef=n; fi
+        [ "$idef" = y ] && hint="[Y/n]"
         case "$mode" in
             yes) answer=$def; return ;;
             no) answer=n; return ;;
@@ -1587,12 +1713,12 @@ niri-setup *args:
         case "$reply" in
             [Yy]*) answer=y ;;
             [Nn]*) answer=n ;;
-            *) answer=$def ;;
+            *) answer=$idef ;;
         esac
     }
 
     # ask_apply: the "Apply?" question of a step; a step chosen in the checklist was confirmed there already
-    ask_apply() { if [ "$preconfirmed" = 1 ] && [ "$mode" != no ]; then answer=y; else ask y "Apply?"; fi; }
+    ask_apply() { if [ "$preconfirmed" = 1 ] && [ "$mode" != no ]; then answer=y; else ask s "Apply?"; fi; }
 
     # place <label> <src> <dest>: copy src to dest unless the destination is identical (already done). A different
     # existing file is never replaced silently: diff, default keep, backup before an explicit yes. Sets $place_result to
@@ -2016,11 +2142,11 @@ niri-setup *args:
     if [ "$mode" = ask ] && [ -z "$only_list" ] && menu_ready; then
         menu_title "octarineOS niri setup"
         menu_multi "Niri setup: choose the steps (no sudo; nothing existing is replaced without asking)" \
-            "niri^Niri config files in ~/.config/niri^1" \
-            "portals^Portal config with the oo7 secret portal^1" \
-            "polkit^Noctalia polkit agent drop-in^1" \
-            "keybinds^Keybind wizard (experimental)^$kb_flags" \
-            "terminal^Terminal that Mod+T opens (Alacritty, Ptyxis, Ghostty, Kitty, WezTerm, Foot)^$term_flags"
+            "niri^Niri config files in ~/.config/niri^0" \
+            "portals^Portal config with the oo7 secret portal^0" \
+            "polkit^Noctalia polkit agent drop-in^0" \
+            "keybinds^Keybind wizard (experimental)^0" \
+            "terminal^Terminal that Mod+T opens (Alacritty, Ptyxis, Ghostty, Kitty, WezTerm, Foot)^0"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
@@ -2521,7 +2647,7 @@ luks-tpm-unlock *args:
     want=()
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--force] [--yes|--no]`. The result is the same however often it runs: enroll ALWAYS runs one systemd-cryptenroll call that enrolls the new TPM2 key and then wipes the old TPM2 slot (never any other slot: no --wipe-slot=all). Which devices are offered or ticked by default depends on a probe: a device that already has a TPM2 key is not ticked and `--yes` leaves it alone; naming a device, or --force (every device), re-enrolls it. It REFUSES to enroll or remove on a volume that has no unlock method other than the TPM2 key (a passphrase, recovery key or FIDO2 key): add a recovery key first with `sudo systemd-cryptenroll DEVICE --recovery-key --unlock-tpm2-device=auto`, or use `sudo cryptsetup luksAddKey`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Let the TPM unlock LUKS volumes at boot. `ujust luks-tpm-unlock [enroll|remove] [DEVICE...] [--pcrs=7+14|7] [--pin] [--force] [--yes|--no]`. The result is the same however often it runs: enroll ALWAYS runs one systemd-cryptenroll call that enrolls the new TPM2 key and then wipes the old TPM2 slot (never any other slot: no --wipe-slot=all). The checklist starts with nothing ticked. Plain `--yes` picks the devices by a probe: a device that already has a TPM2 key is left alone; naming a device, or --force (every device), re-enrolls it. It REFUSES to enroll or remove on a volume that has no unlock method other than the TPM2 key (a passphrase, recovery key or FIDO2 key): add a recovery key first with `sudo systemd-cryptenroll DEVICE --recovery-key --unlock-tpm2-device=auto`, or use `sudo cryptsetup luksAddKey`. It lists every LUKS device (root and data), shows which already have a TPM2 key, and asks which to change; DEVICE is a path or UUID. enroll replaces an existing TPM2 key, then asks for the volume passphrase; remove deletes only the TPM2 key (passphrases stay). PCR 7+14 (default) ties the key to the Secure Boot state and to the enrolled MOK keys, so enrolling or removing a MOK key breaks the unlock until you re-enroll; --pcrs=7 ties it to the Secure Boot state only. --pin asks for a PIN at boot as well. Uses sudo (YubiKey). On AMD CPUs read the warning it prints first.'; exit 0 ;;
             enroll | remove) action=$a ;;
             --pcrs=*) pcrs=${a#--pcrs=} ;;
             --pin) pin=1 ;;
@@ -2601,10 +2727,7 @@ luks-tpm-unlock *args:
     elif menu_ready; then
         items=()
         for d in "${devs[@]}"; do
-            sel=0
-            if [ "$action" = enroll ] && [ "${tpm_of[$d]}" = no ]; then sel=1; fi
-            if [ "$action" = remove ] && [ "${tpm_of[$d]}" = yes ]; then sel=1; fi
-            items+=("$d^$(describe "$d")^$sel")
+            items+=("$d^$(describe "$d")^0")
         done
         menu_multi "LUKS devices: tick the ones to $action" "${items[@]}"
         chosen=("${MENU_RESULT[@]}")
@@ -2822,7 +2945,7 @@ hardware-setup *args:
     while [ "$i" -lt "${#args[@]}" ]; do
         a=${args[$i]}
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image; it keeps the layer you run, dx or gx, but on an fx (dx-gx) machine it moves to nvidia-dx and drops the gx layer, because nvidia-dx-gx does not exist), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is ticked by default (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Vendor and hardware specific setup, one checklist. `ujust hardware-setup [--yes|--no|--list] [--only STEP[,STEP...]]`. Every step detects its hardware and is hidden when the machine does not have it. The menu starts with nothing ticked (a finished step is only marked done): you tick what you want to run. Steps: sensors (fan and temperature chip driver; runs ujust sensors-setup), amd-gpu (the LACT Flatpak and its daemon lactd for AMD GPUs), amd-kargs (optional: the kernel argument amdgpu.ppfeaturemask that unlocks overclocking in LACT; not shipped by default; needs sudo and a reboot, and the reboot must come BEFORE the next image update, which would otherwise replace the pending change; --list shows such a step as pending reboot), amd-cpu-gaming (GameMode tuning for amd-pstate; runs ujust gaming-setup gamemode), rocm (AMD GPU compute tools in a rootless distrobox; runs ujust toolbox rocm) and rocm-export, nvidia (switch to the NVIDIA image; runs ujust switch-image; it keeps the layer you run, dx or gx, but on an fx (dx-gx) machine it moves to nvidia-dx and drops the gx layer, because nvidia-dx-gx does not exist), cuda (CUDA toolbox; runs ujust dev --only cuda, dx image) and cuda-export, secure-boot (enroll the image key; runs ujust enroll-secure-boot-key), tpm-luks (TPM2 auto-unlock; runs ujust luks-tpm-unlock), fido-key (register a security key for sudo and polkit through pam_u2f; needs a touch), iommu (kernel arguments iommu=pt, plus intel_iommu=on on Intel, for device passthrough; optional; runs ujust virthost-setup --only iommu, dx image; sudo, reboot), wake-on-lan (Wake-on-LAN for the wired NIC; runs ujust wake-on-lan). The standalone recipes stay as they are; this menu only calls them. --list shows every step as available, done or not applicable with the reason. --only names steps (a step that does not apply prints "not applicable" and exits 0). --yes runs every available step that is on its recommended list (never the optional ones, and never one that is already done), --no only prints the plan. Steps that use sudo or a hardware touch say so and are never retried. ROCm and CUDA boxes export nothing by default: --export also runs the export steps (rocm-export: hipcc, rocminfo, rocm-smi; cuda-export: nvcc) with distrobox-export into ~/.local/bin, resolving each real path inside the box and never overwriting a file that is not an export of that box; --unexport removes only those wrappers. Undo of an export: ujust hardware-setup --only rocm-export --unexport (or distrobox-export --bin PATH --export-path ~/.local/bin --unexport), and distrobox rm --force rocm or cuda for the box itself. Wrappers start the container on first use and cover only what is exported; entering the box (distrobox enter rocm -- rocminfo, distrobox enter cuda -- nvcc ...) always works without them. The rocm step installs the ROCm tools from Fedora in a rootless distrobox (nothing on the host); whether that build supports your GPU, for example RDNA4 gfx1201, is not verified.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
@@ -2999,7 +3122,7 @@ hardware-setup *args:
             wake-on-lan) [ "$(nmcli -g 802-3-ethernet.wake-on-lan connection show "$(wol_profile)" 2>/dev/null | head -n1)" = magic ] ;;
         esac
     }
-    default_of() { # 1 when ticked by default
+    default_of() { # 1 when plain --yes runs it (never a menu or prompt default: those start empty)
         case "$1" in
             sensors | amd-gpu | amd-cpu-gaming | nvidia | tpm-luks | fido-key) echo 1 ;;
             iommu | wake-on-lan) echo 0 ;;
@@ -3162,10 +3285,9 @@ hardware-setup *args:
     elif [ "$mode" = ask ] && menu_ready; then
         items=()
         for s in "${avail[@]}"; do
-            sel=$(default_of "$s")
             label=${text[$s]}
-            if [ "${isdone[$s]}" = 1 ]; then sel=0; label+=" (done)"; fi
-            items+=("$s^$label^$sel")
+            if [ "${isdone[$s]}" = 1 ]; then label+=" (done)"; fi
+            items+=("$s^$label^0")
         done
         menu_title "octarineOS hardware setup"
         menu_multi "Hardware setup: choose the steps (only what this machine has is listed)" "${items[@]}"
@@ -3178,11 +3300,9 @@ hardware-setup *args:
         # no terminal menu: ask one question per available step
         for s in "${avail[@]}"; do
             [ "${isdone[$s]}" = 1 ] && continue
-            def=$(default_of "$s")
-            hint="[y/N]"; [ "$def" = 1 ] && hint="[Y/n]"
-            printf '%s %s ' "${text[$s]}?" "$hint"
+            printf '%s [y/N] ' "${text[$s]}?"
             read -r reply || reply=""
-            case "$reply" in [Yy]*) chosen+=("$s") ;; [Nn]*) ;; *) [ "$def" = 1 ] && chosen+=("$s") ;; esac
+            case "$reply" in [Yy]*) chosen+=("$s") ;; esac
         done
     fi
 
@@ -3913,7 +4033,7 @@ toolbox *args:
 
     # One row per tool or group, fields separated by ^ :
     #   id ^ label ^ source (image, installer or group) ^ tool name or installer URL ^ installed test
-    #   ^ environment for the installer ^ installer arguments ^ preselected (1/0) ^ exports ^ note
+    #   ^ environment for the installer ^ installer arguments ^ preselected (unused: the checklist starts with nothing ticked) ^ exports ^ note
     # image rows are baked into the toolbox image (packages/dev.txt in the octarine-images repo); the recipe
     # cannot install packages (that would need sudo), it only sets them up and exports them. Group rows are exported without a checklist.
     # Exports, space separated: cmd:NAME exports the binary command -v finds in the box (skipped when absent),
@@ -5044,7 +5164,6 @@ toolbox *args:
             sel[i]=0
             if [ "${states[i]}" = missing ]; then
                 any=1
-                if [ "$def" = 1 ]; then sel[i]=1; fi
                 if [ "$cur" -lt 0 ]; then cur=$i; fi
             fi
         done
@@ -5431,7 +5550,6 @@ toolbox *args:
                 ist[i]=done
             elif ide_detect "${ide_ids[i]}"; then
                 ist[i]=ready
-                isel[i]=1
                 any=1
                 if [ "$icur" -lt 0 ]; then icur=$i; fi
             else

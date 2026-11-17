@@ -6,7 +6,7 @@
 # only reported (INFO; what could not be installed is also in /usr/share/octarine-os/optional-packages-missing).
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant, octarine-os-dx-gx on the dx image: there the dev-only recipe check below is skipped, because the dx layer below legitimately ships it).
-# For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, LIB_DIR.
+# For tests only: LIBEXEC_DIR, MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, LIB_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the pipeline fails).
 # Output goes to a variable or a file first.
@@ -71,6 +71,24 @@ check "the uhid module is loaded at boot (modules-load.d; /dev/uinput gets its s
 check "the Sunshine user unit is shipped" "test -s ${unit_dir}/app-dev.lizardbyte.app.Sunshine.service"
 check "...and NOT enabled by default (the user runs: systemctl --user enable --now app-dev.lizardbyte.app.Sunshine)" "! systemctl --global is-enabled app-dev.lizardbyte.app.Sunshine.service"
 check "firewalld has the sunshine and steam-streaming services" "{ test -s ${lib_dir}/firewalld/services/sunshine.xml || test -s ${etc_dir}/firewalld/services/sunshine.xml; } && { test -s ${lib_dir}/firewalld/services/steam-streaming.xml || test -s ${etc_dir}/firewalld/services/steam-streaming.xml; }"
+
+echo "== Steam Big Picture gamescope session (GDM): session file, wrapper, documented defaults"
+session_file="${share_dir}/wayland-sessions/steam-gamescope.desktop"
+wrapper="${LIBEXEC_DIR:-/usr/libexec}/octarine-os/gamescope-session"
+session_ok() { python3 -I - "${session_file}" <<'PY'
+import configparser, sys
+c = configparser.RawConfigParser(strict=True, interpolation=None)
+c.optionxform = str
+c.read(sys.argv[1], encoding="utf-8")
+e = c["Desktop Entry"]
+assert e["Type"] == "Application" and e["Name"] and e["DesktopNames"] == "gamescope"
+assert e["Exec"] == "/usr/libexec/octarine-os/gamescope-session"
+PY
+}
+check "the gamescope session file parses and names the wrapper under /usr/libexec" "session_ok"
+check "the session wrapper is executable and parses (bash -n)" "[ -x ${wrapper} ] && bash -n ${wrapper}"
+check "the scheduler helpers the session wrapper sources are shipped (gamemode-lib.sh)" "bash -n ${LIBEXEC_DIR:-/usr/libexec}/octarine-os/gamemode-lib.sh"
+check "the documented defaults file is shipped" "test -s ${share_dir}/octarine-os/gamescope-session.conf"
 
 echo "== kernel"
 kver=$(kernels); kver=${kver%%$'\n'*}
