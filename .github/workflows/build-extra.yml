@@ -1,0 +1,182 @@
+---
+name: Build extra variant image
+run-name: ${{ inputs.variant && format('{0} latest {1}', inputs.variant, inputs.sha || github.sha) || 'NVIDIA fan-out' }}
+# The EXTRA variant images, one parametrized workflow (2026-11-17; it replaced build-dx-gx.yml, build-nvidia-dx.yml and build-nvidia-gx.yml). DISPATCH ONLY
+# and `latest` only: no schedule, no push, no pull request, no `testing` channel (so no promotion from testing), and NEVER a required check: its result jobs are
+# named `Build <variant> result` and post no commit status, so this workflow can neither satisfy nor block a promotion pull request. Choose the variant:
+#   dx-gx       ghcr.io/<owner>/octarine-os-dx-gx       the gx layer on the developer image (user-facing alias `fx`)    needs octarine-os-dx:latest
+#   nvidia-dx   ghcr.io/<owner>/octarine-os-nvidia-dx   the dx layer on the NVIDIA variant                              needs octarine-os-nvidia:latest
+#   nvidia-gx   ghcr.io/<owner>/octarine-os-nvidia-gx   the gx layer on the NVIDIA variant                              needs octarine-os-nvidia:latest
+# Dependencies: a variant is built on the PUBLISHED `latest` of its base; a missing or unsigned base fails plainly in that variant's plan job (and a dx-gx run does
+# not rebuild dx: dispatch it again after dx changed). EACH VARIANT IS ITS OWN RUN: its own concurrency group (never cancelled, a newer trigger waits), plan,
+# `sign` job (`environment: signing`, in this file because the environment secret did not reach a job of a reusable workflow; the composite action
+# .github/actions/sign-images signs) and result job, so one variant failing never blocks or cancels another. Plan, build and promote are the reusable
+# dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/plan-dx.sh) skips when the base digest and the layer's inputs
+# are unchanged (`force` builds anyway). Dispatch on `main` only (a DRY RUN, which writes nothing, is allowed on any branch).
+# The chain after the NVIDIA base: when "Build NVIDIA variant" (build-nvidia.yml, untouched) finishes on `main` after a dispatch, the `fanout` job below (workflow_run,
+# which always runs the file of the default branch; `actions: write`) dispatches this workflow for nvidia-dx and nvidia-gx at the commit the NVIDIA build ran for. The
+# two dispatched runs are independent; the fan-out run itself only starts them. Design in CLAUDE.md ("Extra variants").
+on:
+  workflow_run:
+    workflows: ["Build NVIDIA variant"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "Which image: dx-gx (alias fx, needs octarine-os-dx:latest), nvidia-dx or nvidia-gx (need octarine-os-nvidia:latest)"
+        type: choice
+        options:
+          - dx-gx
+          - nvidia-dx
+          - nvidia-gx
+        required: true
+      sha:
+        description: "Commit to build (default: the tip of the ref); the NVIDIA fan-out passes the commit the NVIDIA build ran for"
+        type: string
+        default: ""
+      force:
+        description: "Build even when the base digest and the layer's inputs are unchanged"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan and report only: nothing is built, pushed or signed (allowed on any branch)"
+        type: boolean
+        default: false
+
+env:
+  SHA: ${{ inputs.sha || github.sha }}
+
+# A run that is already building is never cancelled (a newer trigger waits, only one can wait); one group per variant
+concurrency:
+  group: build-extra-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.variant || 'fanout' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # After a successful dispatched NVIDIA base build on main: start the two NVIDIA layer builds. Each dispatch is its own run; `fail-fast: false` so a failed dispatch of one
+  # leaves the other going. Nothing waits for the dispatched runs.
+  fanout:
+    name: Start the ${{ matrix.variant }} build
+    if: >-
+      github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main'
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [nvidia-dx, nvidia-gx]
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch this workflow for the variant
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VARIANT: ${{ matrix.variant }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
+          .github/scripts/retry.sh gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
+          echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
+
+  # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
+  image:
+    name: ${{ inputs.variant }}
+    if: github.event_name == 'workflow_dispatch' && (inputs.dry_run || github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/dx-image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      base_name: ${{ fromJSON('{"dx-gx":"octarine-os-dx","nvidia-dx":"octarine-os-nvidia","nvidia-gx":"octarine-os-nvidia"}')[inputs.variant] }}
+      dx_name: octarine-os-${{ inputs.variant }}
+      variant: ${{ fromJSON('{"dx-gx":"gx","nvidia-dx":"dx","nvidia-gx":"gx"}')[inputs.variant] }}
+      channel: latest
+      sha: ${{ inputs.sha || github.sha }}
+      force: ${{ inputs.force }}
+      dry_run: ${{ inputs.dry_run }}
+      promote_from_testing: false
+      tags: latest-{sha} latest-{date}-{sha} {date}-{sha} {date} latest latest-{date}
+      description: ${{ fromJSON('{"dx-gx":"octarineOS developer tools, Steam, gamescope, MangoHud, GameMode and Sunshine (experimental developer and gamer image, built on request from octarine-os-dx)","nvidia-dx":"octarineOS with the proprietary NVIDIA driver and the developer toolchain of dev-toolbox, VM tooling and tracing tools (NVIDIA developer image, built on request from the NVIDIA variant; no CUDA toolkit, ujust dev installs it in a distrobox)","nvidia-gx":"octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)"}')[inputs.variant] }}
+      # dx-gx: the gx smoke test runs by itself (layer gx); this second one checks that the developer layer below it is intact. NVIDIA: the driver, the kernel
+      # module, the initramfs, and no CUDA toolkit anywhere in the image
+      extra_smoke: ${{ inputs.variant == 'dx-gx' && '.github/scripts/dx-smoke.sh' || '.github/scripts/nvidia-smoke.sh present' }}
+      # dx-gx measured locally at 14.4 GiB (default 8.9, dx 11.4): the default limit of 15 GiB would sit on the edge
+      max_image_gib: ${{ inputs.variant == 'dx-gx' && 18 || 15 }}
+
+  # Signing lives here, not in the reusable workflow: an environment secret did not reach a job inside dx-image.yml (observed 2026-11-16 on two runs).
+  # A build signs every pushed digest; both then verify every tag. Skipped when nothing was built (plan skipped, nothing to do, dry run, failures before it).
+  sign:
+    name: Sign and verify ${{ inputs.variant }} image
+    needs: image
+    if: >-
+      always() && needs.image.result == 'success' &&
+      (needs.image.outputs.build == 'success' || needs.image.outputs.promote == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign and verify
+        uses: ./.github/actions/sign-images
+        with:
+          image: ${{ needs.image.outputs.image }}
+          digests: ${{ needs.image.outputs.digests }}
+          tags: ${{ needs.image.outputs.alias_tags }}
+          mode: ${{ needs.image.outputs.build == 'success' && 'sign' || 'verify' }}
+          private-key: ${{ secrets.SIGNING_SECRET }}
+
+  # The one result of a dispatched run; always runs. Green when the image was built and signed or legitimately skipped (base digest and layer inputs unchanged). It is NOT
+  # named `Build dx and push image` or `Build gx and push image` and posts no commit status: those contexts belong to build-variant.yml and are required checks on main.
+  result:
+    name: Build ${{ inputs.variant }} result
+    needs: [image, sign]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check the result
+        env:
+          PLAN: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.plan || 'failure' }}
+          BUILD_WANTED: ${{ needs.image.outputs.build_wanted }}
+          PROMOTE_WANTED: "false"
+          BUILD: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.build || 'failure' }}
+          PROMOTE: skipped
+          SIGN: ${{ needs.sign.result }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: .github/scripts/aggregate-dx.sh
