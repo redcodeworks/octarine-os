@@ -2,7 +2,7 @@
 name: Build NVIDIA gx image
 # The NVIDIA gamer image (ghcr.io/<owner>/octarine-os-nvidia-gx): the SAME gx layer as octarine-os-gx (variants/gx, the gaming-packages list) on top of the
 # NVIDIA variant octarine-os-nvidia instead of octarine-os. Built beside octarine-os-nvidia-dx, never with it: its own concurrency group, so the two never cancel
-# each other. The variant has only a `latest` channel (weekly, Sunday 12:00 UTC, main only), so this image has only `latest` and the dated tags: it starts when
+# each other. The variant has only a `latest` channel (manual dispatch on main only, no schedule since 2026-11-16), so this image has only `latest` and the dated tags: it starts when
 # "Build NVIDIA variant" finishes on `main` (workflow_run, which always runs the workflow file of the default branch) or by manual dispatch on `main`; it never
 # runs on pushes, pull requests or `testing`. The plan job (.github/scripts/plan-dx.sh, variant gx, promote_from_testing off) skips when the NVIDIA base digest and the
 # gx inputs are unchanged. A THIN CALLER of the reusable dx-image.yml (like build-nvidia-dx.yml): plan, build and promote are shared, signing is this file's own `sign`
@@ -17,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built weekly from the NVIDIA variant)
+        description: octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)
         type: boolean
         default: false
 
@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 jobs:
-  # plan and build: the reusable workflow. The workflow file of `main` only: a dispatch, or a successful scheduled or dispatched NVIDIA
+  # plan and build: the reusable workflow. The workflow file of `main` only: a dispatch, or a successful dispatched NVIDIA
   # build of `main`. Signing is the `sign` job below.
   nvidia_gx:
     name: nvidia-gx
@@ -38,7 +38,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-      contains(fromJSON('["schedule","workflow_dispatch"]'), github.event.workflow_run.event) &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_branch == 'main'))
     uses: ./.github/workflows/dx-image.yml
     permissions:
@@ -54,7 +54,7 @@ jobs:
       force: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
       promote_from_testing: false
       tags: latest-{sha} latest-{date}-{sha} {date}-{sha} {date} latest latest-{date}
-      description: octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built weekly from the NVIDIA variant)
+      description: octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)
       # the driver, the kernel module, the initramfs, and no CUDA toolkit anywhere in the image
       extra_smoke: .github/scripts/nvidia-smoke.sh present
 

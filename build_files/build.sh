@@ -63,7 +63,7 @@ echo "::endgroup::"
 echo "::group::Container signature policy"
 # Needs IMAGE_ORG and IMAGE_NAME (Containerfile build args) and cosign.pub from the repo root.
 # Everything is derived from them, so a fork only changes config/image.env and cosign.pub. The default image and
-# the NVIDIA variant (<name>-nvidia, built weekly from the same files) and the developer image (<name>-dx, built from
+# the NVIDIA variant (<name>-nvidia, built on request from the same files) and the developer image (<name>-dx, built from
 # the published default image) and the NVIDIA developer image (<name>-nvidia-dx, the dx layer on the NVIDIA variant) all
 # get a rule for ALL SIX repositories (the fifth is the gamer variant <name>-gx, the sixth <name>-nvidia-gx, the gx layer on the NVIDIA variant: their rules make a machine that boots
 # this image able to switch to it later), so a machine on any of them can switch to another with
