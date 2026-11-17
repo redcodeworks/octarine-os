@@ -8,10 +8,14 @@ run-name: ${{ inputs.ref && format('Test of {0}', inputs.ref) || github.event.he
 # gate (the ruleset requires `test` and `secrets` on the pull requests into testing, which are the runs of the feature branches); it never cancels an earlier one.
 # No pull_request trigger: the push check run is reported on the commit, so the pull request sees it and nothing runs
 # twice. The image build is build.yml (testing and main pushes).
+# The workflow audit (job `zizmor`, formerly its own workflow file) lives here too, to keep one workflow for every check on a branch: it runs on every push
+# (about 8 s, so no path filter) and, alone, on the weekly schedule (new audits and advisories arrive without a change here); the other jobs skip on the schedule.
 on:
   push:
     branches-ignore:
       - main
+  schedule:
+    - cron: "0 6 * * 3"  # Wednesdays 06:00 UTC: only the zizmor job runs
   workflow_dispatch:
     inputs:
       ref:
@@ -34,6 +38,7 @@ jobs:
   # It runs for every push (a documentation-only one included: it is fast) and for the dispatched `Test of <sha>` runs of the bump workflow.
   test:
     name: test
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -58,7 +63,7 @@ jobs:
   # tests/*.sh sits outside a group or a group has no *.sh. Not run for the dispatched bump runs, like `suite`.
   plan-tests:
     name: plan-tests
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name == 'push'
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     outputs:
@@ -80,7 +85,7 @@ jobs:
   suite:
     name: suite (${{ matrix.group }})
     needs: plan-tests
-    if: github.event_name != 'workflow_dispatch'
+    if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
@@ -138,6 +143,7 @@ jobs:
 
   secrets:
     name: secrets
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -163,3 +169,39 @@ jobs:
 
       - name: Scan the full history
         run: gitleaks git --config .gitleaks.toml --redact --no-banner .
+
+  # zizmor (https://github.com/zizmorcore/zizmor) audits .github/workflows and .github/actions for security problems: template injection, excessive permissions,
+  # credential persistence (artipacked), unpinned actions, known-vulnerable actions and the like. NOT a required status check (the ruleset is the owner's). Not run for the
+  # dispatched bump runs (they only need `test` and `secrets`); runs on pushes and on the weekly schedule.
+  # The binary is a pinned release verified by its sha256 (the way the gitleaks job does it); to move it, read the release and replace both lines.
+  # A finding that is fixed in the workflow is fixed; one that cannot or should not be fixed gets a narrow, documented entry in .github/zizmor.yml
+  # (rule and file and line), never a disabled rule.
+  zizmor:
+    name: zizmor
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned zizmor
+        env:
+          ZIZMOR_VERSION: 1.32.0
+          ZIZMOR_SHA256: bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b
+        run: |
+          f="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${RUNNER_TEMP}/${f}" \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${f}"
+          echo "${ZIZMOR_SHA256}  ${RUNNER_TEMP}/${f}" | sha256sum -c -
+          mkdir -p "${RUNNER_TEMP}/zizmor"
+          tar -xzf "${RUNNER_TEMP}/${f}" -C "${RUNNER_TEMP}/zizmor"
+          echo "${RUNNER_TEMP}/zizmor" >> "${GITHUB_PATH}"
+
+      # exits non-zero on any finding; GH_TOKEN lets the online audits (known-vulnerable actions, impostor commits) ask the API
+      - name: Audit the workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --version && zizmor --no-progress --config .github/zizmor.yml .github
