@@ -10,7 +10,7 @@
 # Kinds: the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
 # on every write) and the octarine-bins image (`just bins-bump` is the pin writer: it resolves octarine-bins:latest, verifies the digest with keys/octarine-bins.pub
 # and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository) and the dx and gx images of the same repository (octarine-bins-dx and octarine-bins-gx, the package lists and later binaries of those variants:
-# pinned in variants/dx/Containerfile and variants/gx/Containerfile; resolve `latest`, verify the digest with keys/octarine-bins.pub, write the digest and the dated registry tag that points at it as the tag).
+# pinned in variants/dx/Containerfile and variants/gx/Containerfile; resolve `latest`, verify the digest with keys/octarine-bins.pub, write the digest and the image's version label as the tag).
 set -uo pipefail
 pin=${1:?pin name}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -75,7 +75,7 @@ case "${pin}" in
         new="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
         if [[ "${new}" == "${cur}" ]]; then status="nothing to bump: the pin equals ${ref}:latest (${curtag})"
         else
-            just bins-bump latest || fail "just bins-bump failed (digest, signature or dated tag; nothing changed)"
+            just bins-bump latest || fail "just bins-bump failed (digest, signature or version label; nothing changed)"
             proposed="$(sed -n 's/^ARG BINS_TAG=//p' Containerfile) $(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile | cut -c1-19)"
             commit_pin "Bump the octarine-bins image to ${proposed%% *}" "a new octarine-bins digest, ${ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries" "$(image_age "${ref}:latest")"
         fi ;;
@@ -92,8 +92,9 @@ case "${pin}" in
         if [[ "${new}" == "${cur}" ]]; then status="nothing to bump: the pin equals ${ref}:latest (${curtag})"
         else
             "${here}/retry.sh" cosign verify --key keys/octarine-bins.pub "${ref}@${new}" > /dev/null || fail "${ref}@${new} does not verify with keys/octarine-bins.pub (nothing changed)"
-            # the dated tag (<date>-<sha7>, a name for humans) that points at the digest: read from the registry (the images carry no version label), see bins-tag.sh
-            newtag=$("${here}/bins-tag.sh" "${ref}" "${new}") || fail "${ref}@${new}: no dated tag points at this digest"
+            # the image's own version label (<date>-<sha7>, a name for humans), as `just bins-bump` reads it
+            newtag=$(skopeo inspect --config "docker://${ref}@${new}" 2> /dev/null | jq -r '.config.Labels["org.opencontainers.image.version"] // empty' 2> /dev/null) || newtag=""
+            [[ "${newtag}" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || fail "${ref}@${new} has no usable org.opencontainers.image.version label ('${newtag}')"
             sed -i -e "s/^ARG ${prefix}_TAG=.*/ARG ${prefix}_TAG=${newtag}/" -e "s/^ARG ${prefix}_DIGEST=.*/ARG ${prefix}_DIGEST=${new}/" "${files[0]}"
             proposed="${newtag} ${new:0:19}"
             commit_pin "Bump the ${pin} image to ${newtag}" "a new ${pin} digest, ${ref}:latest verified with keys/octarine-bins.pub; its ${variant} testing build is the first with these package lists" "$(image_age "${ref}:latest")"
