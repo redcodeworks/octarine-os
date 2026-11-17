@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Checks run INSIDE the built octarine-os-gx image (dx-image.yml mounts this file and runs it with bash when the variant is gx):
-# the gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends), where they came from, that no third-party repository is left
-# enabled, Sunshine's file capability, rules and units, the kernel of the base image, and the checks of the default image's smoke test that still
-# apply to a layer on top of it. EVERY check here is mandatory (the optional tier of the default image's smoke test would not fail the build).
+# the REQUIRED gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends: the required lists of the pinned octarine-bins-gx image), where they
+# came from, that no third-party repository is left enabled, Sunshine's file capability, rules and units, the kernel of the base image, and the checks of the
+# default image's smoke test that still apply to a layer on top of it. EVERY check here is mandatory, except the optional packages of the gx list, which are
+# only reported (INFO; what could not be installed is also in /usr/share/octarine-os/optional-packages-missing).
 #
 # Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant).
 # For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, LIB_DIR.
@@ -37,25 +38,28 @@ same_mesa() { local a b; a=$(evr_of mesa-vulkan-drivers.x86_64); b=$(evr_of mesa
 enabled_repos() { dnf5 repolist --enabled 2>/dev/null | sed -n '2,$p' | sed 's/ .*//'; }
 no_third_party_repo() { local r; r=$(enabled_repos); [ -n "${r}" ] && ! grep -qE '^(rpmfusion|copr:copr.fedorainfracloud.org:lizardbyte|google-chrome)' <<<"${r}"; }
 
-echo "== gaming packages (fedora.txt, rpmfusion.txt, extras.txt): both architectures where a 32-bit game needs them"
-for p in steam gamescope Sunshine steam-devices joystick-support input-remapper protontricks winetricks vkBasalt vulkan-tools mesa-demos libva-utils; do
+echo "== required gaming packages (required-fedora, required-negativo17, required-copr of octarine-bins-gx): both architectures where a 32-bit game needs them"
+for p in steam gamescope Sunshine steam-devices; do
     check "package ${p}" "rpm -q ${p}"
 done
-for p in mangohud gamemode libFAudio obs-studio-plugin-vkcapture-hook-libs mesa-vulkan-drivers; do
+for p in mangohud gamemode libFAudio mesa-vulkan-drivers; do
     check "package ${p} for x86_64" "rpm -q ${p}.x86_64"
     check "package ${p} for i686" "rpm -q ${p}.i686"
 done
 check "x86_64 and i686 Mesa have the same version (one repository provides both)" "same_mesa"
+echo "== optional gaming packages (informational)"
+for p in joystick-support input-remapper protontricks winetricks vkBasalt vulkan-tools mesa-demos libva-utils obs-studio-plugin-vkcapture-hook-libs.x86_64 obs-studio-plugin-vkcapture-hook-libs.i686; do
+    if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO optional package ${p} installed"; else echo "INFO optional package ${p} NOT installed"; fi
+done
 for c in steam gamescope mangohud gamemoded sunshine; do
     check "command ${c}" "have ${c}"
 done
 
 echo "== where they came from"
-check "steam comes from RPM Fusion (rpmfusion-nonfree-steam)" "[ \"\$(from_repo steam)\" = rpmfusion-nonfree-steam ]"
+check "steam comes from negativo17 (fedora-multimedia, required-negativo17.txt)" "[ \"\$(from_repo steam)\" = fedora-multimedia ]"
 check "Sunshine comes from the LizardByte COPR" "[ \"\$(from_repo Sunshine)\" = copr:copr.fedorainfracloud.org:lizardbyte:stable ]"
-check "no RPM Fusion, COPR (LizardByte) or vendor repository is enabled (only the base's repositories)" "no_third_party_repo"
-check "the override file that enabled the Steam repository is gone" "! test -e ${etc_dir}/dnf/repos.override.d/99-gx-steam.repo"
-check "the repository package and its boot service are not in the image" "! rpm -q fedora-workstation-repositories && ! rpm -q fedora-third-party && ! test -e ${etc_dir}/systemd/system/multi-user.target.wants/fedora-third-party-refresh.service"
+check "no RPM Fusion, COPR (LizardByte) or vendor repository is enabled (only the base's repositories; negativo17 stays disabled)" "no_third_party_repo"
+check "the repository package of the old RPM Fusion route and its boot service are not in the image" "! rpm -q fedora-workstation-repositories && ! rpm -q fedora-third-party && ! test -e ${etc_dir}/systemd/system/multi-user.target.wants/fedora-third-party-refresh.service"
 check "Steam is not in any Flatpak preinstall list (the RPM is the Steam of this image)" "! grep -rqiE 'com.valvesoftware.Steam|MoonDeck' ${preinstall_dir}"
 check "Moonlight and MoonDeck Buddy are not packages of the image" "! rpm -q moonlight-qt && ! rpm -q MoonDeckBuddy"
 

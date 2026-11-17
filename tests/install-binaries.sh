@@ -43,6 +43,16 @@ check "a scheduler file the manifest does not list fails" bash -c "[ $rc != 0 ] 
 mk_image "$img"; echo usr/bin/bash >> "$img/ghostty/FILES"; mkdir -p "$img/ghostty/root/usr/bin"; echo x > "$img/ghostty/root/usr/bin/bash"
 rm -rf "$dest"; mkdir -p "$dest/usr/bin"; echo base > "$dest/usr/bin/bash"; (BINARIES_ROOT="$img" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") > "$root/run" 2>&1; rc=$?
 check "a ghostty file that would overwrite a file of the image fails" bash -c "[ $rc != 0 ] && grep -q 'would overwrite' '$root/run'"
+mk_image "$img"; mkdir -p "$img/packages"; echo niri > "$img/packages/required-fedora.txt"; echo '#!/bin/sh' > "$img/packages/install.sh"; inst
+check "a top-level packages/ directory (the package lists) is allowed next to the components" bash -c "[ $rc = 0 ]"
+mk_image "$img"; : > "$img/COMPONENTS"; inst
+check "the default image (a required list) refuses an empty COMPONENTS" bash -c "[ $rc != 0 ] && grep -q 'missing or empty' '$root/run'"
+empty="$root/empty"; rm -rf "$empty"; mkdir -p "$empty/packages" "$empty/LICENSES"; : > "$empty/COMPONENTS"; : > "$empty/SOURCE"; : > "$empty/BUILDINFO"; echo x > "$empty/packages/required-fedora.txt"
+rm -rf "$dest"; mkdir -p "$dest"; (BINARIES_REQUIRED="" BINARIES_ROOT="$empty" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") > "$root/run" 2>&1; rc=$?
+check "dx and gx (an empty required list): an empty COMPONENTS and a packages/ directory install nothing and succeed" bash -c "[ $rc = 0 ] && grep -q 'nothing to install' '$root/run' && [ -z \"\$(ls -A '$dest')\" ]"
+mkdir -p "$empty/newthing"; echo newthing > "$empty/COMPONENTS"
+(BINARIES_REQUIRED="" BINARIES_ROOT="$empty" DESTDIR="$dest" bash "$here/build_files/install-binaries.sh") > "$root/run" 2>&1; rc=$?
+check "an empty required list still refuses a component it does not know (reader first)" bash -c "[ $rc != 0 ] && grep -q 'does not know' '$root/run'"
 
 echo; echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]

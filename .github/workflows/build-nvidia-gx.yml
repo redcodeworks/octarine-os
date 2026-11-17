@@ -1,6 +1,6 @@
 ---
 name: Build NVIDIA gx image
-# The NVIDIA gamer image (ghcr.io/<owner>/octarine-os-nvidia-gx): the SAME gx layer as octarine-os-gx (variants/gx, the gaming-packages list) on top of the
+# The NVIDIA gamer image (ghcr.io/<owner>/octarine-os-nvidia-gx): the SAME gx layer as octarine-os-gx (variants/gx, the lists of the pinned octarine-bins-gx image) on top of the
 # NVIDIA variant octarine-os-nvidia instead of octarine-os. Built beside octarine-os-nvidia-dx, never with it: its own concurrency group, so the two never cancel
 # each other. The variant has only a `latest` channel (manual dispatch on main only, no schedule since 2026-11-16), so this image has only `latest` and the dated tags: it starts when
 # "Build NVIDIA variant" finishes on `main` (workflow_run, which always runs the workflow file of the default branch) or by manual dispatch on `main`; it never

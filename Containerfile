@@ -10,9 +10,10 @@ ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # keys/octarine-bins.pub) by the octarine-bins repository: the sched_ext schedulers scx_* (GPL-2.0), libextest.so for Steam Input on
 # Wayland (32-bit and 64-bit, MIT) and Ghostty. Pinned by DIGEST like the brew image above: it changes only through a bump PR
 # (the weekly bump-pins.yml or `just bins-bump [tag]`, which resolve the digest and verify it with cosign before writing it); CI
-# verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr.
-ARG BINS_TAG=20261116-b8e18a7
-ARG BINS_DIGEST=sha256:348d0d6c198f6e7468fa2d0d6626f3f5afadc2970dbc48bdd31da86237e49d8a
+# verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr
+# and runs the image's /packages/install.sh (the package lists of the default image live in octarine-bins, not here; the dx and gx variants pin octarine-bins-dx and -gx the same way).
+ARG BINS_TAG=20261117-5d8004e
+ARG BINS_DIGEST=sha256:5c47fe871aa7a27484ff6464aee404fb3f1ebabe6ebf89320d5b2e012790ec30
 ARG BINS_IMAGE=ghcr.io/redcodeworks/octarine-bins:${BINS_TAG}@${BINS_DIGEST}
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
@@ -69,8 +70,8 @@ ARG IMAGE_VERSION
 COPY --from=brew /system_files /
 
 # The pinned octarine-bins image is bind-mounted, not copied, so build.sh installs exactly what it checks (layout and contract:
-# the header of install-binaries.sh). /binaries/COMPONENTS names the components; install-binaries.sh installs them and checks that
-# the shared libraries the binaries need are in this image
+# the header of install-binaries.sh). /binaries/packages/install.sh installs the package lists; /binaries/COMPONENTS names the components;
+# install-binaries.sh installs them and checks that the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \
     --mount=type=cache,dst=/var/cache \

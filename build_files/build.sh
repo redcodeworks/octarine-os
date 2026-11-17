@@ -104,159 +104,48 @@ echo "::endgroup::"
 
 ### Install packages
 
+# The package lists are not in this repository: they are the `packages/` directory of the pinned octarine-bins image (bind-mounted at /binaries by the Containerfile,
+# the same mount the binaries come from), installed by that image's own installer, /binaries/packages/install.sh (the contract is in octarine-bins's CLAUDE.md,
+# "The package lists"). In order: required-fedora (ONE strict dnf5 transaction: a name dnf5 cannot find fails the build, so a release difference stops the build
+# instead of shipping an image without something that must be there), then the optional lists (optional-fedora, optional-negativo17: best effort, one transaction per
+# file, retried once as a whole, then package by package). What still cannot be installed is printed as "OPTIONAL PACKAGE MISSING: <name>" and appended to
+# /usr/share/octarine-os/optional-packages-missing (the file exists in every image, possibly empty); the smoke test turns each entry into a CI warning. A missing
+# optional package never fails the build, except niri and noctalia (check_session_packages below).
 #
-# Release-specific parts of this script (the base tag in the Containerfile decides the Fedora release):
-# the package names below, since a package can be renamed, retired or not yet built for a release
-# (niri, noctalia, btrfs-assistant, the cockpit-* modules, usbip, nautilus-python
-# and the gnome-shell-extension-* names are the likeliest); the negativo17 gstreamer replacement of the
-# -free variants; and the removal list further down.
-#
-# Two tiers. CRITICAL packages go in one dnf5 transaction without --skip-unavailable: dnf5 stops with an
-# error on a name it cannot find, so a release difference fails the build instead of shipping an image
-# without something that must be there (the smoke test checks them again). OPTIONAL packages are installed
-# afterwards, one transaction per group; dnf5 transactions are atomic, so a failed group changes nothing
-# (and a dependency that would conflict with a critical package fails the group instead of replacing it).
-# When a group fails its packages are retried one by one, and whatever still cannot be installed is
-# listed in /usr/share/octarine-os/optional-packages-missing (one name per line, the file exists in every
-# image, possibly empty), printed as "OPTIONAL PACKAGE MISSING: <name>", and the smoke test turns each
-# entry into a CI warning. A missing optional package never fails the build.
-#
-# Standing policy: a package from outside Fedora's own repositories (negativo17, RPM Fusion, COPR, vendor
-# repos) may only be installed in an optional group, never in the critical transaction. The smoke test
-# enforces it: every critical package must have the RPM vendor "Fedora Project", else the build fails
-# naming the package. Optional packages are exempt.
-#
-# fish is optional: nothing in the image depends on it and it is never a login shell (bash stays the login
-# shell; zsh is installed but opt-in: `ujust user-setup` offers it). A user who configures their own terminal to
-# start fish needs it installed, which is their own setting.
-
-# Packages can be installed from any ENABLED yum repo on the image: Fedora's own, negativo17 and the base's akmods COPR (the list validate-repos.sh
-# allows). No RPM Fusion repository is installed or enabled in the base (checked 2026-11-16 against the booted image: /usr/etc/yum.repos.d holds only
-# the akmods COPR, negativo17 and the rok-cdemu COPR file). A build that needs RPM Fusion must add it itself, enable it for its own transaction only
-# and disable it again, or validate-repos.sh fails the build (Fedora's `fedora-workstation-repositories` package carries a disabled
-# rpmfusion-nonfree-steam.repo under /usr/share/dnf5/repos.d).
-
-# distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips them; solaar-udev is listed anyway so it stays
-# if the base drops it). solaar-udev (the Logitech udev rules) stays for the Solaar Flatpak and any host-side Solaar; the Solaar GUI package is NOT in the image.
-# Its multimedia stack comes from negativo17, so the RPM Fusion *-freeworld
-# packages from the host are not used: gstreamer1-plugins-bad/-ugly (group `codecs`, optional because they
-# come from negativo17) are the negativo17 equivalents and replace the base's -free variants. They are
-# optional, so a failed transaction leaves the -free GStreamer packages in place (dnf5 is atomic). There
-# is no negativo17 equivalent of mesa-va-drivers-freeworld.
-#
-# gcc, gcc-c++, make and binutils (the linker ld, ar, as) are in the critical tier since 2026-11-14 (the owner's decision: compilers
-# and a linker are useful on any image, not only on a developer one; Bluefin's list is gcc, gcc-c++ and make). binutils is already in
-# the base and a dependency of gcc; it is named anyway so it stays when the base drops it. dnf5 adds glibc-devel, libstdc++-devel,
-# libxcrypt-devel and kernel-headers as dependencies. The dx and NVIDIA dx images inherit them (the dx layer installs the shared
-# developer list on top; dnf5 skips what is already installed). cmake, ninja, meson and the development-tools group are still not here.
-#
-# CRITICAL (keep in step with the smoke tests in .github/workflows/build.yml; tests/compilers.sh checks it):
-echo "::group::Packages: critical"
-dnf5 install -y \
-    pam-u2f snapper fuse-libs tailscale \
-    gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev \
-    gcc gcc-c++ make binutils
-
-# zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
-# is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
-if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
-grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
-echo "::endgroup::"
-
-# OPTIONAL packages, in separate dnf5 transactions BY SOURCE, each in its own log group (policy; the owner, 2026-11-16):
-#   (a) Fedora critical: above, one transaction, a missing name fails the build.
-#   (b) Fedora optional groups: one transaction per group, from Fedora's own repositories.
-#   (c) trusted third party (negativo17, RPM Fusion): optional groups of their own, one transaction per group.
-#   (d) COPR: one transaction per COPR, `dnf5 -y copr enable <owner/project>` right before and `copr disable` right after, the package pinned to an exact
-#       version-release (a COPR is not ours and floats nothing into the image), optional only. Empty today: no pin machinery until one is used.
-# Fedora and trusted third party float; any other COPR or vendor repository is pinned and optional only (validate-repos.sh fails the build on an
-# enabled repository it does not know).
+# What stays here, because it is the OS's policy and not a list: the niri/noctalia hard failure, the smoke test's check that every REQUIRED package has the RPM
+# vendor "Fedora Project" (a package from outside Fedora's own repositories, negativo17, COPR or a vendor repository, may only be in an optional list, or be a
+# decision of the owner for a required-negativo17/copr file of a variant), validate-repos.sh (every enabled repository must be one the base enables), and the zsh step.
+# Packages can come from any ENABLED yum repo of the image: Fedora's own, negativo17 (fedora-multimedia, disabled in the base, which the installer enables for its
+# own calls only) and the base's akmods COPR. No RPM Fusion repository is installed in the base.
+echo "::group::Packages: the lists of the octarine-bins image"
+test -f /binaries/packages/install.sh
 mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
+# NO_CLEANUP: the dnf caches are cache mounts and final-cleanup.sh runs at the end; the removal of gnome-software below still needs dnf5
+MISSING_FILE="${missing_file}" NO_CLEANUP=1 bash /binaries/packages/install.sh
+echo "::endgroup::"
 
-# --- optional install functions (tests/optional-packages.sh cuts this block out of the script) ---
-# <label> <group> <package>...: one transaction for the group. When it fails, once more as a whole, then its packages one by one;
-# what still cannot be installed is listed in the missing file. Never fails the build.
-install_optional() {
-    local label=$1 group=$2; shift 2
-    local pkgs=("$@") pkg
-    echo "::group::Packages: ${label} ${group}"
-    if dnf5 install -y "${pkgs[@]}"; then
-        echo "::endgroup::"
-        return 0
-    fi
-    # one more try of the WHOLE group first: a mirror hiccup should not leave the image without its packages for up to a week (SCHEDULED_REBUILD_MAX_AGE_DAYS)
-    echo "WARNING: optional group ${group} failed, retrying it once as a whole"
-    sleep 20
-    dnf5 clean expire-cache > /dev/null 2>&1 || true
-    if dnf5 install -y "${pkgs[@]}"; then
-        echo "::endgroup::"
-        return 0
-    fi
-    echo "WARNING: optional group ${group} failed as a whole twice, retrying its packages one by one"
-    for pkg in "${pkgs[@]}"; do
-        if ! dnf5 install -y "${pkg}"; then
-            echo "${pkg}" >> "${missing_file}"
-            echo "OPTIONAL PACKAGE MISSING: ${pkg}"
-        fi
-    done
-    echo "::endgroup::"
-}
-# <label> "<group>:<space separated packages>"...: one install_optional transaction per entry
-install_optional_groups() {
-    local label=$1 entry pkgs; shift
-    for entry in "$@"; do
-        read -r -a pkgs <<< "${entry#*:}"
-        install_optional "${label}" "${entry%%:*}" "${pkgs[@]}"
-    done
-}
+# zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
+# is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
+echo "::group::Packages: zsh and the session packages"
+if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
+grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
+
 # The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a coming Fedora that no longer has
-# them fails here too, which is what it is for). The rest of the list stays soft.
+# them fails here too, which is what it is for). The rest of the optional lists stays soft.
 check_session_packages() {
     local pkg
     for pkg in niri noctalia; do
         if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
     done
 }
-# --- end optional install functions ---
-
-# (b) Fedora optional groups
-fedora_optional_groups=(
-    "misc:fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste nautilus-gsconnect powertop iotop-c lm_sensors usbip restic rclone gtk4-layer-shell"
-    "cockpit:cockpit cockpit-podman cockpit-storaged cockpit-networkmanager cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump"
-    "pcp:pcp python3-pcp"
-    "containers:podman-compose kind podman-docker podman-tui"
-    "libguestfs:guestfs-tools libguestfs libguestfs-xfs virt-v2v"
-)
-install_optional_groups "Fedora optional group" "${fedora_optional_groups[@]}"
-
-# (c) trusted third party. Today: the negativo17 multimedia stack (fedora-multimedia, enabled by the base), whose GStreamer plugins replace the -free variants
-third_party_optional_groups=(
-    "codecs:gstreamer1-plugins-bad gstreamer1-plugins-ugly"
-)
-install_optional_groups "Trusted third party optional group" "${third_party_optional_groups[@]}"
-
-# (d) COPR, pinned to an exact version-release, optional only: "<owner/project>:<name>-<version>-<release>". Empty today.
-#   Example: "ublue-os/staging:somepackage-1.2.3-1.fc45"
-copr_optional=()
-for entry in "${copr_optional[@]}"; do
-    repo=${entry%%:*}
-    pkg=${entry#*:}
-    if dnf5 -y copr enable "${repo}"; then
-        install_optional "COPR ${repo}" pinned "${pkg}"
-    else
-        echo "${pkg}" >> "${missing_file}"
-        echo "OPTIONAL PACKAGE MISSING: ${pkg} (COPR ${repo} could not be enabled)"
-    fi
-    dnf5 -y copr disable "${repo}" || true
-done
-
 echo "== optional packages missing:"
 cat "${missing_file}"
 check_session_packages
+echo "::endgroup::"
 
-# Beyond the compilers and linker above (critical list) there are no build tools here (cmake, ninja, meson, the development-tools
+# Beyond the compilers and linker (the required list of octarine-bins) there are no build tools here (cmake, ninja, meson, the development-tools
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
 # /usr/share/ublue-os/distrobox/dev-toolbox.ini (or on the dx image). Nothing in this build compiles from source.
 

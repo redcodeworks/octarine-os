@@ -1,37 +1,31 @@
 #!/usr/bin/env bash
-# Builds the dx layer of octarine-os-dx: the shared developer list (bind-mounted at /dev-packages from the pinned
-# dev-packages image), then variants/dx/packages/extras.txt, the dx-only files and podman.socket. The kernel must be
-# exactly the same before and after (nothing here may pull in a new one).
+# Builds the dx layer of octarine-os-dx: the developer package lists of the pinned octarine-bins-dx image (bind-mounted at /binaries; its /packages/install.sh installs
+# them), its binary components (none yet), the dx-only files and podman.socket. The kernel must be exactly the same before and after (nothing here may pull in a new one).
 set -euo pipefail
 # Log groups: GitHub Actions folds each "::group::" ... "::endgroup::" pair in the build log (plain text elsewhere); never nested. The trap
 # closes a group left open by a failure and prints an "::error::" line outside it (exit status unchanged).
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::dx.sh failed (exit ${rc})"; fi' EXIT
 
 kernel_of() { rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core; }
-echo "::group::dx: shared developer packages"
+echo "::group::dx: developer packages (octarine-bins-dx)"
 before=$(kernel_of)
 echo "Kernel of the base image: ${before}"
 
-# The shared developer list: one strict dnf5 install, then the installer cleans the dnf caches
-test -f /dev-packages/install.sh
-# ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) stays in the shared list, which also
-# builds the owner's fedora-toolbox, but is NOT part of the dx images: `ujust hardware-setup` (step rocm) provides it in a
-# rootless distrobox instead. EXCLUDE takes exact package names (see dev-packages/install.sh in the octarine-images repo).
-EXCLUDE="rocminfo rocm-smi rocm-hip rocm-opencl hipcc" bash /dev-packages/install.sh
+# The lists (required-fedora strict, optional-fedora best effort) and the installer come from the pinned octarine-bins-dx image. What cannot be installed of the optional
+# list is APPENDED to the file the default image's build created (the installer never truncates it), so one file lists the misses of the whole image.
+test -f /binaries/packages/install.sh
+missing_file=/usr/share/octarine-os/optional-packages-missing
+test -f "${missing_file}"
+MISSING_FILE="${missing_file}" bash /binaries/packages/install.sh
+# ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) is NOT part of the dx images (the lists leave it out):
+# `ujust hardware-setup` (step rocm) provides it in a rootless distrobox instead
 for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
 done
+echo "::endgroup::"
 
-echo "::endgroup::"
-echo "::group::dx: extra packages"
-# The extras (grouped list, one strict transaction; names the shared list or the base already installed are skipped)
-mapfile -t extras < <(sed -e 's/[[:space:]]*#.*$//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' /ctx/extras.txt)
-[[ "${#extras[@]}" -gt 0 ]] || { echo "ERROR: /ctx/extras.txt lists no package"; exit 1; }
-echo "Installing ${#extras[@]} extra packages"
-dnf5 -y install --setopt=strict=1 "${extras[@]}"
-dnf5 clean all
-rm -rf /var/cache/libdnf5 /var/cache/dnf /var/log/dnf5.log* /var/log/dnf.log* /root/.cache 2>/dev/null || true
-echo "::endgroup::"
+# The binary components of the dx image: none yet (an empty COMPONENTS is valid for an empty required list); the script prints its own log group
+BINARIES_REQUIRED="" /ctx/install-binaries.sh
 
 echo "::group::dx: files, recipes and the datastore signature policy"
 

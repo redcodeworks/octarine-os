@@ -13,6 +13,10 @@
 #
 # Which components are present is told by /binaries/COMPONENTS (the component names, one per line). Every component is required: the `required` list below
 # must match the components octarine-bins builds, and a component that is missing, unknown or cannot be installed fails the build.
+# The list is PER IMAGE: the default image installs the base octarine-bins image (BINARIES_REQUIRED unset: `scx extest ghostty`); the dx and gx layers call this
+# script on their own octarine-bins-dx / -gx image with BINARIES_REQUIRED="" (no component yet: COMPONENTS exists and is EMPTY, which is valid only for an empty
+# list). A component those images get later is unknown here until this reader learns it (reader first). A top-level `packages/` directory (the package lists and
+# their installer, run by the build scripts, see octarine-bins's CLAUDE.md) is not a component and is allowed in every image.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
 # find its shared libraries in THIS image: a 64-bit file must resolve with ldd (no "not found"), a 32-bit one (extest, loaded into
@@ -26,7 +30,7 @@ echo "::group::install-binaries.sh"
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::install-binaries.sh failed (exit ${rc})"; fi' EXIT
 root=${BINARIES_ROOT:-/binaries}
 dest=${DESTDIR:-}
-required="scx extest ghostty"
+required=${BINARIES_REQUIRED-scx extest ghostty}
 lic=${dest}/usr/share/licenses/octarine-binaries
 err() { echo "ERROR: $*" >&2; exit 1; }
 warn() { echo "WARNING: $*"; echo "::warning::$*"; }
@@ -88,15 +92,19 @@ declare -A installed_note
 
 # ---- which components
 want=()
-test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
+if [[ -n "${required}" ]]; then
+    test -s "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing or empty (not an assembled binaries image)"
+else
+    test -f "${root}/COMPONENTS" || err "${root}/COMPONENTS is missing (not an assembled binaries image)"
+fi
 while read -r name; do
     [[ " ${required} " == *" ${name} "* ]] || err "the binaries image holds the component '${name}', which this installer does not know"
     test -d "${root}/${name}" || err "COMPONENTS lists ${name} but ${root}/${name} is missing"
     want+=("${name}")
 done < "${root}/COMPONENTS"
 for d in "${root}"/*/; do
-    # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files)
-    [[ "$(basename "${d}")" == LICENSES || " ${want[*]} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
+    # LICENSES/ is the union of the component license directories that assemble.sh adds at the top level (SOURCE and BUILDINFO are files); packages/ is the package lists
+    [[ "$(basename "${d}")" == LICENSES || "$(basename "${d}")" == packages || " ${want[*]:-} " == *" $(basename "${d}") "* ]] || err "${d} is in the binaries image but not in COMPONENTS"
 done
 for c in ${required}; do [[ " ${want[*]} " == *" ${c} "* ]] || err "the required component ${c} is not in the binaries image"; done
 
@@ -163,4 +171,5 @@ PYEOF
     fi
     grep -aq com.mitchellh.ghostty /usr/share/icons/hicolor/icon-theme.cache 2> /dev/null || warn "the hicolor icon cache does not list com.mitchellh.ghostty (no cache tool found?): Ghostty may show a generic icon"
 fi
+if [[ ${#want[@]} -eq 0 ]]; then echo "No binary component in ${root} (an image without components): nothing to install"; exit 0; fi
 echo "Installed the prebuilt binaries: $(for c in ${want[@]+"${want[@]}"}; do echo -n "${c} (${installed_note[${c}]:-}) "; done)"
