@@ -87,12 +87,12 @@ virthost-setup *args:
     if [ "$mode" = ask ] && [ -z "$only" ] && [ "$list" = 0 ] && menu_ready; then
         menu_title "octarineOS virtualization host"
         menu_multi "Virtualization host: choose the steps" \
-            "check^Check: virtualization flag, /dev/kvm, virt-host-validate^1" \
-            "daemons^Verify the modular libvirt daemons (sudo)^1" \
+            "check^Check: virtualization flag, /dev/kvm, virt-host-validate^0" \
+            "daemons^Verify the modular libvirt daemons (sudo)^0" \
             "iommu^IOMMU kernel arguments for device passthrough (optional; sudo, reboot)^0" \
-            "connection^libvirt group and default URI (sudo)^1" \
-            "image-dir^VM image directory: ACL and SELinux label (sudo)^1" \
-            "virtio^Download the virtio-win driver ISO^1" \
+            "connection^libvirt group and default URI (sudo)^0" \
+            "image-dir^VM image directory: ACL and SELinux label (sudo)^0" \
+            "virtio^Download the virtio-win driver ISO^0" \
             "bridge^NetworkManager bridge for the LAN (optional; sudo, network blip)^0" \
             "libvirt-network^libvirt network on the bridge^0"
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi

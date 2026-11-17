@@ -785,8 +785,9 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   with `menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"` plus inline no-op fallbacks if the file is
   missing. Items are `id^text^selected` strings; an empty id is a section heading, never returned; commas in text show
   as `;`. `menu_multi HEADER ITEM...` is a checklist with real `gum choose --no-limit` (Bluefin's `toggle-devmode` look:
-  `◉`/`○`/`▸`, `--height` min(items, rows-4), `--selected` with the exact item texts) and fills `MENU_RESULT`; Esc or
-  empty means nothing chosen, not a failure. `menu_one HEADER ITEM...` is a single choice through `ugum choose` (its fzf
+  `◉`/`○`/`▸`, `--height` min(items, rows-4), `--selected` only with `MENU_KEEP_SELECTED=1`, see the next sentence) and fills `MENU_RESULT`; Esc or
+  empty means nothing chosen, not a failure. **Nothing pre-ticked (Kevin, 2026-11-17, all checklists):** `menu_multi` ignores the third item field, so every checklist starts unticked (user-setup, gaming-setup, niri-setup, virthost-setup, dev and its tools groups, luks-tpm-unlock devices, the box tools and IDE launcher pickers, hardware-setup); the one place that does it is the helper. The only opt-in is `MENU_KEEP_SELECTED=1 menu_multi ...` for a checklist that edits a STATE (`toggle-updates`: ticks are what is on now; unticking turns it off). The recipes' own `ask()` takes `s` for a step question (`--yes` runs it, an interactive run defaults to N); the plain no-gum questions default to N; a finished step may carry a `(done)` label only where detection exists (none added). Flag paths (`--yes`, `--only`, named devices) are unchanged. Single-choice pickers (`menu_one`: image, channel, scheduler, fonts, editor) keep the current or first entry as cursor start: they are radio lists, not checklists. `niri-setup` with `--terminal` or keybind flags on a terminal now shows the checklist unticked (tick the step to use the flags).
+  `menu_one HEADER ITEM...` is a single choice through `ugum choose` (its fzf
   fallback drops every `-` flag, so none are passed; the header is printed by the helper) and sets `MENU_ONE`.
   `menu_confirm Q [y|n]` is real `gum confirm` or a plain prompt, default n; never use `ugum confirm` (its fallback
   answers YES on Esc). `menu_ready`/`menu_ready_one` say whether gum or ugum is usable on a real terminal; return code 3
@@ -1165,7 +1166,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   optional, never default; done when the command line or `rpm-ostree kargs` has it; the argument is NOT shipped), `amd-cpu-gaming`
   (`amd_pstate/status` is `active`; calls `gaming-setup gamemode`), `nvidia` (`0x10de`; `switch-image nvidia`, or `nvidia-dx` when
   `IMAGE_ID` ends in `-dx`; done when `/sys/module/nvidia` exists), `cuda` (driver loaded and the dx recipe file exists; `dev --only cuda`),
-  `secure-boot` (EFI, `mokutil --sb-state` enabled, the key file present; ticked by default only on an NVIDIA image whose key
+  `secure-boot` (EFI, `mokutil --sb-state` enabled, the key file present; run by plain `--yes` only on an NVIDIA image whose key
   `mokutil --test-key` does not report enrolled), `tpm-luks` (`/dev/tpmrm0` and a `crypto_LUKS` volume; never reported done, since
   reading the headers needs root), `fido-key` (`lsusb -d 1050:` or a hidraw with `ID_SECURITY_TOKEN=1`; runs
   `pamu2fcfg -o pam://sudo -i pam://sudo` into a temp file, mode 600, moved into `~/.config/Yubico/u2f_keys`; an existing non-empty file
@@ -1193,7 +1194,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
 - One recipe in `60-custom.just` replaces the base's `setup-luks-tpm-unlock` and `remove-luks-tpm-unlock` (which handled the
   root device only, from `rd.luks.uuid`): `15-luks.just` is empty and both names are gone (no aliases). It lists every `crypto_LUKS` device
   (`lsblk`), reads the TPM2 token state with `sudo cryptsetup luksDump`, asks enroll or remove and then a checklist of
-  devices (preticked: unenrolled ones for enroll, enrolled ones for remove), or takes `enroll|remove DEVICE...` (path or
+  devices (nothing ticked; plain `--yes` and `--force` still pick by the probe: unenrolled ones for enroll, enrolled ones for remove), or takes `enroll|remove DEVICE...` (path or
   UUID). Enroll is ONE `systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7+14` call (default:
   Secure Boot state plus the MOK list; `--pcrs=7` binds Secure Boot only, `--pin` adds a PIN); a re-enroll adds `--wipe-slot=tpm2` to that same call, because systemd-cryptenroll(1) (systemd 262 in
   this image) says: "in combination with any of the enrollment options ... the enrollment is completed first, and only when
@@ -1476,7 +1477,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
     `virtnetworkd.socket`, `virtstoraged.socket`. The user file `~/.config/libvirt/libvirt.conf` gets `uri_default = "qemu:///system"` (`place`).
     The default network is checked with `virsh -c qemu:///system` only once the group is in the session (`id -nG`), else a note says to log in
     again and re-run: `net-autostart default`, or `net-define` from `/usr/share/libvirt/networks/default.xml`, autostart, start when missing.
-  - `tools`: second checklist of groups on a terminal (all preselected), per-group y/n without gum, all under `--yes`; one `brew install` per
+  - `tools`: second checklist of groups on a terminal (nothing ticked), per-group y/n without gum (default N), all under `--yes`; one `brew install` per
     formula (retried), installed ones skipped, a failed package is listed with `ujust dev --only tools` and does not stop the rest.
     Groups: Editor `helix`; Python `ruff ty sqlfluff`; Web `prettier typescript-language-server vscode-langservers-extracted yaml-language-server marksman`;
     Java `jdtls google-java-format`; Lua `lua-language-server stylua`; TOML `taplo`; SQL `sql-language-server`; GitHub `gh` (no login).

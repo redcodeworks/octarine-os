@@ -4,11 +4,13 @@
 #   menu_lib="${OCTARINE_MENU_LIB:-/usr/share/octarine-os/lib/menu.sh}"
 #   [ -r "$menu_lib" ] && . "$menu_lib"
 #
-# Items are strings "id^text^selected": id is what the caller gets back, text is what the user sees, selected is 1 to
-# preselect (checklists only). An item with an EMPTY id is a GROUP label ("^Account^0"), not a row: it is never shown
-# as a selectable entry (gum cannot make a row unselectable); instead the items after it show it as a prefix
+# Items are strings "id^text^selected": id is what the caller gets back, text is what the user sees. The third field is
+# IGNORED: a checklist always starts with nothing ticked (Kevin, 2026-11-17: the user ticks what they want). The one
+# exception is a checklist that edits a STATE (the ticks are what is on now, as in toggle-updates): the caller opts in
+# with MENU_KEEP_SELECTED=1 in front of the menu_multi call, and then a 1 preselects the row.
+# An item with an EMPTY id is a GROUP label ("^Account^0"), not a row: it is never shown as a selectable entry (gum cannot make a row unselectable); instead the items after it show it as a prefix
 # ("Account: Login shell"). Every row the user can pick is a real choice. Text must not contain "^"; commas in text are
-# shown as ";" (gum splits --selected on commas).
+# shown as ";".
 #
 # Functions (all keep stdout for the caller's own output; results come back in variables):
 #   menu_tty            true on a terminal (stdin and stdout), or when OCTARINE_MENU_FORCE_TTY is set (tests)
@@ -66,7 +68,7 @@ menu_multi() {
         text=${group:+$group: }${text//,/;}
         items+=("$text")
         id_of["$text"]=$id
-        if [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
+        if [ "${MENU_KEEP_SELECTED:-0}" = 1 ] && [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
     done
     rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
     [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
