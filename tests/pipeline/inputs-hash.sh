@@ -26,7 +26,7 @@ sha() { git rev-parse --short=7 "$1"; }
 
 mkdir -p system_files variants/dx/system_files variants/gx .github/workflows .github/scripts tests docs keys
 echo a > variants/gx/f; echo a > .github/workflows/build-gx.yml; echo a > .github/scripts/gx-smoke.sh
-echo a > .github/workflows/dx-image.yml; echo a > .github/scripts/plan-dx.sh; echo a > .github/scripts/aggregate-dx.sh
+echo a > .github/workflows/dx-image.yml; echo a > .github/workflows/build-variant.yml; echo a > .github/workflows/build-extra.yml; echo a > .github/scripts/plan-dx.sh; echo a > .github/scripts/aggregate-dx.sh
 echo a > system_files/x; echo a > variants/dx/f; echo a > variants/dx/system_files/g
 echo a > .github/workflows/build-dx.yml; echo a > .github/workflows/build.yml; echo a > .github/scripts/dx-smoke.sh
 echo a > tests/dx-image.sh; echo a > tests/other.sh; echo a > README.md; echo a > docs/n.md; echo a > keys/redcodeworks-toolbox-cosign.pub
@@ -47,7 +47,7 @@ g1=$(g)
 echo b >> .github/workflows/build-gx.yml; echo b >> .github/scripts/gx-smoke.sh; commit gx2
 eq "build-gx.yml and gx-smoke.sh are gx-only: vanilla_inputs equal" "$(v)" "${v0}"; ne "...gx_inputs differ" "$(g)" "${g1}"; eq "...dx_inputs equal" "$(d)" "${d1}"
 d1=$(d); g1=$(g)
-for f in .github/workflows/dx-image.yml .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub; do
+for f in .github/workflows/dx-image.yml .github/workflows/build-variant.yml .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub; do
     echo b >> "${f}"; commit "shared ${f}"
     eq "shared file ${f}: vanilla_inputs equal" "$(v)" "${v0}"; ne "...dx_inputs differ" "$(d)" "${d1}"; ne "...gx_inputs differ" "$(g)" "${g1}"
     d1=$(d); g1=$(g)
@@ -55,6 +55,8 @@ done
 echo b >> .github/workflows/build-dx.yml; commit dx2
 eq "build-dx.yml is dx-only: gx_inputs equal" "$(g)" "${g1}"; ne "...dx_inputs differ" "$(d)" "${d1}"
 d1=$(d)
+echo b >> .github/workflows/build-extra.yml; commit extra
+eq "build-extra.yml (dispatch-only extra variants) is pipeline-only: all three hashes equal" "$(v)-$(d)-$(g)" "${v0}-${d1}-${g1}"
 echo b >> README.md; echo b >> docs/n.md; echo b >> docs/CONFIG-GUIDE.md; commit docs
 eq "docs-only change (README, docs/, docs/CONFIG-GUIDE.md): vanilla_inputs equal" "$(v)" "${v0}"; eq "docs-only change: dx_inputs equal to the commit before" "$(d)" "$(d HEAD~1)"
 d2=$(d); g2=$(g)

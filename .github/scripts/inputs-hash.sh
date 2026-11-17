@@ -32,11 +32,11 @@ is_gx_only() {
         *) return 1 ;;
     esac
 }
-# The paths BOTH variants are built with: the reusable workflow (dx-image.yml, parameterized by the variant), its plan and result scripts, the key the list-image pins are verified
+# The paths BOTH variants are built with: the reusable workflow (dx-image.yml, parameterized by the variant), the one caller of the two required variants (build-variant.yml, added 2026-11-17: editing it rebuilds dx AND gx), its plan and result scripts, the key the list-image pins are verified
 # with. They count in dx_inputs and in gx_inputs, never in vanilla_inputs.
 is_variant_shared() {
     case "$1" in
-        .github/workflows/dx-image.yml | .github/scripts/plan-dx.sh | .github/scripts/aggregate-dx.sh | keys/redcodeworks-toolbox-cosign.pub) return 0 ;;
+        .github/workflows/dx-image.yml | .github/workflows/build-variant.yml | .github/scripts/plan-dx.sh | .github/scripts/aggregate-dx.sh | keys/redcodeworks-toolbox-cosign.pub) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -51,7 +51,7 @@ is_pipeline_only() {
         .github/scripts/bump-*.sh) return 0 ;;
         .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
         .github/workflows/require-testing-branch.yml | .github/workflows/test.yml | .github/workflows/zizmor.yml) return 0 ;;
-        .github/workflows/build-nvidia.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;
+        .github/workflows/build-nvidia.yml | .github/workflows/build-extra.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;
         .github/zizmor.yml | .github/dependabot.yml | .gitleaks.toml | githooks/*) return 0 ;;
         *) return 1 ;;
     esac
