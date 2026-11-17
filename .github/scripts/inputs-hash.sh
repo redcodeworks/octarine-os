@@ -17,21 +17,22 @@ set -euo pipefail
 # shellcheck source=docs-only.sh
 source "$(dirname "${BASH_SOURCE[0]}")/docs-only.sh"
 
-# The paths of ONE variant: the dx directory and its smoke test; the gx directory and its smoke test (the workflow files are shared since 2026-11-17, see below). The tests are no input of any image (docs-only.sh lists tests/** with the docs). Everything else (Containerfile, build_files, system_files, Justfile, the other
+# The paths of ONE variant: the dx directory, the dx workflow and its smoke test, the NVIDIA dx caller (it builds the dx layer); the gx directory, the gx workflow and its
+# smoke test. The tests are no input of any image (docs-only.sh lists tests/** with the docs). Everything else (Containerfile, build_files, system_files, Justfile, the other
 # workflows and scripts) belongs to the default image: a change there rebuilds it, and then the variants follow its new digest.
 is_dx_only() {
     case "$1" in
-        variants/dx/* | .github/scripts/dx-smoke.sh) return 0 ;;
+        variants/dx/* | .github/workflows/build-dx.yml | .github/scripts/dx-smoke.sh | .github/workflows/build-nvidia-dx.yml) return 0 ;;
         *) return 1 ;;
     esac
 }
 is_gx_only() {
     case "$1" in
-        variants/gx/* | .github/scripts/gx-smoke.sh) return 0 ;;
+        variants/gx/* | .github/workflows/build-gx.yml | .github/scripts/gx-smoke.sh | .github/workflows/build-nvidia-gx.yml | .github/workflows/build-dx-gx.yml) return 0 ;;
         *) return 1 ;;
     esac
 }
-# The paths BOTH variants are built with: the reusable workflow (dx-image.yml, parameterized by the variant), the one caller of the two required variants (build-variant.yml: editing it rebuilds dx AND gx), their plan and result scripts, the key the list-image pins are verified
+# The paths BOTH variants are built with: the reusable workflow (dx-image.yml, parameterized by the variant), the one caller of the two required variants (build-variant.yml, added 2026-11-17: editing it rebuilds dx AND gx), its plan and result scripts, the key the list-image pins are verified
 # with. They count in dx_inputs and in gx_inputs, never in vanilla_inputs.
 is_variant_shared() {
     case "$1" in
@@ -41,12 +42,12 @@ is_variant_shared() {
 }
 
 # The pipeline-only paths: files that run in CI but are not read by any image build, so changing one rebuilds neither image: the publication of `latest`
-# and the rollback, the variant dispatch, the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan
-# config, the git hooks, and the NVIDIA variant and the extra variants (built by their own dispatch-only workflows from a published image). (build.yml, build-variant.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries are no special case any more
+# and the rollback, the dx dispatch, the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan
+# config, the git hooks, and the NVIDIA variant (built by its own workflow from the published default image). (build.yml, build-dx.yml, build-gx.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries are no special case any more
 # (2026-11-16): the digest pin of octarine-bins in the Containerfile is an ordinary image input, so a bump rebuilds the image on testing.
 is_pipeline_only() {
     case "$1" in
-        .github/scripts/dispatch-variant.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
+        .github/scripts/dispatch-dx.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
         .github/scripts/bump-*.sh) return 0 ;;
         .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
         .github/workflows/require-testing-branch.yml | .github/workflows/test.yml | .github/workflows/zizmor.yml) return 0 ;;

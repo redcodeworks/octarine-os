@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The plan of the variant image workflows (build-variant.yml for dx and gx, build-extra.yml for dx-gx, nvidia-dx and nvidia-gx, both through the reusable dx-image.yml): decide, for one channel, whether to
+# The plan of the variant image workflows (build-dx.yml, build-gx.yml, build-nvidia-dx.yml, build-nvidia-gx.yml, build-dx-gx.yml through the reusable dx-image.yml): decide, for one channel, whether to
 # skip, promote or build, and print key=value lines to $GITHUB_OUTPUT. Run inside a checkout of the commit being built (history needed on main).
 #
 # Environment: CHANNEL (latest or testing), FORCE (true builds anyway), GITHUB_REPOSITORY_OWNER, GITHUB_OUTPUT,
@@ -9,7 +9,7 @@
 # base is whatever `octarine-os:latest` is now, which is the digest of the published pair),
 # PROMOTE_FROM_TESTING (default true; false skips the search for a tested testing image: the NVIDIA developer image has no
 # testing channel). Tools: git, skopeo, cosign, jq.
-# The NVIDIA developer image (build-extra.yml, variant nvidia-dx) runs this with CHANNEL=latest BASE_NAME=octarine-os-nvidia
+# The NVIDIA developer image (build-nvidia-dx.yml) runs this with CHANNEL=latest BASE_NAME=octarine-os-nvidia
 # DX_NAME=octarine-os-nvidia-dx PROMOTE_FROM_TESTING=false: it skips when the NVIDIA base digest and the dx inputs are unchanged.
 #
 # Base: octarine-os:latest for the latest channel, resolved to the digest of its raw manifest and verified with

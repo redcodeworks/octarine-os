@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One issue per ongoing failure of a variant image (dx or gx, one label each: ci-failure-dx, ci-failure-gx) / its `latest` publishing on main, without duplicates (deduplicated on the LABEL, not on the title).
+# One issue per ongoing failure of the dx image / its `latest` publishing on main, without duplicates (deduplicated on the LABEL, not on the title).
 #
 #   ci-issue.sh fail      a run failed: open the issue, or add a comment to the one that is already open
 #   ci-issue.sh recover   `latest` moved: comment "recovered" on the open issue and close it (nothing to do when none is open)

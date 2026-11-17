@@ -711,21 +711,15 @@ jobs:
             echo "signed: ${tag}"
           done
 
-  # Starts the variant workflow (build-variant.yml, once per variant: dx and gx, each its OWN run that can be re-run on its own) for the commit just built, on the same
+  # Starts the dx workflow (build-dx.yml, a separate run that can be re-run on its own) for the commit just built, on the same
   # ref, so its run is recorded on that branch and its file is the branch's own. One-way: it needs the base's aggregate result,
   # nothing of the base needs it. always() because the implicit success() is false when any ancestor job was skipped (promote on
-  # a testing push). It waits until the variant run EXISTS (not until it ends) and fails if none appears; re-running this job alone
-  # (or one matrix leg: "re-run failed jobs") dispatches again. Only for main and testing; there is no pull_request trigger.
-  # The two legs are independent (`fail-fast: false`): a failed dispatch of one leaves the other running, and neither waits for the other or for the
-  # variant runs, which have their own concurrency groups, sign jobs and results (2026-11-17: one matrix job replaced dispatch_dx and dispatch_gx).
-  dispatch_variant:
-    name: Start the ${{ matrix.variant }} build
+  # a testing push). It waits until the dx run EXISTS (not until it ends) and fails if none appears; re-running this job alone
+  # dispatches again. Only for main and testing; there is no pull_request trigger.
+  dispatch_dx:
+    name: Start the dx build
     needs: [build_result, build_push, promote]
     if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [dx, gx]
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -736,16 +730,41 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Dispatch the variant workflow on this ref
+      - name: Dispatch the dx workflow on this ref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
-          VARIANT: ${{ matrix.variant }}
           # main: the digest of the default image this run published or promoted (empty when nothing new was built: a docs-only
-          # merge or an unchanged scheduled run); the variant builds on exactly that digest. The default image's own `latest` moves in the
-          # `publish` job, which does not wait for the variants and which they do not wait for. Empty on testing.
+          # merge or an unchanged scheduled run); dx builds on exactly that digest. The default image's own `latest` moves in the
+          # `publish` job, which does not wait for dx and which dx does not wait for
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
-        run: .github/scripts/dispatch-variant.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+
+  # The same for the gamer image (build-gx.yml, octarine-os-gx): dispatched in PARALLEL with dx, with the same conditions and the same hand-over (the digest of the
+  # default image this run published or promoted), through the same script. Independent of dx: neither waits for the other, a failed dispatch of one leaves the
+  # other running, and re-running this job alone dispatches gx again.
+  dispatch_gx:
+    name: Start the gx build
+    needs: [build_result, build_push, promote]
+    if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch the gx workflow on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+          VARIANT: gx
+          # the same digest as for dx (empty on testing and when nothing new was built)
+          BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
 
   # Main only: the default image's OWN `latest` moves to the digest this run built or promoted, after its signature was checked by the sign job (the dated tags
   # exist already). Independent of the dx image (2026-11-16): nothing waits for dx and dx never gates it. Nothing new (a docs-only merge, an unchanged

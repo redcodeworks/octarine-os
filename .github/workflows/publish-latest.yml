@@ -4,7 +4,7 @@ name: Publish latest
 # Every image publishes its OWN `latest`, after its own signed build or its own promotion, independently of the others (2026-11-16). The main build and the
 # promotion publish dated tags only. Details and the failure table: CLAUDE.md "Publishing latest (one image at a time)".
 #
-#   workflow_call      from the build run of that image on main (build.yml for the default image, build-variant.yml for dx and gx): the image and its digest
+#   workflow_call      from the build run of that image on main (build.yml for the default image, build-dx.yml for dx, build-gx.yml for gx): the image and its digest
 #   workflow_dispatch  by hand, on main: the image and (for the default image optionally) a dated tag of it; dry_run (or any ref but main) only
 #                      plans and reports: nothing is written
 #

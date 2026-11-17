@@ -1,0 +1,231 @@
+---
+name: Build gx image
+run-name: gx ${{ inputs.channel }} ${{ inputs.sha || github.sha }}
+# The gamer image (ghcr.io/<owner>/octarine-os-gx): the published default image plus the gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and
+# friends), a SIBLING of the dx image with the same build strategy, in two channels that follow the default image's own:
+#   octarine-os:testing  -> octarine-os-gx:testing   (dispatched by "Build container image" on `testing`, in parallel with dx)
+#   octarine-os:latest   -> octarine-os-gx:latest    (dispatched by "Build container image" on `main`: promotes the tested testing
+#                                                     image when base digest and gx inputs match, else builds)
+# A SEPARATE workflow that is started by the last jobs of those pipelines (`gh workflow run build-gx.yml --ref <ref> -f channel=<channel> -f sha=<built commit>`,
+# .github/scripts/dispatch-dx.sh with VARIANT=gx) after the base succeeded, and that can be re-run on its own. It never runs for pull requests or feature branches
+# (the plan job's guard). `sha` is the commit the pipeline built: every job checks out exactly that commit, and the plan job refuses a commit that is not an
+# ancestor of the ref. Plan, build and promote are the reusable dx-image.yml with `variant: gx` (plan-dx.sh compares the published image's labels base digest
+# and gx-inputs with the current ones; the gx hash is inputs-hash.sh `gx`). Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and `testing-<sha>`),
+# signed with the repository key in the `signing` environment: the SIGN job is HERE (the environment secret does not reach a job of a reusable workflow, so it uses
+# the composite action .github/actions/sign-images). The result job is the check `Build gx and push image` ONLY when the built commit is the tip of the ref
+# (otherwise `Build gx (older commit)`); the commit status of the same name is posted on the built commit for channel testing. Publishing `latest` is this
+# workflow's own `publish` job (image: gx), independent of the default and dx images. Design in CLAUDE.md ("gx image").
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Channel to build: testing (ref testing) or latest (ref main)"
+        type: choice
+        options:
+          - testing
+          - latest
+        default: latest
+      sha:
+        description: "Commit to build (default: the tip of the ref); the pipeline passes the commit it just built"
+        type: string
+        default: ""
+      base_digest:
+        description: "Channel latest on main: the digest of the default image this run is built on (the pipeline passes the one it just published); empty = no new default image"
+        type: string
+        default: ""
+      force:
+        description: "Build even when the base digest is unchanged"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Plan and report only: nothing is built, pushed or signed, no commit status is posted"
+        type: boolean
+        default: false
+
+env:
+  SHA: ${{ inputs.sha || github.sha }}
+
+# testing: one group per channel and a newer run CANCELS the older one (a superseded tip needs no gx image; the newest tip's run is the one that
+# counts, and a cancelled run posts no commit status, see the status step). latest on main: one group per COMMIT and never cancelled, because with
+# one group a third run would cancel the PENDING second one, silently dropping a default image that then never gets its gx pair; runs of different
+# commits build side by side and Publish latest serializes the moves of gx `latest`
+concurrency:
+  group: build-gx-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.channel == 'latest' && format('latest-{0}', inputs.sha || github.sha) || inputs.channel }}
+  cancel-in-progress: ${{ inputs.channel == 'testing' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # plan, build and promote: the reusable workflow (see its header). Only `testing` (channel testing) or `main` (channel latest) run it: never a
+  # feature branch; a dispatch is the only trigger. Signing is the `sign` job below.
+  gx:
+    name: gx
+    if: >-
+      (github.ref == 'refs/heads/testing' && inputs.channel == 'testing') ||
+      (github.ref == 'refs/heads/main' && inputs.channel == 'latest')
+    uses: ./.github/workflows/dx-image.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      base_name: octarine-os
+      dx_name: octarine-os-gx
+      variant: gx
+      channel: ${{ inputs.channel }}
+      sha: ${{ inputs.sha || github.sha }}
+      base_digest: ${{ inputs.base_digest }}
+      force: ${{ inputs.force }}
+      dry_run: ${{ inputs.dry_run }}
+      promote_from_testing: true
+      tags: ${{ inputs.channel == 'testing' && 'testing-{sha} testing' || 'latest-{date}-{sha}' }}
+      description: octarineOS with Steam, gamescope, MangoHud, GameMode and Sunshine (gamer image, ${{ inputs.channel }} channel)
+
+  # Signing lives here, not in the reusable workflow: an environment secret did not reach a job inside dx-image.yml (observed 2026-11-16 on two runs).
+  # A build signs every pushed digest, a promotion only verifies the digest that was signed when the testing image was published; both then
+  # verify every tag. Skipped when nothing was built or promoted (plan skipped, nothing to do, dry run, failures before it).
+  sign:
+    name: Sign and verify gx image
+    needs: gx
+    if: >-
+      always() && needs.gx.result == 'success' &&
+      (needs.gx.outputs.build == 'success' || needs.gx.outputs.promote == 'success')
+    runs-on: ubuntu-26.04
+    environment: signing
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ env.SHA }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign and verify
+        uses: ./.github/actions/sign-images
+        with:
+          image: ${{ needs.gx.outputs.image }}
+          digests: ${{ needs.gx.outputs.digests }}
+          tags: ${{ needs.gx.outputs.alias_tags }}
+          moving-tags: ${{ needs.gx.outputs.moving_tags }}
+          mode: ${{ needs.gx.outputs.build == 'success' && 'sign' || 'verify' }}
+          private-key: ${{ secrets.SIGNING_SECRET }}
+
+  # The one result of a run, last in the graph (plan -> build or promote -> sign -> this); always runs. Green when the gx
+  # image was built, promoted or legitimately skipped (base and gx inputs unchanged). It is the required check
+  # `Build gx and push image` (in the main ruleset) only when the built commit is the tip of the ref the run was dispatched on (a check run attaches to
+  # that tip): for an older commit it is named `Build gx (older commit)`, so a green check never appears on a commit whose
+  # own gx build has not run. The commit status of the same name on the BUILT commit is always posted (a pull request into
+  # main can require it; both come from this one result, so they never disagree). A plan that was skipped (a ref or channel
+  # that gx is not built for) posts nothing.
+  gx_result:
+    # a dry run never carries the required name (it must not satisfy the check on the tip)
+    name: ${{ inputs.dry_run && 'Build gx (dry run)' || ((inputs.sha || github.sha) == github.sha && 'Build gx and push image' || 'Build gx (older commit)') }}
+    needs: [gx, sign]
+    if: always()
+    runs-on: ubuntu-26.04
+
+    permissions:
+      contents: read
+      statuses: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check the gx result
+        id: result
+        env:
+          # a skipped call (not a ref and channel gx is built for) means every job was skipped; a call that failed before its summary has no outputs: failure
+          PLAN: ${{ needs.gx.result == 'skipped' && 'skipped' || needs.gx.outputs.plan || 'failure' }}
+          BUILD_WANTED: ${{ needs.gx.outputs.build_wanted }}
+          PROMOTE_WANTED: ${{ needs.gx.outputs.promote_wanted }}
+          BUILD: ${{ needs.gx.result == 'skipped' && 'skipped' || needs.gx.outputs.build || 'failure' }}
+          PROMOTE: ${{ needs.gx.result == 'skipped' && 'skipped' || needs.gx.outputs.promote || 'failure' }}
+          SIGN: ${{ needs.sign.result }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: .github/scripts/aggregate-dx.sh
+
+      - name: Post the result as a commit status on the built commit
+        # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
+        if: always() && !contains(needs.*.result, 'cancelled') && needs.gx.result != 'skipped' && inputs.channel == 'testing' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTCOME: ${{ steps.result.outcome }}
+        run: |
+          set -euo pipefail
+          [[ "${SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::no valid commit to post a status on (${SHA})"; exit 1; }
+          state=failure; text="gx image build, promotion or check failed"
+          if [[ "${OUTCOME}" == success ]]; then state=success; text="gx image built, promoted or unchanged"; fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${SHA}" \
+            -f state="${state}" -f context="Build gx and push image" -f description="${text}" \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  # Channel latest on main: gx's OWN `latest` moves to the gx digest built or promoted here, once it is signed and its base is a signed default image from main.
+  # Independent of the default image (2026-11-16): it neither waits for the default image's `latest` nor gates it. Nothing new (gx unchanged) means no digest
+  # and no publish. Called, not dispatched: the digest is handed over, the job is re-run with "re-run failed jobs" and lives in this run.
+  publish:
+    name: Publish latest
+    needs: [gx, sign, gx_result]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run &&
+      needs.gx.result == 'success' && needs.gx_result.result == 'success' && needs.gx.outputs.digests != ''
+    uses: ./.github/workflows/publish-latest.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: gx
+      digest: ${{ needs.gx.outputs.digests }}
+
+  # A failed gx run for latest on main: one issue with the label ci-failure-gx, a comment per further failure (a run started by a
+  # dispatch with the default token probably e-mails nobody), or a failed publish of gx `latest`; a green run closes it.
+  alert:
+    name: Report a failed gx run
+    needs: [gx, sign, gx_result, publish]
+    if: always() && github.ref == 'refs/heads/main' && inputs.channel == 'latest' && !inputs.dry_run
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Open the failure issue or comment on it
+        if: contains(needs.*.result, 'failure')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha || github.sha }}
+          CHANNEL: latest
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          LABEL: ci-failure-gx
+          LABEL_DESC: the gx image build or the move of its latest on main failed (one open issue at a time)
+          ISSUE_TITLE: "The gx image build on main failed"
+          ISSUE_BODY: "The build or promotion of octarine-os-gx on main (or the move of its latest) failed, so octarine-os-gx:latest stays on the previous image (the default and dx images publish their own latest independently and are not held back). See the run for the failed job and re-run the failed jobs. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, gx image."
+          FAIL_COMMENT: "gx build or publish failed again"
+        run: .github/scripts/ci-issue.sh fail
+
+      - name: Close the issue when the run succeeded
+        if: needs.gx_result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.sha || github.sha }}
+          CHANNEL: latest
+          LABEL: ci-failure-gx
+          RECOVER_COMMENT: "the next gx build or promotion succeeded"
+        run: .github/scripts/ci-issue.sh recover

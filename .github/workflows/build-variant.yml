@@ -8,7 +8,10 @@ run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.s
 #   octarine-os:testing  -> octarine-os-<variant>:testing   (dispatched by "Build container image" on `testing`)
 #   octarine-os:latest   -> octarine-os-<variant>:latest    (dispatched by "Build container image" on `main`: promotes the tested testing
 #                                                           image when base digest and variant inputs match, else builds)
-# EACH VARIANT IS ITS OWN RUN, never one run with two parts: build.yml dispatches this workflow once per variant (a matrix of dispatch jobs, `fail-fast: false`),
+# STAGE 1 (2026-11-17): added beside build-dx.yml and build-gx.yml, which still do the real work; nothing dispatches this file yet. GitHub dispatches a workflow only from a file that
+# exists on the default branch, so it must reach `main` BEFORE build.yml dispatches it; stage 2 (after the promotion that carries this file) switches build.yml to it and deletes the
+# two old callers. Until then dispatch it only as a DRY RUN (a real run would use the same concurrency groups and commit statuses as the old callers).
+# EACH VARIANT IS ITS OWN RUN, never one run with two parts: build.yml (from stage 2) dispatches this workflow once per variant (a matrix of dispatch jobs, `fail-fast: false`),
 # so the concurrency group, the sign job, the publish of its own `latest`, the failure issue and the required result belong to one variant and a failed or
 # cancelled gx run can never block or cancel dx, nor the other way round. Find a variant's run by its title (the run-name): `<variant> <channel> <sha>`.
 # A SEPARATE workflow, started by the last jobs of the default pipeline (`gh workflow run build-variant.yml --ref <ref> -f variant=<variant> -f channel=<channel>

@@ -1,11 +1,11 @@
 ---
 name: dx image (reusable)
-# The shared plan, build and promote jobs of the variant images, called by build-variant.yml (octarine-os-dx and octarine-os-gx, the two required variants, one run
-# each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
-# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned binaries image that is verified (dx:
-# octarine-bins-dx, gx: octarine-bins-gx) and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
-# concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
-# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
+# The shared plan, build and promote jobs of the variant images, called by build-dx.yml (octarine-os-dx), build-gx.yml (octarine-os-gx, the gamer image:
+# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx) and build-dx-gx.yml (octarine-os-dx-gx, variant gx on the dx image, experimental). The variant selects the Containerfile (variants/<variant>/Containerfile), the
+# inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned binaries image that is verified (dx: octarine-bins-dx, gx: octarine-bins-gx) and the smoke
+# script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job
+# and RESULT job: the required check `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry
+# that name), `Build gx and push image` by build-gx.yml, the NVIDIA caller never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
 # NO SIGNING HERE: the sign job lives in each caller (`environment: signing`, the composite action .github/actions/sign-images) because the
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed

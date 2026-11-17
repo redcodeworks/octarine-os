@@ -1,6 +1,6 @@
 ---
 name: Build extra variant image
-run-name: ${{ inputs.variant && format('{0} latest {1}', inputs.variant, inputs.sha || github.sha) || 'NVIDIA fan-out' }}
+run-name: ${{ inputs.variant }} latest ${{ inputs.sha || github.sha }}
 # The EXTRA variant images, one parametrized workflow (2026-11-17; it replaced build-dx-gx.yml, build-nvidia-dx.yml and build-nvidia-gx.yml). DISPATCH ONLY
 # and `latest` only: no schedule, no push, no pull request, no `testing` channel (so no promotion from testing), and NEVER a required check: its result jobs are
 # named `Build <variant> result` and post no commit status, so this workflow can neither satisfy nor block a promotion pull request. Choose the variant:
@@ -13,14 +13,12 @@ run-name: ${{ inputs.variant && format('{0} latest {1}', inputs.variant, inputs.
 # .github/actions/sign-images signs) and result job, so one variant failing never blocks or cancels another. Plan, build and promote are the reusable
 # dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/plan-dx.sh) skips when the base digest and the layer's inputs
 # are unchanged (`force` builds anyway). Dispatch on `main` only (a DRY RUN, which writes nothing, is allowed on any branch).
-# The chain after the NVIDIA base: when "Build NVIDIA variant" (build-nvidia.yml, untouched) finishes on `main` after a dispatch, the `fanout` job below (workflow_run,
-# which always runs the file of the default branch; `actions: write`) dispatches this workflow for nvidia-dx and nvidia-gx at the commit the NVIDIA build ran for. The
-# two dispatched runs are independent; the fan-out run itself only starts them. Design in CLAUDE.md ("Extra variants").
+# STAGE 1 (2026-11-17): added beside the old per-variant callers (build-dx-gx.yml, build-nvidia-dx.yml, build-nvidia-gx.yml), which still do the real work and keep their
+# `workflow_run` chain after "Build NVIDIA variant"; this file has NO `workflow_run` trigger yet, so nothing starts it but a person. GitHub dispatches a workflow only from a file
+# that exists on the default branch, so the new files must reach `main` BEFORE anything dispatches them; stage 2 (after the promotion that carries this file) deletes the three old
+# callers and adds the `fanout` job (workflow_run of "Build NVIDIA variant" -> dispatches this workflow for nvidia-dx and nvidia-gx at the commit the NVIDIA build ran for).
+# Until then dispatch it only as a DRY RUN. Design in CLAUDE.md ("Variant workflows").
 on:
-  workflow_run:
-    workflows: ["Build NVIDIA variant"]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
     inputs:
       variant:
@@ -49,47 +47,13 @@ env:
 
 # A run that is already building is never cancelled (a newer trigger waits, only one can wait); one group per variant
 concurrency:
-  group: build-extra-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.variant || 'fanout' }}
+  group: build-extra-${{ inputs.dry_run && 'dry-' || '' }}${{ inputs.variant }}
   cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  # After a successful dispatched NVIDIA base build on main: start the two NVIDIA layer builds. Each dispatch is its own run; `fail-fast: false` so a failed dispatch of one
-  # leaves the other going. Nothing waits for the dispatched runs.
-  fanout:
-    name: Start the ${{ matrix.variant }} build
-    if: >-
-      github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.head_branch == 'main'
-    strategy:
-      fail-fast: false
-      matrix:
-        variant: [nvidia-dx, nvidia-gx]
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      actions: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Dispatch this workflow for the variant
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VARIANT: ${{ matrix.variant }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
-          .github/scripts/retry.sh gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
-          echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
-
   # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
   image:
     name: ${{ inputs.variant }}

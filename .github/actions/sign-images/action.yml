@@ -3,7 +3,7 @@ description: >-
   Signs every pushed digest of a dx image with the repository key and verifies that every tag of it is signed, or (promote path) only verifies
   the digest that was promoted. STEPS ONLY: the caller job carries `environment: signing`, logs in to ghcr.io and checks out the repository
   (cosign.pub, and this action, come from the checkout); the private key arrives as an input and goes to cosign through the environment (env://), never
-  into a shell string and never printed. Used by the `sign` jobs of build-variant.yml and build-extra.yml (an environment secret did not reach a job
+  into a shell string and never printed. Used by the `sign` jobs of build-dx.yml and build-nvidia-dx.yml (an environment secret did not reach a job
   inside the reusable dx-image.yml: observed 2026-11-16 on two runs).
 inputs:
   image:
