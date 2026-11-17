@@ -5,7 +5,7 @@
 # default image's smoke test that still apply to a layer on top of it. EVERY check here is mandatory, except the optional packages of the gx list, which are
 # only reported (INFO; what could not be installed is also in /usr/share/octarine-os/optional-packages-missing).
 #
-# Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant).
+# Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant, octarine-os-dx-gx on the dx image: there the dev-only recipe check below is skipped, because the dx layer below legitimately ships it).
 # For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, LIB_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the pipeline fails).
@@ -84,7 +84,7 @@ check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' ${os_release}"
 check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-gx}\"' ${os_release}"
 check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"
-for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx octarine-os-nvidia-gx; do
+for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx octarine-os-nvidia-gx octarine-os-dx-gx; do
     check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
 done
 check "sudoers valid" "visudo -c"
@@ -92,7 +92,11 @@ check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd S
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"
 check "the gaming-setup recipe is listed" "o=\$(ujust --summary 2>&1) && [[ \" \${o//\$'\\n'/ } \" == *' gaming-setup '* ]]"
-check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+if [ "${EXPECT_IMAGE_ID:-}" = octarine-os-dx-gx ]; then
+    check "the dev recipe of the dx layer below is still imported (octarine-os-dx-gx has both layers)" "grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+else
+    check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+fi
 for p in pam-u2f snapper tailscale borgbackup zsh distrobox; do
     check "package ${p}" "rpm -q ${p}"
 done

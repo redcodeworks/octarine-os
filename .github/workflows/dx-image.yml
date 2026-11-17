@@ -1,7 +1,7 @@
 ---
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-dx.yml (octarine-os-dx), build-gx.yml (octarine-os-gx, the gamer image:
-# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx). The variant selects the Containerfile (variants/<variant>/Containerfile), the
+# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx) and build-dx-gx.yml (octarine-os-dx-gx, variant gx on the dx image, experimental). The variant selects the Containerfile (variants/<variant>/Containerfile), the
 # inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned binaries image that is verified (dx: octarine-bins-dx, gx: octarine-bins-gx) and the smoke
 # script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job
 # and RESULT job: the required check `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry
@@ -16,11 +16,11 @@ on:
   workflow_call:
     inputs:
       base_name:
-        description: "Base image name under ghcr.io/<owner>/ (octarine-os or octarine-os-nvidia)"
+        description: "Base image name under ghcr.io/<owner>/ (octarine-os, octarine-os-nvidia or octarine-os-dx)"
         type: string
         required: true
       dx_name:
-        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx, octarine-os-gx or octarine-os-nvidia-gx)"
+        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx, octarine-os-gx, octarine-os-nvidia-gx or octarine-os-dx-gx)"
         type: string
         required: true
       variant:
@@ -59,6 +59,10 @@ on:
         description: "The org.opencontainers.image.description label"
         type: string
         required: true
+      max_image_gib:
+        description: "The build fails when the built image is larger than this many GiB (the combined dx and gx image needs more than the default)"
+        type: number
+        default: 15
       extra_smoke:
         description: "Optional second smoke test: a script in the repository, then its arguments (it runs inside the image like the variant's smoke script)"
         type: string
@@ -314,7 +318,7 @@ jobs:
 
       - name: Check image size
         env:
-          MAX_IMAGE_GIB: 15
+          MAX_IMAGE_GIB: ${{ inputs.max_image_gib }}
         run: |
           size=$(podman image inspect "${DX_NAME}:${CHANNEL}" --format '{{.Size}}')
           echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"

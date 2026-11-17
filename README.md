@@ -18,8 +18,9 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | manual run, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | manual run, main only |
 | NVIDIA gx | [![NVIDIA gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml?query=branch%3Amain) | manual run, main only |
+| dx-gx | [![dx-gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml?query=branch%3Amain) | manual run, main only |
 
-The gx, NVIDIA dx and NVIDIA gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
+The gx, NVIDIA dx, NVIDIA gx and dx-gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
 
 ## Requirements
 
@@ -79,6 +80,7 @@ Added by this image:
 | NVIDIA | Adds the proprietary NVIDIA driver (built on request; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built on request, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 | NVIDIA gx | The NVIDIA image with the same gaming packages as gx (built on request, NVIDIA GPUs only; experimental, not yet known to build) | `ghcr.io/redcodeworks/octarine-os-nvidia-gx:latest` |
+| dx-gx (alias fx) | Experimental: the developer tools of dx and the gaming packages of gx in one image (built on request, very large, not tested on hardware). `ujust switch-image fx` is the short name for `dx-gx`; it is the same image | `ghcr.io/redcodeworks/octarine-os-dx-gx:latest` |
 
 ## Install
 
@@ -126,7 +128,7 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust gaming-setup` | Checklist for gaming: Steam (Flatpak), ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, extest, launchers and GameMode tuning; on the gx image Steam and the layers are already installed and those steps are skipped |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
-| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, gx, nvidia, nvidia-dx, nvidia-gx) or channel (latest, testing); `--list` shows what exists |
+| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, gx, nvidia, nvidia-dx, nvidia-gx, dx-gx or its alias fx) or channel (latest, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust toggle-motd` | Turns the message of the day (a fastfetch summary, or a tip when fastfetch is not installed) on or off for every shell; `toggle-user-motd` is the same switch |

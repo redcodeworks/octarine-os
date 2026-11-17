@@ -13,6 +13,7 @@ rules:
       - dx-image.yml
       - build-nvidia-dx.yml
       - build-nvidia-gx.yml
+      - build-dx-gx.yml
       - build-nvidia.yml
       - build.yml
       - bump-pins.yml

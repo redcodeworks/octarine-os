@@ -10,8 +10,9 @@ Build recipes for the images that sit on top of the default `octarine-os` image.
   Flatpak steps), Sunshine is installed with its user unit but not started (`systemctl --user enable --now app-dev.lizardbyte.app.Sunshine`).
   The build leaves no third-party repository enabled (negativo17 is enabled only for the install call).
 - `nvidia/` adds the NVIDIA driver build.
+- The experimental `octarine-os-dx-gx` (alias `fx`) has no directory of its own: it is the `gx/` layer built on `octarine-os-dx` instead of the default image (layering order: default, dx, gx). It is large (the sum of both layers) and only built on request.
 
-Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, (the package lists of dx and gx are in the octarine-bins repository, one pinned image per variant; gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml` and `build-nvidia-gx.yml` workflows build them from the published
+Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, (the package lists of dx and gx are in the octarine-bins repository, one pinned image per variant; gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`, `build-nvidia-gx.yml` and (experimental, dispatch only) `build-dx-gx.yml` workflows build them from the published
 default image; dx and gx are built by the same reusable workflow and are dispatched in parallel after the default image.
 
 Before editing: a variant only adds to the default image, so anything every user needs belongs in `build_files/` and

@@ -34,7 +34,7 @@ FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
 
 # os-release IMAGE_VERSION of this build (set by the workflow), written by gx.sh
 ARG IMAGE_VERSION
-# os-release IMAGE_ID: octarine-os-gx, or octarine-os-nvidia-gx when the base is the NVIDIA variant (same layer, same packages)
+# os-release IMAGE_ID: octarine-os-gx, octarine-os-nvidia-gx when the base is the NVIDIA variant, or octarine-os-dx-gx when the base is the dx image (same layer, same packages)
 ARG GX_IMAGE_ID=octarine-os-gx
 
 # The pinned bins-gx image through a bind mount at /binaries (its package lists, then its zero components), in gx.sh (which also keeps the kernel unchanged)
