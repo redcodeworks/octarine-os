@@ -114,6 +114,12 @@ check "gx published: the switch runs with the enforced signature policy" logged 
 run "$base" --list
 check "--list has a gx row that says not published" bash -c "grep -E '^gx +not published +not published' '$root/out'"
 
+# ---- dx-gx (experimental): `fx` is only an alias for the same repository
+FAKE_PUBLISHED="$pub_all octarine-os-dx-gx:latest" run "$base" fx --yes
+check "fx switches to octarine-os-dx-gx (alias, same repository)" logged "sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os-dx-gx:latest"
+run "$base" dx-gx --yes
+check "dx-gx not published: refused, bootc is not called" bash -c "[ $rc = 1 ] && grep -q 'octarine-os-dx-gx:latest is not published' '$root/out'"
+
 # ---- nvidia images on a machine without an NVIDIA GPU
 pubnv="$pub_all octarine-os-nvidia-dx:latest"
 OCTARINE_SYSFS_DRM="$root/drm-amd" FAKE_PUBLISHED="$pubnv" run "$base" nvidia --yes

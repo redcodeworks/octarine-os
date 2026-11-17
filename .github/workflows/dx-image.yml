@@ -1,8 +1,8 @@
 ---
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-dx.yml (octarine-os-dx), build-gx.yml (octarine-os-gx, the gamer image:
-# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx). The variant selects the Containerfile (variants/<variant>/Containerfile), the
-# inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned list image that is verified (dx: dev-packages, gx: gaming-packages) and the smoke
+# input `variant: gx`) build-nvidia-dx.yml (octarine-os-nvidia-dx) and build-nvidia-gx.yml (octarine-os-nvidia-gx, variant gx) and build-dx-gx.yml (octarine-os-dx-gx, variant gx on the dx image, experimental). The variant selects the Containerfile (variants/<variant>/Containerfile), the
+# inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned binaries image that is verified (dx: octarine-bins-dx, gx: octarine-bins-gx) and the smoke
 # script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job
 # and RESULT job: the required check `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry
 # that name), `Build gx and push image` by build-gx.yml, the NVIDIA caller never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
@@ -16,11 +16,11 @@ on:
   workflow_call:
     inputs:
       base_name:
-        description: "Base image name under ghcr.io/<owner>/ (octarine-os or octarine-os-nvidia)"
+        description: "Base image name under ghcr.io/<owner>/ (octarine-os, octarine-os-nvidia or octarine-os-dx)"
         type: string
         required: true
       dx_name:
-        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx, octarine-os-gx or octarine-os-nvidia-gx)"
+        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx, octarine-os-gx, octarine-os-nvidia-gx or octarine-os-dx-gx)"
         type: string
         required: true
       variant:
@@ -59,6 +59,10 @@ on:
         description: "The org.opencontainers.image.description label"
         type: string
         required: true
+      max_image_gib:
+        description: "The build fails when the built image is larger than this many GiB (the combined dx and gx image needs more than the default)"
+        type: number
+        default: 15
       extra_smoke:
         description: "Optional second smoke test: a script in the repository, then its arguments (it runs inside the image like the variant's smoke script)"
         type: string
@@ -230,16 +234,16 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
 
-      # The shared package list of the variant (dx: dev-packages, gx: gaming-packages; built and signed by the octarine-images repository, a package this project owns)
-      # is PINNED by digest in variants/<variant>/Containerfile (ARG DEV_PACKAGES_DIGEST or GAMING_PACKAGES_DIGEST, changed only by a bump PR). Every build verifies the
-      # PINNED digest with the toolbox key and records it in the image's dev-packages or gaming-packages label: a hand-edited digest cannot ship unverified. No `latest`
-      # is read here. The Containerfile reads the pin itself.
-      - name: Verify the pinned package list image
+      # The variant's binaries image (octarine-bins-dx or octarine-bins-gx: the package lists, their installer and the variant's binary components; built and signed
+      # by the octarine-bins repository with its own key) is PINNED by digest in variants/<variant>/Containerfile (ARG BINS_DX_DIGEST or BINS_GX_DIGEST, changed only by
+      # a bump PR). Every build verifies the PINNED digest with keys/octarine-bins.pub and records it in the image's bins-dx or bins-gx label: a hand-edited digest
+      # cannot ship unverified. No `latest` is read here. The Containerfile reads the pin itself.
+      - name: Verify the pinned binaries image of the variant
         run: |
           set -euo pipefail
           case "${VARIANT}" in
-              dx) list=dev-packages; prefix=DEV_PACKAGES ;;
-              gx) list=gaming-packages; prefix=GAMING_PACKAGES ;;
+              dx) list=octarine-bins-dx; label=bins-dx; prefix=BINS_DX ;;
+              gx) list=octarine-bins-gx; label=bins-gx; prefix=BINS_GX ;;
               *) echo "::error::unknown variant '${VARIANT}'"; exit 1 ;;
           esac
           file="variants/${VARIANT}/Containerfile"
@@ -247,10 +251,10 @@ jobs:
           digest=$(sed -n "s/^ARG ${prefix}_DIGEST=//p" "${file}")
           [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${prefix}_DIGEST in ${file} is missing or malformed"; exit 1; }
           ref="ghcr.io/redcodeworks/${list}@${digest}"
-          .github/scripts/retry.sh cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/redcodeworks-toolbox-cosign.pub"; exit 1; }
+          .github/scripts/retry.sh cosign verify --key keys/octarine-bins.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/octarine-bins.pub"; exit 1; }
           echo "${list} image pinned: ghcr.io/redcodeworks/${list}:${tag}@${digest} (signature valid)"
           echo "LIST_REF=${ref}" >> "${GITHUB_ENV}"
-          echo "LIST_LABEL=${list}" >> "${GITHUB_ENV}"
+          echo "LIST_LABEL=${label}" >> "${GITHUB_ENV}"
 
       # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
@@ -314,7 +318,7 @@ jobs:
 
       - name: Check image size
         env:
-          MAX_IMAGE_GIB: 15
+          MAX_IMAGE_GIB: ${{ inputs.max_image_gib }}
         run: |
           size=$(podman image inspect "${DX_NAME}:${CHANNEL}" --format '{{.Size}}')
           echo "Image size: $((size / 1024 / 1024)) MiB (limit $((MAX_IMAGE_GIB * 1024)) MiB)"

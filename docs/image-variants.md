@@ -4,14 +4,15 @@ Build recipes for the images that sit on top of the default `octarine-os` image.
 
 - `dx/` is the developer image: the developer toolchain, the virtual machine hosting set and thin `ujust`
   recipes that fetch the opt-in datastore bundle on demand (`ujust datastore-install`).
-- `gx/` is the gamer image: the default image plus one signed package list (`gaming-packages`, from the octarine-images
-  repository, pinned by digest and split by source: Fedora, RPM Fusion for Steam, and the LizardByte COPR for Sunshine at an exact
-  version) and a few gx-only steps. Steam is the RPM Fusion package (no Flatpak Steam in the image, `ujust gaming-setup` skips its
+- `gx/` is the gamer image: the default image plus the package lists of one pinned image (`octarine-bins-gx`, from the octarine-bins
+  repository, pinned by digest and split by source: Fedora, negativo17 for Steam, and the LizardByte COPR for Sunshine at an exact
+  version) and a few gx-only steps. Steam is the negativo17 package (no Flatpak Steam in the image, `ujust gaming-setup` skips its
   Flatpak steps), Sunshine is installed with its user unit but not started (`systemctl --user enable --now app-dev.lizardbyte.app.Sunshine`).
-  The build adds RPM Fusion only for the Steam transaction and leaves no third-party repository enabled.
+  The build leaves no third-party repository enabled (negativo17 is enabled only for the install call).
 - `nvidia/` adds the NVIDIA driver build.
+- The experimental `octarine-os-dx-gx` (alias `fx`) has no directory of its own: it is the `gx/` layer built on `octarine-os-dx` instead of the default image (layering order: default, dx, gx). It is large (the sum of both layers) and only built on request.
 
-Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, and `dx/` and `gx/` a `packages/` extras list (gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml` and `build-nvidia-gx.yml` workflows build them from the published
+Each has its own `Containerfile` and a setup script (`dx.sh`, `gx.sh`, `nvidia.sh`); `dx/` also carries its own `system_files/`, (the package lists of dx and gx are in the octarine-bins repository, one pinned image per variant; gx has no `system_files/`: its packages bring everything). The `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`, `build-nvidia-gx.yml` and (experimental, dispatch only) `build-dx-gx.yml` workflows build them from the published
 default image; dx and gx are built by the same reusable workflow and are dispatched in parallel after the default image.
 
 Before editing: a variant only adds to the default image, so anything every user needs belongs in `build_files/` and

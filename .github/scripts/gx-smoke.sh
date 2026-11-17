@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Checks run INSIDE the built octarine-os-gx image (dx-image.yml mounts this file and runs it with bash when the variant is gx):
-# the gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends), where they came from, that no third-party repository is left
-# enabled, Sunshine's file capability, rules and units, the kernel of the base image, and the checks of the default image's smoke test that still
-# apply to a layer on top of it. EVERY check here is mandatory (the optional tier of the default image's smoke test would not fail the build).
+# the REQUIRED gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends: the required lists of the pinned octarine-bins-gx image), where they
+# came from, that no third-party repository is left enabled, Sunshine's file capability, rules and units, the kernel of the base image, and the checks of the
+# default image's smoke test that still apply to a layer on top of it. EVERY check here is mandatory, except the optional packages of the gx list, which are
+# only reported (INFO; what could not be installed is also in /usr/share/octarine-os/optional-packages-missing).
 #
-# Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant).
+# Environment: BASE_KERNEL (the kernel release of the base image: the gx image must carry exactly that one kernel). EXPECT_IMAGE_ID (default octarine-os-gx; octarine-os-nvidia-gx for the same layer on the NVIDIA variant, octarine-os-dx-gx on the dx image: there the dev-only recipe check below is skipped, because the dx layer below legitimately ships it).
 # For tests only: MODULES_DIR, UNIT_DIR, PREINSTALL_DIR, POLICY_FILE, OS_RELEASE, SHARE_DIR, ETC_DIR, LIB_DIR.
 #
 # Under pipefail never write `producer | grep -q` (grep quits at the first match, the producer dies of SIGPIPE and the pipeline fails).
@@ -37,25 +38,28 @@ same_mesa() { local a b; a=$(evr_of mesa-vulkan-drivers.x86_64); b=$(evr_of mesa
 enabled_repos() { dnf5 repolist --enabled 2>/dev/null | sed -n '2,$p' | sed 's/ .*//'; }
 no_third_party_repo() { local r; r=$(enabled_repos); [ -n "${r}" ] && ! grep -qE '^(rpmfusion|copr:copr.fedorainfracloud.org:lizardbyte|google-chrome)' <<<"${r}"; }
 
-echo "== gaming packages (fedora.txt, rpmfusion.txt, extras.txt): both architectures where a 32-bit game needs them"
-for p in steam gamescope Sunshine steam-devices joystick-support input-remapper protontricks winetricks vkBasalt vulkan-tools mesa-demos libva-utils; do
+echo "== required gaming packages (required-fedora, required-negativo17, required-copr of octarine-bins-gx): both architectures where a 32-bit game needs them"
+for p in steam gamescope Sunshine steam-devices; do
     check "package ${p}" "rpm -q ${p}"
 done
-for p in mangohud gamemode libFAudio obs-studio-plugin-vkcapture-hook-libs mesa-vulkan-drivers; do
+for p in mangohud gamemode libFAudio mesa-vulkan-drivers; do
     check "package ${p} for x86_64" "rpm -q ${p}.x86_64"
     check "package ${p} for i686" "rpm -q ${p}.i686"
 done
 check "x86_64 and i686 Mesa have the same version (one repository provides both)" "same_mesa"
+echo "== optional gaming packages (informational)"
+for p in joystick-support input-remapper protontricks winetricks vkBasalt vulkan-tools mesa-demos libva-utils obs-studio-plugin-vkcapture-hook-libs.x86_64 obs-studio-plugin-vkcapture-hook-libs.i686; do
+    if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO optional package ${p} installed"; else echo "INFO optional package ${p} NOT installed"; fi
+done
 for c in steam gamescope mangohud gamemoded sunshine; do
     check "command ${c}" "have ${c}"
 done
 
 echo "== where they came from"
-check "steam comes from RPM Fusion (rpmfusion-nonfree-steam)" "[ \"\$(from_repo steam)\" = rpmfusion-nonfree-steam ]"
+check "steam comes from negativo17 (fedora-multimedia, required-negativo17.txt)" "[ \"\$(from_repo steam)\" = fedora-multimedia ]"
 check "Sunshine comes from the LizardByte COPR" "[ \"\$(from_repo Sunshine)\" = copr:copr.fedorainfracloud.org:lizardbyte:stable ]"
-check "no RPM Fusion, COPR (LizardByte) or vendor repository is enabled (only the base's repositories)" "no_third_party_repo"
-check "the override file that enabled the Steam repository is gone" "! test -e ${etc_dir}/dnf/repos.override.d/99-gx-steam.repo"
-check "the repository package and its boot service are not in the image" "! rpm -q fedora-workstation-repositories && ! rpm -q fedora-third-party && ! test -e ${etc_dir}/systemd/system/multi-user.target.wants/fedora-third-party-refresh.service"
+check "no RPM Fusion, COPR (LizardByte) or vendor repository is enabled (only the base's repositories; negativo17 stays disabled)" "no_third_party_repo"
+check "the repository package of the old RPM Fusion route and its boot service are not in the image" "! rpm -q fedora-workstation-repositories && ! rpm -q fedora-third-party && ! test -e ${etc_dir}/systemd/system/multi-user.target.wants/fedora-third-party-refresh.service"
 check "Steam is not in any Flatpak preinstall list (the RPM is the Steam of this image)" "! grep -rqiE 'com.valvesoftware.Steam|MoonDeck' ${preinstall_dir}"
 check "Moonlight and MoonDeck Buddy are not packages of the image" "! rpm -q moonlight-qt && ! rpm -q MoonDeckBuddy"
 
@@ -80,7 +84,7 @@ check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' ${os_release}"
 check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-gx}\"' ${os_release}"
 check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"
-for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx octarine-os-nvidia-gx; do
+for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx octarine-os-nvidia-gx octarine-os-dx-gx; do
     check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
 done
 check "sudoers valid" "visudo -c"
@@ -88,7 +92,11 @@ check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd S
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"
 check "the gaming-setup recipe is listed" "o=\$(ujust --summary 2>&1) && [[ \" \${o//\$'\\n'/ } \" == *' gaming-setup '* ]]"
-check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+if [ "${EXPECT_IMAGE_ID:-}" = octarine-os-dx-gx ]; then
+    check "the dev recipe of the dx layer below is still imported (octarine-os-dx-gx has both layers)" "grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+else
+    check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+fi
 for p in pam-u2f snapper tailscale borgbackup zsh distrobox; do
     check "package ${p}" "rpm -q ${p}"
 done

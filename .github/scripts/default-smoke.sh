@@ -48,11 +48,12 @@ check "brew tarball present" "test -s /usr/share/homebrew.tar.zst"
 check "brew profile script present" "test -f /etc/profile.d/brew.sh"
 check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 
-# CRITICAL packages (build.sh, first dnf5 transaction): a missing one fails the build
+# REQUIRED packages (required-fedora.txt of the pinned octarine-bins image, one strict dnf5 transaction): a missing one fails the build. This list repeats that file by hand (the lists
+# are not in this image); the vendor check below is the OS's own policy and stays here
 CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev gcc gcc-c++ make binutils"
 for p in $CRITICAL; do
   check "package $p" "rpm -q $p"
-  # standing policy: critical packages come from Fedora itself (outside repos only in optional groups)
+  # standing policy: required packages come from Fedora itself (outside repos only in optional lists)
   check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
 done
 # Solaar is not in the image; solaar-udev keeps the Logitech device permissions (including uinput) for a Solaar Flatpak the user installs
@@ -63,7 +64,7 @@ for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss;
   check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
 done
 check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
-# OPTIONAL packages: informational only, never fail (the missing list is reported below)
+# OPTIONAL packages (optional-fedora.txt and optional-negativo17.txt of the pinned octarine-bins image): informational only, never fail (the missing list is reported below)
 for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
          gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
          nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
@@ -83,7 +84,7 @@ else
 fi
 # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
 check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
-echo "== optional packages missing (written by build.sh, empty is good)"
+echo "== optional packages missing (written by the octarine-bins installer through build.sh, empty is good)"
 cat /usr/share/octarine-os/optional-packages-missing 2>/dev/null || true
 check "optional-packages-missing file exists" "test -f /usr/share/octarine-os/optional-packages-missing"
 check "zsh login files source /etc/profile (brew.sh relies on it)" "grep -q /etc/profile /etc/zprofile"
@@ -107,6 +108,7 @@ check "signature policy also covers the dx variant repository" "grep -q $REF-dx 
 check "signature policy also covers the NVIDIA dx repository" "grep -q $REF-nvidia-dx /etc/containers/policy.json"
 check "signature policy also covers the gx variant repository (not published yet)" "grep -q $REF-gx /etc/containers/policy.json"
 check "signature policy also covers the NVIDIA gx repository" "grep -q $REF-nvidia-gx /etc/containers/policy.json"
+check "signature policy also covers the dx-gx repository" "grep -q $REF-dx-gx /etc/containers/policy.json"
 check "release is Fedora" "grep -qx ID=fedora /etc/os-release"
 check "release matches a numeric base tag ($BASE_TAG)" "case \"$BASE_TAG\" in [0-9]*) grep -qx \"VERSION_ID=$BASE_TAG\" /etc/os-release;; esac"
 check "sudoers valid" "visudo -c"

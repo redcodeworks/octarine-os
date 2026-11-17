@@ -18,8 +18,9 @@ The wider desktop setup is in [`CONFIG-GUIDE.md`](docs/CONFIG-GUIDE.md); the res
 | NVIDIA | [![NVIDIA, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia.yml?query=branch%3Amain) | manual run, main only |
 | NVIDIA dx | [![NVIDIA dx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-dx.yml?query=branch%3Amain) | manual run, main only |
 | NVIDIA gx | [![NVIDIA gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-nvidia-gx.yml?query=branch%3Amain) | manual run, main only |
+| dx-gx | [![dx-gx, main](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml/badge.svg?branch=main)](https://github.com/redcodeworks/octarine-os/actions/workflows/build-dx-gx.yml?query=branch%3Amain) | manual run, main only |
 
-The gx, NVIDIA dx and NVIDIA gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
+The gx, NVIDIA dx, NVIDIA gx and dx-gx badges show "no status" until their first run. Each image moves its own `latest` tag after its own build has passed its checks, so the default, dx and gx images do not wait for each other.
 
 ## Requirements
 
@@ -65,7 +66,7 @@ Added by this image:
 **Hardening and defaults**
 - sshd (off by default): no root login, no X11 or TCP forwarding; password and keyboard-interactive logins are not turned off
 - Kernel and network tuning: ptrace scope, restricted kernel pointers, SysRq, BBR, a higher `vm.max_map_count`, zram swap tuning
-- Firewall zone with named services (Sunshine, MoonDeckBuddy, Steam streaming, GSConnect, Tailscale)
+- Firewall zone with named services (Sunshine, Steam streaming, GSConnect, Tailscale)
 - Security-key (YubiKey) touch for sudo and polkit (the password still works without a key); 30-minute sudo timeout
 - Images are signed, and the Universal Blue base image is checked against its signing key before every build (the build stops if it does not verify); after the second switch (Install, step 3) the system refuses unsigned updates
 
@@ -75,10 +76,11 @@ Added by this image:
 |---|---|---|
 | default | The image described above | `ghcr.io/redcodeworks/octarine-os:latest` |
 | dx | Developer image: the full developer toolchain (Clang, CMake, Ninja, Meson, gdb), `-devel` libraries, `uv`, `rustup-init`, the VM-hosting set (libvirt, QEMU, virt-manager, Cockpit machines; the default image no longer has it), tracing tools, the opt-in datastore containers (`ujust datastore-install`), and `ujust dev` (which can also install Visual Studio Code). Larger than the default | `ghcr.io/redcodeworks/octarine-os-dx:latest` |
-| gx | Gamer image: Steam (from RPM Fusion), gamescope, MangoHud, GameMode, vkBasalt, Mesa for 32-bit games, controller and input tools, and the Sunshine game-streaming host (installed, not started: turn it on with `systemctl --user enable --now app-dev.lizardbyte.app.Sunshine`). Steam is a regular package here, so `ujust gaming-setup` skips its Flatpak Steam steps. Larger than the default | `ghcr.io/redcodeworks/octarine-os-gx:latest` |
+| gx | Gamer image: Steam, gamescope, MangoHud, GameMode, vkBasalt, Mesa for 32-bit games, controller and input tools, and the Sunshine game-streaming host (installed, not started: turn it on with `systemctl --user enable --now app-dev.lizardbyte.app.Sunshine`). Steam is a regular package here, so `ujust gaming-setup` skips its Flatpak Steam steps. Larger than the default | `ghcr.io/redcodeworks/octarine-os-gx:latest` |
 | NVIDIA | Adds the proprietary NVIDIA driver (built on request; NVIDIA GPUs only, not used by the owner). With Secure Boot, enroll the key with `ujust enroll-secure-boot-key` | `ghcr.io/redcodeworks/octarine-os-nvidia:latest` |
 | NVIDIA dx | The NVIDIA image with the same developer tools as dx (built on request, NVIDIA GPUs only). The CUDA toolkit is not included: `ujust dev` can set it up in a container | `ghcr.io/redcodeworks/octarine-os-nvidia-dx:latest` |
 | NVIDIA gx | The NVIDIA image with the same gaming packages as gx (built on request, NVIDIA GPUs only; experimental, not yet known to build) | `ghcr.io/redcodeworks/octarine-os-nvidia-gx:latest` |
+| dx-gx (alias fx) | Experimental: the developer tools of dx and the gaming packages of gx in one image (built on request, very large, not tested on hardware). `ujust switch-image fx` is the short name for `dx-gx`; it is the same image | `ghcr.io/redcodeworks/octarine-os-dx-gx:latest` |
 
 ## Install
 
@@ -126,7 +128,7 @@ In a terminal, some status lines (errors, warnings, successes, things you must d
 | `ujust gaming-setup` | Checklist for gaming: Steam (Flatpak), ProtonUp-Qt, Lutris, gamescope, MangoHud, Proton-GE, extest, launchers and GameMode tuning; on the gx image Steam and the layers are already installed and those steps are skipped |
 | `ujust niri-setup` | Sets up the niri session in your home directory: config files, portal file and Noctalia polkit agent |
 | `ujust toolbox [<name>]` | Lists, creates and manages distrobox containers |
-| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, gx, nvidia, nvidia-dx, nvidia-gx) or channel (latest, testing); `--list` shows what exists |
+| `ujust switch-image [image] [channel]` | Switches to another published image (default, dx, gx, nvidia, nvidia-dx, nvidia-gx, dx-gx or its alias fx) or channel (latest, testing); `--list` shows what exists |
 | `ujust toggle-updates [enable\|disable\|status]` | Checklist of the automatic updates: image, Flatpak, distrobox and Homebrew |
 | `ujust update` | Updates exactly the sources that `ujust toggle-updates` has switched on |
 | `ujust toggle-motd` | Turns the message of the day (a fastfetch summary, or a tip when fastfetch is not installed) on or off for every shell; `toggle-user-motd` is the same switch |
@@ -162,7 +164,7 @@ The image ships prebuilt [extest](https://github.com/Supreeeme/extest) libraries
 from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sched_ext schedulers](https://github.com/sched-ext/scx)
 (scx, GPL-2.0, by the sched-ext authors); the license texts and source records are in `/usr/share/licenses/octarine-binaries/`. They are built in the owner's separate octarine-bins repository; if they cannot be installed the build fails (nothing new is published, the previous image stays).
 
-The gx image installs [Steam](https://store.steampowered.com) (Valve; packaged by [RPM Fusion](https://rpmfusion.org)), [gamescope](https://github.com/ValveSoftware/gamescope) (Valve), [MangoHud](https://github.com/flightlessmango/MangoHud), [GameMode](https://github.com/FeralInteractive/gamemode) (Feral Interactive) and [Sunshine](https://github.com/LizardByte/Sunshine) (LizardByte, GPL-3.0), each under its own license; Fedora packages them, except Steam (RPM Fusion) and Sunshine (the LizardByte COPR).
+The gx image installs [Steam](https://store.steampowered.com) (Valve; packaged by [negativo17](https://negativo17.org)), [gamescope](https://github.com/ValveSoftware/gamescope) (Valve), [MangoHud](https://github.com/flightlessmango/MangoHud), [GameMode](https://github.com/FeralInteractive/gamemode) (Feral Interactive) and [Sunshine](https://github.com/LizardByte/Sunshine) (LizardByte, GPL-3.0), each under its own license; Fedora packages them, except Steam (negativo17) and Sunshine (the LizardByte COPR).
 
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 
