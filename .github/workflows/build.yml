@@ -478,8 +478,8 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
         run: |
-          # main publishes only the dated tags; the bare `latest` is moved later by publish-latest.yml (see CLAUDE.md "Promoting
-          # the default and dx images together")
+          # main publishes only the dated tags; the bare `latest` is moved later by the publish job (publish-latest.yml: CLAUDE.md
+          # "Publishing latest, one image at a time")
           alias_tags="$(just generate-build-tags \
                         ${IMAGE_NAME} \
                         ${DEFAULT_TAG} \
@@ -734,15 +734,59 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF: ${{ github.ref_name }}
           # main: the digest of the default image this run published or promoted (empty when nothing new was built: a docs-only
-          # merge or an unchanged scheduled run); dx builds on exactly that digest, and `latest` is moved only after dx passed
+          # merge or an unchanged scheduled run); dx builds on exactly that digest. The default image's own `latest` moves in the
+          # `publish` job, which does not wait for dx and which dx does not wait for
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
         run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
 
-  # A failed daily or promotion build of the default image: ONE issue (label ci-failure-default, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
+  # The same for the gamer image (build-gx.yml, octarine-os-gx): dispatched in PARALLEL with dx, with the same conditions and the same hand-over (the digest of the
+  # default image this run published or promoted), through the same script. Independent of dx: neither waits for the other, a failed dispatch of one leaves the
+  # other running, and re-running this job alone dispatches gx again.
+  dispatch_gx:
+    name: Start the gx build
+    needs: [build_result, build_push, promote]
+    if: always() && needs.build_result.result == 'success' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/testing')
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Dispatch the gx workflow on this ref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ github.ref_name }}
+          VARIANT: gx
+          # the same digest as for dx (empty on testing and when nothing new was built)
+          BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
+        run: .github/scripts/dispatch-dx.sh "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+
+  # Main only: the default image's OWN `latest` moves to the digest this run built or promoted, after its signature was checked by the sign job (the dated tags
+  # exist already). Independent of the dx image (2026-11-16): nothing waits for dx and dx never gates it. Nothing new (a docs-only merge, an unchanged
+  # scheduled run) means no digest and no publish. Called, not dispatched: the digest is handed over and the job re-runs with "re-run failed jobs".
+  publish:
+    name: Publish latest
+    needs: [build_result, build_push, promote, sign]
+    if: >-
+      always() && github.ref == 'refs/heads/main' && needs.build_result.result == 'success' &&
+      (needs.build_push.outputs.digests != '' || needs.promote.outputs.digests != '')
+    uses: ./.github/workflows/publish-latest.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      image: default
+      digest: ${{ needs.build_push.outputs.digests || needs.promote.outputs.digests }}
+
+  # A failed daily or promotion build of the default image (or of its publish step): ONE issue (label ci-failure-default, a comment per further failure, closed by the next green run), like the dx and publish alerts: a scheduled run
   # that fails e-mails nobody who is not watching Actions. A cancelled run raises nothing and closes nothing. Needs issues: write only.
   alert:
     name: Report a failed daily or promotion build of the default image
-    needs: [plan, build_push, promote, build_result]
+    needs: [plan, build_push, promote, build_result, publish]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-26.04
     permissions:
@@ -763,7 +807,7 @@ jobs:
           LABEL: ci-failure-default
           LABEL_DESC: the default image build on main failed (one open issue at a time)
           ISSUE_TITLE: "The default image build on main failed"
-          ISSUE_BODY: "The scheduled or promotion build of octarine-os on main failed, so latest may be stale (the daily rebuild refreshes it). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, CI and signing flow."
+          ISSUE_BODY: "The scheduled or promotion build of octarine-os on main (or the move of its latest) failed, so latest may be stale (the daily rebuild refreshes it). See the run for the failed job. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, CI and signing flow."
           FAIL_COMMENT: "daily or promotion build of the default image failed again"
         run: .github/scripts/ci-issue.sh fail
 

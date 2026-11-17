@@ -1,9 +1,11 @@
 ---
 name: dx image (reusable)
-# The shared plan, build and promote jobs of the developer images, called by build-dx.yml (octarine-os-dx) and build-nvidia-dx.yml
-# (octarine-os-nvidia-dx). Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job and RESULT job: the required check
-# `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry that name), the
-# NVIDIA caller never posts them. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
+# The shared plan, build and promote jobs of the variant images, called by build-dx.yml (octarine-os-dx), build-gx.yml (octarine-os-gx, the gamer image:
+# input `variant: gx`) and build-nvidia-dx.yml (octarine-os-nvidia-dx). The variant selects the Containerfile (variants/<variant>/Containerfile), the
+# inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned list image that is verified (dx: dev-packages, gx: gaming-packages) and the smoke
+# script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers, concurrency group, run-name, guards, SIGN job
+# and RESULT job: the required check `Build dx and push image` and its commit status are posted by build-dx.yml only (a job of this workflow could not carry
+# that name), `Build gx and push image` by build-gx.yml, the NVIDIA caller never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
 # NO SIGNING HERE: the sign job lives in each caller (`environment: signing`, the composite action .github/actions/sign-images) because the
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed
@@ -18,9 +20,13 @@ on:
         type: string
         required: true
       dx_name:
-        description: "Name of the image built on it (octarine-os-dx or octarine-os-nvidia-dx)"
+        description: "Name of the image built on it (octarine-os-dx, octarine-os-nvidia-dx or octarine-os-gx)"
         type: string
         required: true
+      variant:
+        description: "dx (developer layer, the default) or gx (gamer layer): the Containerfile, inputs hash, pinned list image and smoke script"
+        type: string
+        default: dx
       channel:
         description: "latest or testing"
         type: string
@@ -54,7 +60,7 @@ on:
         type: string
         required: true
       extra_smoke:
-        description: "Optional second smoke test: a script in the repository, then its arguments (it runs inside the image like dx-smoke.sh)"
+        description: "Optional second smoke test: a script in the repository, then its arguments (it runs inside the image like the variant's smoke script)"
         type: string
         default: ""
     outputs:
@@ -90,6 +96,7 @@ on:
         value: ${{ jobs.build.outputs.moving_tags }}
 
 env:
+  VARIANT: ${{ inputs.variant }}
   CHANNEL: ${{ inputs.channel }}
   SHA: ${{ inputs.sha }}
   BASE_NAME: ${{ inputs.base_name }}
@@ -100,7 +107,7 @@ permissions:
 
 jobs:
   plan:
-    name: Plan the dx build
+    name: Plan the ${{ inputs.variant }} build
     runs-on: ubuntu-26.04
 
     outputs:
@@ -109,7 +116,7 @@ jobs:
       channel: ${{ steps.plan.outputs.channel }}
       base_tag: ${{ steps.plan.outputs.base_tag }}
       base_digest: ${{ steps.plan.outputs.base_digest }}
-      dx_inputs: ${{ steps.plan.outputs.dx_inputs }}
+      inputs: ${{ steps.plan.outputs.inputs }}
       source_tag: ${{ steps.plan.outputs.source_tag }}
       source_digest: ${{ steps.plan.outputs.source_digest }}
 
@@ -153,12 +160,13 @@ jobs:
         env:
           # channel latest on main: the default image the pipeline just published (latest is not moved before this run has passed)
           BASE_DIGEST_PIN: ${{ inputs.channel == 'latest' && inputs.base_digest || '' }}
+          VARIANT: ${{ inputs.variant }}
           FORCE: ${{ inputs.force }}
           PROMOTE_FROM_TESTING: ${{ inputs.promote_from_testing }}
         run: .github/scripts/plan-dx.sh
 
   build:
-    name: Build dx image
+    name: Build ${{ inputs.variant }} image
     needs: plan
     if: needs.plan.outputs.build == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04
@@ -177,7 +185,7 @@ jobs:
       BASE_DIGEST: ${{ needs.plan.outputs.base_digest }}
       BASE_TAG: ${{ needs.plan.outputs.base_tag }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
-      DX_INPUTS: ${{ needs.plan.outputs.dx_inputs }}
+      INPUTS: ${{ needs.plan.outputs.inputs }}
       DESCRIPTION: ${{ inputs.description }}
       EXTRA_SMOKE: ${{ inputs.extra_smoke }}
       TAGS: ${{ inputs.tags }}
@@ -222,10 +230,27 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
 
-      # The shared developer package list (dev-packages, built and signed by the octarine-images repository (renamed from fedora-toolbox), a package this project owns) floats at latest: resolved to a digest once,
-      # verified with the toolbox key, passed to the build as DEV_PACKAGES_REF and recorded in the dev-packages image label
-      - name: Resolve and verify the dev-packages image
-        run: .github/scripts/latest-ref.sh ghcr.io/redcodeworks/dev-packages keys/redcodeworks-toolbox-cosign.pub DEV_PACKAGES_REF
+      # The shared package list of the variant (dx: dev-packages, gx: gaming-packages; built and signed by the octarine-images repository, a package this project owns)
+      # is PINNED by digest in variants/<variant>/Containerfile (ARG DEV_PACKAGES_DIGEST or GAMING_PACKAGES_DIGEST, changed only by a bump PR). Every build verifies the
+      # PINNED digest with the toolbox key and records it in the image's dev-packages or gaming-packages label: a hand-edited digest cannot ship unverified. No `latest`
+      # is read here. The Containerfile reads the pin itself.
+      - name: Verify the pinned package list image
+        run: |
+          set -euo pipefail
+          case "${VARIANT}" in
+              dx) list=dev-packages; prefix=DEV_PACKAGES ;;
+              gx) list=gaming-packages; prefix=GAMING_PACKAGES ;;
+              *) echo "::error::unknown variant '${VARIANT}'"; exit 1 ;;
+          esac
+          file="variants/${VARIANT}/Containerfile"
+          tag=$(sed -n "s/^ARG ${prefix}_TAG=//p" "${file}")
+          digest=$(sed -n "s/^ARG ${prefix}_DIGEST=//p" "${file}")
+          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${prefix}_DIGEST in ${file} is missing or malformed"; exit 1; }
+          ref="ghcr.io/redcodeworks/${list}@${digest}"
+          .github/scripts/retry.sh cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/redcodeworks-toolbox-cosign.pub"; exit 1; }
+          echo "${list} image pinned: ghcr.io/redcodeworks/${list}:${tag}@${digest} (signature valid)"
+          echo "LIST_REF=${ref}" >> "${GITHUB_ENV}"
+          echo "LIST_LABEL=${list}" >> "${GITHUB_ENV}"
 
       # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
@@ -246,13 +271,18 @@ jobs:
           set -a; . ./config/image.env; set +a
           version=$(.github/scripts/image-version.sh)
           sha=$(git rev-parse HEAD)
-          podman build -f variants/dx/Containerfile \
+          # the variant's image id argument, and the keyword of the Artifact Hub label
+          case "${VARIANT}" in
+              dx) id_arg="DX_IMAGE_ID=${DX_NAME}"; keyword=developer ;;
+              gx) id_arg="GX_IMAGE_ID=${DX_NAME}"; keyword=gaming ;;
+              *) echo "::error::unknown variant '${VARIANT}'"; exit 1 ;;
+          esac
+          podman build -f "variants/${VARIANT}/Containerfile" \
             --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
             --build-arg "BASE_TAG=${BASE_TAG}" \
             --build-arg "BASE_DIGEST=${BASE_DIGEST}" \
-            --build-arg "DEV_PACKAGES_REF=${DEV_PACKAGES_REF}" \
             --build-arg "IMAGE_VERSION=${version}" \
-            --build-arg "DX_IMAGE_ID=${DX_NAME}" \
+            --build-arg "${id_arg}" \
             --unsetlabel io.github.redcodeworks.octarine-os.base-index-digest \
             --unsetlabel io.github.redcodeworks.octarine-os.vanilla-inputs \
             --unsetlabel org.opencontainers.image.maintainer \
@@ -270,17 +300,17 @@ jobs:
             --label "org.opencontainers.image.documentation=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
             --label "org.opencontainers.image.base.name=${BASE_IMAGE}:${BASE_TAG}" \
             --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
-            --label "io.github.redcodeworks.octarine-os.dx-tree=$(git rev-parse HEAD:variants/dx)" \
-            --label "io.github.redcodeworks.octarine-os.dx-inputs=${DX_INPUTS}" \
-            --label "io.github.redcodeworks.octarine-os.dev-packages=${DEV_PACKAGES_REF}" \
+            --label "io.github.redcodeworks.octarine-os.${VARIANT}-tree=$(git rev-parse "HEAD:variants/${VARIANT}")" \
+            --label "io.github.redcodeworks.octarine-os.${VARIANT}-inputs=${INPUTS}" \
+            --label "io.github.redcodeworks.octarine-os.${LIST_LABEL}=${LIST_REF}" \
             --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
             --label "io.artifacthub.package.deprecated=false" \
-            --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},developer" \
+            --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},${keyword}" \
             --label "io.artifacthub.package.license=Apache-2.0" \
             --label "io.artifacthub.package.logo-url=${IMAGE_LOGO_URL}" \
             --label "io.artifacthub.package.prerelease=false" \
             --tag "${DX_NAME}:${CHANNEL}" .
-          echo "Built ${DX_NAME}:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST} (${BASE_TAG}), dx inputs ${DX_INPUTS}"
+          echo "Built ${DX_NAME}:${CHANNEL} from ${BASE_IMAGE}@${BASE_DIGEST} (${BASE_TAG}), ${VARIANT} inputs ${INPUTS}"
 
       - name: Check image size
         env:
@@ -296,7 +326,7 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the image
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/dx-smoke.sh:/smoke.sh:ro" \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/${VARIANT}-smoke.sh:/smoke.sh:ro" \
             "${DX_NAME}:${CHANNEL}" bash /smoke.sh
 
       # The caller's own checks (the NVIDIA caller: driver, kernel module, initramfs, no CUDA toolkit): a script of the repository and its arguments
@@ -375,7 +405,7 @@ jobs:
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
   promote:
-    name: Promote tested dx image
+    name: Promote tested ${{ inputs.variant }} image
     needs: plan
     if: needs.plan.outputs.promote == 'true' && !inputs.dry_run
     runs-on: ubuntu-26.04

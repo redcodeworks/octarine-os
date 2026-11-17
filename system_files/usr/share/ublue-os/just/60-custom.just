@@ -1008,7 +1008,7 @@ gaming-setup *args:
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -1050,6 +1050,16 @@ gaming-setup *args:
         case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$def ;; esac
     }
     skipped_result() { if [ "$mode" = no ]; then echo "planned (would ask)"; else echo "skipped (not applied)"; fi; }
+
+    # native_steam: Steam is an RPM of the image (the gx image): the Flatpak Steam, its Vulkan layers and its launchers are not needed (GAMING_SETUP_NATIVE_STEAM=1|0 forces the answer, for tests)
+    native_steam() { case "${GAMING_SETUP_NATIVE_STEAM:-}" in 1) return 0 ;; 0) return 1 ;; esac; rpm -q steam >/dev/null 2>&1; }
+    native_skip() { # step: say why the step does nothing here
+        cur=$1
+        echo
+        echo "== $1"
+        echo "Steam is installed from the image (the steam RPM), so the Flatpak Steam steps do not apply: nothing to do."
+        record "$1" "skipped (Steam is installed from the image)"
+    }
 
     app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
     installed() { flatpak info "$1" >/dev/null 2>&1; }
@@ -1114,22 +1124,35 @@ gaming-setup *args:
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
         menu_title "octarineOS gaming setup"
-        menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
-            "^Apps^0" \
-            "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
-            "^Steam extras^0" \
-            "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
-            "extest^extest libraries (Steam Input on Wayland)^0" \
-            "desktop^Generated Steam launchers^1" \
-            "^Tuning^0" \
-            "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        # with Steam as an RPM of the image the Flatpak Steam, Vulkan layer and launcher steps are not offered
+        if native_steam; then
+            menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
+                "^Apps^0" \
+                "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "^Steam extras^0" \
+                "extest^extest libraries (Steam Input on Wayland)^0" \
+                "^Tuning^0" \
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        else
+            menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
+                "^Apps^0" \
+                "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "^Steam extras^0" \
+                "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
+                "extest^extest libraries (Steam Input on Wayland)^0" \
+                "desktop^Generated Steam launchers^1" \
+                "^Tuning^0" \
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        fi
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
         steps=" ${MENU_RESULT[*]}"
     fi
 
-    if selected steam && ! explicit reset; then app_step steam "Steam" "$steam" y; fi
+    if selected steam && ! explicit reset; then
+        if native_steam; then native_skip steam; else app_step steam "Steam" "$steam" y; fi
+    fi
     if selected protonup && ! explicit reset; then app_step protonup "ProtonUp-Qt" net.davidotek.pupgui2 y; fi
     if selected lutris && ! explicit reset; then app_step lutris "Lutris" net.lutris.Lutris n; fi
 
@@ -1139,7 +1162,10 @@ gaming-setup *args:
     echo
     echo "== extensions"
     inst=$(app_install_type "$steam")
-    if [ -z "$inst" ]; then
+    if native_steam; then
+        echo "Steam is installed from the image (the steam RPM, with gamescope and MangoHud as RPMs too), so the Flatpak Vulkan layers and the PATH override do not apply: nothing to do."
+        record "extensions" "skipped (Steam is installed from the image)"
+    elif [ -z "$inst" ]; then
         echo "Skipped: $steam is not installed (step steam)."
         record "extensions" "skipped (no Steam)"
     else
@@ -1219,7 +1245,10 @@ gaming-setup *args:
     cur=desktop
     echo
     echo "== desktop (Steam launchers)"
-    if ! installed "$steam"; then
+    if native_steam; then
+        echo "Steam is installed from the image (the steam RPM ships its own launcher), so the generated Flatpak launchers do not apply: nothing to do."
+        record "desktop" "skipped (Steam is installed from the image)"
+    elif ! installed "$steam"; then
         echo "Skipped: $steam is not installed (step steam)."
         record "desktop" "skipped (no Steam)"
     else
@@ -2302,21 +2331,22 @@ switch-image *args:
     channel=""
     for a in "$@"; do
         case "$a" in
-            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Switch this machine to another octarineOS image or channel. `ujust switch-image [IMAGE] [CHANNEL] [--yes|--no|--force|--list]`. The nvidia images ask first on a machine without an NVIDIA GPU (--yes alone does not bypass it; --force does). Images: default, dx (developer tools), gx (gamer image; a machine can name it before it is published, and the switch then says it is not published), nvidia (proprietary NVIDIA driver), nvidia-dx. Channels: latest (the default), testing (unreleased builds; not every image has one). Without arguments it shows the current image and asks. With only an image it keeps the current channel (latest when pinned). It checks that the target is published, then runs `sudo bootc switch --enforce-container-sigpolicy`; reboot to use it, `sudo bootc rollback` to undo. --list shows what is published, --yes skips the question, --no only prints the plan. A pending kernel-argument change (applied with rpm-ostree kargs, not yet rebooted) would be replaced by the switch: it prints a WARNING and asks (default no; --yes goes on with the warning printed). Reboot first.'; exit 0 ;;
             --yes) mode=yes ;;
             --no) mode=no ;;
             --list) list=1 ;;
             --force) force=1 ;;
-            default | dx | nvidia | nvidia-dx) image=$a ;;
+            default | dx | gx | nvidia | nvidia-dx) image=$a ;;
             latest | testing) channel=$a ;;
             -*) echo "Unknown option: $a (use --yes, --no, --force or --list)" >&2; exit 2 ;;
-            *) echo "Unknown image or channel: $a (images: default, dx, nvidia, nvidia-dx; channels: latest, testing)" >&2; exit 2 ;;
+            *) echo "Unknown image or channel: $a (images: default, dx, gx, nvidia, nvidia-dx; channels: latest, testing)" >&2; exit 2 ;;
         esac
     done
     name_of() {
         case "$1" in
             default) echo octarine-os ;;
             dx) echo octarine-os-dx ;;
+            gx) echo octarine-os-gx ;;
             nvidia) echo octarine-os-nvidia ;;
             nvidia-dx) echo octarine-os-nvidia-dx ;;
         esac
@@ -2335,7 +2365,7 @@ switch-image *args:
         cur_name=${name_tag%%:*}
         cur_tag=latest
         case "$name_tag" in *:*) cur_tag=${name_tag#*:} ;; esac
-        for k in default dx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx; do
             if [ "$cur_name" = "$(name_of "$k")" ]; then cur_image=$k; registry=${cur%/*}; fi
         done
         case "$cur_tag" in latest | testing) cur_channel=$cur_tag ;; esac
@@ -2359,14 +2389,14 @@ switch-image *args:
     if [ "$list" = 1 ]; then
         tmp=$(mktemp -d)
         trap 'rm -rf -- "$tmp"' EXIT
-        for k in default dx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx; do
             for c in latest testing; do
                 (probe "$k" "$c"; echo $? >"$tmp/$k.$c") &
             done
         done
         wait
         printf '%-12s %-18s %-18s\n' IMAGE latest testing
-        for k in default dx nvidia nvidia-dx; do
+        for k in default dx gx nvidia nvidia-dx; do
             row=$(printf '%-12s' "$k")
             for c in latest testing; do
                 case "$(cat "$tmp/$k.$c" 2>/dev/null)" in 0) s=published ;; 1) s="not published" ;; *) s=unknown ;; esac
@@ -2382,11 +2412,12 @@ switch-image *args:
             menu_one "Which image?" \
                 "default^default: the base image" \
                 "dx^dx: developer tools, compilers and virtualization" \
+                "gx^gx: gamer image" \
                 "nvidia^nvidia: proprietary NVIDIA driver" \
                 "nvidia-dx^nvidia-dx: NVIDIA driver and developer tools" || { echo "No image chosen; nothing changed."; exit 0; }
             image=$MENU_ONE
         else
-            echo "Name an image: default, dx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
+            echo "Name an image: default, dx, gx, nvidia or nvidia-dx (ujust switch-image --help)" >&2
             exit 2
         fi
     fi

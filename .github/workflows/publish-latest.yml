@@ -1,13 +1,12 @@
 ---
 name: Publish latest
-# Moves the bare `latest` tag of the default image (octarine-os) and of the dx image (octarine-os-dx) TOGETHER, as the last step of a green dx
-# run on main, so `bootc upgrade` never sees a default image that the dx image has not been built and checked on. The main build and the
-# promotion publish dated tags only. Details and the failure table: CLAUDE.md "Promoting the default and dx images together".
+# Moves the bare `latest` tag of ONE image: the default image (octarine-os), the dx image (octarine-os-dx) or the gx image (octarine-os-gx).
+# Every image publishes its OWN `latest`, after its own signed build or its own promotion, independently of the others (2026-11-16). The main build and the
+# promotion publish dated tags only. Details and the failure table: CLAUDE.md "Publishing latest (one image at a time)".
 #
-#   workflow_call      from the dx run (build-dx.yml, job `publish`, channel latest on main): the pair is handed over by digest
-#   workflow_dispatch  by hand, on main: scope both (the pair belonging to a default image) or vanilla-only (the ESCAPE HATCH for a
-#                      security fix while dx is broken: only octarine-os:latest moves, dx latest stays behind and the summary says so);
-#                      dry_run (or any ref but main) only plans and reports: nothing is written
+#   workflow_call      from the build run of that image on main (build.yml for the default image, build-dx.yml for dx, build-gx.yml for gx): the image and its digest
+#   workflow_dispatch  by hand, on main: the image and (for the default image optionally) a dated tag of it; dry_run (or any ref but main) only
+#                      plans and reports: nothing is written
 #
 # No `signing` environment: the workflow only copies manifests and verifies signatures, it never signs, so the secret is not needed and an
 # environment would be a gate without a safety property (the dispatch is already a write action). It writes only on main (the script is
@@ -15,33 +14,30 @@ name: Publish latest
 on:
   workflow_call:
     inputs:
-      vanilla_digest:
-        description: "Digest of the default image to publish"
+      image:
+        description: "Which image: default, dx or gx"
         type: string
         required: true
-      dx_digest:
-        description: "Digest of the dx image built or promoted for it (empty: the one already under latest)"
+      digest:
+        description: "Digest of that image to publish"
         type: string
-        default: ""
-      main_sha:
-        description: "The main commit of the dx run (for the report)"
-        type: string
-        default: ""
+        required: true
       dry_run:
         description: "Plan only"
         type: boolean
         default: false
   workflow_dispatch:
     inputs:
-      scope:
-        description: "both: the default image and the dx image built on it; vanilla-only: only the default image (security fixes while dx is broken)"
+      image:
+        description: "Which image's latest moves"
         type: choice
         options:
-          - both
-          - vanilla-only
-        default: both
-      vanilla_tag:
-        description: "Dated tag of the default image (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>); empty = the newest main commit with a published image"
+          - default
+          - dx
+          - gx
+        default: default
+      tag:
+        description: "Dated tag of that image (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>); empty = for the default image the newest main commit with a published image, a variant needs its tag"
         type: string
         default: ""
       reason:
@@ -60,15 +56,14 @@ jobs:
   publish:
     name: Move latest
     runs-on: ubuntu-26.04
-    # one publish at a time, a running one is never cancelled (a pending one may be replaced by a newer one: each carries its whole target)
+    # one publish per image at a time, a running one is never cancelled (a pending one may be replaced by a newer one: each carries its whole target);
+    # the images do not wait for each other
     concurrency:
-      group: publish-latest
+      group: publish-latest-${{ inputs.image }}
       cancel-in-progress: false
     permissions:
       contents: read
       packages: write
-    outputs:
-      moved: ${{ steps.publish.outputs.moved }}
     steps:
       - name: Checkout with the full history (the main commit of an image is checked against it)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -93,39 +88,16 @@ jobs:
         with:
           tool: cosign
 
-      - name: Verify the pair and move latest
-        id: publish
+      - name: Verify the image and move its latest
         env:
           OWNER: ${{ github.repository_owner }}
+          IMAGE: ${{ inputs.image }}
           # in a called workflow github.event_name is the CALLER's event, so the inputs of each trigger are told apart by name: an input
           # the trigger does not declare is empty
-          SCOPE: ${{ inputs.scope || 'both' }}
-          VANILLA_DIGEST: ${{ inputs.vanilla_digest || '' }}
-          DX_DIGEST: ${{ inputs.dx_digest || '' }}
-          VANILLA_TAG: ${{ inputs.vanilla_tag || '' }}
+          DIGEST: ${{ inputs.digest || '' }}
+          TAG: ${{ inputs.tag || '' }}
           REASON: ${{ inputs.reason || '' }}
           DRY_RUN: ${{ inputs.dry_run || false }}
           # writes only on main; any other ref is a dry run whatever the input says
           WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
         run: .github/scripts/publish-latest.sh
-
-  # `latest` moved: close the open failure issue (one issue at a time, see ci-issue.sh)
-  recover:
-    name: Close the failure issue
-    needs: publish
-    if: needs.publish.outputs.moved == 'true' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-26.04
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-
-      - name: Comment "recovered" and close
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-        run: .github/scripts/ci-issue.sh recover

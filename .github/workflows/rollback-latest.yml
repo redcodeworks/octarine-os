@@ -1,35 +1,39 @@
 ---
 name: Roll back latest
-# The sanctioned way to put `latest` of the default image (octarine-os) and the dx image (octarine-os-dx) back on an OLDER dated build. Publish latest
-# (publish-latest.yml) never moves `latest` backwards; this workflow does, on purpose, by hand: a dispatch on main with the dated tag of the default
-# image to roll back to. Modelled on Bazzite's retag workflow (a re-point of the tags from an old tag with a short cancel window).
+# The sanctioned way to put the `latest` of ONE image (the default image octarine-os, the dx image octarine-os-dx or the gx image octarine-os-gx) back on an OLDER dated build of that
+# same image. Publish latest (publish-latest.yml) never moves `latest` backwards; this workflow does, on purpose, by hand: a dispatch on main with the
+# image and its dated tag. Each image is rolled back on its own (the images publish independently); modelled on Bazzite's retag workflow (a re-point of
+# the tags from an old tag with a short cancel window).
 #
-#   vanilla_tag   the dated tag of the DEFAULT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused
-#   reason        free text (required), goes into the summary
-#   default_only  false (default): the dx image built on that default image moves with it; the run REFUSES when no dx image was built on it.
-#                 true: only the default image moves and dx `latest` stays behind (the summary says so), as publish-latest's vanilla-only
-#   dry_run       true (default): plan and report only, nothing is written
+#   image     default, dx or gx: the image whose `latest` moves back (nothing else moves)
+#   tag       the dated tag of THAT image (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused
+#   reason    free text (required), goes into the summary
+#   dry_run   true (default): plan and report only, nothing is written
 #
-# What is the same as publish-latest.yml, because it is the same script (publish-latest.sh with ALLOW_BACKWARDS=true): BOTH signatures are verified
-# before anything moves (cosign.pub), the dx image is the one whose base-digest label is the default image's digest, the default image was built from
-# main, the digests are preserved (skopeo copy --all --preserve-digests, each tag read back), dx moves first and the default image LAST, nothing is
-# signed (so no `signing` environment), nothing is written on any ref but main, one move at a time (the same concurrency group as publish-latest). New:
-# the first job is a 30-second cancel window (cancel the run in that time and nothing happens). The next green dx run on main moves `latest` forward again to the newest pair: roll back, then fix main, or hold the daily build.
+# What is the same as publish-latest.yml, because it is the same script (publish-latest.sh with ALLOW_BACKWARDS=true): the signature is verified before
+# anything moves (cosign.pub), a dx or gx image must stand on a signed default image built from main, a default image was built from main, the digest is
+# preserved (skopeo copy --all --preserve-digests, the tag read back), nothing is signed (so no `signing` environment), nothing is written on any ref but
+# main, one move at a time per image (the same concurrency group as publish-latest). New: the first job is a 30-second cancel window (cancel the run in that
+# time and nothing happens). The next green build of that image on main moves its `latest` forward again: roll back, then fix main, or hold the daily build.
 on:
   workflow_dispatch:
     inputs:
-      vanilla_tag:
-        description: "Dated tag of the default image to roll back to (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>)"
+      image:
+        description: "Which image's latest moves back"
+        type: choice
+        options:
+          - default
+          - dx
+          - gx
+        default: default
+      tag:
+        description: "Dated tag of that image to roll back to (latest-<sha7>, latest-<date>-<sha7>, <date>-<sha7>)"
         type: string
         required: true
       reason:
         description: "Why (free text, required)"
         type: string
         required: true
-      default_only:
-        description: "Move only the default image (dx latest stays behind); false = the dx image built on it moves too, and the run refuses when there is none"
-        type: boolean
-        default: false
       dry_run:
         description: "Plan and report only"
         type: boolean
@@ -45,17 +49,16 @@ jobs:
     steps:
       - name: Say what is about to happen, then wait 30 seconds (cancel the run to stop it)
         env:
-          TAG: ${{ inputs.vanilla_tag }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
           REASON: ${{ inputs.reason }}
-          ONLY: ${{ inputs.default_only }}
           DRY: ${{ inputs.dry_run }}
           REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           {
             echo "## Roll back latest"
-            echo "- default image tag: \`${TAG}\`"
-            echo "- dx image moves too: $([[ "${ONLY}" == true ]] && echo no, default_only || echo yes, the dx image built on it)"
+            echo "- image: ${IMAGE}, tag: \`${TAG}\` (only that image's latest moves)"
             echo "- reason: ${REASON}"
             echo "- dry run: ${DRY}; ref: ${REF} (anything but main only plans)"
             [[ "${DRY}" == true ]] || echo "- **Cancel this run within 30 seconds to stop it.**"
@@ -66,9 +69,9 @@ jobs:
     name: Move latest back
     needs: window
     runs-on: ubuntu-26.04
-    # the same group as publish-latest.yml: one move of latest at a time, a running one is never cancelled
+    # the same group as publish-latest.yml for this image: one move of its latest at a time, a running one is never cancelled
     concurrency:
-      group: publish-latest
+      group: publish-latest-${{ inputs.image }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -96,17 +99,17 @@ jobs:
         with:
           tool: cosign
 
-      - name: Verify the pair and move latest back
+      - name: Verify the image and move its latest back
         env:
           OWNER: ${{ github.repository_owner }}
-          VANILLA_TAG: ${{ inputs.vanilla_tag }}
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ inputs.tag }}
           REASON: ${{ inputs.reason }}
-          SCOPE: ${{ inputs.default_only && 'vanilla-only' || 'both' }}
           DRY_RUN: ${{ inputs.dry_run }}
           ALLOW_BACKWARDS: "true"
           # writes only on main; any other ref is a dry run whatever the input says
           WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          [[ -n "${VANILLA_TAG}" && -n "${REASON}" ]] || { echo "::error::vanilla_tag and reason are required"; exit 1; }
+          [[ -n "${TAG}" && -n "${REASON}" ]] || { echo "::error::tag and reason are required"; exit 1; }
           .github/scripts/publish-latest.sh

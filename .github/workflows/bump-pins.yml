@@ -5,7 +5,7 @@ name: Bump pins
 # that has the file (`gh workflow run bump-pins.yml --ref testing`; with `-f dry_run=true` it prints what it would open, keep or close, one pull request per pin, and
 # pushes and opens nothing, and may be dispatched from any branch to try its scripts).
 #
-# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (chunkah, brew, bins (the octarine-bins image digest)), each pin that moved gets its own
+# One job, one script (.github/scripts/bump-weekly.sh): every pin goes through bump-run.sh (chunkah, brew, bins (the octarine-bins image digest), dev-packages (the dx package list image digest), gaming-packages (the gx package list image digest)), each pin that moved gets its own
 # branch, commit and pull request, an open pull request of the same pin that already proposes the same value stays, an older one is closed with a pointer to the new one (no
 # force-push, so a moved upstream means a new pull request), and a stale one (testing already has the value) is closed. A failing pin (a registry that cannot be reached, a
 # signature that does not verify) changes nothing and turns the run red, which scripts/scheduled-runs.sh reports; the other pins still go in. Stay manual by the owner's decision: the

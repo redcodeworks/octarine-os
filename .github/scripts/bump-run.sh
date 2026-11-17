@@ -5,11 +5,13 @@
 # cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
 # Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
-#   bump-run.sh chunkah|brew|bins
+#   bump-run.sh chunkah|brew|bins|dev-packages|gaming-packages
 #
 # Kinds: the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
 # on every write) and the octarine-bins image (`just bins-bump` is the pin writer: it resolves octarine-bins:latest, verifies the digest with keys/octarine-bins.pub
-# and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository).
+# and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository) and the dev-packages list image of octarine-images (pinned in
+# variants/dx/Containerfile; resolve dev-packages:latest, verify the digest with keys/redcodeworks-toolbox-cosign.pub, write the digest and a dated tag for humans) and the gaming-packages list image of
+# octarine-images (the same, pinned in variants/gx/Containerfile).
 set -uo pipefail
 pin=${1:?pin name}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -77,6 +79,29 @@ case "${pin}" in
             just bins-bump latest || fail "just bins-bump failed (digest, signature or version label; nothing changed)"
             proposed="$(sed -n 's/^ARG BINS_TAG=//p' Containerfile) $(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile | cut -c1-19)"
             commit_pin "Bump the octarine-bins image to ${proposed%% *}" "a new octarine-bins digest, ${ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries" "$(image_age "${ref}:latest")"
+        fi ;;
+    dev-packages | gaming-packages)
+        # the two shared package LIST images of octarine-images, pinned the same way in the Containerfile of the variant that installs them (dx, gx)
+        if [[ "${pin}" == dev-packages ]]; then variant=dx; prefix=DEV_PACKAGES; ref=ghcr.io/redcodeworks/dev-packages
+        else variant=gx; prefix=GAMING_PACKAGES; ref=ghcr.io/redcodeworks/gaming-packages; fi
+        files=("variants/${variant}/Containerfile")
+        cur=$(sed -n "s/^ARG ${prefix}_DIGEST=//p" "${files[0]}"); curtag=$(sed -n "s/^ARG ${prefix}_TAG=//p" "${files[0]}")
+        [[ "${cur}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${prefix}_DIGEST in ${files[0]} is missing or malformed"
+        current="${curtag} ${cur:0:19}"
+        manifest=$(skopeo inspect --raw "docker://${ref}:latest" 2> /dev/null) || manifest=""
+        [[ -n "${manifest}" ]] || fail "cannot resolve ${ref}:latest"
+        new="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
+        if [[ "${new}" == "${cur}" ]]; then status="nothing to bump: the pin equals ${ref}:latest (${curtag})"
+        else
+            "${here}/retry.sh" cosign verify --key keys/redcodeworks-toolbox-cosign.pub "${ref}@${new}" > /dev/null || fail "${ref}@${new} does not verify with keys/redcodeworks-toolbox-cosign.pub (nothing changed)"
+            # the dated tag that points at the same digest (a label for humans), else `latest`
+            newtag=latest
+            for t in $(skopeo list-tags "docker://${ref}" 2> /dev/null | jq -r '.Tags[] | select(test("^latest-[0-9]{8}-[0-9a-f]{7}$"))' 2> /dev/null | sort -r | head -n 10); do
+                if [[ "sha256:$(skopeo inspect --raw "docker://${ref}:${t}" 2> /dev/null | sha256sum | sed 's/ .*//')" == "${new}" ]]; then newtag=${t}; break; fi
+            done
+            sed -i -e "s/^ARG ${prefix}_TAG=.*/ARG ${prefix}_TAG=${newtag}/" -e "s/^ARG ${prefix}_DIGEST=.*/ARG ${prefix}_DIGEST=${new}/" "${files[0]}"
+            proposed="${newtag} ${new:0:19}"
+            commit_pin "Bump the ${pin} image to ${newtag}" "a new ${pin} digest, ${ref}:latest verified with keys/redcodeworks-toolbox-cosign.pub; its ${variant} testing build is the first with this list" "$(image_age "${ref}:latest")"
         fi ;;
     *) fail "unknown pin '${pin}'" ;;
 esac
