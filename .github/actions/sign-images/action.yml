@@ -33,6 +33,7 @@ runs:
       uses: ./.github/actions/setup-tool
       with:
         tool: cosign
+        cache: "false"   # the signing key is present in this job: install and verify cosign fresh, never restore it
 
     - name: Sign every pushed digest
       if: inputs.mode == 'sign'
