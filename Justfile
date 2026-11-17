@@ -155,7 +155,7 @@ build $target_image=image_name $tag=default_tag:
 
 # Split the image into layers for smaller updates (chunkah, like Aurora and Bazzite). The chunkah image is pinned by digest in config/chunkah.env and its
 # cosign signature is verified before it runs (.github/scripts/chunkah-ref.sh). chunkah starts from the image's own config (`podman inspect`), so
-# every label set by `just build` stays; the labels of an earlier ostree commit are dropped, as chunkah's own documentation does.
+# every label set by `just build` stays; CHUNKAH_EPOCH_BASE (see below) sets SOURCE_DATE_EPOCH; the labels of an earlier ostree commit are dropped, as chunkah's own documentation does.
 # You may run into space issues on runners: this makes a complete copy of the image.
 [group('Image')]
 rechunk $target_image=image_name $tag=default_tag:
@@ -181,7 +181,18 @@ rechunk $target_image=image_name $tag=default_tag:
       MISSING_LABEL=(--label "org.octarineos.optional-packages-missing=${csv:-none}")
     fi
 
+    # Reproducible layers: chunkah clamps the mtime of every file no package owns to SOURCE_DATE_EPOCH (else to now), so a rebuild with no content change
+    # re-shipped every layer with such files. The epoch is the Created time of the image the build started FROM (CHUNKAH_EPOCH_BASE, a digest reference the
+    # workflow has already pulled): a pure function of the base digest. Unset (a local run): no epoch, chunkah's default. Set but unreadable: fail.
+    EPOCH_ARGS=()
+    if [[ -n "${CHUNKAH_EPOCH_BASE:-}" ]]; then
+      epoch="$(podman image inspect --format '{{ '{{.Created.Unix}}' }}' "${CHUNKAH_EPOCH_BASE}")"
+      [[ "${epoch}" =~ ^[0-9]+$ && "${epoch}" -gt 0 ]] || { echo "::error::no usable Created time for ${CHUNKAH_EPOCH_BASE}: '${epoch}'"; exit 1; }
+      EPOCH_ARGS=(-e "SOURCE_DATE_EPOCH=${epoch}")
+    fi
+
     podman run --rm \
+      "${EPOCH_ARGS[@]}" \
       --mount=type=image,src="${target_image}:${tag}",target=/chunkah \
       -v "${CHUNKAH_CONFIG_FILE}:/chunkah-config.json:ro,Z" \
       -v "${CHUNKAH_OUTPUT_DIR}:/run/out:Z" \

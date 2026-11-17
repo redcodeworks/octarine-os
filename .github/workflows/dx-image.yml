@@ -344,6 +344,8 @@ jobs:
 
       - name: Rechunk with chunkah
         run: |
+          # the layers' epoch is the Created time of the base this build started FROM (our default image, pulled above; its own Created is the epoch of its chunkah run)
+          export CHUNKAH_EPOCH_BASE="${BASE_IMAGE}@${BASE_DIGEST}"
           just rechunk "${DX_NAME}" "${CHANNEL}"
 
       - name: Disk after the build
