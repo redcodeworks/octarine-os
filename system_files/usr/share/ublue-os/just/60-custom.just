@@ -1008,7 +1008,7 @@ gaming-setup *args:
         case "$a" in
             --yes) mode=yes ;;
             --no) mode=no ;;
-            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
+            help | --help | -h) printf '%s\n' 'Gaming setup, a checklist with one y/n question per step, or name steps to run exactly those. `ujust gaming-setup [STEP...] [--yes|--no]`. Steps: steam (Flatpak Steam), protonup (ProtonUp-Qt Flatpak), lutris (Lutris Flatpak), extensions (gamescope and MangoHud Vulkan layers matching Steam'\''s runtime, Proton-GE, and the PATH override so they resolve inside the sandbox), extest (install the prebuilt extest libraries, 32-bit and 64-bit, from /usr/lib/extest, which the image ships), desktop (generated Steam launchers in ~/.local/share/applications: extest hooked in when it is installed, plus a gamescope launcher at your display'\''s resolution and refresh rate), gamemode (the GameMode tuning as ~/.config/gamemode.ini), reset (undo: generated launchers, the PATH line, optionally the extest library and the gamemode file). Flatpak apps are installed only when Flathub lists them as verified. On the gx image Steam is an RPM of the image: the steam, extensions and desktop steps then say so and do nothing. --yes takes the defaults, --no only prints the plan. Settings: EXTEST_DEST (default ~/.local/lib/extest), GAMING_SETUP_RES (WxH@Hz instead of detecting it)'; exit 0 ;;
             -*) echo "Unknown option: $a" >&2; echo "$usage" >&2; exit 1 ;;
             *)
                 case "$valid" in
@@ -1050,6 +1050,16 @@ gaming-setup *args:
         case "$reply" in [Yy]*) answer=y ;; [Nn]*) answer=n ;; *) answer=$def ;; esac
     }
     skipped_result() { if [ "$mode" = no ]; then echo "planned (would ask)"; else echo "skipped (not applied)"; fi; }
+
+    # native_steam: Steam is an RPM of the image (the gx image): the Flatpak Steam, its Vulkan layers and its launchers are not needed (GAMING_SETUP_NATIVE_STEAM=1|0 forces the answer, for tests)
+    native_steam() { case "${GAMING_SETUP_NATIVE_STEAM:-}" in 1) return 0 ;; 0) return 1 ;; esac; rpm -q steam >/dev/null 2>&1; }
+    native_skip() { # step: say why the step does nothing here
+        cur=$1
+        echo
+        echo "== $1"
+        echo "Steam is installed from the image (the steam RPM), so the Flatpak Steam steps do not apply: nothing to do."
+        record "$1" "skipped (Steam is installed from the image)"
+    }
 
     app_install_type() { flatpak list --app --columns=application,installation 2>/dev/null | awk -v a="$1" '$1 == a {print $2; exit}'; }
     installed() { flatpak info "$1" >/dev/null 2>&1; }
@@ -1114,22 +1124,35 @@ gaming-setup *args:
     # as confirmed); reset is only ever named explicitly. Otherwise the per-step questions are unchanged.
     if [ "$mode" = ask ] && [ -z "$steps" ] && menu_ready; then
         menu_title "octarineOS gaming setup"
-        menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
-            "^Apps^0" \
-            "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
-            "^Steam extras^0" \
-            "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
-            "extest^extest libraries (Steam Input on Wayland)^0" \
-            "desktop^Generated Steam launchers^1" \
-            "^Tuning^0" \
-            "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        # with Steam as an RPM of the image the Flatpak Steam, Vulkan layer and launcher steps are not offered
+        if native_steam; then
+            menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
+                "^Apps^0" \
+                "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "^Steam extras^0" \
+                "extest^extest libraries (Steam Input on Wayland)^0" \
+                "^Tuning^0" \
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        else
+            menu_multi "Gaming setup: choose the steps (Flathub apps are installed only when verified)" \
+                "^Apps^0" \
+                "steam^Steam^1" "protonup^ProtonUp-Qt^1" "lutris^Lutris^0" \
+                "^Steam extras^0" \
+                "extensions^gamescope, MangoHud, Proton-GE and the PATH override^1" \
+                "extest^extest libraries (Steam Input on Wayland)^0" \
+                "desktop^Generated Steam launchers^1" \
+                "^Tuning^0" \
+                "gamemode^GameMode tuning in ~/.config/gamemode.ini^$gm_default"
+        fi
         if [ "${#MENU_RESULT[@]}" -eq 0 ]; then echo "Nothing selected; nothing changed."; exit 0; fi
         echo "Selected steps: ${MENU_RESULT[*]}"
         if ! menu_confirm "Run these steps?" y; then echo "Nothing changed."; exit 0; fi
         steps=" ${MENU_RESULT[*]}"
     fi
 
-    if selected steam && ! explicit reset; then app_step steam "Steam" "$steam" y; fi
+    if selected steam && ! explicit reset; then
+        if native_steam; then native_skip steam; else app_step steam "Steam" "$steam" y; fi
+    fi
     if selected protonup && ! explicit reset; then app_step protonup "ProtonUp-Qt" net.davidotek.pupgui2 y; fi
     if selected lutris && ! explicit reset; then app_step lutris "Lutris" net.lutris.Lutris n; fi
 
@@ -1139,7 +1162,10 @@ gaming-setup *args:
     echo
     echo "== extensions"
     inst=$(app_install_type "$steam")
-    if [ -z "$inst" ]; then
+    if native_steam; then
+        echo "Steam is installed from the image (the steam RPM, with gamescope and MangoHud as RPMs too), so the Flatpak Vulkan layers and the PATH override do not apply: nothing to do."
+        record "extensions" "skipped (Steam is installed from the image)"
+    elif [ -z "$inst" ]; then
         echo "Skipped: $steam is not installed (step steam)."
         record "extensions" "skipped (no Steam)"
     else
@@ -1219,7 +1245,10 @@ gaming-setup *args:
     cur=desktop
     echo
     echo "== desktop (Steam launchers)"
-    if ! installed "$steam"; then
+    if native_steam; then
+        echo "Steam is installed from the image (the steam RPM ships its own launcher), so the generated Flatpak launchers do not apply: nothing to do."
+        record "desktop" "skipped (Steam is installed from the image)"
+    elif ! installed "$steam"; then
         echo "Skipped: $steam is not installed (step steam)."
         record "desktop" "skipped (no Steam)"
     else

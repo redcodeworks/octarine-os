@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
-# Start the dx workflow for a commit the pipeline just built, and FAIL if no run appears.
+# Start the dx or gx workflow for a commit the pipeline just built, and FAIL if no run appears.
 #   dispatch-dx.sh <channel> <sha> [<base_digest>]
 # Environment: REF (the branch to dispatch on, main or testing), GITHUB_REPOSITORY, GH_TOKEN (the default token with
-# `actions: write`), POLL_TRIES (default 12), POLL_WAIT seconds between tries (default 10), WORKFLOW (default build-dx.yml),
+# `actions: write`), POLL_TRIES (default 12), POLL_WAIT seconds between tries (default 10), VARIANT (dx, the default, or gx: the workflow
+# build-<variant>.yml, the run-name prefix and the workflow name "Build <variant> image"; the script keeps its name, it serves both),
 # GITHUB_STEP_SUMMARY (optional; a failure to write to it never fails the step).
 #
 # Finding the run. The dispatch API answers 204 unless the request carries `return_run_details: true`; `gh` 2.87.0 and later sends it and
 # prints the run URL when stdout is not a terminal. So: the URL printed by `gh workflow run` is used when there is one (its trailing
 # number is the run id; the run is then checked for event and branch). A `gh` that prints no URL (an older one on the runner) gets
 # the snapshot approach: the ids of the runs of this workflow on this branch are listed BEFORE the dispatch, and the run is the first id that is
-# not in that list, on this branch, with the run-name (`dx <channel> <sha>`) or the workflow name as its title (a fresh run has the workflow name until the run-name applies; the title is informational, never a reason to fail). No clock is used anywhere. Either
+# not in that list, on this branch, with the run-name (`<variant> <channel> <sha>`) or the workflow name as its title (a fresh run has the workflow name until the run-name applies; the title is informational, never a reason to fail). No clock is used anywhere. Either
 # way, no run found within the time fails the step (the base build stays green, this job is red, and re-running it dispatches again).
-# The dx run itself is not waited for.
+# The variant's run itself is not waited for.
 set -euo pipefail
 channel="${1:?channel}"
 sha="${2:?sha}"
 base_digest="${3-}"
 ref="${REF:?REF}"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY}"
-workflow="${WORKFLOW:-build-dx.yml}"
+variant="${VARIANT:-dx}"
+[[ "${variant}" =~ ^(dx|gx)$ ]] || { echo "::error::unknown variant '${variant}'"; exit 2; }
+workflow="build-${variant}.yml"
 [[ "${channel}" =~ ^(testing|latest)$ ]] || { echo "::error::unknown channel '${channel}'"; exit 2; }
 [[ "${sha}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${sha}' is not a full commit sha"; exit 2; }
 [[ -z "${base_digest}" || "${base_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::'${base_digest}' is not a sha256 digest"; exit 2; }
 [[ "${ref}" =~ ^(main|testing)$ ]] || { echo "::error::refusing to dispatch on '${ref}'"; exit 2; }
 echo "gh: $(gh --version 2> /dev/null | head -n1)"
-title="dx ${channel} ${sha}"
+title="${variant} ${channel} ${sha}"
 
 list_runs() {
     gh run list -R "${repo}" --workflow "${workflow}" --branch "${ref}" --event workflow_dispatch --limit 50 \
@@ -40,7 +43,7 @@ echo "${out}"
 
 started() {
     echo "Started: $1"
-    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "dx ${channel} for ${sha}: $1" >> "${GITHUB_STEP_SUMMARY}" 2> /dev/null || true
+    [[ -z "${GITHUB_STEP_SUMMARY:-}" ]] || echo "${variant} ${channel} for ${sha}: $1" >> "${GITHUB_STEP_SUMMARY}" 2> /dev/null || true
     exit 0
 }
 
@@ -69,7 +72,7 @@ tries="${POLL_TRIES:-12}"
 for ((i = 1; i <= tries; i++)); do
     # a run that was not listed before the dispatch, on this branch, titled with the run-name or (for the first seconds, or for good when the
     # run-name never applies) the workflow name; the exact run-name wins when both exist
-    found=$(list_runs | jq -r --arg t "${title}" --arg w "Build dx image" --arg b "${ref}" --arg before " ${before} " \
+    found=$(list_runs | jq -r --arg t "${title}" --arg w "Build ${variant} image" --arg b "${ref}" --arg before " ${before} " \
         '[.[] | select((.displayTitle == $t or .displayTitle == $w) and .headBranch == $b and (((.databaseId | tostring) as $i | $before | contains(" " + $i + " ")) | not))]
          | (map(select(.displayTitle == $t)) + .) | first | .url // empty' 2> /dev/null) || found=""
     if [[ -n "${found}" ]]; then started "${found}"; fi

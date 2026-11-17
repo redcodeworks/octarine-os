@@ -13,7 +13,7 @@ sudo bootc switch ghcr.io/redcodeworks/octarine-os:latest
 sudo bootc switch --enforce-container-sigpolicy ghcr.io/redcodeworks/octarine-os:latest
 ```
 
-For a variant (the developer image `octarine-os-dx`, the NVIDIA images) or a channel (`testing`), use
+For a variant (the developer image `octarine-os-dx`, the gamer image `octarine-os-gx`, the NVIDIA images) or a channel (`testing`), use
 `ujust switch-image` once the image is running; `ujust switch-image --list` shows what exists, and
 [image-variants.md](image-variants.md) says what each variant is for.
 
@@ -28,7 +28,7 @@ skip any step:
 - `ujust user-setup`: checklist for a new user (groups, login shell, Flatpak access, fonts, terminal profile).
 - `ujust niri-setup`: sets up the niri session in your home directory.
 - `ujust hardware-setup`: vendor and hardware steps; steps for hardware your machine lacks are hidden.
-- `ujust gaming-setup`: checklist for Steam, Lutris, gamescope, MangoHud and GameMode tuning.
+- `ujust gaming-setup`: checklist for Steam, Lutris, gamescope, MangoHud and GameMode tuning (on the gx image Steam and the layers are installed already, those steps are skipped).
 - `ujust toggle-updates`, then `ujust update`: choose which sources update automatically, and update them.
 - `ujust dev` (dx image only): developer setup checklist.
 - `ujust datastore-install` (dx image only): optional, downloads the signed datastore bundle (PostgreSQL, Valkey, SeaweedFS, Kafka as rootless containers).
