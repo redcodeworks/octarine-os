@@ -16,7 +16,7 @@
 #
 # Two sources, because neither alone is complete: dnf5's own answer (it applies the override directory, which the .repo files do not
 # show) and a scan of every section with enabled=1 in the repo directories (it also sees a file dnf5 would not load). A missing
-# directory is fine. Env overrides exist for tests/validate-repos.sh: REPO_DIRS (colon separated), DNF5.
+# directory is fine. Env overrides exist for tests/image/validate-repos.sh: REPO_DIRS (colon separated), DNF5.
 set -euo pipefail
 
 ALLOWED=(

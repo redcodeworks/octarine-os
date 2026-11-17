@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Decide whether a SCHEDULED run may skip the image build, and print one line: `skip: ...` or `build: <reason>`.
-# The decision is a pure function of its environment, so it can be tried locally (see tests/plan-skip.sh):
+# The decision is a pure function of its environment, so it can be tried locally (see tests/pipeline/plan-skip.sh):
 #
 #   EVENT             github.event_name; anything but `schedule` always builds
 #   REF               github.ref; the skip only applies on refs/heads/main (the default branch)

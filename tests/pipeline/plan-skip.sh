@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Tests for .github/scripts/plan-skip.sh (the scheduled-run skip decision) with fixed inputs. Run: tests/plan-skip.sh
+# Tests for .github/scripts/plan-skip.sh (the scheduled-run skip decision) with fixed inputs. Run: tests/pipeline/plan-skip.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-script="$here/../.github/scripts/plan-skip.sh"
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
+script="$here/.github/scripts/plan-skip.sh"
 pass=0
 failn=0
 now=$(date -u -d '2026-11-08T10:05:00Z' +%s)

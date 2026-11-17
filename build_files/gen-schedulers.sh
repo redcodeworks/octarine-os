@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Generates the scheduler registry and the per-instance unit drop-ins from the manifest of the prebuilt binaries. Run by build.sh
-# after install-binaries.sh (DESTDIR only for tests/schedulers.sh).
+# after install-binaries.sh (DESTDIR only for tests/image/schedulers.sh).
 #
 #   input    /usr/share/octarine-os/schedulers.tsv   four tab-separated fields: name, path (bin/<name>), minimum kernel (EMPTY for
 #            all seven today), description (up to 120 characters); no header. Read with awk -F'\t' and cut -f, never with

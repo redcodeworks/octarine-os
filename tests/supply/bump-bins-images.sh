@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests the `bins-dx` and `bins-gx` kinds of bump-run.sh (the weekly pin bump of the octarine-bins-dx and -gx images; the same code, run once per kind) with stub skopeo and cosign and a throwaway git repository:
 # an equal pin changes nothing, a newer verified digest is written into the variant's Containerfile (variants/dx for bins-dx, variants/gx for bins-gx: digest and the image's version label as the tag) as ONE commit with the table row,
-# a digest that does not verify fails and leaves the tree as it was. Needs: bash, git, jq. Run: tests/bump-bins-images.sh
+# a digest that does not verify fails and leaves the tree as it was. Needs: bash, git, jq. Run: tests/supply/bump-bins-images.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d)
 trap 'rm -rf -- "${root:?}"' EXIT
 pass=0; failn=0; rc=0

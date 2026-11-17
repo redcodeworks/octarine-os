@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests .github/scripts/publish-latest.sh (the one step that moves the `latest` of ONE image: the default image or dx; each image publishes its own)
-# with a fake registry (stub skopeo), a stub cosign and a throwaway git repository that plays main. Run: tests/publish-latest.sh
+# with a fake registry (stub skopeo), a stub cosign and a throwaway git repository that plays main. Run: tests/pipeline/publish-latest.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 script="$here/.github/scripts/publish-latest.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT

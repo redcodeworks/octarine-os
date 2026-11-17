@@ -2,10 +2,10 @@
 # Thin test for `ujust hardware-setup` (60-custom.just): only what is silent or irreversible (kernel argument, TPM enrollment, Secure Boot key, security-key file, the plan mode).
 # The menu and the step list show when the recipe is run. Nothing real changes: ujust, sudo, flatpak, systemctl, rpm-ostree,
 # mokutil, lsblk, lsusb, udevadm, pamu2fcfg, distrobox and systemd-detect-virt are fakes, sysfs paths are redirected by
-# environment variables. Needs: bash, just. Run: tests/hardware-setup.sh
+# environment variables. Needs: bash, just. Run: tests/recipes/hardware-setup.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 justfile="$here/system_files/usr/share/ublue-os/just/60-custom.just"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT

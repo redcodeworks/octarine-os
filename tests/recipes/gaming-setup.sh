@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Thin test for `ujust gaming-setup` on the gx image (60-custom.just): with the steam RPM installed the Flatpak steps (steam, extensions, desktop) say so and
 # do nothing, the other steps and a machine without the RPM behave as before. Nothing real changes: flatpak and rpm are fakes, HOME is a temp dir.
-# Needs: bash, just. Run: tests/gaming-setup.sh
+# Needs: bash, just. Run: tests/recipes/gaming-setup.sh
 set -uo pipefail
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 justfile="$here/system_files/usr/share/ublue-os/just/60-custom.just"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT

@@ -54,12 +54,37 @@ jobs:
       - name: Check Just format
         run: just check
 
-  # The behavior tests (tests/*.sh) on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a script shows here). NOT a required check: it is
-  # informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and `secrets` pass). Not run for the dispatched
-  # bump runs (they only need `test` and `secrets`).
-  suite:
-    name: suite
+  # The groups of the behavior tests: one per directory under tests/ (tests/{pipeline,supply,image,recipes}/; the directory tree is the only list). The job fails when a
+  # tests/*.sh sits outside a group or a group has no *.sh. Not run for the dispatched bump runs, like `suite`.
+  plan-tests:
+    name: plan-tests
     if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      groups: ${{ steps.plan.outputs.groups }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: List the test groups
+        id: plan
+        run: .github/scripts/plan-tests.sh
+
+  # The behavior tests (tests/<group>/*.sh), one matrix job per group (`suite (<group>)`), on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a
+  # script shows here). NOT a required check: it is informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and
+  # `secrets` pass). Not run for the dispatched bump runs (they only need `test` and `secrets`).
+  suite:
+    name: suite (${{ matrix.group }})
+    needs: plan-tests
+    if: github.event_name != 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ${{ fromJSON(needs.plan-tests.outputs.groups) }}
     runs-on: ubuntu-26.04
     timeout-minutes: 25
     container: registry.fedoraproject.org/fedora:45
@@ -99,12 +124,14 @@ jobs:
       - name: Make the pinned just usable by that user
         run: install -m 0755 "$(command -v just)" /usr/bin/just && just --version
 
-      - name: Run every tests/*.sh
+      - name: Run every test of the group
         shell: runuser -u ci -- bash {0}
+        env:
+          GROUP: ${{ matrix.group }}
         run: |
           unset GITHUB_OUTPUT GITHUB_ENV GITHUB_STEP_SUMMARY GITHUB_PATH
           fail=0
-          for t in tests/*.sh; do
+          for t in tests/"${GROUP}"/*.sh; do
             if out=$(timeout 600 bash "$t" 2>&1); then echo "PASS $t"; else echo "FAIL $t"; echo "$out"; fail=1; fi
           done
           exit "$fail"

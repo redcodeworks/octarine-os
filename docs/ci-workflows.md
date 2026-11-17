@@ -2,7 +2,7 @@
 
 Everything that builds, tests, signs and publishes the images runs from here.
 
-- `workflows/` has the GitHub Actions workflows. `test.yml` runs the fast sanity check and the behavior tests on every branch; `build.yml` builds the default
+- `workflows/` has the GitHub Actions workflows. `test.yml` runs the fast sanity check and the behavior tests (four parallel groups, one job each) on every branch; `build.yml` builds the default
   image on `testing` and `main` and every day; `build-dx.yml`, `build-gx.yml`, `build-nvidia.yml`, `build-nvidia-dx.yml`, `build-nvidia-gx.yml` and the experimental `build-dx-gx.yml` (dispatch only, `latest` only: the gx layer on the dx image; the dx, gx, nvidia-dx, nvidia-gx and dx-gx workflows are thin callers of the reusable `dx-image.yml` (input `variant`: dx or gx) for plan, build and promote and sign in their own `sign` job through the shared action `actions/sign-images`, because the signing environment secret did not reach a job inside a reusable workflow; `build-dx.yml` posts the required check `Build dx and push image` and `build-gx.yml` posts `Build gx and push image` (a required check once the ruleset lists it); `build.yml` dispatches dx and gx in parallel after the default build)
   build the variants; the prebuilt programs (scx, extest, Ghostty) are built by the separate octarine-bins repository, and this image installs the octarine-bins image it pins by digest (the weekly bump proposes a new digest); `publish-latest.yml` moves the
   `latest` tag; `bump-pins.yml` opens one independent pull request per pinned version that moved (one commit each, cut from `testing`, so any subset can be merged in any order and a pin you do not want is just closed; a newer bump of the same pin replaces its older pull request; rerun by hand with `gh workflow run bump-pins.yml --ref testing`, add `-f dry_run=true` to only print what it would open); the rest are maintenance (old daily image cleanup, a rollback, a workflow security audit).
@@ -17,7 +17,7 @@ build instead of building again; each image then moves its own `latest` tag, ind
 only documentation skip the image builds.
 
 Before editing: workflows are audited for security problems, and the required checks (`test`, `secrets` and the build
-check) must keep their names. Scripts are tested from `tests/`, so a change to one usually needs a test change too.
+check) must keep their names. Scripts are tested from `tests/<group>/` (`pipeline`, `supply`, `image`, `recipes`; a new test goes into one of those directories and needs no workflow change), so a change to a script usually needs a test change too.
 
 Images built by the scheduled daily build also carry a tag `daily-YYYYMMDD` (the default, dx and gx images). `prune-daily.yml` runs
 weekly and keeps the newest 14 of those, deleting older daily images and their signatures; the image behind `latest`, `testing`

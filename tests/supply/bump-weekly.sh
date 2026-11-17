@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests the orchestration of the weekly bump (bump-weekly.sh): one independent branch, commit and pull request per pin, an unchanged rerun, a moved upstream
 # (new PR, older one closed), a stale PR, a failing pin, the dry run and the refusal to start from another checkout. Real git (a bare origin and a clone in a temp
-# dir); gh, bump-run.sh and bump-checks.sh are stubs (the decisions per pin are bump-run.sh's own business). Needs: bash, git, jq. Run: tests/bump-weekly.sh
+# dir); gh, bump-run.sh and bump-checks.sh are stubs (the decisions per pin are bump-run.sh's own business). Needs: bash, git, jq. Run: tests/supply/bump-weekly.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d)
 trap 'rm -rf -- "${root:?}"' EXIT
 pass=0; failn=0; rc=0

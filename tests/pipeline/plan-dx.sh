@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests .github/scripts/plan-dx.sh (skip, promote or build, per channel) with stub skopeo and cosign in a temporary git
-# repository. Run: tests/plan-dx.sh
+# repository. Run: tests/pipeline/plan-dx.sh
 set -uo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 plan="$here/.github/scripts/plan-dx.sh"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
