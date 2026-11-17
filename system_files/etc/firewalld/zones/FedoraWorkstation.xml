@@ -7,7 +7,6 @@
   <service name="samba-client"/>
   <service name="gsconnect"/>
   <service name="sunshine"/>
-  <service name="moondeckbuddy"/>
   <service name="steam-streaming"/>
   <service name="mdns"/>
   <port port="41641" protocol="udp"/>

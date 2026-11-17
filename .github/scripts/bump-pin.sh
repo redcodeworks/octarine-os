@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Decides whether the digest pin of an EXTERNAL image (chunkah, which this repository does not own) has to move to its `latest` tag, and rewrites the pin
 # when it has. Used by the weekly workflow bump-pins.yml; tested with fake skopeo and cosign by tests/bump-pins.sh. Run from the repository root.
-# (brew and octarine-bins are bumped through the `just brew-bump` / `just bins-bump` recipes, dev-packages inside bump-run.sh.)
+# (brew and octarine-bins are bumped through the `just brew-bump` / `just bins-bump` recipes, the dx and gx images inside bump-run.sh.)
 #
 #   bump-pin.sh chunkah
 #

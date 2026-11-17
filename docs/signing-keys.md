@@ -14,8 +14,7 @@ as a warning in the build, never skipped silently).
 
 `redcodeworks-toolbox-cosign.pub` is the cosign public key of the octarine-images repository (the owner's own project, renamed from fedora-toolbox on 2026-11-16,
 `cosign.pub` at https://github.com/redcodeworks/octarine-images, copied 2026-11-09, identical to the key printed in the
-README of `ghcr.io/redcodeworks/dev-packages`). It signs `ghcr.io/redcodeworks/dev-packages`, the developer package list
-the `octarine-os-dx` image installs, and `ghcr.io/redcodeworks/gaming-packages`, the gamer package list the `octarine-os-gx` image installs (both verified with the key, not keyless, at the digest pinned in the variant's `Containerfile`; every dx and gx build verifies the pin). It also signs `ghcr.io/redcodeworks/datastore-images`, the opt-in datastore bundle: the dx image installs
+README of `ghcr.io/redcodeworks/dev-packages`). Since 2026-11-16 it no longer verifies the package list images of the dx and gx variants (those lists moved into the `octarine-bins-dx` and `octarine-bins-gx` images, which `octarine-bins.pub` verifies). It signs `ghcr.io/redcodeworks/datastore-images`, the opt-in datastore bundle: the dx image installs
 the key as `/etc/pki/containers/redcodeworks-toolbox.pub` and a container policy rule for that repository, so `ujust datastore-install` pulls only a bundle signed with it. Not this image's own signing key.
 
 Secure Boot of the kernel (no file here): `.github/scripts/secureboot-check.sh` is Bluefin's and Aurora's `secureboot` recipe. It copies `vmlinuz` out of the built image and runs

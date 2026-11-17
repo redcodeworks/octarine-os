@@ -10,23 +10,24 @@ ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
 ARG BASE_TAG=latest
 ARG BASE_DIGEST=
 
-# The gaming package lists: a tiny signed FROM scratch image (/fedora.txt, /rpmfusion.txt, /copr.txt, /install.sh, /install-copr.sh, /README) built from the
-# octarine-images repository. PINNED by digest, like dev-packages in the dx Containerfile: GAMING_PACKAGES_DIGEST changes only through the weekly bump pull
-# request (bump-run.sh, kind gaming-packages), the gx build verifies the pinned digest with keys/redcodeworks-toolbox-cosign.pub on every build
-# (dx-image.yml) and records it in the gaming-packages label. GAMING_PACKAGES_TAG is only for humans. The pin covers the LISTS and installers only
-# (the package names, the exact Sunshine version of the COPR list); the other packages still float through dnf.
-ARG GAMING_PACKAGES_TAG=latest-20261116-39ab64d
-ARG GAMING_PACKAGES_DIGEST=sha256:4b65361ea50f4c2eb7dc5a800376f3d41837566c031b3bcb9ae032712bded9c9
-ARG GAMING_PACKAGES_REF=ghcr.io/redcodeworks/gaming-packages:${GAMING_PACKAGES_TAG}@${GAMING_PACKAGES_DIGEST}
+# The gx binaries image, ghcr.io/redcodeworks/octarine-bins-gx: a signed FROM scratch image built by the octarine-bins repository (with its OWN key,
+# keys/octarine-bins.pub). It carries the gaming package lists and their installer under /packages (required-fedora, required-negativo17 (Steam), required-copr (Sunshine,
+# exact version), optional-fedora, install.sh) and, so far, no binary component (/COMPONENTS is empty). PINNED by digest, like octarine-bins in the default Containerfile:
+# BINS_GX_DIGEST changes only through the weekly bump pull request (bump-run.sh, kind bins-gx), the gx build verifies the pinned digest on every build (dx-image.yml) and
+# records it in the bins-gx label. BINS_GX_TAG is only for humans. The pin covers the lists and the installer (the package names, the exact Sunshine version); the
+# other packages still float through dnf.
+ARG BINS_GX_TAG=20261117-5cf8fd9
+ARG BINS_GX_DIGEST=sha256:b5109842bfd7b446b90acfe261637ade182ad2dbc11b2279200362585deb81a0
+ARG BINS_GX_REF=ghcr.io/redcodeworks/octarine-bins-gx:${BINS_GX_TAG}@${BINS_GX_DIGEST}
 
-FROM ${GAMING_PACKAGES_REF} AS gamingpkgs
+FROM ${BINS_GX_REF} AS binsgx
 # (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
 
 FROM scratch AS ctx
 COPY variants/gx/gx.sh /gx.sh
 COPY build_files/final-cleanup.sh /final-cleanup.sh
 COPY build_files/validate-repos.sh /validate-repos.sh
-COPY variants/gx/packages/extras.txt /extras.txt
+COPY build_files/install-binaries.sh /install-binaries.sh
 # (no system_files tree: the packages bring their own units, rules and firewall services; add one here and a `cp -a` in gx.sh when a file is ever needed)
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
@@ -36,8 +37,8 @@ ARG IMAGE_VERSION
 # os-release IMAGE_ID: octarine-os-gx, or octarine-os-nvidia-gx when the base is the NVIDIA variant (same layer, same packages)
 ARG GX_IMAGE_ID=octarine-os-gx
 
-# The shared lists through a bind mount, one dnf5 call per source class, then the extras, in gx.sh (which also keeps the kernel unchanged)
-RUN --mount=type=bind,from=gamingpkgs,source=/,target=/gaming-packages \
+# The pinned bins-gx image through a bind mount at /binaries (its package lists, then its zero components), in gx.sh (which also keeps the kernel unchanged)
+RUN --mount=type=bind,from=binsgx,source=/,target=/binaries \
     --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
