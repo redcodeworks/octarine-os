@@ -7,6 +7,9 @@ inputs:
   tool:
     description: cosign or just
     required: true
+  cache:
+    description: "true (default) restores and saves the installed binary with actions/cache; false never restores a binary (the signing steps, which hold the signing key, run only what the pinned installer just downloaded and verified)"
+    default: "true"
 runs:
   using: composite
   steps:
@@ -30,6 +33,7 @@ runs:
 
     - name: Restore the cached binary
       id: cache
+      if: inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.cfg.outputs.dir }}
@@ -100,7 +104,7 @@ runs:
 
     # After a fresh install keep the binary for the cache (saved when the job ends, only after a miss and a green job)
     - name: Keep the binary for the cache
-      if: steps.hit.outputs.install == 'true'
+      if: steps.hit.outputs.install == 'true' && inputs.cache == 'true'
       shell: bash
       env:
         TOOL: ${{ inputs.tool }}
