@@ -41,6 +41,7 @@ check "ghostty: installed with its desktop file, an icon the hicolor cache lists
 check "source and build records ship for every binary component" "for i in scx extest ghostty; do test -s /usr/share/licenses/octarine-binaries/\$i/SOURCE && test -s /usr/share/licenses/octarine-binaries/\$i/BUILDINFO || exit 1; done"
 # pcp is an optional package: its units are enabled only when it is installed
 check "pcp units enabled when pcp is installed" "! rpm -q pcp || (systemctl is-enabled pmcd.service && systemctl is-enabled pmlogger.service)"
+check "local SELinux module octarine-local is installed and still carries the PCP read rule" "semodule -l | grep -qx octarine-local && cd \$(mktemp -d) && semodule -E octarine-local && grep -q \"allow pcp_pmlogger_t systemd_nsresourced_runtime_t\" octarine-local.cil"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
 check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
 check "brew-upgrade.timer stays disabled" "! systemctl is-enabled brew-upgrade.timer"
