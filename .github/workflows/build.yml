@@ -444,6 +444,8 @@ jobs:
       - name: Rechunk with chunkah
         id: rechunk
         run: |
+          # the layers' epoch is the Created time of the base this build started FROM (pulled by the base check above)
+          export CHUNKAH_EPOCH_BASE="${BASE_IMAGE}@${BASE_INDEX_DIGEST}"
           just rechunk \
             ${IMAGE_NAME} \
             ${DEFAULT_TAG}
