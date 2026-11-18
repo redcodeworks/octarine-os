@@ -27,7 +27,15 @@ def amd64_child(manifest: bytes) -> str:
         children = json.loads(manifest).get("manifests") or []
     except ValueError:
         return ""
-    return next((m.get("digest", "") for m in children if (m.get("platform") or {}).get("os") == "linux" and (m.get("platform") or {}).get("architecture") == "amd64"), "")
+    return next(
+        (
+            m.get("digest", "")
+            for m in children
+            if (m.get("platform") or {}).get("os") == "linux"
+            and (m.get("platform") or {}).get("architecture") == "amd64"
+        ),
+        "",
+    )
 
 
 def verified_by(image: str, pin: str, manifest: bytes, key: str):
@@ -60,10 +68,14 @@ def main(argv=None):
     try:
         manifest = registry.read("raw", base)
     except registry.ReadError:
-        ci.log.error(f"cannot read {base} (a registry read error after the retries, not a missing tag): re-run; nothing was built")
+        ci.log.error(
+            f"cannot read {base} (a registry read error after the retries, not a missing tag): re-run; nothing was built"
+        )
         return 1
     except registry.Absent:
-        ci.log.error(f"cannot resolve {base} (does the tag exist? skopeo list-tags docker://{image})")
+        ci.log.error(
+            f"cannot resolve {base} (does the tag exist? skopeo list-tags docker://{image})"
+        )
         return 1
     pin = registry.sha256_of(manifest)
     verified, errors, unfinished = verified_by(image, pin, manifest, key)
@@ -72,9 +84,15 @@ def main(argv=None):
         tail = ci.text(joined, 300)
         if unfinished:
             # a check could not be completed (network, registry): a TRANSIENT failure, not a verdict on the key
-            ci.log.error(f"the signature of {base} ({pin}) could not be checked after the retries (a read error, not a wrong key): re-run; nothing was built. {tail}")
-        elif re.search("no signatures found", joined, re.I) and not re.search("no matching signatures", joined, re.I):
-            ci.log.error(f"no signature is visible for {base} ({pin}) yet: Universal Blue may still be publishing it (a re-run in a while usually passes); the build stops. {tail}")
+            ci.log.error(
+                f"the signature of {base} ({pin}) could not be checked after the retries (a read error, not a wrong key): re-run; nothing was built. {tail}"
+            )
+        elif re.search("no signatures found", joined, re.I) and not re.search(
+            "no matching signatures", joined, re.I
+        ):
+            ci.log.error(
+                f"no signature is visible for {base} ({pin}) yet: Universal Blue may still be publishing it (a re-run in a while usually passes); the build stops. {tail}"
+            )
         else:
             ci.log.error(
                 f"{base} ({pin}) is not signed by {key}: the build stops. Possible causes: Universal Blue rotated its signing key (compare {key} with "
@@ -84,7 +102,10 @@ def main(argv=None):
     ci.result(f"BASE_PIN={pin}")
     ci.append_to("GITHUB_ENV", f"BASE_PIN={pin}")
     ci.append_to("GITHUB_OUTPUT", f"pin={pin}")
-    ci.append_to("GITHUB_STEP_SUMMARY", f"Base image: `{base}` resolved ONCE to `{pin}` and verified ({verified}) with `{key}`; the build is FROM that digest.")
+    ci.append_to(
+        "GITHUB_STEP_SUMMARY",
+        f"Base image: `{base}` resolved ONCE to `{pin}` and verified ({verified}) with `{key}`; the build is FROM that digest.",
+    )
     return 0
 
 

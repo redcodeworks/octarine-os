@@ -54,7 +54,9 @@ def main(argv=None):
         tag, digest = ih.nearest_image_for_inputs(tip)
     except ih.Unreadable as e:
         # a registry read error is not "no tested image": falling back to a rebuild would put an UNTESTED build on latest. Fail the plan; a re-run decides again.
-        ci.log.error(f"cannot decide whether a tested testing image exists for {tip}: {e}")
+        ci.log.error(
+            f"cannot decide whether a tested testing image exists for {tip}: {e}"
+        )
         return 1
     except ih.NoImage as e:
         no(str(e))

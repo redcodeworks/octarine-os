@@ -43,7 +43,15 @@ class Kind(enum.IntEnum):
 
     INT, PTR, ARRAY, STRUCT, UNION, ENUM = 1, 2, 3, 4, 5, 6
     FWD, TYPEDEF, VOLATILE, CONST, RESTRICT, FUNC = 7, 8, 9, 10, 11, 12
-    FUNC_PROTO, VAR, DATASEC, FLOAT, DECL_TAG, TYPE_TAG, ENUM64 = 13, 14, 15, 16, 17, 18, 19
+    FUNC_PROTO, VAR, DATASEC, FLOAT, DECL_TAG, TYPE_TAG, ENUM64 = (
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+    )
 
 
 EM_BPF = 247
@@ -57,7 +65,9 @@ def parse_btf(blob):
     """Return (types, strings) of a BTF blob: types is a list of dicts (index 0 is void), strings a function name -> str."""
     if len(blob) < 24:
         raise CheckError("BTF too short")
-    magic, version, flags, hdr_len, type_off, type_len, str_off, str_len = struct.unpack_from("<HBBIIIII", blob, 0)
+    magic, version, flags, hdr_len, type_off, type_len, str_off, str_len = (
+        struct.unpack_from("<HBBIIIII", blob, 0)
+    )
     if magic != BTF_MAGIC:
         raise CheckError("not BTF (magic %#x)" % magic)
     sdata = blob[hdr_len + str_off : hdr_len + str_off + str_len]
@@ -74,7 +84,13 @@ def parse_btf(blob):
         pos += 12
         kind = (info >> 24) & 0x1F
         vlen = info & 0xFFFF
-        t = {"kind": kind, "name": name(name_off), "vlen": vlen, "size": size_type, "members": []}
+        t = {
+            "kind": kind,
+            "name": name(name_off),
+            "vlen": vlen,
+            "size": size_type,
+            "members": [],
+        }
         match kind:
             case Kind.INT | Kind.VAR | Kind.DECL_TAG:
                 pos += 4
@@ -97,7 +113,17 @@ def parse_btf(blob):
                     v_type, v_off, v_size = struct.unpack_from("<III", blob, pos)
                     pos += 12
                     t["members"].append((v_type, v_off))
-            case Kind.PTR | Kind.FWD | Kind.TYPEDEF | Kind.VOLATILE | Kind.CONST | Kind.RESTRICT | Kind.FUNC | Kind.FLOAT | Kind.TYPE_TAG:
+            case (
+                Kind.PTR
+                | Kind.FWD
+                | Kind.TYPEDEF
+                | Kind.VOLATILE
+                | Kind.CONST
+                | Kind.RESTRICT
+                | Kind.FUNC
+                | Kind.FLOAT
+                | Kind.TYPE_TAG
+            ):
                 pass
             case _:
                 raise CheckError("unknown BTF kind %d" % kind)
@@ -115,14 +141,35 @@ def elf_sections(data):
     raw = []
     for i in range(e_shnum):
         o = e_shoff + i * e_shentsize
-        sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link, sh_info, sh_align, sh_entsize = struct.unpack_from("<IIQQQQIIQQ", data, o)
+        (
+            sh_name,
+            sh_type,
+            sh_flags,
+            sh_addr,
+            sh_offset,
+            sh_size,
+            sh_link,
+            sh_info,
+            sh_align,
+            sh_entsize,
+        ) = struct.unpack_from("<IIQQQQIIQQ", data, o)
         raw.append((sh_name, sh_type, sh_offset, sh_size, sh_link, sh_info, sh_entsize))
     shstr = raw[e_shstrndx]
     strtab = data[shstr[2] : shstr[2] + shstr[3]]
     out = []
     for sh_name, sh_type, off, size, link, info, ent in raw:
         end = strtab.find(b"\0", sh_name)
-        out.append({"name": strtab[sh_name:end].decode(), "type": sh_type, "offset": off, "size": size, "link": link, "info": info, "entsize": ent})
+        out.append(
+            {
+                "name": strtab[sh_name:end].decode(),
+                "type": sh_type,
+                "offset": off,
+                "size": size,
+                "link": link,
+                "info": info,
+                "entsize": ent,
+            }
+        )
     return e_machine, e_shoff + e_shnum * e_shentsize, out
 
 
@@ -133,9 +180,19 @@ def elf_symbols(data, sections):
             stab = data[strs["offset"] : strs["offset"] + strs["size"]]
             syms = []
             for i in range(s["size"] // 24):
-                st_name, st_info, st_other, st_shndx, st_value, st_size = struct.unpack_from("<IBBHQQ", data, s["offset"] + i * 24)
+                st_name, st_info, st_other, st_shndx, st_value, st_size = (
+                    struct.unpack_from("<IBBHQQ", data, s["offset"] + i * 24)
+                )
                 end = stab.find(b"\0", st_name)
-                syms.append({"name": stab[st_name:end].decode(), "bind": st_info >> 4, "type": st_info & 0xF, "shndx": st_shndx, "value": st_value})
+                syms.append(
+                    {
+                        "name": stab[st_name:end].decode(),
+                        "bind": st_info >> 4,
+                        "type": st_info & 0xF,
+                        "shndx": st_shndx,
+                        "value": st_value,
+                    }
+                )
             return syms
     raise CheckError("no symbol table")
 
@@ -163,13 +220,19 @@ def analyse_object(obj):
     syms = elf_symbols(obj, secs)
     required, weak = set(), set()
     for s in syms:
-        if s["shndx"] == 0 and s["name"] and s["bind"] in (1, 2):  # SHN_UNDEF, GLOBAL or WEAK
+        if (
+            s["shndx"] == 0 and s["name"] and s["bind"] in (1, 2)
+        ):  # SHN_UNDEF, GLOBAL or WEAK
             (weak if s["bind"] == 2 else required).add(s["name"])
     btf_sec = [s for s in secs if s["name"] == ".BTF"]
     if not btf_sec:
         raise CheckError("the BPF object has no .BTF section")
-    types = parse_btf(obj[btf_sec[0]["offset"] : btf_sec[0]["offset"] + btf_sec[0]["size"]])
-    ops = [t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"]
+    types = parse_btf(
+        obj[btf_sec[0]["offset"] : btf_sec[0]["offset"] + btf_sec[0]["size"]]
+    )
+    ops = [
+        t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"
+    ]
     if not ops:
         raise CheckError("the BPF object's BTF has no struct sched_ext_ops")
     by_off = {}
@@ -177,7 +240,9 @@ def analyse_object(obj):
         by_off.setdefault(mbits // 8, mname)
     members = set()
     for i, s in enumerate(secs):
-        if s["type"] == 9 and secs[s["info"]]["name"].startswith(".struct_ops"):  # SHT_REL against a struct_ops section
+        if s["type"] == 9 and secs[s["info"]]["name"].startswith(
+            ".struct_ops"
+        ):  # SHT_REL against a struct_ops section
             for r in range(s["size"] // 16):
                 r_offset, r_info = struct.unpack_from("<QQ", obj, s["offset"] + r * 16)
                 if r_offset in by_off:
@@ -194,7 +259,11 @@ def decompress_vmlinuz(path):
     start = (setup_sects + 1) * 512
     payload_off, payload_len = struct.unpack_from("<II", data, 0x248)
     payload = data[start + payload_off : start + payload_off + payload_len]
-    tools = {b"\x28\xb5\x2f\xfd": ["zstd", "-dc"], b"\xfd7zXZ\x00": ["xz", "-dc"], b"\x1f\x8b": ["gzip", "-dc"]}
+    tools = {
+        b"\x28\xb5\x2f\xfd": ["zstd", "-dc"],
+        b"\xfd7zXZ\x00": ["xz", "-dc"],
+        b"\x1f\x8b": ["gzip", "-dc"],
+    }
     for magic, cmd in tools.items():
         if payload.startswith(magic):
             try:
@@ -203,9 +272,14 @@ def decompress_vmlinuz(path):
                 raise CheckError("cannot run %s to unpack the kernel: %s" % (cmd[0], e))
             # the payload is followed by a few trailer bytes, so the tool may exit non-zero after writing all of the image
             if r.stdout[:4] != b"\x7fELF":
-                raise CheckError("%s did not produce a kernel image (exit %d)" % (cmd[0], r.returncode))
+                raise CheckError(
+                    "%s did not produce a kernel image (exit %d)"
+                    % (cmd[0], r.returncode)
+                )
             return r.stdout
-    raise CheckError("unknown kernel payload compression (starts with %s)" % payload[:6].hex())
+    raise CheckError(
+        "unknown kernel payload compression (starts with %s)" % payload[:6].hex()
+    )
 
 
 def kernel_btf(kernel_dir):
@@ -242,11 +316,18 @@ def main():
     except OSError as e:
         print("FAIL kernel config unreadable: %s" % e)
         return 1
-    for key in ("CONFIG_SCHED_CLASS_EXT", "CONFIG_BPF_SYSCALL", "CONFIG_DEBUG_INFO_BTF"):
+    for key in (
+        "CONFIG_SCHED_CLASS_EXT",
+        "CONFIG_BPF_SYSCALL",
+        "CONFIG_DEBUG_INFO_BTF",
+    ):
         if cfg.get(key) == "y":
             print("ok   %s=y in the %s kernel config" % (key, kver))
         else:
-            print("FAIL %s is not y in the %s kernel config (%s): no scheduler can load" % (key, kver, cfg.get(key, "unset")))
+            print(
+                "FAIL %s is not y in the %s kernel config (%s): no scheduler can load"
+                % (key, kver, cfg.get(key, "unset"))
+            )
             failed = True
 
     # 2. the kernel's BTF and symbols
@@ -255,14 +336,21 @@ def main():
         types = kernel_btf(args.kernel_dir)
         print("ok   kernel BTF read from vmlinuz (%d types)" % len(types))
     except CheckError as e:
-        print("WARN kernel BTF could not be read (%s): the comparison below is skipped, only the config check counts" % e)
+        print(
+            "WARN kernel BTF could not be read (%s): the comparison below is skipped, only the config check counts"
+            % e
+        )
     if types is None:
         return 1 if failed else 0
     kernel_funcs = {t["name"] for t in types if t["kind"] == Kind.FUNC}
     kernel_vars = {t["name"] for t in types if t["kind"] == Kind.VAR}
-    kops = [t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"]
+    kops = [
+        t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"
+    ]
     if not kops:
-        print("FAIL the kernel BTF has no struct sched_ext_ops: this kernel has no usable sched_ext")
+        print(
+            "FAIL the kernel BTF has no struct sched_ext_ops: this kernel has no usable sched_ext"
+        )
         return 1
     kernel_members = {m for m, _ in kops[0]["members"]}
     sysmap = set()
@@ -289,7 +377,10 @@ def main():
         run_text = open(args.run_script).read()
     except OSError:
         run_text = ""
-    wrapper = all(m in run_text for m in ("unshare", "--bind", "config-${rel}", "/usr/lib/modules"))
+    wrapper = all(
+        m in run_text
+        for m in ("unshare", "--bind", "config-${rel}", "/usr/lib/modules")
+    )
     needing = []
     for name in names:
         path = os.path.join(args.binary_dir, name)
@@ -308,7 +399,10 @@ def main():
             failed = True
             continue
         if not members:
-            print("FAIL %s: found no struct_ops member (the reader is wrong or the object is unexpected)" % name)
+            print(
+                "FAIL %s: found no struct_ops member (the reader is wrong or the object is unexpected)"
+                % name
+            )
             failed = True
             continue
 
@@ -322,7 +416,9 @@ def main():
             return sym in kernel_funcs or sym in kernel_vars or sym in sysmap
 
         miss_req = sorted(s for s in req if not known(s))
-        miss_weak = sorted(s for s in weak if not known(s) and not s.startswith("CONFIG_"))
+        miss_weak = sorted(
+            s for s in weak if not known(s) and not s.startswith("CONFIG_")
+        )
         kconfig = sorted(s for s in (req | weak) if s.startswith("CONFIG_"))
         miss_members = sorted(m for m in members if m not in kernel_members)
         status = "ok  "
@@ -332,20 +428,43 @@ def main():
         if kconfig and not wrapper:
             status = "FAIL"
             failed = True
-        print("%s %s: %d required imports, %d weak, %d struct_ops members set" % (status, name, len(req), len(weak), len(members)))
+        print(
+            "%s %s: %d required imports, %d weak, %d struct_ops members set"
+            % (status, name, len(req), len(weak), len(members))
+        )
         if kconfig:
             needing.append(name)
-            print("       .kconfig externs (libbpf reads the kernel config at load time): %s" % ", ".join(kconfig))
+            print(
+                "       .kconfig externs (libbpf reads the kernel config at load time): %s"
+                % ", ".join(kconfig)
+            )
             if not wrapper:
-                print("       FAIL: libbpf finds no kernel config here (no /boot/config-<release>, no /proc/config.gz) and %s does not give the scheduler one" % args.run_script)
+                print(
+                    "       FAIL: libbpf finds no kernel config here (no /boot/config-<release>, no /proc/config.gz) and %s does not give the scheduler one"
+                    % args.run_script
+                )
         if miss_req:
-            print("       required kernel symbols missing from %s: %s" % (kver, ", ".join(miss_req)))
+            print(
+                "       required kernel symbols missing from %s: %s"
+                % (kver, ", ".join(miss_req))
+            )
         if miss_members:
-            print("       struct sched_ext_ops members set by the scheduler but absent from the kernel: %s" % ", ".join(miss_members))
+            print(
+                "       struct sched_ext_ops members set by the scheduler but absent from the kernel: %s"
+                % ", ".join(miss_members)
+            )
         if miss_weak:
-            print("       note: optional (weak) imports absent from the kernel, the compat layer handles them: %s" % ", ".join(miss_weak))
-    print("schedulers that need a kernel config at load time (CONFIG_* externs): %s; run script provides it: %s" % (", ".join(needing) or "none", "yes" if wrapper else "no"))
-    print("limits: static comparison only; verifier acceptance, changed semantics and the userspace side are not checked")
+            print(
+                "       note: optional (weak) imports absent from the kernel, the compat layer handles them: %s"
+                % ", ".join(miss_weak)
+            )
+    print(
+        "schedulers that need a kernel config at load time (CONFIG_* externs): %s; run script provides it: %s"
+        % (", ".join(needing) or "none", "yes" if wrapper else "no")
+    )
+    print(
+        "limits: static comparison only; verifier acceptance, changed semantics and the userspace side are not checked"
+    )
     return 1 if failed else 0
 
 

@@ -16,7 +16,11 @@ ARCHIVE = ".archive/"  # the kept shell scripts: inert, never checked as live co
 
 
 def tracked(*patterns):
-    return [f for f in ci.git("ls-files", *patterns).splitlines() if not f.startswith(ARCHIVE)]
+    return [
+        f
+        for f in ci.git("ls-files", *patterns).splitlines()
+        if not f.startswith(ARCHIVE)
+    ]
 
 
 def bad_shell(f):

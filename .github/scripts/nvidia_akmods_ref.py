@@ -25,13 +25,18 @@ def main(argv=None):
     args = ap.parse_args(argv)
     kernel, fedora = args.kernel, args.fedora
     image = os.environ.get("AKMODS_IMAGE") or "ghcr.io/ublue-os/akmods-nvidia-lts"
-    if not (m := re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc([0-9]+)\.x86_64", kernel)):
+    if not (
+        m := re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc([0-9]+)\.x86_64", kernel)
+    ):
         ci.log.error(f"'{kernel}' is not a kernel release like 7.2.15-300.fc45.x86_64")
         return 1
     if m[1] != fedora:
         ci.log.error(f"kernel {kernel} belongs to Fedora {m[1]}, not {fedora}")
         return 1
-    tags = [f"main-{fedora}-{kernel}", f"main-{fedora}-{kernel.removesuffix('.x86_64')}"]
+    tags = [
+        f"main-{fedora}-{kernel}",
+        f"main-{fedora}-{kernel.removesuffix('.x86_64')}",
+    ]
     for tag in tags:
         try:
             digest = registry.digest(image, tag)
@@ -39,7 +44,9 @@ def main(argv=None):
             continue
         ci.result(f"tag={tag}\ndigest={digest}\nref={image}@{digest}")
         return 0
-    ci.log.error(f"no {image} tag for kernel {kernel} (tried: {' '.join(tags)}). The akmods image may not be built for this kernel yet, or its tag form differs; nothing is published.")
+    ci.log.error(
+        f"no {image} tag for kernel {kernel} (tried: {' '.join(tags)}). The akmods image may not be built for this kernel yet, or its tag form differs; nothing is published."
+    )
     return 1
 
 

@@ -15,14 +15,21 @@ import ci  # noqa: E402
 def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
     pairs = [line.rstrip("\n").partition("=")[::2] for line in sys.stdin]
-    versions = {k: v.removesuffix('"').removeprefix('"') for k, v in pairs if "version" in k.lower()}
+    versions = {
+        k: v.removesuffix('"').removeprefix('"')
+        for k, v in pairs
+        if "version" in k.lower()
+    }
     bad = False
     for key, value in versions.items():
         if any(channel in value.lower() for channel in ("testing", "latest")):
             ci.log.error(f"{key}={value} names a channel")
             bad = True
         ci.log.info(f"{key}={value}")
-    for key, what in (("org.opencontainers.image.version", "org.opencontainers.image.version"), ("IMAGE_VERSION", "os-release IMAGE_VERSION")):
+    for key, what in (
+        ("org.opencontainers.image.version", "org.opencontainers.image.version"),
+        ("IMAGE_VERSION", "os-release IMAGE_VERSION"),
+    ):
         if key not in versions:
             ci.log.error(f"{what} is missing")
             return 1

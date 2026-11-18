@@ -20,7 +20,10 @@ class Failed(ci.NetworkError):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0], usage="retry.py [-n TRIES] [-d DELAY] [--] command [args...]")
+    ap = argparse.ArgumentParser(
+        description=__doc__.strip().splitlines()[0],
+        usage="retry.py [-n TRIES] [-d DELAY] [--] command [args...]",
+    )
     ap.add_argument("-n", type=int, dest="tries", default=ci.int_env("RETRY_TRIES", 3))
     ap.add_argument("-d", type=int, dest="delay", default=ci.int_env("RETRY_DELAY", 5))
     ap.add_argument("command", nargs=argparse.REMAINDER)
@@ -38,7 +41,9 @@ def main(argv=None):
     try:
         attempt()
     except Failed as e:
-        ci.log.error(f"{e}: a transient network error would have passed by now, so treat this as a real failure (bad signature, missing package or tag, or a longer outage)")
+        ci.log.error(
+            f"{e}: a transient network error would have passed by now, so treat this as a real failure (bad signature, missing package or tag, or a longer outage)"
+        )
         return e.code
     return 0
 

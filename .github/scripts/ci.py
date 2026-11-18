@@ -27,11 +27,15 @@ class Annotations(logging.Handler):
     """Writes log records the way the Actions runner reads them: `::error::` and `::warning::` lines (stderr), plain lines for info, all on stderr: stdout belongs to the result of a script (`ci.result`), which a workflow may capture with `$(...)`."""
 
     def emit(self, record):
-        prefix = {logging.ERROR: "::error::", logging.WARNING: "::warning::"}.get(record.levelno, "")
+        prefix = {logging.ERROR: "::error::", logging.WARNING: "::warning::"}.get(
+            record.levelno, ""
+        )
         print(f"{prefix}{record.getMessage()}", file=sys.stderr, flush=True)
 
 
-log = logging.getLogger("ci")  # every script logs through this one: log.info, log.warning, log.error
+log = logging.getLogger(
+    "ci"
+)  # every script logs through this one: log.info, log.warning, log.error
 log.setLevel(logging.INFO)
 log.addHandler(Annotations())
 log.propagate = False
@@ -39,7 +43,10 @@ log.propagate = False
 
 def arg_parser(doc):
     """An ArgumentParser whose --help description is the first sentence of the script's docstring."""
-    return argparse.ArgumentParser(description=doc.strip().splitlines()[0].split(" Usage:")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
+    return argparse.ArgumentParser(
+        description=doc.strip().splitlines()[0].split(" Usage:")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
 
 def append_to(env_var: str, line: str) -> None:
@@ -102,7 +109,9 @@ def stderr_of(proc: subprocess.CompletedProcess) -> str:
 
 def git(*args: str) -> str:
     """The stdout of a git command; a failing git raises CalledProcessError (callers that expect a failure catch it: EAFP)."""
-    return subprocess.run(["git", *args], check=True, text=True, capture_output=True).stdout.strip()
+    return subprocess.run(
+        ["git", *args], check=True, text=True, capture_output=True
+    ).stdout.strip()
 
 
 @contextlib.contextmanager
@@ -147,7 +156,9 @@ def retry(*, on, attempts=None, delay=None, backoff=True):
                         e.args = (f"{e} (failed {tries} attempts)",)
                         raise
                     wait = pause * i if backoff else pause
-                    log.warning(f"{fn.__name__}: try {i}/{tries} failed ({text(str(e), 200)}); retrying in {wait} s")
+                    log.warning(
+                        f"{fn.__name__}: try {i}/{tries} failed ({text(str(e), 200)}); retrying in {wait} s"
+                    )
                     time.sleep(wait)
 
         return wrapper
@@ -158,15 +169,26 @@ def retry(*, on, attempts=None, delay=None, backoff=True):
 def retry_decision(exc, retry_count):
     """githubkit's own retry decision (RETRY_DEFAULT: a rate limit once, a 5xx three times) plus transport errors (a dropped connection, a timeout: githubkit raises a
     RequestError that is not a RequestFailed), two more tries with a pause of RETRY_DELAY (5) seconds times the try number. An error status such as a 404 is never retried."""
-    if isinstance(exc, RequestError) and not isinstance(exc, RequestFailed) and retry_count < 2:
+    if (
+        isinstance(exc, RequestError)
+        and not isinstance(exc, RequestFailed)
+        and retry_count < 2
+    ):
         pause = int_env("RETRY_DELAY", 5) * (retry_count + 1)
-        return RetryOption(True, timedelta(seconds=max(pause, 0.001)))  # githubkit reads a zero timedelta as "no answer" and waits 60 s, so never zero
+        return RetryOption(
+            True, timedelta(seconds=max(pause, 0.001))
+        )  # githubkit reads a zero timedelta as "no answer" and waits 60 s, so never zero
     return RETRY_DEFAULT(exc, retry_count)
 
 
 def github():
     """The githubkit client of every script: token from GITHUB_TOKEN (or GH_TOKEN, which the workflow steps export for the gh CLI), server from GITHUB_API_URL (a fake in the tests), the retry decision above. Its errors are not wrapped."""
-    return GitHub(os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"), base_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"), timeout=30, auto_retry=retry_decision)
+    return GitHub(
+        os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN"),
+        base_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+        timeout=30,
+        auto_retry=retry_decision,
+    )
 
 
 def version(tag: str) -> Version:
@@ -179,7 +201,12 @@ def version(tag: str) -> Version:
 
 def git_ok(*args: str) -> bool:
     """Whether a git command succeeds (`git cat-file -e ...`, `git merge-base --is-ancestor ...`)."""
-    return run(["git", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    return (
+        run(
+            ["git", *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).returncode
+        == 0
+    )
 
 
 def epoch(iso: str) -> int:

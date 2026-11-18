@@ -12,7 +12,9 @@ def test_a_404_raises_the_sdk_error_after_one_request(github):
     gh = ci.github()
     with pytest.raises(RequestFailed) as e:
         gh.rest.repos.get_latest_release("o", "r")
-    assert e.value.response.status_code == 404 and github.requests == [("GET", "/repos/o/r/releases/latest")]
+    assert e.value.response.status_code == 404 and github.requests == [
+        ("GET", "/repos/o/r/releases/latest")
+    ]
 
 
 def test_a_dropped_connection_is_retried(github):
@@ -39,10 +41,22 @@ def test_the_token_server_and_typed_models(github):
 
 
 def test_paginate_is_a_lazy_iterator(github):
-    github.routes["/repos/o/r/tags"] = [{**fixture("tag"), "name": "v1"}, {**fixture("tag"), "name": "v2"}]
+    github.routes["/repos/o/r/tags"] = [
+        {**fixture("tag"), "name": "v1"},
+        {**fixture("tag"), "name": "v2"},
+    ]
     gh = ci.github()
-    assert next(t.name for t in gh.rest.paginate(gh.rest.repos.list_tags, owner="o", repo="r") if t.name == "v2") == "v2"
+    assert (
+        next(
+            t.name
+            for t in gh.rest.paginate(gh.rest.repos.list_tags, owner="o", repo="r")
+            if t.name == "v2"
+        )
+        == "v2"
+    )
 
 
 def test_versions_order_numerically_not_alphabetically():
-    assert ci.version("v1.10.0") > ci.version("v1.9.0") and ci.version("1.0.3") < ci.version("v1.1.0")
+    assert ci.version("v1.10.0") > ci.version("v1.9.0") and ci.version(
+        "1.0.3"
+    ) < ci.version("v1.1.0")

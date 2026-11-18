@@ -33,7 +33,9 @@ API_BASE = os.environ.get("API_BASE", "")
 PROTECT = set(os.environ.get("PROTECT", "").split())
 
 DAILY = re.compile(r"^daily-\d{8}$")
-ALIAS = re.compile(r"^(latest-[0-9a-f]{7}|latest-\d{8}(-[0-9a-f]{7})?|\d{8}(-[0-9a-f]{7})?)$")
+ALIAS = re.compile(
+    r"^(latest-[0-9a-f]{7}|latest-\d{8}(-[0-9a-f]{7})?|\d{8}(-[0-9a-f]{7})?)$"
+)
 SIG = re.compile(r"^sha256-([0-9a-f]{64})\.sig$")
 
 
@@ -71,11 +73,22 @@ def plan(versions):
             images.append(v)
     image_digests = {digest_of(v) for v in images}
     protect = {p.split(":")[-1] for p in PROTECT}
-    dailies = sorted((v for v in images if any(DAILY.match(t) for t in tags_of(v))), key=lambda v: datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")), reverse=True)
+    dailies = sorted(
+        (v for v in images if any(DAILY.match(t) for t in tags_of(v))),
+        key=lambda v: datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")),
+        reverse=True,
+    )
     kept = dailies[:KEEP]
-    doomed = [v for v in dailies[KEEP:] if all(DAILY.match(t) or ALIAS.match(t) for t in tags_of(v)) and digest_of(v) not in protect]
+    doomed = [
+        v
+        for v in dailies[KEEP:]
+        if all(DAILY.match(t) or ALIAS.match(t) for t in tags_of(v))
+        and digest_of(v) not in protect
+    ]
     doomed_digests = {digest_of(v) for v in doomed}
-    doomed_sigs = [s for d, s in sigs.items() if d in doomed_digests or d not in image_digests]
+    doomed_sigs = [
+        s for d, s in sigs.items() if d in doomed_digests or d not in image_digests
+    ]
     return dailies, kept, doomed, doomed_sigs
 
 
@@ -84,7 +97,9 @@ def main(argv=None):
     versions = read_versions(sys.stdin.read())
     dailies, kept, doomed, doomed_sigs = plan(versions)
     todo = doomed + doomed_sigs
-    ci.log.info(f"{len(versions)} versions, {len(dailies)} with a daily tag, keeping the newest {KEEP}")
+    ci.log.info(
+        f"{len(versions)} versions, {len(dailies)} with a daily tag, keeping the newest {KEEP}"
+    )
     for v in kept:
         ci.log.info(f"  keep   {label(v)}")
     for v in dailies[KEEP:]:

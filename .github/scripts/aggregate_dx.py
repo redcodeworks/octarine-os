@@ -26,9 +26,13 @@ def fail(message):
 
 def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
-    plan, build, promote, sign = (os.environ[n] for n in ("PLAN", "BUILD", "PROMOTE", "SIGN"))
+    plan, build, promote, sign = (
+        os.environ[n] for n in ("PLAN", "BUILD", "PROMOTE", "SIGN")
+    )
     build_wanted, promote_wanted = env("BUILD_WANTED", ""), env("PROMOTE_WANTED", "")
-    ci.log.info(f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} sign={sign}")
+    ci.log.info(
+        f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} sign={sign}"
+    )
     all_skipped = build == "skipped" and promote == "skipped" and sign == "skipped"
     if plan == "skipped":
         if not all_skipped:
@@ -40,20 +44,30 @@ def main(argv=None):
     if env("DRY_RUN") == "true":
         # a dry run plans and reports only: nothing may have been built, promoted or signed
         if not all_skipped:
-            fail(f"Dry run, but later jobs ran (build {build}, promote {promote}, sign {sign})")
-        ci.log.info(f"Dry run: planned build={build_wanted} promote={promote_wanted}; nothing was built, pushed or signed")
+            fail(
+                f"Dry run, but later jobs ran (build {build}, promote {promote}, sign {sign})"
+            )
+        ci.log.info(
+            f"Dry run: planned build={build_wanted} promote={promote_wanted}; nothing was built, pushed or signed"
+        )
         return 0
     match build_wanted, promote_wanted:
         case "true", _:
             if not (build == "success" and promote == "skipped" and sign == "success"):
-                fail(f"The dx build did not succeed (build {build}, promote {promote}, sign {sign})")
+                fail(
+                    f"The dx build did not succeed (build {build}, promote {promote}, sign {sign})"
+                )
         case _, "true":
             if not (promote == "success" and build == "skipped" and sign == "success"):
-                fail(f"The dx promotion did not succeed (promote {promote}, build {build}, sign {sign})")
+                fail(
+                    f"The dx promotion did not succeed (promote {promote}, build {build}, sign {sign})"
+                )
             ci.log.info("Promoted the tested dx image: no rebuild")
         case _:
             if not all_skipped:
-                fail(f"Unexpected results (build {build}, promote {promote}, sign {sign})")
+                fail(
+                    f"Unexpected results (build {build}, promote {promote}, sign {sign})"
+                )
             ci.log.info("Base and dx inputs unchanged: nothing to build")
     ci.log.info("ok")
     return 0

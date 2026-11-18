@@ -37,8 +37,15 @@ def main(argv=None):
             msg
             for ok, msg in (
                 (variant in ("dx", "gx"), f"unknown variant '{variant}'"),
-                (re.fullmatch(r"[0-9a-f]{40}", args.sha), f"'{args.sha}' is not a full commit sha"),
-                (not args.base_digest or re.fullmatch(r"sha256:[0-9a-f]{64}", args.base_digest), f"'{args.base_digest}' is not a sha256 digest"),
+                (
+                    re.fullmatch(r"[0-9a-f]{40}", args.sha),
+                    f"'{args.sha}' is not a full commit sha",
+                ),
+                (
+                    not args.base_digest
+                    or re.fullmatch(r"sha256:[0-9a-f]{64}", args.base_digest),
+                    f"'{args.base_digest}' is not a sha256 digest",
+                ),
                 (ref in ("main", "testing"), f"refusing to dispatch on '{ref}'"),
             )
             if not ok
@@ -54,24 +61,55 @@ def main(argv=None):
     rest = gh.rest
 
     def list_runs():
-        return rest.actions.list_workflow_runs(workflow_id=WORKFLOW, branch=ref, event="workflow_dispatch", per_page=50, **repo).parsed_data.workflow_runs
+        return rest.actions.list_workflow_runs(
+            workflow_id=WORKFLOW,
+            branch=ref,
+            event="workflow_dispatch",
+            per_page=50,
+            **repo,
+        ).parsed_data.workflow_runs
 
     before = {r.id for r in list_runs()}
-    inputs = {"variant": variant, "channel": args.channel, "sha": args.sha, **({"base_digest": args.base_digest} if args.base_digest else {})}
+    inputs = {
+        "variant": variant,
+        "channel": args.channel,
+        "sha": args.sha,
+        **({"base_digest": args.base_digest} if args.base_digest else {}),
+    }
     try:
-        rest.actions.create_workflow_dispatch(workflow_id=WORKFLOW, data={"ref": ref, "inputs": inputs}, **repo)
+        rest.actions.create_workflow_dispatch(
+            workflow_id=WORKFLOW, data={"ref": ref, "inputs": inputs}, **repo
+        )
     except Exception as e:  # noqa: BLE001 - the SDK's own error, whatever its type, is the reason to print
-        ci.log.error(f"could not dispatch {WORKFLOW} on {ref} (channel {args.channel}, {args.sha}): {e}")
+        ci.log.error(
+            f"could not dispatch {WORKFLOW} on {ref} (channel {args.channel}, {args.sha}): {e}"
+        )
         return 1
-    for i in range(1, tries + 1):  # a poll, not a retry: the dispatched run does not exist yet for a moment
-        new = next((r for r in list_runs() if r.display_title == title and r.head_branch == ref and r.id not in before), None)
+    for i in range(
+        1, tries + 1
+    ):  # a poll, not a retry: the dispatched run does not exist yet for a moment
+        new = next(
+            (
+                r
+                for r in list_runs()
+                if r.display_title == title
+                and r.head_branch == ref
+                and r.id not in before
+            ),
+            None,
+        )
         if new:
             ci.summary(f"Started: {new.html_url}")
-            ci.append_to("GITHUB_STEP_SUMMARY", f"{variant} {args.channel} for {args.sha}: {new.html_url}")
+            ci.append_to(
+                "GITHUB_STEP_SUMMARY",
+                f"{variant} {args.channel} for {args.sha}: {new.html_url}",
+            )
             return 0
         if i != tries:
             time.sleep(poll_wait)
-    ci.log.error(f"{WORKFLOW} was dispatched but no new run titled '{title}' appeared on {ref} in {tries * poll_wait} s; re-run this job to dispatch again")
+    ci.log.error(
+        f"{WORKFLOW} was dispatched but no new run titled '{title}' appeared on {ref} in {tries * poll_wait} s; re-run this job to dispatch again"
+    )
     return 1
 
 
