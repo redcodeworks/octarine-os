@@ -16,6 +16,7 @@
 #   menu_tty            true on a terminal (stdin and stdout), or when OCTARINE_MENU_FORCE_TTY is set (tests)
 #   menu_ready          true when menu_multi/menu_confirm can use real gum (a terminal and gum on PATH)
 #   menu_ready_one      true when menu_one can use ugum choose (a terminal and ugum on PATH)
+#   menu_height N       list height for N rows: min(N, terminal rows - 4), at least 3 (menu_multi's --height, menu_one's GUM_CHOOSE_HEIGHT)
 #   menu_title TEXT     a styled title with gum, plain text otherwise
 #   menu_multi HEADER ITEM...   checklist (gum choose --no-limit, Bluefin's devmode look); fills MENU_RESULT (array of
 #                       ids). Returns 0 (MENU_RESULT may be empty: nothing chosen, Esc or Ctrl-C), 3 when no handler is
@@ -50,8 +51,19 @@ menu_title() {
     if menu_ready; then gum style --bold --foreground 4 "$1"; else printf '%s\n' "$1"; fi
 }
 
+# menu_height N: the list height for N rows, min(N, terminal rows - 4), at least 3 (a list that fits the screen never pages).
+menu_height() {
+    local rows h
+    rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    h=$((rows - 4))
+    if [ "$1" -lt "$h" ]; then h=$1; fi
+    if [ "$h" -lt 3 ]; then h=3; fi
+    echo "$h"
+}
+
 menu_multi() {
-    local header=$1 spec id text sel line out rows h n group=""
+    local header=$1 spec id text sel line out h group=""
     shift
     MENU_RESULT=()
     menu_ready || return 3
@@ -70,12 +82,7 @@ menu_multi() {
         id_of["$text"]=$id
         if [ "${MENU_KEEP_SELECTED:-0}" = 1 ] && [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
     done
-    rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
-    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-    h=$((rows - 4))
-    n=${#items[@]}
-    if [ "$n" -lt "$h" ]; then h=$n; fi
-    if [ "$h" -lt 3 ]; then h=3; fi
+    h=$(menu_height "${#items[@]}")
     args=(choose --no-limit --height "$h" --selected-prefix "◉  " --unselected-prefix "○  " --cursor "▸  ")
     args+=(--header "${header:+$header$'\n'}x or space ticks an entry, ENTER confirms the ticked ones, Esc cancels")
     if [ "${#selected[@]}" -gt 0 ]; then args+=(--selected "$(IFS=,; echo "${selected[*]}")"); fi
@@ -103,7 +110,13 @@ menu_one() {
         id_of["$text"]=$id
     done
     if [ -n "$header" ]; then printf '%s\n' "$header"; fi
-    out=$(ugum choose "${items[@]}") || true
+    # Real gum shows 10 rows and pages the rest; a flag would be dropped by ugum's fzf fallback (and its value taken as an
+    # item), so the height goes in through the environment (the fallback ignores it), unless the user set it.
+    if [ -z "${GUM_CHOOSE_HEIGHT+x}" ]; then
+        out=$(GUM_CHOOSE_HEIGHT=$(menu_height "${#items[@]}") ugum choose "${items[@]}") || true
+    else
+        out=$(ugum choose "${items[@]}") || true
+    fi
     out=${out%%$'\n'*}
     [ -n "$out" ] && [ -n "${id_of[$out]:-}" ] || return 1
     MENU_ONE=${id_of[$out]}
