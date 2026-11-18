@@ -51,30 +51,39 @@ check_session_packages
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
 # /usr/share/ublue-os/distrobox/dev-toolbox.ini (or on the dx image). Nothing in this build compiles from source.
 
-# Remove RPMs the base ships that this image replaces, only if they are still present:
-# Firefox (use the Flatpak) and toolbox (distrobox covers it)
-for pkg in firefox firefox-langpacks toolbox; do
-    if rpm -q "$pkg" &>/dev/null; then
-        dnf5 remove -y "$pkg"
-    fi
-done
+# Packages to exclude: the RPMs the base ships that this image replaces (Bluefin's EXCLUDED_PACKAGES, the same rpm -qa filter).
+#   firefox, firefox-langpacks  use the Flatpak
+#   toolbox                     distrobox covers it
+#   gnome-software              Bazaar (a preinstalled Flatpak) is the software center; fwupd and PackageKit stay, so firmware updates
+#                               remain available through `fwupdmgr`
+# (gnome-software-rpm-ostree is not in the base image, so it is not listed.)
+EXCLUDED_PACKAGES=(
+    firefox
+    firefox-langpacks
+    gnome-software
+    toolbox
+)
 
-# gnome-software: Bazaar (a preinstalled Flatpak) is the software center; fwupd and PackageKit stay, so
-# firmware updates remain available through `fwupdmgr`. Preview the transaction first and fail the build if it
-# would take anything from the protected list with it (the single place that list lives).
+# Deviation: Bluefin removes the list blindly. We preview the transaction first and fail the build if it would take anything from the
+# protected list with it (the single place that list lives) or does not list a package we asked for.
 PROTECTED_PKGS="gnome-shell nautilus fwupd flatpak PackageKit gdm gnome-control-center gnome-session-wayland-session ostree rpm-ostree bootc podman systemd"
-if rpm -q gnome-software &>/dev/null; then
-    plan=$(dnf5 remove --assumeno gnome-software 2>&1 || true)
-    echo "== gnome-software removal transaction"
+readarray -t INSTALLED_EXCLUDED < <(rpm -qa --queryformat='%{NAME}\n' "${EXCLUDED_PACKAGES[@]}" 2>/dev/null || true)
+if [[ "${#INSTALLED_EXCLUDED[@]}" -gt 0 ]]; then
+    plan=$(dnf5 remove --assumeno "${INSTALLED_EXCLUDED[@]}" 2>&1 || true)
+    echo "== removal transaction"
     echo "${plan}"
-    grep -Eq '^[[:space:]]*gnome-software[[:space:]]' <<< "${plan}" || { echo "ERROR: the removal preview does not list gnome-software"; exit 1; }
+    for pkg in "${INSTALLED_EXCLUDED[@]}"; do
+        grep -Eq "^[[:space:]]*${pkg}[[:space:]]" <<< "${plan}" || { echo "ERROR: the removal preview does not list ${pkg}"; exit 1; }
+    done
     for pkg in ${PROTECTED_PKGS}; do
         if grep -Eq "^[[:space:]]*${pkg}[[:space:]]" <<< "${plan}"; then
-            echo "ERROR: removing gnome-software would also remove protected package ${pkg}"
+            echo "ERROR: removing ${INSTALLED_EXCLUDED[*]} would also remove protected package ${pkg}"
             exit 1
         fi
     done
-    dnf5 remove -y gnome-software
+    dnf5 remove -y "${INSTALLED_EXCLUDED[@]}"
+else
+    echo "No excluded packages found to remove."
 fi
 
 echo "::endgroup::"

@@ -16,7 +16,15 @@ echo "Kernel of the base image: ${before}"
 test -f /binaries/packages/install.sh
 missing_file=/usr/share/octarine-os/optional-packages-missing
 test -f "${missing_file}"
+# kernel-devel must not come back, and certainly not at another version than the kernel: bcc (optional list) Recommends it and systemtap-devel
+# (required list) supplements it, which pulled kernel-devel 7.3.4 (249 MiB, a dangling build symlink) next to kernel 7.3.3 on a real machine. The base
+# has none and 05-override-install.sh removes it from the default image, so it is excluded for this install only. If dx ever needs the headers it gets them
+# with the development-tools group (kernel-headers comes with glibc-devel), not through a stray kernel-devel.
+dnf_dropin=/etc/dnf/libdnf5.conf.d/90-octarine-no-kernel-devel.conf
+mkdir -p "$(dirname "${dnf_dropin}")"
+printf '[main]\nexcludepkgs=kernel-devel,kernel-devel-matched\n' > "${dnf_dropin}"
 MISSING_FILE="${missing_file}" bash /binaries/packages/install.sh
+rm -f "${dnf_dropin}"
 # ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) is NOT part of the dx images (the lists leave it out):
 # `ujust hardware-setup` (step rocm) provides it in a rootless distrobox instead
 for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do

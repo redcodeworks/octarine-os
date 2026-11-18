@@ -6,7 +6,7 @@
 # Deviations from Bluefin, in short:
 #   - the scripts sit directly in build_files/ (the Containerfile mounts it at /ctx), not in base/ and shared/
 #   - 03-install-kernel-akmods.sh is not used: we keep the base image's kernel, there are no akmods in this image
-#   - 05-override-install.sh and 20-tests.sh are added in later changes; Bluefin's shared/validate-repos.sh and clean-stage.sh are
+#   - 05-override-install.sh keeps only the kernel-devel and /usr/src removal; 20-tests.sh is added in a later change; Bluefin's shared/validate-repos.sh and clean-stage.sh are
 #     replaced by our validate-repos.sh (an allow-list, shared with the variant builds) and final-cleanup.sh (bootc lint)
 #   - our own steps in the gaps of the numbering: 01 signature policy, 06 SELinux module, 07 branding, 10 binaries, 21 image identity
 #   - the identity (21) is written AFTER dracut (19) because dracut copies os-release into the initramfs; packages (04) come before the
@@ -70,6 +70,9 @@ echo "::endgroup::"
 
 # Install Additional Packages
 /ctx/04-packages.sh
+
+# Remove kernel-devel and /usr/src
+/ctx/05-override-install.sh
 
 # The local SELinux module (after every package step)
 /ctx/06-selinux.sh
