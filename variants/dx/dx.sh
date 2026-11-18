@@ -22,13 +22,16 @@ test -f "${missing_file}"
 # with the development-tools group (kernel-headers comes with glibc-devel), not through a stray kernel-devel.
 dnf_dropin=/etc/dnf/libdnf5.conf.d/90-octarine-no-kernel-devel.conf
 mkdir -p "$(dirname "${dnf_dropin}")"
-printf '[main]\nexcludepkgs=kernel-devel,kernel-devel-matched\n' > "${dnf_dropin}"
+printf '[main]\nexcludepkgs=kernel-devel,kernel-devel-matched\n' >"${dnf_dropin}"
 MISSING_FILE="${missing_file}" /ctx/install-packages.sh /ctx/packages
 rm -f "${dnf_dropin}"
 # ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) is NOT part of the dx images (the lists leave it out):
 # `ujust hardware-setup` (step rocm) provides it in a rootless distrobox instead
 for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
-    if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
+	if rpm -q "${p}" >/dev/null 2>&1; then
+		echo "ERROR: ${p} must not be installed in the dx image"
+		exit 1
+	fi
 done
 echo "::endgroup::"
 
@@ -44,8 +47,8 @@ dev_import='import? "/usr/share/ublue-os/just/70-octarine-dev.just"'
 test -f "${ujust_main}"
 test -s /usr/share/ublue-os/just/70-octarine-dev.just
 if ! grep -qxF "${dev_import}" "${ujust_main}"; then
-    [[ -z "$(tail -c1 "${ujust_main}")" ]] || echo >> "${ujust_main}"
-    echo "${dev_import}" >> "${ujust_main}"
+	[[ -z "$(tail -c1 "${ujust_main}")" ]] || echo >>"${ujust_main}"
+	echo "${dev_import}" >>"${ujust_main}"
 fi
 grep -qxF "${dev_import}" "${ujust_main}"
 chmod 0755 /usr/bin/sdk
@@ -81,16 +84,16 @@ PY
 # --- end datastore bundle signature policy ---
 store_import='import? "/usr/share/ublue-os/just/72-octarine-datastore.just"'
 test -s /usr/share/ublue-os/just/72-octarine-datastore.just
-if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >> "${ujust_main}"; fi
+if ! grep -qxF "${store_import}" "${ujust_main}"; then echo "${store_import}" >>"${ujust_main}"; fi
 grep -qxF "${store_import}" "${ujust_main}"
 box_import='import? "/usr/share/ublue-os/just/73-octarine-datastore-box.just"'
 test -s /usr/share/ublue-os/just/73-octarine-datastore-box.just
 test -s /usr/share/octarine-os/datastore/datastore.ini
-if ! grep -qxF "${box_import}" "${ujust_main}"; then echo "${box_import}" >> "${ujust_main}"; fi
+if ! grep -qxF "${box_import}" "${ujust_main}"; then echo "${box_import}" >>"${ujust_main}"; fi
 grep -qxF "${box_import}" "${ujust_main}"
 virthost_import='import? "/usr/share/ublue-os/just/75-octarine-virthost.just"'
 test -s /usr/share/ublue-os/just/75-octarine-virthost.just
-if ! grep -qxF "${virthost_import}" "${ujust_main}"; then echo "${virthost_import}" >> "${ujust_main}"; fi
+if ! grep -qxF "${virthost_import}" "${ujust_main}"; then echo "${virthost_import}" >>"${ujust_main}"; fi
 grep -qxF "${virthost_import}" "${ujust_main}"
 
 # Docker-compatible API socket for developer tools (rootful); the default image already enables the user one globally
@@ -101,27 +104,36 @@ echo "::group::dx: image identity and kernel check"
 
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
 # version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
-set_os_release_field() { # key value: replace the line when it exists, append it otherwise
-    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
-    if grep -q "^${key}=" "${file}"; then
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
-    else
-        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
-        echo "${key}=\"${value}\"" >> "${file}"
-    fi
-    grep -qx "${key}=\"${value}\"" "${file}"
+set_os_release_field() {                                                  # key value: replace the line when it exists, append it otherwise
+	local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}" # the override is for tests
+	if grep -q "^${key}=" "${file}"; then
+		sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+	else
+		[[ -z "$(tail -c1 "${file}")" ]] || echo >>"${file}"
+		echo "${key}=\"${value}\"" >>"${file}"
+	fi
+	grep -qx "${key}=\"${value}\"" "${file}"
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
 # the same layer sits on the default image (octarine-os-dx) and on the NVIDIA variant (octarine-os-nvidia-dx)
 image_id="${DX_IMAGE_ID:-octarine-os-dx}"
-[[ "${image_id}" =~ ^octarine-os(-nvidia)?-dx$ ]] || { echo "ERROR: DX_IMAGE_ID '${image_id}' is not octarine-os-dx or octarine-os-nvidia-dx"; exit 1; }
+[[ "${image_id}" =~ ^octarine-os(-nvidia)?-dx$ ]] || {
+	echo "ERROR: DX_IMAGE_ID '${image_id}' is not octarine-os-dx or octarine-os-nvidia-dx"
+	exit 1
+}
 set_os_release_field IMAGE_ID "${image_id}"
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
 IMAGE_ID_EXPECTED="${image_id}" bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == "${IMAGE_ID_EXPECTED}" ]]'
 
 after=$(kernel_of)
-[[ "${after}" == "${before}" ]] || { echo "ERROR: the dx install changed the kernel (${before} -> ${after})"; exit 1; }
-[[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: /usr/lib/modules does not hold exactly ${before}"; exit 1; }
+[[ "${after}" == "${before}" ]] || {
+	echo "ERROR: the dx install changed the kernel (${before} -> ${after})"
+	exit 1
+}
+[[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || {
+	echo "ERROR: /usr/lib/modules does not hold exactly ${before}"
+	exit 1
+}
 echo "dx layer installed for kernel ${before}"
 echo "::endgroup::"
 

@@ -1,7 +1,7 @@
 ---
 name: Prune daily images
 # Images built by the scheduled daily build carry an extra tag `daily-YYYYMMDD` (octarine-os, and octarine-os-dx and octarine-os-gx built on it). Weekly, only the
-# newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/prune-daily.py). Testing builds, the
+# newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/prune_daily.py). Testing builds, the
 # NVIDIA images, the bare `latest` and anything else are never touched. Scheduled runs delete for real; start it by hand with dry_run on
 # (the default) to see the plan: `gh workflow run prune-daily.yml -f dry_run=true`. A failed run is just a red scheduled run.
 #
@@ -9,7 +9,7 @@ name: Prune daily images
 # variant's `latest` stands on, any failed lookup stops the run) and passes the names and that protect list on. `prune` is a matrix with ONE JOB PER PACKAGE (a new image is
 # one more name in `plan`; a name the prune script cannot read turns only its own job red). Each job lists and deletes only its own package, so they share nothing; each makes a
 # few list calls and at most 30 deletes, so parallel runs stay far from the rate limits (the `gh` calls are not retried: a failed one fails that job; the registry reads in
-# `plan` are retried by registry-read.sh).
+# `plan` are retried by registry_read.py).
 on:
   schedule:
     - cron: '0 5 * * 0'  # Sundays 05:00 UTC (scheduled runs come from the default branch)
@@ -43,6 +43,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: List the packages and what must survive
         id: plan
         env:
@@ -58,11 +61,11 @@ jobs:
           protect=""
           for name in ${names}; do
             image="ghcr.io/${owner}/${name}"
-            rc=0; digest=$(IMAGE="${image}" .github/scripts/registry-digest.sh latest) || rc=$?
+            rc=0; digest=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${image}" latest) || rc=$?
             [[ "${rc}" == 0 && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read ${image}:latest (status ${rc})"; exit 1; }
             protect="${protect} ${digest}"
             if [[ "${name}" != octarine-os ]]; then
-              base=$(.github/scripts/registry-read.sh config "${image}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
+              base=$(uv run --frozen --no-dev python -I .github/scripts/registry_read.py config "${image}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
               [[ "${base}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${image}@${digest} has no readable base digest label"; exit 1; }
               protect="${protect} ${base}"
             fi
@@ -93,6 +96,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Prune
         env:
           EVENT: ${{ github.event_name }}
@@ -105,4 +111,4 @@ jobs:
           export API_BASE="${scope}/packages/container/${NAME}"
           echo "== ${API_BASE}, dry run: ${DRY_RUN}"
           echo "Protected: ${PROTECT}"
-          gh api --paginate "${API_BASE}/versions?per_page=100" | python3 .github/scripts/prune-daily.py
+          gh api --paginate "${API_BASE}/versions?per_page=100" | uv run --frozen --no-dev python -I .github/scripts/prune_daily.py

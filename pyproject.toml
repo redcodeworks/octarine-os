@@ -1,0 +1,21 @@
+# Dependencies of the CI scripts and their tests (not a package). The versions are pinned with hashes in uv.lock; every workflow step and recipe runs `uv run --frozen`, so nothing resolves at run time.
+# The exact interpreter is .python-version (uv-managed, never the runner's system Python); requires-python is only the floor the lock is valid for.
+[project]
+name = "octarine-os-ci"
+version = "0"
+description = "CI scripts of octarine-os"
+requires-python = ">=3.14"
+dependencies = [
+    "githubkit",  # the GitHub API (it brings httpx and pydantic, which the scripts use directly as well)
+    "packaging",  # version ordering
+    "pyyaml",     # sanity.py parses the workflow files
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff>=0.17.5",
+]
+
+[tool.uv]
+package = false

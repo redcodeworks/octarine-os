@@ -22,15 +22,17 @@ export GS="$root/gs" SHELLF="$root/shell" CALLS="$root/calls"
 export USER_SETUP_FISH="$root/fakefish" USER_SETUP_ZSH="$root/fakezsh" USER_SETUP_SHELLS="$root/shells" USER_SETUP_SKEL="$root/skel"
 export USER_SETUP_SEARCH_DIRS="$root/sp1:$root/sp2" XDG_CACHE_HOME="$root/cache"
 mkdir -p "$root/skel" "$root/sp1" "$root/sp2"
-printf '#!/bin/sh\n' >"$USER_SETUP_FISH"; chmod +x "$USER_SETUP_FISH"
-printf '#!/bin/sh\n' >"$USER_SETUP_ZSH"; chmod +x "$USER_SETUP_ZSH"
+printf '#!/bin/sh\n' >"$USER_SETUP_FISH"
+chmod +x "$USER_SETUP_FISH"
+printf '#!/bin/sh\n' >"$USER_SETUP_ZSH"
+chmod +x "$USER_SETUP_ZSH"
 echo skelrc >"$root/skel/.zshrc"
 REAL_JUST=$(command -v just)
 # a PATH with only the basics, so the real ptyxis, brew, starship, git and gsettings are never seen
 sysbin="$root/sysbin"
 mkdir -p "$sysbin"
 for c in chmod wc bash sh env cat grep awk tr cut sed mkdir cp mv rm realpath dirname head tail sort uniq date touch ls readlink mktemp tee cmp basename wc; do
-    p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
+	p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 
 cat >"$bin/flatpak" <<'F'
@@ -128,24 +130,38 @@ export bin_dir="$bin"
 chmod +x "$bin"/*
 
 reset() {
-    
-    rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".*
-    rm -rf "$HOME" "$XDG_CACHE_HOME" "$root"/sp1/* "$root"/sp2/*
-    mkdir -p "$HOME"
-    : >"$LOG"; : >"$INSTALLED"; : >"$GS"
-    echo /bin/bash >"$SHELLF"
-    echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
-    : >"$BREW_CASKS"; : >"$FC_FAMILIES"
+
+	rm -f "$bin/starship" "$LOG" "$GROUPS_OF" "$FAILAPP" "$OVR".*
+	rm -rf "$HOME" "$XDG_CACHE_HOME" "$root"/sp1/* "$root"/sp2/*
+	mkdir -p "$HOME"
+	: >"$LOG"
+	: >"$INSTALLED"
+	: >"$GS"
+	echo /bin/bash >"$SHELLF"
+	echo "$USER_SETUP_ZSH" >"$USER_SETUP_SHELLS"
+	: >"$BREW_CASKS"
+	: >"$FC_FAMILIES"
 }
 run() { # stdin text, args...
-    local input=$1
-    shift
-    printf '%b' "$input" | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1
-    rc=$?
+	local input=$1
+	shift
+	printf '%b' "$input" | PATH="$bin:$sysbin" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1
+	rc=$?
 }
-ok() { pass=$((pass + 1)); echo "ok   $1"; }
-bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out"; }
-check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+ok() {
+	pass=$((pass + 1))
+	echo "ok   $1"
+}
+bad() {
+	failn=$((failn + 1))
+	echo "FAIL $1"
+	sed 's/^/     /' "$root/out"
+}
+check() {
+	local d=$1
+	shift
+	if "$@"; then ok "$d"; else bad "$d"; fi
+}
 has() { grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$LOG"; }
 notlogged() { ! grep -qF -- "$1" "$LOG"; }
@@ -174,13 +190,33 @@ check "failure: exit non-zero" test "$rc" != 0
 check "failure: later step still ran" logged "it.mijorus.gearlever"
 
 # ---- editor step: fake editors in temp directories (PATH and the extra search directories), temp HOME
-edir="$root/edbin"; extra="$root/edextra"; mkdir -p "$edir" "$extra"
+edir="$root/edbin"
+extra="$root/edextra"
+mkdir -p "$edir" "$extra"
 export USER_SETUP_EDITOR_DIRS="$extra" USER_SETUP_EDITOR_SYSDIRS="$edir"
-mked() { local d=$1; shift; for t in "$@"; do printf '#!/bin/sh\nexit 0\n' >"$d/$t"; chmod +x "$d/$t"; done; }
-edrun() { local input=$1; shift; printf '%b' "$input" | PATH="$bin:$sysbin:$edir" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1; rc=$?; }
+mked() {
+	local d=$1
+	shift
+	for t in "$@"; do
+		printf '#!/bin/sh\nexit 0\n' >"$d/$t"
+		chmod +x "$d/$t"
+	done
+}
+edrun() {
+	local input=$1
+	shift
+	printf '%b' "$input" | PATH="$bin:$sysbin:$edir" "$REAL_JUST" --justfile "$justfile" --working-directory "$root" user-setup "$@" >"$root/out" 2>&1
+	rc=$?
+}
 edf() { echo "$HOME/.config/environment.d/50-editor.conf"; }
-edreset() { reset; rm -f "$edir"/* "$extra"/*; unset EDITOR VISUAL SUDO_EDITOR; }
-edreset; mked "$edir" nano vim; mked "$extra" hx
+edreset() {
+	reset
+	rm -f "$edir"/* "$extra"/*
+	unset EDITOR VISUAL SUDO_EDITOR
+}
+edreset
+mked "$edir" nano vim
+mked "$extra" hx
 edrun '' --only editor --no
 check "editor --no: prints the plan, writes nothing" bash -c "[ $rc = 0 ] && grep -q 'Plan: would ask which editor' '$root/out' && [ ! -e '$(edf)' ]"
 edrun '' --only editor --yes

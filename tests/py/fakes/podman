@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Fake podman: logs the call (LOG) and exits with PODMAN_RC (default 0)."""
+import os
+import sys
+
+if "LOG" in os.environ:
+    with open(os.environ["LOG"], "a") as log:
+        log.write("podman " + " ".join(sys.argv[1:]) + "\n")
+sys.exit(int(os.environ.get("PODMAN_RC", 0)))

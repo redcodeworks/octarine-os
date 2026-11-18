@@ -7,9 +7,9 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=gamemode-lib.sh
 . "${here}/gamemode-lib.sh"
 (
-    if command -v tuned-adm > /dev/null 2>&1; then
-        timeout 5 tuned-adm profile latency-performance > /dev/null 2>&1 || log "tuned-adm profile latency-performance failed"
-    fi
+	if command -v tuned-adm >/dev/null 2>&1; then
+		timeout 5 tuned-adm profile latency-performance >/dev/null 2>&1 || log "tuned-adm profile latency-performance failed"
+	fi
 ) &
 with_lock scheduler_start || true
 wait

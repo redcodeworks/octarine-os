@@ -7,18 +7,18 @@ d=$(mktemp -d)
 trap 'rm -rf -- "${d}"' EXIT
 cd "${d}"
 
-cat > hello.c <<'C'
+cat >hello.c <<'C'
 #include <stdio.h>
 #include <math.h>
 int main(void) { printf("c-ok %d\n", (int)sqrt(49.0)); return 0; }
 C
-cat > hello.cpp <<'C'
+cat >hello.cpp <<'C'
 #include <iostream>
 #include <string>
 #include <vector>
 int main() { std::vector<std::string> v{"cpp", "ok"}; std::cout << v[0] << "-" << v[1] << std::endl; return 0; }
 C
-cat > Makefile <<'M'
+cat >Makefile <<'M'
 out.txt: hello-c
 	./hello-c > out.txt
 M
@@ -44,7 +44,7 @@ make
 [[ "$(cat out.txt)" == "c-ok 7" ]]
 echo "PASS make builds from a Makefile"
 
-printf '.globl _start\n_start: mov $60, %%eax\n xor %%edi, %%edi\n syscall\n' > a.s
+printf '.globl _start\n_start: mov $60, %%eax\n xor %%edi, %%edi\n syscall\n' >a.s
 as -o a.o a.s
 ld -o a-static a.o
 ./a-static

@@ -12,11 +12,11 @@ run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.s
 # so the concurrency group, the sign job, the publish of its own `latest`, the failure issue and the required result belong to one variant and a failed or
 # cancelled gx run can never block or cancel dx, nor the other way round. Find a variant's run by its title (the run-name): `<variant> <channel> <sha>`.
 # A SEPARATE workflow, started by the last jobs of the default pipeline (`gh workflow run build-variant.yml --ref <ref> -f variant=<variant> -f channel=<channel>
-# -f sha=<built commit>`, .github/scripts/dispatch-variant.sh) after the base succeeded, and that can be re-run on its own. A dispatched run uses the file of the ref
+# -f sha=<built commit>`, .github/scripts/dispatch_variant.py) after the base succeeded, and that can be re-run on its own. A dispatched run uses the file of the ref
 # it was dispatched on and is recorded on that branch, so a change here runs on `testing` before it is promoted and the README can show a badge per branch. It never
 # runs for pull requests or feature branches (the plan job's guard; a DRY RUN is the one exception, it writes nothing). `sha` is the commit the pipeline built: the ref
 # may have moved on since, so every job checks out exactly that commit, and the plan job refuses a commit that is not an ancestor of the ref. The plan job
-# (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
+# (.github/scripts/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
 # <variant>-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and `testing-<sha>`), signed with the repository key in the
 # `signing` environment. The result job is the check `Build <variant> and push image` ONLY when the built commit is the tip of the ref (otherwise it is named `Build
 # <variant> (older commit)`, so a green check can never appear on a commit whose own build has not run); the commit status of the same name is always posted on the
@@ -24,7 +24,7 @@ run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.s
 # ("dx image", "gx image").
 # This file is the THIN CALLER: plan, build and promote are the reusable dx-image.yml (shared with build-extra.yml); the triggers, the SIGN job (the `signing`
 # environment secret did not reach a job of a reusable workflow, so signing is here, via .github/actions/sign-images), the concurrency group, the run-name
-# (dispatch-variant.sh finds the run by it), the result job with its required name and commit status, `publish` and `alert` stay here, because only this workflow may
+# (dispatch_variant.py finds the run by it), the result job with its required name and commit status, `publish` and `alert` stay here, because only this workflow may
 # post the contexts `Build dx and push image` and `Build gx and push image`.
 on:
   workflow_dispatch:
@@ -123,6 +123,11 @@ jobs:
           persist-credentials: false
           ref: ${{ env.SHA }}
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+        with:
+          cache: false  # this job holds the signing key: no cache
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -164,6 +169,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Check the result
         id: result
         env:
@@ -175,7 +183,7 @@ jobs:
           PROMOTE: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.promote || 'failure' }}
           SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
-        run: .github/scripts/aggregate-dx.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/aggregate_dx.py
 
       - name: Post the result as a commit status on the built commit
         # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
@@ -227,6 +235,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Open the failure issue or comment on it
         if: contains(needs.*.result, 'failure')
         env:
@@ -239,7 +250,7 @@ jobs:
           ISSUE_TITLE: "The ${{ inputs.variant }} image build on main failed"
           ISSUE_BODY: "The build or promotion of octarine-os-${{ inputs.variant }} on main (or the move of its latest) failed, so octarine-os-${{ inputs.variant }}:latest stays on the previous image (the other images publish their own latest independently and are not held back). See the run for the failed job and re-run the failed jobs. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, dx image and gx image."
           FAIL_COMMENT: "${{ inputs.variant }} build or publish failed again"
-        run: .github/scripts/ci-issue.sh fail
+        run: uv run --frozen --no-dev python -I .github/scripts/ci_issue.py fail
 
       - name: Close the issue when the run succeeded
         if: needs.result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -249,4 +260,4 @@ jobs:
           CHANNEL: latest
           LABEL: ci-failure-${{ inputs.variant }}
           RECOVER_COMMENT: "the next ${{ inputs.variant }} build or promotion succeeded"
-        run: .github/scripts/ci-issue.sh recover
+        run: uv run --frozen --no-dev python -I .github/scripts/ci_issue.py recover

@@ -10,50 +10,57 @@ echo "::group:: ===$(basename "$0")==="
 set -eoux pipefail
 
 IMPORTANT_PACKAGES=(
-    distrobox
-    flatpak
-    gdm
-    gnome-shell
-    mutter
-    pipewire
-    ptyxis
-    systemd
-    tailscale
-    wireplumber
-    zsh
+	distrobox
+	flatpak
+	gdm
+	gnome-shell
+	mutter
+	pipewire
+	ptyxis
+	systemd
+	tailscale
+	wireplumber
+	zsh
 )
 
 for package in "${IMPORTANT_PACKAGES[@]}"; do
-    rpm -q "${package}" >/dev/null || { echo "Missing package: ${package}... Exiting"; exit 1 ; }
+	rpm -q "${package}" >/dev/null || {
+		echo "Missing package: ${package}... Exiting"
+		exit 1
+	}
 done
 
 # these packages are supposed to be removed (EXCLUDED_PACKAGES of 04-packages.sh)
 UNWANTED_PACKAGES=(
-    firefox
-    gnome-software
-    toolbox
+	firefox
+	gnome-software
+	toolbox
 )
 
 for package in "${UNWANTED_PACKAGES[@]}"; do
-    if rpm -q "${package}" >/dev/null 2>&1; then
-        echo "Unwanted package found: ${package}... Exiting"; exit 1
-    fi
+	if rpm -q "${package}" >/dev/null 2>&1; then
+		echo "Unwanted package found: ${package}... Exiting"
+		exit 1
+	fi
 done
 
 # The units 17-cleanup.sh enables (tailscaled.service is deliberately not enabled; rpm-ostreed-automatic.timer is the base's)
 IMPORTANT_UNITS=(
-    brew-setup.service
-    brew-update.timer
-    rpm-ostreed-automatic.timer
+	brew-setup.service
+	brew-update.timer
+	rpm-ostreed-automatic.timer
 )
 
 for unit in "${IMPORTANT_UNITS[@]}"; do
-    if ! systemctl is-enabled "$unit" 2>/dev/null | grep -q "^enabled$"; then
-        echo "${unit} is not enabled"
-        exit 1
-    fi
+	if ! systemctl is-enabled "$unit" 2>/dev/null | grep -q "^enabled$"; then
+		echo "${unit} is not enabled"
+		exit 1
+	fi
 done
 
-systemctl --global is-enabled podman.socket | grep -q "^enabled$" || { echo "podman.socket (global) is not enabled"; exit 1; }
+systemctl --global is-enabled podman.socket | grep -q "^enabled$" || {
+	echo "podman.socket (global) is not enabled"
+	exit 1
+}
 
 echo "::endgroup::"

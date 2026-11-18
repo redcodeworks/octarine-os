@@ -10,7 +10,7 @@ name: Roll back latest
 #   reason    free text (required), goes into the summary
 #   dry_run   true (default): plan and report only, nothing is written
 #
-# What is the same as publish-latest.yml, because it is the same script (publish-latest.sh with ALLOW_BACKWARDS=true): the signature is verified before
+# What is the same as publish-latest.yml, because it is the same script (publish_latest.py with ALLOW_BACKWARDS=true): the signature is verified before
 # anything moves (cosign.pub), a dx or gx image must stand on a signed default image built from main, a default image was built from main, the digest is
 # preserved (skopeo copy --all --preserve-digests, the tag read back), nothing is signed (so no `signing` environment), nothing is written on any ref but
 # main, one move at a time per image (the same concurrency group as publish-latest). New: the first job is a 30-second cancel window (cancel the run in that
@@ -84,6 +84,9 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Fetch main
         run: git fetch --no-tags origin main:refs/remotes/origin/main
 
@@ -112,4 +115,4 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${TAG}" && -n "${REASON}" ]] || { echo "::error::tag and reason are required"; exit 1; }
-          .github/scripts/publish-latest.sh
+          uv run --frozen --no-dev python -I .github/scripts/publish_latest.py

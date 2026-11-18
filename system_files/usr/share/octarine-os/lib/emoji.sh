@@ -15,32 +15,46 @@
 # (Done, Installed, Applied, Enabled, Added, Created, Wrote), 🧹 removal (Removed, Cleaned, Deleted, Disabled, Reset), 🔄 changes (Updated, Replaced, Edited, Switched,
 # Changed), 🎨 a reported setting change ("... is now ...").
 oe_emoji_enabled() {
-    [[ -z "${NO_EMOJI:-}" ]] || return 1
-    [[ -z "${OCTARINE_PLAIN:-}" || "${OCTARINE_PLAIN}" == 0 ]] || return 1
-    [[ -n "${TERM:-}" && "${TERM}" != dumb ]] || return 1
-    [[ "${OCTARINE_FORCE_EMOJI:-}" == 1 ]] || [[ -t 1 ]]
+	[[ -z "${NO_EMOJI:-}" ]] || return 1
+	[[ -z "${OCTARINE_PLAIN:-}" || "${OCTARINE_PLAIN}" == 0 ]] || return 1
+	[[ -n "${TERM:-}" && "${TERM}" != dumb ]] || return 1
+	[[ "${OCTARINE_FORCE_EMOJI:-}" == 1 ]] || [[ -t 1 ]]
 }
 # oe_emoji_pick <text>: sets OE_EMOJI (empty for no emoji)
 oe_emoji_pick() {
-    local t=$1
-    OE_EMOJI=""
-    if [[ "${t}" =~ ^(ERROR|Error|Refused|Refusing|Could\ not|Cannot|Can\'t|Failed|FAILED|Unknown\ |Usage:|usage:) ]]; then OE_EMOJI="❌"
-    elif [[ "${t}" =~ ^(WARNING|Warning|warning|Note:|Notice:|Skipped|skipped|Not\ applied|Not\ changed|Kept|Left\ .*\ alone) ]]; then OE_EMOJI="🟡"
-    elif [[ "${t}" =~ ^(Restart|Reboot|Log\ out\ and\ back\ in).*(apply|take\ effect|effect) ]]; then OE_EMOJI="🔁"
-    elif [[ "${t}" =~ ^(Needs:|Next:|Log\ out|Logout|Reboot\ (is\ )?needed|Touch\ ) ]]; then OE_EMOJI="❗"
-    elif [[ "${t}" =~ ^(Done|done|Installed|installed|Applied|applied|Enabled|Added|Created|Wrote|wrote)([^[:alnum:]]|$) ]]; then OE_EMOJI="✅"
-    elif [[ "${t}" =~ ^(Removed|Cleaned|Deleted|Disabled|Reset)([^[:alnum:]]|$) ]]; then OE_EMOJI="🧹"
-    elif [[ "${t}" =~ ^(Updated|Replaced|Edited|Switched|Changed)([^[:alnum:]]|$) ]]; then OE_EMOJI="🔄"
-    elif [[ "${t}" =~ ^[^[:space:]].*\ is\ now\  ]]; then OE_EMOJI="🎨"
-    fi
+	local t=$1
+	OE_EMOJI=""
+	if [[ "${t}" =~ ^(ERROR|Error|Refused|Refusing|Could\ not|Cannot|Can\'t|Failed|FAILED|Unknown\ |Usage:|usage:) ]]; then
+		OE_EMOJI="❌"
+	elif [[ "${t}" =~ ^(WARNING|Warning|warning|Note:|Notice:|Skipped|skipped|Not\ applied|Not\ changed|Kept|Left\ .*\ alone) ]]; then
+		OE_EMOJI="🟡"
+	elif [[ "${t}" =~ ^(Restart|Reboot|Log\ out\ and\ back\ in).*(apply|take\ effect|effect) ]]; then
+		OE_EMOJI="🔁"
+	elif [[ "${t}" =~ ^(Needs:|Next:|Log\ out|Logout|Reboot\ (is\ )?needed|Touch\ ) ]]; then
+		OE_EMOJI="❗"
+	elif [[ "${t}" =~ ^(Done|done|Installed|installed|Applied|applied|Enabled|Added|Created|Wrote|wrote)([^[:alnum:]]|$) ]]; then
+		OE_EMOJI="✅"
+	elif [[ "${t}" =~ ^(Removed|Cleaned|Deleted|Disabled|Reset)([^[:alnum:]]|$) ]]; then
+		OE_EMOJI="🧹"
+	elif [[ "${t}" =~ ^(Updated|Replaced|Edited|Switched|Changed)([^[:alnum:]]|$) ]]; then
+		OE_EMOJI="🔄"
+	elif [[ "${t}" =~ ^[^[:space:]].*\ is\ now\  ]]; then
+		OE_EMOJI="🎨"
+	fi
 }
 echo() {
-    local text
-    if [[ $# -eq 0 || "$1" == -* ]]; then builtin echo "$@"; return; fi
-    text="$*"
-    if [[ "${text}" != [[:space:]]* ]] && oe_emoji_enabled; then
-        oe_emoji_pick "${text}"
-        if [[ -n "${OE_EMOJI}" ]]; then builtin echo "${OE_EMOJI} ${text}"; return; fi
-    fi
-    builtin echo "$@"
+	local text
+	if [[ $# -eq 0 || "$1" == -* ]]; then
+		builtin echo "$@"
+		return
+	fi
+	text="$*"
+	if [[ "${text}" != [[:space:]]* ]] && oe_emoji_enabled; then
+		oe_emoji_pick "${text}"
+		if [[ -n "${OE_EMOJI}" ]]; then
+			builtin echo "${OE_EMOJI} ${text}"
+			return
+		fi
+	fi
+	builtin echo "$@"
 }

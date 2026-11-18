@@ -14,6 +14,7 @@ rules:
       - build-nvidia.yml
       - build.yml
       - bump-pins.yml
+      - prune-daily.yml
       - publish-latest.yml
       - rollback-latest.yml
       - test.yml

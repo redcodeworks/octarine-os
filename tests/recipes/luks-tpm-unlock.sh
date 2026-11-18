@@ -13,9 +13,21 @@ trap 'rm -rf -- "$root"' EXIT
 pass=0
 failn=0
 rc=0
-ok() { pass=$((pass + 1)); echo "ok   $1"; }
-bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; echo "     rc=$rc"; }
-check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+ok() {
+	pass=$((pass + 1))
+	echo "ok   $1"
+}
+bad() {
+	failn=$((failn + 1))
+	echo "FAIL $1"
+	sed 's/^/     /' "$root/out" 2>/dev/null
+	echo "     rc=$rc"
+}
+check() {
+	local d=$1
+	shift
+	if "$@"; then ok "$d"; else bad "$d"; fi
+}
 has() { grep -qF -- "$1" "$root/out"; }
 hasnt() { ! grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
@@ -70,10 +82,10 @@ echo "vendor_id : GenuineIntel" >"$root/cpu-intel"
 echo "vendor_id : AuthenticAMD" >"$root/cpu-amd"
 
 run() { # args...
-    : >"$LOG"
-    PATH="$root/fakebin:$PATH" OCTARINE_LUKS_CMDLINE="$root/cmdline" OCTARINE_LUKS_CPUINFO="${CPU:-$root/cpu-intel}" \
-        just --justfile "$justfile" luks-tpm-unlock "$@" >"$root/out" 2>&1 </dev/null
-    rc=$?
+	: >"$LOG"
+	PATH="$root/fakebin:$PATH" OCTARINE_LUKS_CMDLINE="$root/cmdline" OCTARINE_LUKS_CPUINFO="${CPU:-$root/cpu-intel}" \
+		just --justfile "$justfile" luks-tpm-unlock "$@" >"$root/out" 2>&1 </dev/null
+	rc=$?
 }
 
 OCTARINE_TPM_DEVICE="$root/none" run enroll /dev/nvme1n1 --yes

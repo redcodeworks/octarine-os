@@ -1,6 +1,6 @@
 name: Test
-# The run of a push is named after the commit; a dispatch with `ref` (the bump workflow tests a bump branch tip from the testing ref, see bump-checks.sh) is named "Test of <sha>" so
-# bump-checks.sh finds it. A dispatch on a branch itself (no ref) still works.
+# The run of a push is named after the commit; a dispatch with `ref` (the bump workflow tests a bump branch tip from the testing ref, see bump_checks.py) is named "Test of <sha>" so
+# bump_checks.py finds it. A dispatch on a branch itself (no ref) still works.
 run-name: ${{ inputs.ref && format('Test of {0}', inputs.ref) || github.event.head_commit.message || 'Test' }}
 
 # The fast lane: every push to a dev branch runs the quick sanity check (bash -n, workflow parse) and the behavior tests and a secret scan. A push to `testing` runs them too (since 2026-11-15):
@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 jobs:
-  # Stage 1 of the pipeline (the required check): only the OBVIOUS, in about 10 s (.github/scripts/sanity.sh): `bash -n` on the shell scripts and a parse of the workflow files.
+  # Stage 1 of the pipeline (the required check): only the OBVIOUS, in about 10 s (.github/scripts/sanity.py): `bash -n` on the shell scripts, a compile of the Python ones and a parse of the workflow files.
   # Stage 2 is the image build on testing, which shows the complicated problems.
   # It runs for every push (a documentation-only one included: it is fast) and for the dispatched `Test of <sha>` runs of the bump workflow.
   test:
@@ -48,8 +48,11 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Sanity checks
-        run: .github/scripts/sanity.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/sanity.py
 
       - name: Set up just
         uses: ./.github/actions/setup-tool
@@ -58,6 +61,26 @@ jobs:
 
       - name: Check Just format
         run: just check
+
+  # The pytest suite of the CI scripts (tests/py): each script runs as a real subprocess against fake skopeo, cosign, podman and sbverify (executable files in tests/py/fakes), real git
+  # repositories and a fake GitHub API on localhost. Not a required check, like `suite`; not run for the dispatched bump runs.
+  pytest:
+    name: pytest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
+      - name: Run the pytest suite
+        run: uv run --frozen pytest tests/py -q
 
   # The groups of the behavior tests: one per directory under tests/ (tests/{pipeline,supply,image,recipes}/; the directory tree is the only list). The job fails when a
   # tests/*.sh sits outside a group or a group has no *.sh. Not run for the dispatched bump runs, like `suite`.
@@ -75,9 +98,12 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: List the test groups
         id: plan
-        run: .github/scripts/plan-tests.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/plan_tests.py
 
   # The behavior tests (tests/<group>/*.sh), one matrix job per group (`suite (<group>)`), on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a
   # script shows here). NOT a required check: it is informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and
@@ -96,7 +122,7 @@ jobs:
     steps:
       - name: Install the tools the tests need
         run: |
-          # a plain loop: the repository (and its retry.sh) is not checked out yet
+          # a plain loop: the repository (and its retry.py) is not checked out yet
           for attempt in 1 2 3; do
             dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
               jq git python3 python3-pyyaml gawk \

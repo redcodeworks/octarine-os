@@ -12,7 +12,7 @@ set -eoux pipefail
 rm -rf /usr/src
 # Remove kernel-devel from rpmdb because all package files are removed from /usr/src
 if rpm -q kernel-devel &>/dev/null; then
-    rpm --erase --nodeps kernel-devel
+	rpm --erase --nodeps kernel-devel
 fi
 
 echo "::endgroup::"

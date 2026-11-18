@@ -22,37 +22,60 @@ etc_dir="${ETC_DIR:-/etc}"
 lib_dir="${LIB_DIR:-/usr/lib}"
 version_re='[0-9]{8}-[0-9a-f]{7,}'
 fail=0
-check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else
+	echo "FAIL $1"
+	fail=1
+fi; }
 have() { command -v "$1" >/dev/null 2>&1; }
-kernels() { local d; for d in "${modules_dir}"/*/; do [ -d "${d}" ] && basename "${d}"; done; }
-kernel_count() { local k; k=$(kernels); if [ -z "${k}" ]; then echo 0; else grep -c . <<<"${k}"; fi; }
+kernels() {
+	local d
+	for d in "${modules_dir}"/*/; do [ -d "${d}" ] && basename "${d}"; done
+}
+kernel_count() {
+	local k
+	k=$(kernels)
+	if [ -z "${k}" ]; then echo 0; else grep -c . <<<"${k}"; fi
+}
 one_kernel() { [ "$(kernel_count)" = 1 ]; }
-kernel_is_base() { local k; k=$(kernels); [ -n "${BASE_KERNEL:-}" ] && [ "${k}" = "${BASE_KERNEL}" ]; }
+kernel_is_base() {
+	local k
+	k=$(kernels)
+	[ -n "${BASE_KERNEL:-}" ] && [ "${k}" = "${BASE_KERNEL}" ]
+}
 has_text() { [ -r "$1" ] && grep -qF -- "$2" "$1"; }
 # the repository an installed package came from (dnf5 keeps it in its history)
 from_repo() { dnf5 -q repoquery --installed "$1" --queryformat '%{from_repo}\n' 2>/dev/null | head -n1; }
 # the version-release of an installed package for one architecture
 evr_of() { rpm -q --queryformat '%{EPOCH}:%{VERSION}-%{RELEASE}\n' "$1" 2>/dev/null; }
-same_mesa() { local a b; a=$(evr_of mesa-vulkan-drivers.x86_64); b=$(evr_of mesa-vulkan-drivers.i686); [ -n "${a}" ] && [ "${a}" = "${b}" ]; }
+same_mesa() {
+	local a b
+	a=$(evr_of mesa-vulkan-drivers.x86_64)
+	b=$(evr_of mesa-vulkan-drivers.i686)
+	[ -n "${a}" ] && [ "${a}" = "${b}" ]
+}
 # the enabled repository ids, one per line (output to a variable: no pipe into grep -q)
 enabled_repos() { dnf5 repolist --enabled 2>/dev/null | sed -n '2,$p' | sed 's/ .*//'; }
-no_third_party_repo() { local r; r=$(enabled_repos); [ -n "${r}" ] && ! grep -qE '^(rpmfusion|copr:copr.fedorainfracloud.org:lizardbyte|google-chrome)' <<<"${r}"; }
+no_third_party_repo() {
+	local r
+	r=$(enabled_repos)
+	[ -n "${r}" ] && ! grep -qE '^(rpmfusion|copr:copr.fedorainfracloud.org:lizardbyte|google-chrome)' <<<"${r}"
+}
 
 echo "== required gaming packages (required-fedora, required-negativo17, required-copr of packages/gx): both architectures where a 32-bit game needs them"
 for p in steam gamescope Sunshine steam-devices; do
-    check "package ${p}" "rpm -q ${p}"
+	check "package ${p}" "rpm -q ${p}"
 done
 for p in mangohud gamemode libFAudio mesa-vulkan-drivers; do
-    check "package ${p} for x86_64" "rpm -q ${p}.x86_64"
-    check "package ${p} for i686" "rpm -q ${p}.i686"
+	check "package ${p} for x86_64" "rpm -q ${p}.x86_64"
+	check "package ${p} for i686" "rpm -q ${p}.i686"
 done
 check "x86_64 and i686 Mesa have the same version (one repository provides both)" "same_mesa"
 echo "== optional gaming packages (informational)"
 for p in joystick-support input-remapper protontricks winetricks vkBasalt vulkan-tools mesa-demos libva-utils obs-studio-plugin-vkcapture-hook-libs.x86_64 obs-studio-plugin-vkcapture-hook-libs.i686; do
-    if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO optional package ${p} installed"; else echo "INFO optional package ${p} NOT installed"; fi
+	if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO optional package ${p} installed"; else echo "INFO optional package ${p} NOT installed"; fi
 done
 for c in steam gamescope mangohud gamemoded sunshine; do
-    check "command ${c}" "have ${c}"
+	check "command ${c}" "have ${c}"
 done
 
 echo "== where they came from"
@@ -75,7 +98,8 @@ check "firewalld has the sunshine and steam-streaming services" "{ test -s ${lib
 echo "== Steam Big Picture gamescope session (GDM): session file, wrapper, documented defaults"
 session_file="${share_dir}/wayland-sessions/steam-gamescope.desktop"
 wrapper="${LIBEXEC_DIR:-/usr/libexec}/octarine-os/gamescope-session"
-session_ok() { python3 -I - "${session_file}" <<'PY'
+session_ok() {
+	python3 -I - "${session_file}" <<'PY'
 import configparser, sys
 c = configparser.RawConfigParser(strict=True, interpolation=None)
 c.optionxform = str
@@ -91,7 +115,8 @@ check "the scheduler helpers the session wrapper sources are shipped (gamemode-l
 check "the documented defaults file is shipped" "test -s ${share_dir}/octarine-os/gamescope-session.conf"
 
 echo "== kernel"
-kver=$(kernels); kver=${kver%%$'\n'*}
+kver=$(kernels)
+kver=${kver%%$'\n'*}
 check "exactly one kernel is installed" "one_kernel"
 check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "kernel_is_base"
 check "the initramfs for the kernel exists" "test -s ${modules_dir}/${kver}/initramfs.img"
@@ -103,7 +128,7 @@ check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-gx}\"' ${o
 check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"
 for r in octarine-os octarine-os-nvidia octarine-os-dx octarine-os-nvidia-dx octarine-os-gx octarine-os-nvidia-gx octarine-os-dx-gx; do
-    check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
+	check "signature policy has a rule for ghcr.io/redcodeworks/${r}" "has_text ${policy_file} '\"ghcr.io/redcodeworks/${r}\"'"
 done
 check "sudoers valid" "visudo -c"
 check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd SHELL=/usr/bin/zsh"
@@ -116,12 +141,12 @@ check "menu helper library shipped" "test -s ${share_dir}/octarine-os/lib/menu.s
 check "dev-toolbox definition" "has_text ${share_dir}/ublue-os/distrobox/dev-toolbox.ini '[dev-toolbox]'"
 check "the gaming-setup recipe is listed" "o=\$(ujust --summary 2>&1) && [[ \" \${o//\$'\\n'/ } \" == *' gaming-setup '* ]]"
 if [ "${EXPECT_IMAGE_ID:-}" = octarine-os-dx-gx ]; then
-    check "the dev recipe of the dx layer below is still imported (octarine-os-dx-gx has both layers)" "grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+	check "the dev recipe of the dx layer below is still imported (octarine-os-dx-gx has both layers)" "grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
 else
-    check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
+	check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
 fi
 for p in mutter pipewire wireplumber gdm ptyxis systemd pam-u2f snapper tailscale borgbackup zsh distrobox; do
-    check "package ${p}" "rpm -q ${p}"
+	check "package ${p}" "rpm -q ${p}"
 done
 check "firefox removed" "! rpm -q firefox"
 check "toolbox removed" "! rpm -q toolbox"
@@ -129,20 +154,24 @@ check "gnome-software removed" "! rpm -q gnome-software"
 for p in fwupd flatpak gnome-shell; do check "package ${p} still installed" "rpm -q ${p}"; done
 
 if [ "${fail}" != 0 ]; then
-    echo "== DIAGNOSTICS (a check failed)"
-    echo "DIAG kernels found (${modules_dir}): $(kernels | tr '\n' ' ')"
-    echo "DIAG BASE_KERNEL: ${BASE_KERNEL:-unset}"
-    missing=""
-    for p in steam gamescope mangohud gamemode vkBasalt libFAudio Sunshine mesa-vulkan-drivers steam-devices input-remapper; do
-        rpm -q "${p}" >/dev/null 2>&1 || missing="${missing} ${p}"
-    done
-    echo "DIAG gaming packages not installed:${missing:- none}"
-    echo "DIAG installed architectures: $(rpm -q --queryformat '%{NAME}.%{ARCH} ' mangohud libFAudio mesa-vulkan-drivers gamemode 2>&1)"
-    echo "DIAG sources: steam=$(from_repo steam) Sunshine=$(from_repo Sunshine)"
-    echo "DIAG enabled repositories:"; enabled_repos | sed 's/^/DIAG   /'
-    echo "DIAG getcap sunshine: $(getcap /usr/bin/sunshine 2>&1)"
-    echo "DIAG rpm -V Sunshine:"; rpm -V Sunshine 2>&1 | sed 's/^/DIAG   /'
-    echo "DIAG os-release:"; sed 's/^/DIAG   /' "${os_release}" 2>&1
-    echo "DIAG policy scopes:"; grep -o '"ghcr.io/[^"]*"' "${policy_file}" 2>&1 | sed 's/^/DIAG   /' || true
+	echo "== DIAGNOSTICS (a check failed)"
+	echo "DIAG kernels found (${modules_dir}): $(kernels | tr '\n' ' ')"
+	echo "DIAG BASE_KERNEL: ${BASE_KERNEL:-unset}"
+	missing=""
+	for p in steam gamescope mangohud gamemode vkBasalt libFAudio Sunshine mesa-vulkan-drivers steam-devices input-remapper; do
+		rpm -q "${p}" >/dev/null 2>&1 || missing="${missing} ${p}"
+	done
+	echo "DIAG gaming packages not installed:${missing:- none}"
+	echo "DIAG installed architectures: $(rpm -q --queryformat '%{NAME}.%{ARCH} ' mangohud libFAudio mesa-vulkan-drivers gamemode 2>&1)"
+	echo "DIAG sources: steam=$(from_repo steam) Sunshine=$(from_repo Sunshine)"
+	echo "DIAG enabled repositories:"
+	enabled_repos | sed 's/^/DIAG   /'
+	echo "DIAG getcap sunshine: $(getcap /usr/bin/sunshine 2>&1)"
+	echo "DIAG rpm -V Sunshine:"
+	rpm -V Sunshine 2>&1 | sed 's/^/DIAG   /'
+	echo "DIAG os-release:"
+	sed 's/^/DIAG   /' "${os_release}" 2>&1
+	echo "DIAG policy scopes:"
+	grep -o '"ghcr.io/[^"]*"' "${policy_file}" 2>&1 | sed 's/^/DIAG   /' || true
 fi
 exit "${fail}"

@@ -24,13 +24,13 @@ set -ouex pipefail
 
 mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
-: > "${missing_file}"
+: >"${missing_file}"
 # NO_CLEANUP: the dnf caches are cache mounts and final-cleanup.sh runs at the end; the removal of gnome-software below still needs dnf5
 MISSING_FILE="${missing_file}" NO_CLEANUP=1 /ctx/install-packages.sh /ctx/packages
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
-grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
+grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >>/etc/shells
 
 echo "== optional packages missing:"
 cat "${missing_file}"
@@ -46,17 +46,17 @@ cat "${missing_file}"
 #                               remain available through `fwupdmgr`
 # (gnome-software-rpm-ostree is not in the base image, so it is not listed.)
 EXCLUDED_PACKAGES=(
-    firefox
-    firefox-langpacks
-    gnome-software
-    toolbox
+	firefox
+	firefox-langpacks
+	gnome-software
+	toolbox
 )
 
 readarray -t INSTALLED_EXCLUDED < <(rpm -qa --queryformat='%{NAME}\n' "${EXCLUDED_PACKAGES[@]}" 2>/dev/null || true)
 if [[ "${#INSTALLED_EXCLUDED[@]}" -gt 0 ]]; then
-    dnf5 remove -y "${INSTALLED_EXCLUDED[@]}"
+	dnf5 remove -y "${INSTALLED_EXCLUDED[@]}"
 else
-    echo "No excluded packages found to remove."
+	echo "No excluded packages found to remove."
 fi
 
 echo "::endgroup::"

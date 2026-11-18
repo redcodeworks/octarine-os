@@ -11,7 +11,7 @@ run-name: ${{ inputs.variant && format('{0} latest {1}', inputs.variant, inputs.
 # not rebuild dx: dispatch it again after dx changed). EACH VARIANT IS ITS OWN RUN: its own concurrency group (never cancelled, a newer trigger waits), plan,
 # `sign` job (`environment: signing`, in this file because the environment secret did not reach a job of a reusable workflow; the composite action
 # .github/actions/sign-images signs) and result job, so one variant failing never blocks or cancels another. Plan, build and promote are the reusable
-# dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/plan-dx.sh) skips when the base digest and the layer's inputs
+# dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/plan_dx.py) skips when the base digest and the layer's inputs
 # are unchanged (`force` builds anyway). Dispatch on `main` only (a DRY RUN, which writes nothing, is allowed on any branch).
 # The chain after the NVIDIA base: when "Build NVIDIA variant" (build-nvidia.yml, untouched) finishes on `main` after a dispatch, the `fanout` job below (workflow_run,
 # which always runs the file of the default branch; `actions: write`) dispatches this workflow for nvidia-dx and nvidia-gx at the commit the NVIDIA build ran for. The
@@ -79,6 +79,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Dispatch this workflow for the variant
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
-          .github/scripts/retry.sh gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
+          uv run --frozen --no-dev python -I .github/scripts/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
           echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
 
   # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
@@ -137,6 +140,11 @@ jobs:
           persist-credentials: false
           ref: ${{ env.SHA }}
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+        with:
+          cache: false  # this job holds the signing key: no cache
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -170,6 +178,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Check the result
         env:
           PLAN: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.plan || 'failure' }}
@@ -179,4 +190,4 @@ jobs:
           PROMOTE: skipped
           SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
-        run: .github/scripts/aggregate-dx.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/aggregate_dx.py

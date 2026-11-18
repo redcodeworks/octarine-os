@@ -6,10 +6,10 @@
 # ~/.zshrc or ~/.zshenv is read later and still wins. Disable for yourself: delete the managed file.
 __octarine_f="${XDG_CONFIG_HOME:-$HOME/.config}/environment.d/50-editor.conf"
 if [ -r "$__octarine_f" ]; then
-    while IFS='=' read -r __octarine_k __octarine_v; do
-        case "$__octarine_k" in EDITOR | VISUAL | SUDO_EDITOR) ;; *) continue ;; esac
-        case "$__octarine_v" in '' | *[!A-Za-z0-9_./+-]*) continue ;; esac
-        export "$__octarine_k=$__octarine_v"
-    done <"$__octarine_f"
+	while IFS='=' read -r __octarine_k __octarine_v; do
+		case "$__octarine_k" in EDITOR | VISUAL | SUDO_EDITOR) ;; *) continue ;; esac
+		case "$__octarine_v" in '' | *[!A-Za-z0-9_./+-]*) continue ;; esac
+		export "$__octarine_k=$__octarine_v"
+	done <"$__octarine_f"
 fi
 unset __octarine_f __octarine_k __octarine_v

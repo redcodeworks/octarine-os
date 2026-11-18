@@ -56,6 +56,9 @@ jobs:
         if: steps.disk.outputs.low == 'true'
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Set up cosign
         uses: ./.github/actions/setup-tool
         with:
@@ -76,7 +79,7 @@ jobs:
           raw=$(skopeo inspect --raw "docker://${DEFAULT_IMAGE}:latest")
           [[ -n "${raw}" ]] || { echo "::error::Cannot read ${DEFAULT_IMAGE}:latest"; exit 1; }
           digest="sha256:$(printf '%s' "${raw}" | sha256sum | sed 's/ .*//')"
-          .github/scripts/retry.sh cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
+          uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key cosign.pub "${DEFAULT_IMAGE}@${digest}" > /dev/null
           echo "Base image ${DEFAULT_IMAGE}:latest = ${digest} (signature valid)"
           echo "BASE_REF=${DEFAULT_IMAGE}@${digest}" >> "${GITHUB_ENV}"
           echo "BASE_DIGEST=${digest}" >> "${GITHUB_ENV}"
@@ -85,7 +88,7 @@ jobs:
       - name: Read the kernel of the base image
         run: |
           set -euo pipefail
-          .github/scripts/retry.sh podman pull "${BASE_REF}" > /dev/null
+          uv run --frozen --no-dev python -I .github/scripts/retry.py podman pull "${BASE_REF}" > /dev/null
           kernel=$(podman run --rm "${BASE_REF}" rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core)
           echo "Kernel of the base image: ${kernel}"
           echo "BASE_KERNEL=${kernel}" >> "${GITHUB_ENV}"
@@ -98,7 +101,7 @@ jobs:
       - name: Resolve the akmods image for this kernel
         run: |
           set -euo pipefail
-          out=$(.github/scripts/nvidia-akmods-ref.sh "${BASE_KERNEL}" "${FEDORA_VERSION}")
+          out=$(uv run --frozen --no-dev python -I .github/scripts/nvidia_akmods_ref.py "${BASE_KERNEL}" "${FEDORA_VERSION}")
           echo "${out}"
           echo "AKMODS_REF=$(sed -n 's/^ref=//p' <<<"${out}")" >> "${GITHUB_ENV}"
           echo "AKMODS_TAG=$(sed -n 's/^tag=//p' <<<"${out}")" >> "${GITHUB_ENV}"
@@ -109,7 +112,7 @@ jobs:
         id: akmods-sig
         continue-on-error: true
         run: |
-          .github/scripts/retry.sh cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
+          uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key keys/ublue-os-main-cosign.pub "${AKMODS_REF}" > /dev/null
           echo "Signature of ${AKMODS_REF} is valid"
 
       - name: Report the akmods signature result
@@ -121,7 +124,7 @@ jobs:
       - name: Build the image
         run: |
           set -euo pipefail
-          version=$(.github/scripts/image-version.sh)
+          version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)
           podman build -f variants/nvidia/Containerfile \
             --build-arg "BASE_REF=${BASE_REF}" \
             --build-arg "AKMODS_REF=${AKMODS_REF}" \
@@ -148,9 +151,9 @@ jobs:
       # Secure Boot: the kernel verifies against the pinned certificate (the variant adds modules, never a kernel)
       - name: Secure Boot check of the kernel
         run: |
-          .github/scripts/retry.sh sudo apt-get update -qq
-          .github/scripts/retry.sh sudo apt-get install -y --no-install-recommends sbsigntool
-          .github/scripts/secureboot-check.sh octarine-os-nvidia:build
+          uv run --frozen --no-dev python -I .github/scripts/retry.py sudo apt-get update -qq
+          uv run --frozen --no-dev python -I .github/scripts/retry.py sudo apt-get install -y --no-install-recommends sbsigntool
+          uv run --frozen --no-dev python -I .github/scripts/secureboot_check.py octarine-os-nvidia:build
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -176,7 +179,7 @@ jobs:
         run: |
           set -euox pipefail
           # One push, the other tags are registry-side copies of its digest (one manifest digest for every tag)
-          .github/scripts/push-tags.sh octarine-os-nvidia:build "${VARIANT_IMAGE}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/push_tags.py octarine-os-nvidia:build "${VARIANT_IMAGE}" ${ALIAS_TAGS}
 
   sign:
     name: Sign and verify NVIDIA image
@@ -193,6 +196,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+        with:
+          cache: false  # this job holds the signing key: no cache
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -228,6 +236,6 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            .github/scripts/retry.sh cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done

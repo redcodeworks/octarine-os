@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Fake cosign: `sign` and `verify` succeed or fail as COSIGN_MODE says (ok | nosig | badsig | down | flaky), and log the call in LOG."""
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "LOG" in os.environ:
+    with open(os.environ["LOG"], "a") as log:
+        log.write("cosign " + " ".join(args) + "\n")
+
+count_file = Path(os.environ["COUNT"]) if "COUNT" in os.environ else None
+calls = (int(count_file.read_text()) if count_file and count_file.exists() else 0) + 1
+if count_file:
+    count_file.write_text(str(calls))
+
+mode = os.environ.get("COSIGN_MODE", "ok")
+# Registry lag, as seen on GHCR: COSIGN_LAG=N makes the first N verifies answer "image tag not found ... MANIFEST_UNKNOWN" (the tag was just copied), COSIGN_UNSIGNED_FIRST=N makes
+# the first N answer "no signatures found" (the signature was just written); both are counted in LAG_FILE and then everything verifies.
+lag_file = Path(os.environ["LAG_FILE"]) if "LAG_FILE" in os.environ else None
+if lag_file and args[:1] == ["verify"]:
+    seen = int(lag_file.read_text()) if lag_file.exists() else 0
+    lag_file.write_text(str(seen + 1))
+    if seen < int(os.environ.get("COSIGN_LAG", 0)):
+        print("Error: image tag not found: GET https://ghcr.io/v2/o/i/manifests/testing: MANIFEST_UNKNOWN: manifest unknown", file=sys.stderr)
+        sys.exit(1)
+    if seen < int(os.environ.get("COSIGN_UNSIGNED_FIRST", 0)):
+        print("Error: no signatures found", file=sys.stderr)
+        sys.exit(1)
+messages = {
+    "nosig": "Error: no signatures found",
+    "badsig": "Error: no matching signatures: invalid signature when validating ASN.1 encoded signature",
+    "down": "Error: context deadline exceeded",
+}
+if mode in messages:
+    print(messages[mode], file=sys.stderr)
+    sys.exit(1)
+if mode == "flaky" and calls <= 1:
+    print("Error: GET https://ghcr.io/v2/: TLS handshake timeout", file=sys.stderr)
+    sys.exit(1)

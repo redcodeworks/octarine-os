@@ -20,12 +20,12 @@
 set -euo pipefail
 
 ALLOWED=(
-    fedora
-    updates
-    updates-archive
-    fedora-cisco-openh264
-    fedora-multimedia
-    "copr:copr.fedorainfracloud.org:ublue-os:akmods"
+	fedora
+	updates
+	updates-archive
+	fedora-cisco-openh264
+	fedora-multimedia
+	"copr:copr.fedorainfracloud.org:ublue-os:akmods"
 )
 REPO_DIRS=${REPO_DIRS:-/etc/yum.repos.d:/usr/share/dnf5/repos.d:/etc/dnf/repos.override.d}
 DNF5=${DNF5:-dnf5}
@@ -36,39 +36,45 @@ trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::validate
 enabled=()
 # 1. what dnf5 itself enables (header line "repo id ..." skipped)
 if command -v "${DNF5}" >/dev/null 2>&1; then
-    while read -r id _; do
-        [[ -n "${id}" && "${id}" != "repo" ]] && enabled+=("${id}")
-    done < <("${DNF5}" repolist --enabled)
+	while read -r id _; do
+		[[ -n "${id}" && "${id}" != "repo" ]] && enabled+=("${id}")
+	done < <("${DNF5}" repolist --enabled)
 else
-    echo "NOTE: ${DNF5} not found, checking the repository files only"
+	echo "NOTE: ${DNF5} not found, checking the repository files only"
 fi
 # 2. every [section] with enabled=1 (also "enabled = 1" and "enabled=True") in the repository directories
-IFS=: read -r -a dirs <<< "${REPO_DIRS}"
+IFS=: read -r -a dirs <<<"${REPO_DIRS}"
 for dir in "${dirs[@]}"; do
-    [[ -d "${dir}" ]] || { echo "NOTE: ${dir} does not exist"; continue; }
-    for f in "${dir}"/*.repo; do
-        [[ -f "${f}" && -r "${f}" ]] || continue
-        while read -r id; do
-            enabled+=("${id}")
-        done < <(awk '/^\[.*\]/ { s = substr($0, 2, length($0) - 2) }
+	[[ -d "${dir}" ]] || {
+		echo "NOTE: ${dir} does not exist"
+		continue
+	}
+	for f in "${dir}"/*.repo; do
+		[[ -f "${f}" && -r "${f}" ]] || continue
+		while read -r id; do
+			enabled+=("${id}")
+		done < <(awk '/^\[.*\]/ { s = substr($0, 2, length($0) - 2) }
                       tolower($0) ~ /^enabled[[:space:]]*=[[:space:]]*(1|true)[[:space:]]*$/ { print s }' "${f}")
-    done
+	done
 done
 
 unexpected=()
 declare -A seen=()
 for id in "${enabled[@]}"; do
-    [[ -z "${seen[${id}]:-}" ]] || continue
-    seen[${id}]=1
-    ok=0
-    for a in "${ALLOWED[@]}"; do [[ "${id}" == "${a}" ]] && ok=1; done
-    if (( ok )); then echo "enabled, expected: ${id}"; else echo "ENABLED, NOT EXPECTED: ${id}"; unexpected+=("${id}"); fi
+	[[ -z "${seen[${id}]:-}" ]] || continue
+	seen[${id}]=1
+	ok=0
+	for a in "${ALLOWED[@]}"; do [[ "${id}" == "${a}" ]] && ok=1; done
+	if ((ok)); then echo "enabled, expected: ${id}"; else
+		echo "ENABLED, NOT EXPECTED: ${id}"
+		unexpected+=("${id}")
+	fi
 done
 
-if (( ${#unexpected[@]} > 0 )); then
-    echo "::error::validate-repos.sh: repositories enabled that the image does not expect: ${unexpected[*]}" >&2
-    echo "Disable them at the end of the step that added them (dnf5 config-manager setopt <id>.enabled=0), or, when the base" >&2
-    echo "meant to enable them, add the id to ALLOWED in build_files/validate-repos.sh." >&2
-    exit 1
+if ((${#unexpected[@]} > 0)); then
+	echo "::error::validate-repos.sh: repositories enabled that the image does not expect: ${unexpected[*]}" >&2
+	echo "Disable them at the end of the step that added them (dnf5 config-manager setopt <id>.enabled=0), or, when the base" >&2
+	echo "meant to enable them, add the id to ALLOWED in build_files/validate-repos.sh." >&2
+	exit 1
 fi
 echo "validate-repos.sh: ${#seen[@]} enabled repositories, all expected"

@@ -87,7 +87,7 @@ runs:
         MOVING_TAGS: ${{ inputs.moving-tags }}
       run: |
         set -euo pipefail
-        .github/scripts/move-tags.sh "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
+        uv run --frozen --no-dev python -I .github/scripts/move_tags.py "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
         for tag in ${MOVING_TAGS}; do
           cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
           echo "signed: ${tag}"

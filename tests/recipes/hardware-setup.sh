@@ -12,9 +12,21 @@ trap 'rm -rf -- "$root"' EXIT
 pass=0
 failn=0
 rc=0
-ok() { pass=$((pass + 1)); echo "ok   $1"; }
-bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; echo "     rc=$rc"; }
-check() { local d=$1; shift; if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi; }
+ok() {
+	pass=$((pass + 1))
+	echo "ok   $1"
+}
+bad() {
+	failn=$((failn + 1))
+	echo "FAIL $1"
+	sed 's/^/     /' "$root/out" 2>/dev/null
+	echo "     rc=$rc"
+}
+check() {
+	local d=$1
+	shift
+	if "$@" >/dev/null 2>&1; then ok "$d"; else bad "$d"; fi
+}
 has() { grep -qF -- "$1" "$root/out"; }
 hasnt() { ! grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
@@ -26,8 +38,8 @@ export HOME="$root/home"
 unset XDG_CONFIG_HOME
 
 mk() { # name, body
-    printf '#!/bin/bash\n%s\n' "$2" >"$bin/$1"
-    chmod +x "$bin/$1"
+	printf '#!/bin/bash\n%s\n' "$2" >"$bin/$1"
+	chmod +x "$bin/$1"
 }
 mk ujust 'echo "ujust $*" >>"$LOG"; [ "${FAKE_UJUST_FAIL:-}" = "$1" ] && exit 1; exit 0'
 mk sudo 'echo "sudo $*" >>"$LOG"; [ "${FAKE_SUDO_FAIL:-}" = 1 ] && exit 1; exec "$@"'
@@ -52,8 +64,12 @@ echo 'IMAGE_ID="octarine-os"' >"$osrel"
 export OCTARINE_OS_RELEASE="$osrel"
 
 # a machine: AMD GPU (amdgpu loaded), amd-pstate active, TPM, EFI, LUKS volume, a security key; no NVIDIA, no dx
-rm -rf "$root/m"; mkdir -p "$root/m"
-card() { mkdir -p "$root/m/drm/$1/device"; echo "$2" >"$root/m/drm/$1/device/vendor"; }
+rm -rf "$root/m"
+mkdir -p "$root/m"
+card() {
+	mkdir -p "$root/m/drm/$1/device"
+	echo "$2" >"$root/m/drm/$1/device/vendor"
+}
 card card0 0x1002
 mkdir -p "$root/m/amdgpu" "$root/m/efi"
 echo active >"$root/m/pstate"
@@ -64,16 +80,16 @@ echo 4294950911 >"$root/m/ppfm"
 : >"$root/m/key.der"
 mkdir -p "$root/m/modload"
 export OCTARINE_SYSFS_DRM="$root/m/drm" HW_AMDGPU_MODULE="$root/m/amdgpu" HW_NVIDIA_MODULE="$root/m/no-nvidia" \
-    GAMING_SETUP_PSTATE_STATUS="$root/m/pstate" OCTARINE_TPM_DEVICE="$root/m/tpm" HW_EFI="$root/m/efi" HW_SB_KEY="$root/m/key.der" \
-    HW_DEV_JUST="$root/m/no-dev.just" HW_KVM="$root/m/no-kvm" OCTARINE_MODULES_LOAD_DIR="$root/m/modload" \
-    HW_U2F_KEYS="$root/m/u2f_keys" HW_PPFEATUREMASK="$root/m/ppfm" HW_CMDLINE="$root/m/cmdline" HW_HIDRAW_GLOB="$root/m/hidraw*" \
-    XDG_CONFIG_HOME="$root/home/.config"
+	GAMING_SETUP_PSTATE_STATUS="$root/m/pstate" OCTARINE_TPM_DEVICE="$root/m/tpm" HW_EFI="$root/m/efi" HW_SB_KEY="$root/m/key.der" \
+	HW_DEV_JUST="$root/m/no-dev.just" HW_KVM="$root/m/no-kvm" OCTARINE_MODULES_LOAD_DIR="$root/m/modload" \
+	HW_U2F_KEYS="$root/m/u2f_keys" HW_PPFEATUREMASK="$root/m/ppfm" HW_CMDLINE="$root/m/cmdline" HW_HIDRAW_GLOB="$root/m/hidraw*" \
+	XDG_CONFIG_HOME="$root/home/.config"
 export FAKE_FSTYPES="crypto_LUKS" FAKE_USB=1
 
 run() {
-    : >"$LOG"
-    PATH="$bin:$PATH" just --justfile "$justfile" hardware-setup "$@" >"$root/out" 2>&1 </dev/null
-    rc=$?
+	: >"$LOG"
+	PATH="$bin:$PATH" just --justfile "$justfile" hardware-setup "$@" >"$root/out" 2>&1 </dev/null
+	rc=$?
 }
 state() { grep -E "^$1 " "$root/out" | sed -E "s/^$1 +//"; }
 
@@ -103,5 +119,6 @@ rc=$?
 check "checklist: gum is called and nothing is pre-ticked (no --selected)" bash -c "grep -q 'gum choose' '$LOG' && ! grep -q -- '--selected ' '$LOG'"
 check "checklist: an empty result changes nothing and exits 0" test "$rc" = 0
 rm -f "$bin/gum"
-echo; echo "passed: $pass, failed: $failn"
+echo
+echo "passed: $pass, failed: $failn"
 [ "$failn" = 0 ]
