@@ -1,13 +1,10 @@
 #!/usr/bin/bash
 # Derived from ublue-os/bluefin build_files/base/18-workarounds.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
-# Deviation: Bluefin's bling.sh copy is left out (we have no bling files). The orphan-directory loop sits inside the group.
+# Deviation: Bluefin's bling.sh copy is left out (we have no bling files). The orphan-directory loop sits inside the group. Bluefin's removal of the just README translations is left out (nothing needs it).
 
 echo "::group:: ===$(basename "$0")==="
 
 set -eoux pipefail
-
-# Try removing just docs (is it actually promblematic?)
-rm -rf /usr/share/doc/just/README.*.md
 
 # Remove orphan /usr/lib/modules/ directories left by kernel-tools version bumps
 # that don't bring the matching kernel-core. akmods-ostree-post iterates all
