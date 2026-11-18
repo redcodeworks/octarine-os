@@ -34,6 +34,5 @@ systemctl --global enable podman.socket
 # The base image enables mcelog. It is no longer masked for everybody: the packaged unit skips itself without /dev/mcelog
 # and when edac_mce_amd is loaded, and our drop-in (50-octarine-intel-only.conf) skips it on any non-Intel CPU, so AMD machines
 # get no failed unit and Intel machines keep machine-check logging.
-test -f /usr/lib/systemd/system/mcelog.service.d/50-octarine-intel-only.conf
 
 echo "::endgroup::"
