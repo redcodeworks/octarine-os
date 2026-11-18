@@ -1,0 +1,33 @@
+# REQUIRED packages of the octarine-os gx (gaming) image (ghcr.io/redcodeworks/octarine-bins-gx, /packages/required-fedora.txt): Fedora's own repositories, ONE strict dnf5
+# transaction (installer/install.sh): a package that cannot be installed fails the build. What a gaming image cannot do without: the compositor and overlay tooling, the
+# 32-bit Vulkan stack, and the controller rules. The rest of the gaming list is in optional-fedora.txt.
+# One entry per line: "name", "name.arch" or "@group"; blank lines and #-comments ignored. Syntax and policy: CLAUDE.md, "The package lists".
+# (moved here from octarine-images' gaming-packages on 2026-11-16, split into required and optional the same day)
+#
+# Every name resolved on Fedora 45 (repoquery, 2026-11-16).
+# Every .i686 entry has its .x86_64 sibling named explicitly: a bare name next to a name.i686 made dnf5 on a host install ONLY the i686 package (the lint enforces the pairing).
+# Installed BEFORE required-negativo17.txt (the installer's order): Steam's 32-bit dependencies, Mesa included, then come from here unless negativo17 has a newer build,
+# which it does for Mesa; see gx/README.md.
+
+# --- Compositor and overlays ---
+gamescope
+mangohud.x86_64
+mangohud.i686
+gamemode.x86_64
+gamemode.i686
+
+# --- Mesa for 32-bit games: both architectures, named explicitly. Fedora ships both; so does negativo17
+# (fedora-multimedia, enabled in the Universal Blue base, same version for both architectures). ---
+mesa-vulkan-drivers.x86_64
+mesa-vulkan-drivers.i686
+
+# --- Controllers and audio ---
+# steam-devices: the udev rules for controllers (Fedora ships it)
+steam-devices
+libFAudio.x86_64
+libFAudio.i686
+
+# --- Deliberately absent ---
+# umu-launcher: not in the Fedora 45 repositories on 2026-11-16.
+# lact, extest, game-devices-udev: not packaged in Fedora or negativo17.
+# Decky Loader: out-of-tree installer, not wanted in the image.

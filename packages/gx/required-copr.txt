@@ -1,0 +1,8 @@
+# REQUIRED COPR packages (installer/install.sh). One entry per line, always the exact
+# version and release: owner/project:name-version-release. The installer enables the COPR, installs that
+# one package in its own strict transaction and disables the COPR again; any failure fails the build. Sunshine is the streaming host of a gaming image.
+# Case matters in the package name. The gx image of octarine-os installs this list.
+#
+# VERIFIED: the NVR is from the COPR build 10986252 result (fedora-45-x86_64 chroot) and installed strictly
+# in a real gx image build (2026-11-16).
+lizardbyte/stable:Sunshine-2026.914.233613-1.fc45
