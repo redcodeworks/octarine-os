@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Fake sbverify: `--list` prints two signatures, `--cert <crt> <kernel>` verifies unless SB_FAIL=1; every call is logged in LOG."""
+import os
+import sys
+
+args = sys.argv[1:]
+with open(os.environ["LOG"], "a") as log:
+    log.write("sbverify " + " ".join(args) + "\n")
+if args[0] == "--list":
+    print("signature 1\n - subject: /CN=kernel-signer\nsignature 2\n - subject: /CN=ublue kernel")
+    sys.exit(0)
+if os.environ.get("SB_FAIL") == "1":
+    print("Signature verification failed", file=sys.stderr)
+    sys.exit(1)
+print("Signature verification OK")

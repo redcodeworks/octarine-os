@@ -592,7 +592,7 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euo pipefail
-          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
             uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
@@ -653,6 +653,8 @@ jobs:
 
       - name: Set up the CI Python
         uses: ./.github/actions/setup-ci-python
+        with:
+          cache: false  # this job holds the signing key: no cache
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

@@ -5,32 +5,27 @@
 - the line `IMAGE_VERSION=<value>` (os-release, the CI appends it to the labels) is required and follows the same rule; quotes around a value are ignored.
 """
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci  # noqa: E402
 
 
-def main():
-    found = found_os = False
-    bad = 0
-    for line in sys.stdin:
-        line = line.rstrip("\n")
-        k, _, v = line.partition("=")
-        if "version" not in k.lower():
-            continue
-        v = v.removesuffix('"').removeprefix('"')
-        if k == "org.opencontainers.image.version":
-            found = True
-        if "testing" in v.lower() or "latest" in v.lower():
-            print(f"ERROR: {k}={v} names a channel")
-            bad = 1
-        if k == "IMAGE_VERSION":
-            found_os = True
-        print(f"{k}={v}")
-    if not found:
-        print("ERROR: org.opencontainers.image.version is missing")
-        return 1
-    if not found_os:
-        print("ERROR: os-release IMAGE_VERSION is missing")
-        return 1
-    return bad
+def main(argv=None):
+    ci.arg_parser(__doc__).parse_args(argv)
+    pairs = [line.rstrip("\n").partition("=")[::2] for line in sys.stdin]
+    versions = {k: v.removesuffix('"').removeprefix('"') for k, v in pairs if "version" in k.lower()}
+    bad = False
+    for key, value in versions.items():
+        if any(channel in value.lower() for channel in ("testing", "latest")):
+            print(f"ERROR: {key}={value} names a channel")
+            bad = True
+        print(f"{key}={value}")
+    for key, what in (("org.opencontainers.image.version", "org.opencontainers.image.version"), ("IMAGE_VERSION", "os-release IMAGE_VERSION")):
+        if key not in versions:
+            print(f"ERROR: {what} is missing")
+            return 1
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

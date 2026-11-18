@@ -40,27 +40,34 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def die(msg):
-    """`::error::<msg>` on stdout and exit 1 (the plan's own failures)."""
-    print(f"::error::{msg}")
+    """Log the error and exit 1 (the plan's own failures)."""
+    ci.log.error(msg)
     raise SystemExit(1)
 
 
-def raw_digest_of(ref: str, quiet: bool = False) -> str:
-    """The digest of the raw manifest of <image ref>; raises registry.Absent (3) or registry.ReadError (4)."""
-    return registry.sha256_of(registry.read("raw", ref, quiet=quiet))
+def raw_digest_of(ref: str) -> str:
+    """The digest of the raw manifest of <image ref>; raises registry.Absent or registry.ReadError."""
+    return registry.sha256_of(registry.read("raw", ref))
 
 
-def verify(ref: str, quiet: bool = False) -> int:
-    """cosign verify with the verdict told apart: 0 verified, 5 not verified, 4 could not be completed (retried)."""
-    return registry.verify_code(["--key", "cosign.pub", ref], sink=(lambda m: None) if quiet else ci.err)
+def verdict(ref: str) -> str:
+    """cosign verify with the verdict told apart: "verified", "not verified" (cosign said so) or "unfinished" (could not be completed after the retries)."""
+    try:
+        registry.cosign_check(["--key", "cosign.pub", ref])
+    except registry.NotVerified:
+        return "not verified"
+    except registry.ReadError:
+        return "unfinished"
+    return "verified"
 
 
-def main():
-    channel = env("CHANNEL") or sys.exit("CHANNEL: parameter null or not set")
+def main(argv=None):
+    ci.arg_parser(__doc__).parse_args(argv)
+    channel = os.environ["CHANNEL"]
     if channel not in ("latest", "testing"):
         die(f"Unknown channel '{channel}' (latest or testing)")
     force = env("FORCE") or "false"
-    owner = (env("GITHUB_REPOSITORY_OWNER") or sys.exit("GITHUB_REPOSITORY_OWNER: parameter null or not set")).lower()
+    owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
     variant = env("VARIANT") or "dx"
     if variant not in ("dx", "gx"):
         die(f"Unknown variant '{variant}' (dx or gx)")
@@ -81,15 +88,15 @@ def main():
             base_tag = mine
         except registry.Absent:
             try:
-                found, _ = ih.nearest_image_for_inputs("HEAD", lambda tag: raw_digest_of(f"{base}:{tag}", quiet=True))
+                found, _ = ih.nearest_image_for_inputs("HEAD", lambda tag: raw_digest_of(f"{base}:{tag}"))
                 base_tag = found
-                print(f"No {base}:{mine} (the default build was reused): using the nearest earlier {base_tag}, built from the same default-image inputs")
+                ci.log.info(f"No {base}:{mine} (the default build was reused): using the nearest earlier {base_tag}, built from the same default-image inputs")
             except ih.Unreadable:
                 die("Could not read the registry while looking for an earlier testing image (a read error, not a missing image): not falling back to the floating tag")
             except ih.NoImage:
                 base_tag = "testing"
-                print(f"::warning::No {base}:{mine} and no earlier testing image with the same default-image inputs: falling back to the floating {base}:testing")
-        except registry.RegistryError:
+                ci.log.warning(f"No {base}:{mine} and no earlier testing image with the same default-image inputs: falling back to the floating {base}:testing")
+        except registry.ReadError:
             die(f"Could not read {base}:{mine} (a registry read error, not a missing tag): not falling back to another base")
     pin = env("BASE_DIGEST_PIN") or ""
     if pin:
@@ -101,43 +108,45 @@ def main():
             die(f"BASE_DIGEST_PIN '{pin}' is not sha256:<64 hex>")
         try:
             raw = registry.read("raw", f"{base}@{pin}")
-        except registry.RegistryError:
+        except registry.ReadError:
             die(f"Cannot read {base}@{pin}")
         if registry.sha256_of(raw) != pin:
             die(f"{base}@{pin} does not hash to its digest")
         digest = pin
         base_tag = "latest"
-        print(f"Base pinned by the pipeline: {base}@{digest}")
+        ci.log.info(f"Base pinned by the pipeline: {base}@{digest}")
     else:
         try:
             digest = raw_digest_of(f"{base}:{base_tag}")
-        except registry.RegistryError:
+        except registry.ReadError:
             die(f"Cannot read {base}:{base_tag}")
-    if verify(f"{base}@{digest}") != 0:
+    if verdict(f"{base}@{digest}") != "verified":
         die(f"The base {base}@{digest} did not verify (or could not be checked: see the message above): nothing is built on it")
-    print(f"Base image {base}:{base_tag} = {digest} (signature valid)")
+    ci.log.info(f"Base image {base}:{base_tag} = {digest} (signature valid)")
 
     inputs = {"dx": ih.dx_inputs, "gx": ih.gx_inputs}[variant]("HEAD")
-    print(f"{variant} inputs of this commit: {inputs}")
+    ci.log.info(f"{variant} inputs of this commit: {inputs}")
 
     def labels_of(tag):
-        """(code, base digest, inputs): the labels of a published tag ('-' for a missing label), code 3 absent, 4 unreadable."""
+        """(status, base digest, inputs): the labels of a published tag ('-' for a missing label), status ok, absent or unreadable."""
         try:
             lab = registry.labels(registry.read("config", f"{dx}:{tag}"))
-        except registry.RegistryError as e:
-            return e.code, "", ""
-        return 0, lab.get(l_base) or "-", lab.get(l_inputs) or "-"
+        except registry.Absent:
+            return "absent", "", ""
+        except registry.ReadError:
+            return "unreadable", "", ""
+        return "ok", lab.get(l_base) or "-", lab.get(l_inputs) or "-"
 
     build, promote = True, False
     source_tag = source_digest = ""
     rc, cur_base, cur_inputs = labels_of(channel)
-    if rc != 0:
-        # absent (3) or unreadable (4): both mean "build, never skip" for the PUBLISHED image of this channel (a skip needs a positive read)
+    if rc != "ok":
+        # absent or unreadable: both mean "build, never skip" for the PUBLISHED image of this channel (a skip needs a positive read)
         cur_base = cur_inputs = ""
-        if rc == 3:
-            print(f"No published {dx}:{channel} yet")
+        if rc == "absent":
+            ci.log.info(f"No published {dx}:{channel} yet")
         else:
-            print(f"::warning::{dx}:{channel} could not be read (a read error): building, never skipping on a failed read")
+            ci.log.warning(f"{dx}:{channel} could not be read (a read error): building, never skipping on a failed read")
     if force == "true":
         decision = f"forced: building although the published image is {cur_base or 'unknown'}"
     elif cur_base and cur_base == digest and cur_inputs == inputs:
@@ -148,44 +157,43 @@ def main():
     else:
         if cur_base:
             if cur_base != digest:
-                print(f"The published {variant} image was built from {cur_base}, the base is now {digest}")
+                ci.log.info(f"The published {variant} image was built from {cur_base}, the base is now {digest}")
             if cur_inputs != inputs:
-                print(f"The {variant} inputs changed since the published {variant} image ({cur_inputs} -> {inputs})")
+                ci.log.info(f"The {variant} inputs changed since the published {variant} image ({cur_inputs} -> {inputs})")
         decision = "building"
         if channel == "latest" and (env("PROMOTE_FROM_TESTING") or "true") == "true":
             maximum = env("MAX_WALK") or "60"
             tags = ["testing"] + [f"testing-{ci.git('rev-parse', '--short=7', c)}" for c in ci.git("rev-list", f"--max-count={maximum}", "HEAD").split()]
             for t in tags:
                 rc, t_base, t_inputs = labels_of(t)
-                if rc == 3:
+                if rc == "absent":
                     continue  # no such candidate tag
-                if rc != 0:
+                if rc != "ok":
                     die(f"Could not read the labels of {dx}:{t} (a registry read error, not a missing tag): not building instead of promoting")
                 if not (t_base == digest and t_inputs == inputs):
                     continue
                 try:
                     d = raw_digest_of(f"{dx}:{t}")
-                except registry.RegistryError as e:
-                    die(f"Could not read the manifest of {dx}:{t} (exit {e.code}): not building instead of promoting")
-                rc = verify(f"{dx}@{d}", quiet=True)
-                if rc == 0:
+                except registry.ReadError as e:
+                    die(f"Could not read the manifest of {dx}:{t} ({e}): not building instead of promoting")
+                answer = verdict(f"{dx}@{d}")
+                if answer == "verified":
                     build, promote, source_tag, source_digest = False, True, t, d
                     decision = f"promoting {t} ({source_digest}): same base digest and {variant} inputs, signed"
                     break
-                if rc != 5:
+                if answer == "unfinished":
                     die(f"Could not complete the signature check of {dx}:{t} (a read error, not a bad signature): not building instead of promoting")
-                print(f"::warning::{t} matches but its signature does not verify; not promoting it")
+                ci.log.warning(f"{t} matches but its signature does not verify; not promoting it")
             if not promote:
                 decision = f"building (no tested testing image with this base digest and these {variant} inputs)"
-    print(f"{variant} {channel}: {decision}")
-    ci.summary(f"{variant} {channel}: {decision}", echo=False)
+    ci.log.info(f"{variant} {channel}: {decision}")
+    ci.append_to("GITHUB_STEP_SUMMARY", f"{variant} {channel}: {decision}")
     if not build and not promote:
-        print(f"::notice::base unchanged, nothing to build ({channel}: {digest})")
-    if not env("GITHUB_OUTPUT"):
-        sys.exit("GITHUB_OUTPUT: parameter null or not set")
+        ci.log.info(f"::notice::base unchanged, nothing to build ({channel}: {digest})")
+    os.environ["GITHUB_OUTPUT"]  # required: the plan's answer goes there
     for key, value in (("build", str(build).lower()), ("promote", str(promote).lower()), ("channel", channel), ("base_tag", base_tag), ("base_digest", digest), ("inputs", inputs),
                        ("source_tag", source_tag), ("source_digest", source_digest)):
-        ci.output(key, value)
+        ci.append_to("GITHUB_OUTPUT", f"{key}={value}")
     return 0
 
 

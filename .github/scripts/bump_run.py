@@ -31,11 +31,8 @@ class Fail(Exception):
 
 
 def say(line):
-    print(line, flush=True)
-    try:
-        ci.append_to("GITHUB_STEP_SUMMARY", f"- {line}")
-    except OSError:
-        pass
+    ci.log.info(line)
+    ci.append_to("GITHUB_STEP_SUMMARY", f"- {line}")
 
 
 def days(iso: str) -> str:
@@ -47,10 +44,10 @@ def days(iso: str) -> str:
 
 
 def image_age(ref: str) -> str:
-    p = ci.capture(["skopeo", "inspect", "--override-os", "linux", "--override-arch", "amd64", "--config", f"docker://{ref}"])
+    """Days since the linux/amd64 image of `ref` was created, or "unknown"."""
     try:
-        return days(json.loads(p.stdout).get("created") or "")
-    except (ValueError, AttributeError):
+        return days(json.loads(registry.read("config", ref, linux_amd64=True)).get("created") or "")
+    except (registry.Absent, registry.ReadError, ValueError, AttributeError):
         return days("")
 
 
@@ -71,7 +68,7 @@ class Pin:
         self.files = []
 
     def fail(self, msg):
-        print(f"::error::{self.name}: {msg}")
+        ci.log.error(f"{self.name}: {msg}")
         self.status = msg
         raise Fail(msg)
 
@@ -112,7 +109,7 @@ class Pin:
     def brew(self):
         self.current = containerfile_arg("BREW_TAG")
         try:
-            tags = json.loads(ci.capture(["skopeo", "list-tags", "docker://ghcr.io/ublue-os/brew"]).stdout)["Tags"]
+            tags = json.loads(ci.run(["skopeo", "list-tags", "docker://ghcr.io/ublue-os/brew"], capture=True).stdout)["Tags"]
             latest = sorted(t for t in tags if re.fullmatch(r"\d{8}", t))[-1]
         except (ValueError, KeyError, TypeError, IndexError):
             latest = ""
@@ -134,11 +131,11 @@ class Pin:
             self.fail("BINS_DIGEST in the Containerfile is missing or malformed")
         self.current = f"{curtag} {cur[:19]}"
         ref = "ghcr.io/redcodeworks/octarine-bins"
-        p = ci.capture(["skopeo", "inspect", "--raw", f"docker://{ref}:latest"])
-        manifest = p.stdout.rstrip(b"\n") if p.returncode == 0 else b""
-        if not manifest:
+        try:
+            latest = registry.digest(ref, "latest")
+        except (registry.Absent, registry.ReadError):
             self.fail(f"cannot resolve {ref}:latest")
-        if registry.sha256_of(manifest) == cur:
+        if latest == cur:
             self.status = f"nothing to bump: the pin equals {ref}:latest ({curtag})"
             return
         if not just("bins-bump", "latest"):
@@ -148,10 +145,10 @@ class Pin:
                         f"a new octarine-bins digest, {ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries", image_age(f"{ref}:latest"))
 
 
-def main(argv):
-    if not argv or not argv[0]:
-        sys.exit("pin name: parameter null or not set")
-    pin = Pin(argv[0])
+def main(argv=None):
+    ap = ci.arg_parser(__doc__)
+    ap.add_argument("pin", help="chunkah, brew or bins")
+    pin = Pin(ap.parse_args(argv).pin)
     try:
         if subprocess.run(["git", "diff", "--quiet"]).returncode != 0:
             pin.fail("the working tree is not clean")
@@ -168,4 +165,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

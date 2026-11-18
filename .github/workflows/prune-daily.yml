@@ -61,7 +61,7 @@ jobs:
           protect=""
           for name in ${names}; do
             image="ghcr.io/${owner}/${name}"
-            rc=0; digest=$(IMAGE="${image}" uv run --frozen --no-dev python -I .github/scripts/registry_digest.py latest) || rc=$?
+            rc=0; digest=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${image}" latest) || rc=$?
             [[ "${rc}" == 0 && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read ${image}:latest (status ${rc})"; exit 1; }
             protect="${protect} ${digest}"
             if [[ "${name}" != octarine-os ]]; then

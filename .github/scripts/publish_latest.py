@@ -42,13 +42,20 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 TAG_RE = re.compile(r"latest-[0-9a-f]{7}|latest-[0-9]{8}-[0-9a-f]{7}|[0-9]{8}-[0-9a-f]{7}")
 
 
+class Stop(SystemExit):
+    """End the run with exit status 1 (a refusal or a read error; nothing was moved) after logging why."""
+
+    def __init__(self, message):
+        ci.log.error(message)
+        super().__init__(1)
+
+
 def read_error(what):
-    ci.err(f"::error::could not read the registry ({what}): a read error, not a missing image or tag; nothing was moved")
-    raise SystemExit(1)
+    raise Stop(f"could not read the registry ({what}): a read error, not a missing image or tag; nothing was moved")
 
 
 def label(image, digest, key):
-    """One label of image@digest; a registry that cannot be read fails the run."""
+    """One label of image@digest; a registry that cannot be read (or does not show a digest it just named) fails the run."""
     try:
         return registry.labels(registry.read("config", f"{image}@{digest}")).get(key) or ""
     except registry.RegistryError:
@@ -56,32 +63,37 @@ def label(image, digest, key):
 
 
 def tag_digest(image, tag):
-    """(code, digest): code 0 with the digest, 3 the tag does not exist, 4 the registry could not be read (retried)."""
+    """The digest under a tag, or None when the tag does not exist; a registry that cannot be read fails the run (never "no latest yet")."""
     try:
-        return 0, registry.digest(image, tag, quiet=True)
-    except registry.RegistryError as e:
-        return e.code, ""
+        return registry.digest(image, tag)
+    except registry.Absent:
+        return None
+    except registry.ReadError:
+        read_error(f"{image}:{tag}")
 
 
-def must_be_signed(ref):
-    rc = registry.verify_code(["--key", "cosign.pub", ref], sink=lambda m: None)  # 0 verified, 5 not verified, 4 could not be checked
-    if rc == 0:
-        return
-    if rc == 4:
+def must_be_signed(ref, fresh=False):
+    """The ref carries a valid signature (cosign.pub); `fresh`: it was written seconds ago, so a missing signature is retried first."""
+    check = registry.cosign_check_fresh if fresh else registry.cosign_check
+    try:
+        check(["--key", "cosign.pub", ref])
+    except registry.NotVerified:
+        raise Stop(f"{ref} has no valid signature (cosign.pub)")
+    except registry.ReadError:
         read_error(f"signature of {ref}")
-    ci.fail(f"{ref} has no valid signature (cosign.pub)")
 
 
 def is_commit(rev):
     return bool(rev) and ci.git_ok("cat-file", "-e", f"{rev}^{{commit}}")
 
 
-def main():
-    owner = (os.environ.get("OWNER") or sys.exit("OWNER: parameter null or not set")).lower()
-    which = os.environ.get("IMAGE") or sys.exit("IMAGE (default, dx or gx): parameter null or not set")
+def main(argv=None):
+    ci.arg_parser(__doc__).parse_args(argv)
+    owner = os.environ["OWNER"].lower()
+    which = os.environ["IMAGE"]
     names = {"default": "octarine-os", "dx": "octarine-os-dx", "gx": "octarine-os-gx"}
     if which not in names:
-        print("::error::IMAGE must be default, dx or gx")
+        ci.log.error("IMAGE must be default, dx or gx")
         return 2
     img = f"ghcr.io/{owner}/{names[which]}"
     bimg = f"ghcr.io/{owner}/octarine-os"
@@ -91,7 +103,13 @@ def main():
     write = os.environ.get("WRITE") or "false"
     reason = os.environ.get("REASON", "")
     back = os.environ.get("ALLOW_BACKWARDS") or "false"
+    try:
+        return publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back)
+    except Stop as e:
+        return e.code
 
+
+def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
     ci.append_to("GITHUB_OUTPUT", "moved=false")
 
     # ---- 1. the candidate
@@ -101,27 +119,21 @@ def main():
         ctag = os.environ.get("TAG", "")
         if ctag:
             if not TAG_RE.fullmatch(ctag):
-                ci.fail(f"'{ctag}' is not a dated tag of {img} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused")
-            rc, cand = tag_digest(img, ctag)
-            if rc != 0:
-                if rc == 3:
-                    ci.fail(f"{img}:{ctag} does not exist")
-                read_error(f"{img}:{ctag}")
+                raise Stop(f"'{ctag}' is not a dated tag of {img} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused")
+            cand = tag_digest(img, ctag)
+            if cand is None:
+                raise Stop(f"{img}:{ctag} does not exist")
         elif which == "default":
             for c in ci.git("rev-list", "--first-parent", f"--max-count={max_walk}", main_ref).split():
-                t = f"latest-{ci.git('rev-parse', '--short=7', c)}"
-                rc, d = tag_digest(img, t)
-                if rc == 0:
-                    cand, ctag = d, t
+                ctag = f"latest-{ci.git('rev-parse', '--short=7', c)}"
+                if cand := tag_digest(img, ctag):
                     break
-                if rc != 3:
-                    read_error(f"{img}:{t}")
-            if not cand:
-                ci.fail(f"no published latest-<sha7> within the newest {max_walk} commits of {main_ref}")
+            else:
+                raise Stop(f"no published latest-<sha7> within the newest {max_walk} commits of {main_ref}")
         else:
-            ci.fail(f"{img}: a dated tag is required (TAG), there is no main commit to look it up by")
+            raise Stop(f"{img}: a dated tag is required (TAG), there is no main commit to look it up by")
     if not DIGEST_RE.fullmatch(cand):
-        ci.fail(f"'{cand}' is not a sha256 digest")
+        raise Stop(f"'{cand}' is not a sha256 digest")
 
     # ---- 2. verification: the candidate is signed; the default image was built from main; a variant stands on such a default image
     must_be_signed(f"{img}@{cand}")
@@ -131,38 +143,32 @@ def main():
     else:
         base = label(img, cand, L_BASE)
         if not DIGEST_RE.fullmatch(base):
-            ci.fail(f"{img}@{cand} has no usable base digest label ('{base}')")
+            raise Stop(f"{img}@{cand} has no usable base digest label ('{base}')")
         must_be_signed(f"{bimg}@{base}")
         rev = label(bimg, base, L_REV)
         root_desc = f"{bimg}@{base} (the base of {img}@{cand})"
     if not is_commit(rev):
-        ci.fail(f"{root_desc}: its revision label '{rev}' is not a commit of this repository")
+        raise Stop(f"{root_desc}: its revision label '{rev}' is not a commit of this repository")
     if not ci.git_ok("merge-base", "--is-ancestor", rev, main_ref):
-        ci.fail(f"{root_desc} was built from {rev}, which is not on {main_ref}: only images built from main are published as latest")
+        raise Stop(f"{root_desc} was built from {rev}, which is not on {main_ref}: only images built from main are published as latest")
 
     # ---- 3. ordering guard: never move latest backwards
     def older(candidate, current):
-        """True when the candidate is older than the one under latest now (an unreadable label fails the run: read_error exits)."""
+        """True when the candidate is older than the one under latest now."""
         cr, ur = label(img, candidate, L_REV), label(img, current, L_REV)
         cc, uc = label(img, candidate, L_CREATED), label(img, current, L_CREATED)
         if not is_commit(ur):
-            ci.err(f"::warning::the image under {img}:latest has no usable revision label ({ur or 'none'}): the ordering guard cannot compare")
+            ci.log.warning(f"the image under {img}:latest has no usable revision label ({ur or 'none'}): the ordering guard cannot compare")
             return False
         if cr == ur:
             return bool(cc and uc and cc < uc)
         return ci.git_ok("merge-base", "--is-ancestor", cr, ur)
 
-    # the digest under latest now: absent (3) means none yet; a read error fails the run (it must not look like "nothing is published", which would move latest unguarded)
-    rc, cur = tag_digest(img, "latest")
-    if rc not in (0, 3):
-        read_error(f"{img}:latest")
-    if rc != 0:
-        cur = ""
-    note = f" (reason: {reason})" if reason else ""
+    cur = tag_digest(img, "latest") or ""  # absent means none yet; a read error fails the run (it must not look like "nothing is published", which would move latest unguarded)
     if back == "true":
-        print("ROLLBACK: the ordering guard is skipped; an older verified image may be put under latest")
+        ci.log.info("ROLLBACK: the ordering guard is skipped; an older verified image may be put under latest")
     elif cur and cur != cand and older(cand, cur):
-        ci.summary(f"latest held: {img}:latest ({cur}) is newer than the candidate {cand}; nothing was moved{note}")
+        ci.summary(f"latest held: {img}:latest ({cur}) is newer than the candidate {cand}; nothing was moved{f' (reason: {reason})' if reason else ''}")
         return 0
 
     # ---- 4. plan
@@ -176,17 +182,15 @@ def main():
         return 0
 
     # ---- 5. move; the copy is read back and verified
-    rc = ci.retry_command(["skopeo", "copy", "--all", "--preserve-digests", f"docker://{img}@{cand}", f"docker://{img}:latest"])
-    if rc != 0:
-        return rc
-    # the read-back polls (a registry may show the previous manifest or fail a read for a moment right after a copy): registry.settled, the same one push_tags.py uses
     try:
-        registry.settled(img, "latest", cand)
-    except SystemExit:
-        ci.fail(f"{img}:latest does not show {cand} after the copy")
-    must_be_signed(f"{img}:latest")
-    pre = "ROLLBACK, " if back == "true" else ""
-    ci.summary(f"{pre}latest moved: {plan}{'; reason: ' + reason if reason else ''}")
+        registry.copy(f"{img}@{cand}", f"{img}:latest")
+        registry.settled(img, "latest", cand)  # the read-back polls (a registry may show the previous manifest right after a copy)
+    except ci.NetworkError as e:
+        raise Stop(str(e))
+    except registry.ReadError:
+        raise Stop(f"{img}:latest does not show {cand} after the copy")
+    must_be_signed(f"{img}:latest", fresh=True)
+    ci.summary(f"{'ROLLBACK, ' if back == 'true' else ''}latest moved: {plan}{'; reason: ' + reason if reason else ''}")
     ci.append_to("GITHUB_OUTPUT", "moved=true")
     return 0
 

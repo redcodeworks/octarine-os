@@ -18,9 +18,12 @@ DRY_RUN (default true) only prints the plan. API_BASE (e.g. users/<owner>/packag
 import json
 import os
 import re
-import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci  # noqa: E402
 
 KEEP = int(os.environ.get("KEEP") or 14)
 MAX_DELETES = int(os.environ.get("MAX_DELETES") or 30)
@@ -79,7 +82,8 @@ def plan(versions):
     return dailies, kept, doomed, doomed_sigs
 
 
-def main():
+def main(argv=None):
+    ci.arg_parser(__doc__).parse_args(argv)
     versions = read_versions(sys.stdin.read())
     dailies, kept, doomed, doomed_sigs = plan(versions)
     todo = doomed + doomed_sigs
@@ -95,19 +99,21 @@ def main():
         print(f"  DELETE sig   {label(v)}")
     if not todo:
         print("Nothing to prune.")
-        return
+        return 0
     if len(todo) > MAX_DELETES:
         sys.exit(f"Refusing to delete {len(todo)} versions (limit {MAX_DELETES})")
     if DRY_RUN:
         print(f"Dry run: {len(todo)} versions would be deleted.")
-        return
+        return 0
     if not API_BASE:
         sys.exit("API_BASE is required to delete")
+    gh = ci.github()
     for v in todo:
-        subprocess.run(["gh", "api", "-X", "DELETE", f"{API_BASE}/versions/{v['id']}"], check=True)
+        gh.request("DELETE", f"/{API_BASE}/versions/{v['id']}")
         print(f"deleted {v['id']}")
     print(f"Deleted {len(todo)} versions.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

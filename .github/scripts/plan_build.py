@@ -21,41 +21,42 @@ import ci  # noqa: E402
 import docs_only  # noqa: E402
 
 
-def main(argv):
-    if not argv or not argv[0]:
-        sys.exit("event: parameter null or not set")
-    event = argv[0]
-    before = argv[1] if len(argv) > 1 else ""
-    after = (argv[2] if len(argv) > 2 else "") or "HEAD"
-    ref = argv[3] if len(argv) > 3 else ""
+def main(argv=None):
+    ap = ci.arg_parser(__doc__)
+    ap.add_argument("event")
+    ap.add_argument("before", nargs="?", default="")
+    ap.add_argument("after", nargs="?", default="HEAD")
+    ap.add_argument("ref", nargs="?", default="")
+    args = ap.parse_args(argv)
+    event, before, after, ref = args.event, args.before, args.after or "HEAD", args.ref
     if event in ("schedule", "workflow_dispatch"):
         print("true")
         return 0
     if event != "push":
-        print(f"unknown event '{event}'", file=sys.stderr)
+        ci.note(f"unknown event '{event}'")
         return 1
     if not before or re.fullmatch(r"0+", before) or not ci.git_ok("cat-file", "-e", f"{before}^{{commit}}") or not ci.git_ok("cat-file", "-e", f"{after}^{{commit}}"):
-        ci.err(f"no usable base commit ('{before}'): building")
+        ci.note(f"no usable base commit ('{before}'): building")
         print("true")
         return 0
     changed = ci.git("diff", "--name-only", before, after).splitlines()
     if not changed:
-        ci.err("empty diff: building")
+        ci.note("empty diff: building")
         print("true")
         return 0
     for f in changed:
         if not docs_only.is_docs(f):
-            ci.err(f"non-docs file changed ({f}): building")
+            ci.note(f"non-docs file changed ({f}): building")
             print("true")
             return 0
     if ref == "refs/heads/testing":
-        ci.err(f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip")
+        ci.note(f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip")
         print("true")
         return 0
-    ci.err(f"only docs changed ({len(changed)} files): skipping the heavy build")
+    ci.note(f"only docs changed ({len(changed)} files): skipping the heavy build")
     print("false")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

@@ -1,0 +1,273 @@
+{
+ "url": "https://api.github.com/repos/sched-ext/scx/compare/71713c704a19b0767564267596227221671e83bf...e7b3a219617472cf78880ac424714e52c932db61",
+ "html_url": "https://github.com/sched-ext/scx/compare/71713c704a19b0767564267596227221671e83bf...e7b3a219617472cf78880ac424714e52c932db61",
+ "permalink_url": "https://github.com/sched-ext/scx/compare/sched-ext:71713c7...sched-ext:e7b3a21",
+ "diff_url": "https://github.com/sched-ext/scx/compare/71713c704a19b0767564267596227221671e83bf...e7b3a219617472cf78880ac424714e52c932db61.diff",
+ "patch_url": "https://github.com/sched-ext/scx/compare/71713c704a19b0767564267596227221671e83bf...e7b3a219617472cf78880ac424714e52c932db61.patch",
+ "base_commit": {
+  "sha": "71713c704a19b0767564267596227221671e83bf",
+  "node_id": "C_kwDOKy0w_toAKDcxNzEzYzcwNGExOWIwNzY3NTY0MjY3NTk2MjI3MjIxNjcxZTgzYmY",
+  "commit": {
+   "author": {
+    "name": "Tejun Heo",
+    "email": "tj@kernel.org",
+    "date": "2026-10-15T19:14:30Z"
+   },
+   "committer": {
+    "name": "Tejun Heo",
+    "email": "tj@kernel.org",
+    "date": "2026-10-15T19:14:30Z"
+   },
+   "message": "versions: bump versions for 1.1.4 October 2026 release\n\nSigned-off-by: Tejun Heo <tj@kernel.org>",
+   "tree": {
+    "sha": "cf8704fffd3b74b3efffa1fd9e443896a721fc8e",
+    "url": "https://api.github.com/repos/sched-ext/scx/git/trees/cf8704fffd3b74b3efffa1fd9e443896a721fc8e"
+   },
+   "url": "https://api.github.com/repos/sched-ext/scx/git/commits/71713c704a19b0767564267596227221671e83bf",
+   "comment_count": 0,
+   "verification": {
+    "verified": false,
+    "reason": "unknown_key",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\niIQEABYKACwWIQTfIjM1kS57o3GsC/uxYfJx3gVYGQUCatEmFg4cdGpAa2VybmVs\nLm9yZwAKCRCxYfJx3gVYGRc0AQDck6dHL2a1IFk9OHRdbpfLGHne5aVgUjwMmz2J\nFvwAjQEAm/ovVXKYUCgDwtoHGHBKCeOdiJWJb6z0LqFSlmUc9Qc=\n=SO2T\n-----END PGP SIGNATURE-----",
+    "payload": "tree cf8704fffd3b74b3efffa1fd9e443896a721fc8e\nparent d1a90f76527f5967edeec67c2a396ac267edafa6\nauthor Tejun Heo <tj@kernel.org> 1792091670 -1000\ncommitter Tejun Heo <tj@kernel.org> 1792091670 -1000\n\nversions: bump versions for 1.1.4 October 2026 release\n\nSigned-off-by: Tejun Heo <tj@kernel.org>\n",
+    "verified_at": null
+   }
+  },
+  "url": "https://api.github.com/repos/sched-ext/scx/commits/71713c704a19b0767564267596227221671e83bf",
+  "html_url": "https://github.com/sched-ext/scx/commit/71713c704a19b0767564267596227221671e83bf",
+  "comments_url": "https://api.github.com/repos/sched-ext/scx/commits/71713c704a19b0767564267596227221671e83bf/comments",
+  "author": {
+   "login": "htejun",
+   "id": 1051723,
+   "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+   "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/htejun",
+   "html_url": "https://github.com/htejun",
+   "followers_url": "https://api.github.com/users/htejun/followers",
+   "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+   "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+   "organizations_url": "https://api.github.com/users/htejun/orgs",
+   "repos_url": "https://api.github.com/users/htejun/repos",
+   "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/htejun/received_events",
+   "type": "User",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "committer": {
+   "login": "htejun",
+   "id": 1051723,
+   "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+   "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/htejun",
+   "html_url": "https://github.com/htejun",
+   "followers_url": "https://api.github.com/users/htejun/followers",
+   "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+   "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+   "organizations_url": "https://api.github.com/users/htejun/orgs",
+   "repos_url": "https://api.github.com/users/htejun/repos",
+   "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/htejun/received_events",
+   "type": "User",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "parents": [
+   {
+    "sha": "d1a90f76527f5967edeec67c2a396ac267edafa6",
+    "url": "https://api.github.com/repos/sched-ext/scx/commits/d1a90f76527f5967edeec67c2a396ac267edafa6",
+    "html_url": "https://github.com/sched-ext/scx/commit/d1a90f76527f5967edeec67c2a396ac267edafa6"
+   }
+  ]
+ },
+ "merge_base_commit": {
+  "sha": "71713c704a19b0767564267596227221671e83bf",
+  "node_id": "C_kwDOKy0w_toAKDcxNzEzYzcwNGExOWIwNzY3NTY0MjY3NTk2MjI3MjIxNjcxZTgzYmY",
+  "commit": {
+   "author": {
+    "name": "Tejun Heo",
+    "email": "tj@kernel.org",
+    "date": "2026-10-15T19:14:30Z"
+   },
+   "committer": {
+    "name": "Tejun Heo",
+    "email": "tj@kernel.org",
+    "date": "2026-10-15T19:14:30Z"
+   },
+   "message": "versions: bump versions for 1.1.4 October 2026 release\n\nSigned-off-by: Tejun Heo <tj@kernel.org>",
+   "tree": {
+    "sha": "cf8704fffd3b74b3efffa1fd9e443896a721fc8e",
+    "url": "https://api.github.com/repos/sched-ext/scx/git/trees/cf8704fffd3b74b3efffa1fd9e443896a721fc8e"
+   },
+   "url": "https://api.github.com/repos/sched-ext/scx/git/commits/71713c704a19b0767564267596227221671e83bf",
+   "comment_count": 0,
+   "verification": {
+    "verified": false,
+    "reason": "unknown_key",
+    "signature": "-----BEGIN PGP SIGNATURE-----\n\niIQEABYKACwWIQTfIjM1kS57o3GsC/uxYfJx3gVYGQUCatEmFg4cdGpAa2VybmVs\nLm9yZwAKCRCxYfJx3gVYGRc0AQDck6dHL2a1IFk9OHRdbpfLGHne5aVgUjwMmz2J\nFvwAjQEAm/ovVXKYUCgDwtoHGHBKCeOdiJWJb6z0LqFSlmUc9Qc=\n=SO2T\n-----END PGP SIGNATURE-----",
+    "payload": "tree cf8704fffd3b74b3efffa1fd9e443896a721fc8e\nparent d1a90f76527f5967edeec67c2a396ac267edafa6\nauthor Tejun Heo <tj@kernel.org> 1792091670 -1000\ncommitter Tejun Heo <tj@kernel.org> 1792091670 -1000\n\nversions: bump versions for 1.1.4 October 2026 release\n\nSigned-off-by: Tejun Heo <tj@kernel.org>\n",
+    "verified_at": null
+   }
+  },
+  "url": "https://api.github.com/repos/sched-ext/scx/commits/71713c704a19b0767564267596227221671e83bf",
+  "html_url": "https://github.com/sched-ext/scx/commit/71713c704a19b0767564267596227221671e83bf",
+  "comments_url": "https://api.github.com/repos/sched-ext/scx/commits/71713c704a19b0767564267596227221671e83bf/comments",
+  "author": {
+   "login": "htejun",
+   "id": 1051723,
+   "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+   "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/htejun",
+   "html_url": "https://github.com/htejun",
+   "followers_url": "https://api.github.com/users/htejun/followers",
+   "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+   "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+   "organizations_url": "https://api.github.com/users/htejun/orgs",
+   "repos_url": "https://api.github.com/users/htejun/repos",
+   "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/htejun/received_events",
+   "type": "User",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "committer": {
+   "login": "htejun",
+   "id": 1051723,
+   "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+   "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+   "gravatar_id": "",
+   "url": "https://api.github.com/users/htejun",
+   "html_url": "https://github.com/htejun",
+   "followers_url": "https://api.github.com/users/htejun/followers",
+   "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+   "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+   "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+   "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+   "organizations_url": "https://api.github.com/users/htejun/orgs",
+   "repos_url": "https://api.github.com/users/htejun/repos",
+   "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+   "received_events_url": "https://api.github.com/users/htejun/received_events",
+   "type": "User",
+   "user_view_type": "public",
+   "site_admin": false
+  },
+  "parents": [
+   {
+    "sha": "d1a90f76527f5967edeec67c2a396ac267edafa6",
+    "url": "https://api.github.com/repos/sched-ext/scx/commits/d1a90f76527f5967edeec67c2a396ac267edafa6",
+    "html_url": "https://github.com/sched-ext/scx/commit/d1a90f76527f5967edeec67c2a396ac267edafa6"
+   }
+  ]
+ },
+ "status": "ahead",
+ "ahead_by": 1,
+ "behind_by": 0,
+ "total_commits": 1,
+ "commits": [
+  {
+   "sha": "e7b3a219617472cf78880ac424714e52c932db61",
+   "node_id": "C_kwDOKy0w_toAKGU3YjNhMjE5NjE3NDcyY2Y3ODg4MGFjNDI0NzE0ZTUyYzkzMmRiNjE",
+   "commit": {
+    "author": {
+     "name": "Tejun Heo",
+     "email": "tj@kernel.org",
+     "date": "2026-10-15T19:24:14Z"
+    },
+    "committer": {
+     "name": "Tejun Heo",
+     "email": "tj@kernel.org",
+     "date": "2026-10-15T19:24:14Z"
+    },
+    "message": "ci: Package scx_arena with its workspace dependencies\n\nThe scx_arena package check packages scx_arena alone, so cargo looks up its\nscx_cargo, scx_stats and scx_utils dependencies on crates.io. A release PR\nbumps every crate before any of them is published, and the check fails there\nbecause the bumped scx_utils is not on crates.io yet.\n\nPackage the workspace dependencies in the same run. cargo then uses the\nlocal versions, and the check passes before the release is published.",
+    "tree": {
+     "sha": "632048e259ac725d742014cc112cd6071719bc62",
+     "url": "https://api.github.com/repos/sched-ext/scx/git/trees/632048e259ac725d742014cc112cd6071719bc62"
+    },
+    "url": "https://api.github.com/repos/sched-ext/scx/git/commits/e7b3a219617472cf78880ac424714e52c932db61",
+    "comment_count": 0,
+    "verification": {
+     "verified": false,
+     "reason": "unsigned",
+     "signature": null,
+     "payload": null,
+     "verified_at": null
+    }
+   },
+   "url": "https://api.github.com/repos/sched-ext/scx/commits/e7b3a219617472cf78880ac424714e52c932db61",
+   "html_url": "https://github.com/sched-ext/scx/commit/e7b3a219617472cf78880ac424714e52c932db61",
+   "comments_url": "https://api.github.com/repos/sched-ext/scx/commits/e7b3a219617472cf78880ac424714e52c932db61/comments",
+   "author": {
+    "login": "htejun",
+    "id": 1051723,
+    "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/htejun",
+    "html_url": "https://github.com/htejun",
+    "followers_url": "https://api.github.com/users/htejun/followers",
+    "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+    "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+    "organizations_url": "https://api.github.com/users/htejun/orgs",
+    "repos_url": "https://api.github.com/users/htejun/repos",
+    "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/htejun/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+   },
+   "committer": {
+    "login": "htejun",
+    "id": 1051723,
+    "node_id": "MDQ6VXNlcjEwNTE3MjM=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/1051723?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/htejun",
+    "html_url": "https://github.com/htejun",
+    "followers_url": "https://api.github.com/users/htejun/followers",
+    "following_url": "https://api.github.com/users/htejun/following{/other_user}",
+    "gists_url": "https://api.github.com/users/htejun/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/htejun/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/htejun/subscriptions",
+    "organizations_url": "https://api.github.com/users/htejun/orgs",
+    "repos_url": "https://api.github.com/users/htejun/repos",
+    "events_url": "https://api.github.com/users/htejun/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/htejun/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+   },
+   "parents": [
+    {
+     "sha": "71713c704a19b0767564267596227221671e83bf",
+     "url": "https://api.github.com/repos/sched-ext/scx/commits/71713c704a19b0767564267596227221671e83bf",
+     "html_url": "https://github.com/sched-ext/scx/commit/71713c704a19b0767564267596227221671e83bf"
+    }
+   ]
+  }
+ ],
+ "files": [
+  {
+   "sha": "ba061417b3ac6e5352c9606d4a600fd4c1c1704a",
+   "filename": ".github/workflows/ci.yml",
+   "status": "modified",
+   "additions": 3,
+   "deletions": 1,
+   "changes": 4,
+   "blob_url": "https://github.com/sched-ext/scx/blob/e7b3a219617472cf78880ac424714e52c932db61/.github%2Fworkflows%2Fci.yml",
+   "raw_url": "https://github.com/sched-ext/scx/raw/e7b3a219617472cf78880ac424714e52c932db61/.github%2Fworkflows%2Fci.yml",
+   "contents_url": "https://api.github.com/repos/sched-ext/scx/contents/.github%2Fworkflows%2Fci.yml?ref=e7b3a219617472cf78880ac424714e52c932db61",
+   "patch": "@@ -216,7 +216,9 @@ jobs:\n         run: cargo nextest run --cargo-profile ci --workspace --locked --no-fail-fast --status-level fail --success-output never\n       - name: Check scx_arena package contents\n         run: |\n-          cargo package --locked --no-verify -p scx_arena\n+          # Package the workspace deps too. On a release PR, their bumped\n+          # versions aren't on crates.io yet.\n+          cargo package --locked --no-verify -p scx_arena -p scx_cargo -p scx_stats -p scx_utils\n           tar -tf target/package/scx_arena-*.crate > target/package/scx_arena-files.txt\n           grep -q '/bpf/src/arena.bpf.c$' target/package/scx_arena-files.txt\n           grep -q '/bpf/include/lib/arena.h$' target/package/scx_arena-files.txt"
+  }
+ ]
+}
