@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from conftest import SCRIPTS, git, script
+from conftest import SCRIPTS, git, script, script_path
 
 CHUNKAH = "quay.io/coreos/chunkah"
 OLD = "sha256:" + "1" * 64
@@ -143,14 +143,21 @@ def clone(tmp_path, github, monkeypatch):
         ["git", "clone", "-q", str(origin), str(work)], check=True, capture_output=True
     )
     git(work, "checkout", "-q", "-b", "testing")
-    scripts = work / ".github" / "scripts"
-    scripts.mkdir(parents=True)
-
-    # the real bump_weekly.py and ci.py, with stubs for the scripts it starts
+    # the real bump_weekly.py and ci.py in the same stage directories as in the
+    # repository, with stubs next to bump_weekly.py for the scripts it starts
     for name in ("bump_weekly.py", "ci.py"):
-        shutil.copy(SCRIPTS / name, scripts)
-    (scripts / "bump_run.py").write_text(STUB_RUN)
-    (scripts / "bump_checks.py").write_text(STUB_CHECKS)
+        target = work / ".github" / "scripts" / script_path(name).relative_to(SCRIPTS)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(script_path(name), target)
+    weekly_dir = (
+        work
+        / ".github"
+        / "scripts"
+        / script_path("bump_weekly.py").parent.relative_to(SCRIPTS)
+    )
+    (weekly_dir / "bump_run.py").write_text(STUB_RUN)
+    (weekly_dir / "bump_checks.py").write_text(STUB_CHECKS)
+    weekly = weekly_dir.relative_to(work) / "bump_weekly.py"
     (work / "pins.txt").write_text("chunkah=1\nbrew=1\nbins=1\n")
     git(work, "add", "-A")
     git(work, "commit", "-qm", "init")
@@ -171,7 +178,7 @@ def clone(tmp_path, github, monkeypatch):
             Extra keyword arguments add or override environment variables.
             """
             return subprocess.run(
-                [os.sys.executable, "-I", ".github/scripts/bump_weekly.py"],
+                [os.sys.executable, "-I", str(weekly)],
                 cwd=work,
                 capture_output=True,
                 text=True,

@@ -31,7 +31,7 @@ from pathlib import Path
 from githubkit.exception import RequestFailed
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))
+sys.path[:0] = [str(HERE / "00-lib"), str(HERE)]
 import ci  # noqa: E402
 
 NOTES = {

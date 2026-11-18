@@ -30,7 +30,8 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+here = Path(__file__).resolve().parent
+sys.path[:0] = [str(here / "00-lib"), str(here)]
 import ci  # noqa: E402
 
 MARKER = "Reported by bump_checks.py"

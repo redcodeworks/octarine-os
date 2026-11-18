@@ -29,7 +29,8 @@ from pathlib import Path
 
 from githubkit.exception import RequestFailed
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+here = Path(__file__).resolve().parent
+sys.path[:0] = [str(here / "00-lib"), str(here)]
 import ci  # noqa: E402
 
 env = os.environ.get

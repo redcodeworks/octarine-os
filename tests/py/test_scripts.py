@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from conftest import FAKES, SCRIPTS, fixture, git, make_repo, pull, script
+from conftest import FAKES, fixture, git, make_repo, pull, script, script_path
 
 D = "sha256:" + "a" * 64
 
@@ -461,7 +461,7 @@ def prune(vs, **env):
     Extra keyword arguments add or override environment variables.
     """
     return subprocess.run(
-        [sys.executable, "-I", str(SCRIPTS / "prune_daily.py")],
+        [sys.executable, "-I", str(script_path("prune_daily.py"))],
         input=json.dumps(vs),
         capture_output=True,
         text=True,

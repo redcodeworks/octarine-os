@@ -8,7 +8,7 @@ import sys
 import pytest
 
 import ci
-from conftest import SCRIPTS, git, make_repo, script
+from conftest import git, make_repo, script, script_path
 
 NOW = ci.epoch("2026-11-08T10:05:00Z")
 SKIP_ENV = {
@@ -328,7 +328,7 @@ def version_check(*lines):
     """
     # the script reads KEY=VALUE lines from stdin
     return subprocess.run(
-        [sys.executable, "-I", str(SCRIPTS / "check_version_neutral.py")],
+        [sys.executable, "-I", str(script_path("check_version_neutral.py"))],
         input="".join(f"{line}\n" for line in lines),
         capture_output=True,
         text=True,

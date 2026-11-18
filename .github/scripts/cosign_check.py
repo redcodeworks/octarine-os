@@ -11,7 +11,8 @@ yet included; retried, still failing after the last try). cosign's stdout is dis
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+here = Path(__file__).resolve().parent
+sys.path[:0] = [str(here / "00-lib"), str(here)]
 import ci  # noqa: E402
 import registry  # noqa: E402
 

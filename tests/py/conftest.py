@@ -19,7 +19,16 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".github" / "scripts"
 FAKES = ROOT / "tests" / "py" / "fakes"
-sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(SCRIPTS / "00-lib"))
+
+
+def script_path(name):
+    """Return the path of a script of .github/scripts, found by name in its stage
+    directory (00-lib, 10-plan, ...).
+
+    Raises StopIteration for a name that no directory holds.
+    """
+    return next(p for p in sorted(SCRIPTS.rglob(name)) if "__pycache__" not in p.parts)
 
 
 @pytest.fixture
@@ -52,7 +61,7 @@ def script(name, *args, cwd=None, env=None, extra=None):
     """
     e = {**os.environ, **(env or {}), **(extra or {})}
     return subprocess.run(
-        [sys.executable, "-I", str(SCRIPTS / name), *args],
+        [sys.executable, "-I", str(script_path(name)), *args],
         cwd=cwd,
         env=e,
         capture_output=True,
