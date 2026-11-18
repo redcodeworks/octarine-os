@@ -51,7 +51,7 @@ check "enabled (global) podman.socket" "systemctl --global is-enabled podman.soc
 
 # REQUIRED packages (required-fedora.txt of the pinned octarine-bins image, one strict dnf5 transaction): a missing one fails the build. This list repeats that file by hand (the lists
 # are not in this image); the vendor check below is the OS's own policy and stays here
-CRITICAL="pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev gcc gcc-c++ make binutils"
+CRITICAL="mutter pipewire wireplumber gdm ptyxis systemd pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev gcc gcc-c++ make binutils"
 for p in $CRITICAL; do
   check "package $p" "rpm -q $p"
   # standing policy: required packages come from Fedora itself (outside repos only in optional lists)
