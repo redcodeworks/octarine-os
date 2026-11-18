@@ -18,7 +18,7 @@ def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
     date = os.environ.get("VERSION_DATE") or time.strftime("%Y%m%d")
     sha = os.environ.get("VERSION_SHA") or ci.git("rev-parse", "--short", "HEAD")
-    print(f"{date}-{sha}")
+    ci.result(f"{date}-{sha}")
     return 0
 
 

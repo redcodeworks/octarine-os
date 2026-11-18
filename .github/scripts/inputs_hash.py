@@ -146,7 +146,7 @@ def main(argv=None):
     ap.add_argument("kind", choices=["vanilla", "dx", "gx"])
     ap.add_argument("rev", nargs="?", default="HEAD")
     args = ap.parse_args(argv)
-    print(_inputs(args.kind, args.rev))
+    ci.result(_inputs(args.kind, args.rev))
     return 0
 
 

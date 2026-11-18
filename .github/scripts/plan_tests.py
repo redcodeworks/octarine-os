@@ -29,7 +29,7 @@ def main(argv=None):
         ci.log.error("no test groups under tests/")
         return 1
     text = json.dumps(groups, separators=(",", ":"))
-    print(text)
+    ci.result(text)
     ci.append_to("GITHUB_OUTPUT", f"groups={text}")
     return 0
 

@@ -64,4 +64,4 @@ def decide() -> str:
 
 
 if __name__ == "__main__":
-    print(decide())
+    ci.result(decide())

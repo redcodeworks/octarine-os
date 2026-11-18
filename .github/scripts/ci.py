@@ -24,12 +24,11 @@ from packaging.version import InvalidVersion, Version
 
 
 class Annotations(logging.Handler):
-    """Writes log records the way the Actions runner reads them: `::error::` and `::warning::` lines (stderr), plain lines for info (stdout)."""
+    """Writes log records the way the Actions runner reads them: `::error::` and `::warning::` lines (stderr), plain lines for info, all on stderr: stdout belongs to the result of a script (`ci.result`), which a workflow may capture with `$(...)`."""
 
     def emit(self, record):
         prefix = {logging.ERROR: "::error::", logging.WARNING: "::warning::"}.get(record.levelno, "")
-        stream = sys.stderr if record.levelno >= logging.WARNING else sys.stdout
-        print(f"{prefix}{record.getMessage()}", file=stream, flush=True)
+        print(f"{prefix}{record.getMessage()}", file=sys.stderr, flush=True)
 
 
 log = logging.getLogger("ci")  # every script logs through this one: log.info, log.warning, log.error
@@ -51,19 +50,24 @@ def append_to(env_var: str, line: str) -> None:
 
 
 def emit(key: str, value: str, note: str = "") -> None:
-    """Print `key=value` and export it as a step output."""
-    print(f"{key}={value}{note}")
+    """Write `key=value` as the result and export it as a step output."""
+    result(f"{key}={value}{note}")
     append_to("GITHUB_OUTPUT", f"{key}={value}")
 
 
+def result(text: str) -> None:
+    """The ONE way a script writes its result to stdout (what a workflow captures: `true`/`false`, a digest, key=value lines); reasons and progress go through `log`."""
+    print(text, flush=True)
+
+
 def note(message: str) -> None:
-    """A plain line on stderr: a decision script keeps its stdout for its answer (key=value lines, `true`/`false`) and puts the reasons here."""
-    print(message, file=sys.stderr, flush=True)
+    """A plain info line (stderr): a decision script keeps its stdout for its answer and puts the reasons here."""
+    log.info(message)
 
 
 def summary(line: str) -> None:
-    """Print a line and add it to the job summary (a summary that cannot be written never fails the step)."""
-    print(line, flush=True)
+    """Log a line and add it to the job summary (a summary that cannot be written never fails the step)."""
+    log.info(line)
     try:
         append_to("GITHUB_STEP_SUMMARY", line)
     except OSError:

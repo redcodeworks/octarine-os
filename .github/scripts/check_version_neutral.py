@@ -19,12 +19,12 @@ def main(argv=None):
     bad = False
     for key, value in versions.items():
         if any(channel in value.lower() for channel in ("testing", "latest")):
-            print(f"ERROR: {key}={value} names a channel")
+            ci.log.error(f"{key}={value} names a channel")
             bad = True
-        print(f"{key}={value}")
+        ci.log.info(f"{key}={value}")
     for key, what in (("org.opencontainers.image.version", "org.opencontainers.image.version"), ("IMAGE_VERSION", "os-release IMAGE_VERSION")):
         if key not in versions:
-            print(f"ERROR: {what} is missing")
+            ci.log.error(f"{what} is missing")
             return 1
     return 1 if bad else 0
 

@@ -20,7 +20,7 @@ import inputs_hash as ih  # noqa: E402
 
 def no(reason):
     ci.note(f"no reuse: {reason}")
-    print("reuse=false")
+    ci.result("reuse=false")
     raise SystemExit(0)
 
 
@@ -33,7 +33,7 @@ def main(argv=None):
     event, ref, after = args.event, args.ref, args.after or "HEAD"
     if not (event == "push" and ref == "refs/heads/testing"):
         no(f"not a push to testing ({event} {ref})")
-    print(f"inputs={ih.vanilla_inputs(after)}")
+    ci.result(f"inputs={ih.vanilla_inputs(after)}")
     try:
         tag, digest = ih.nearest_image_for_inputs(after)
     except ih.Unreadable as e:
@@ -42,7 +42,7 @@ def main(argv=None):
     except ih.NoImage as e:
         no(str(e))
     ci.note(f"reuse: {tag} ({digest}) was built from the same default-image inputs as {after}")
-    print(f"reuse=true\nsource_tag={tag}\nsource_digest={digest}")
+    ci.result(f"reuse=true\nsource_tag={tag}\nsource_digest={digest}")
     return 0
 
 

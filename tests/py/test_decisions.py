@@ -133,3 +133,11 @@ def test_version_labels_must_not_name_a_channel():
     assert version_check("org.opencontainers.image.version=1", "IMAGE_VERSION=latest").returncode == 1
     assert version_check("IMAGE_VERSION=1").returncode == 1  # the OCI version label is required
     assert version_check("org.opencontainers.image.version=1").returncode == 1  # and so is IMAGE_VERSION
+
+
+def test_a_captured_result_is_alone_on_stdout():
+    """A workflow captures stdout with `$(...)`: the reason a script logs (info) goes to stderr, stdout holds only the result."""
+    p = script("plan_build.py", "push", "0" * 40, "HEAD", "refs/heads/main")
+    assert p.returncode == 0 and p.stdout == "true\n" and "no usable base commit" in p.stderr
+    p = script("plan_skip.py", env={k: "" for k in SKIP_ENV}, extra=SKIP_ENV)
+    assert p.stdout.count("\n") == 1 and p.stdout.startswith("skipped:")
