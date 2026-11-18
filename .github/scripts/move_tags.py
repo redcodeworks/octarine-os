@@ -31,6 +31,7 @@ def main(argv=None):
     ap.add_argument("digest")
     ap.add_argument("tags", nargs="*", metavar="tag")
     args = ap.parse_args(argv)
+
     # a tag must never be moved to something that is not a digest
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.digest):
         ci.log.error(f"move_tags.py: '{args.digest}' is not a digest")

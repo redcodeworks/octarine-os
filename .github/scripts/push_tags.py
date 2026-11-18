@@ -36,6 +36,7 @@ def main(argv=None):
     ap.add_argument("tags", nargs="+", metavar="tag")
     args = ap.parse_args(argv)
     first, *others = args.tags
+
     # any network or read-back failure stops the publication
     try:
         digest = registry.push(args.local_image, f"{args.registry_image}:{first}")

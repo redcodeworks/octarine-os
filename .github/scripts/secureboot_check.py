@@ -54,6 +54,7 @@ def download(url, target):
             url,
         ]
     )
+
     # curl must exit 0; anything else is a transient network error to retry
     if proc.returncode != 0:
         raise ci.NetworkError(f"curl failed (exit {proc.returncode})")
@@ -77,6 +78,7 @@ def main(argv=None):
         or "https://github.com/ublue-os/akmods/raw/main/certs/public_key.der"
     )
     cid = ""
+
     # the work directory (kernel copy and key files) is removed when the check ends
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)

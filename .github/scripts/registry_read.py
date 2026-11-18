@@ -27,6 +27,7 @@ def main(argv=None):
     ap.add_argument("mode", choices=["raw", "config"])
     ap.add_argument("ref")
     args = ap.parse_args(argv)
+
     # keep a missing reference (3) apart from a read error (4)
     try:
         data = registry.read(args.mode, args.ref)

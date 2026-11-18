@@ -24,6 +24,7 @@ def parse_env(path: Path) -> dict:
     else must be KEY=VALUE with an upper-case key; ValueError otherwise.
     """
     values = {}
+
     # read the pin file line by line
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
@@ -51,6 +52,7 @@ def main(argv=None):
         "file", nargs="?", default=os.environ.get("CHUNKAH_ENV") or "config/chunkah.env"
     )
     file = Path(ap.parse_args(argv).file)
+
     # the pin file must exist
     if not file.is_file():
         ci.log.error(f"{file} not found")
@@ -62,6 +64,7 @@ def main(argv=None):
         ci.log.error(str(e))
         return 1
     image, digest = pin.get("CHUNKAH_IMAGE", ""), pin.get("CHUNKAH_DIGEST", "")
+
     # the image must look like a registry reference
     if not re.fullmatch(r"[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+", image):
         ci.log.error(f"bad CHUNKAH_IMAGE '{image}'")
@@ -71,6 +74,7 @@ def main(argv=None):
         ci.log.error(f"bad CHUNKAH_DIGEST '{digest}'")
         return 1
     ref = f"{image}@{digest}"
+
     # an image that does not verify (or cannot be checked) is not trusted
     try:
         registry.cosign_check(
@@ -87,6 +91,7 @@ def main(argv=None):
             f"cosign verification of {ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)"
         )
         return 1
+
     # pull now, with retries, so the rechunk does not pull inside its own run
     try:
         # now, with retries, so `just rechunk` does not pull inside its single

@@ -57,6 +57,7 @@ def verified_by(image: str, pin: str, manifest: bytes, key: str):
     errors, unfinished = [], False
     candidates = [(pin, f"the signature of {pin}")]
     child = amd64_child(manifest)
+
     # a plain image has no linux/amd64 child; only a well-formed digest is a candidate
     if re.fullmatch(r"sha256:[0-9a-f]{64}", child):
         candidates.append((child, f"the signature of its linux/amd64 manifest {child}"))
@@ -86,11 +87,13 @@ def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
     image, ver = os.environ["BASE_IMAGE"], os.environ["FEDORA_VERSION"]
     key = os.environ.get("KEY") or "keys/ublue-os-main-cosign.pub"
+
     # the tag is the Fedora release number
     if not ver.isdigit():  # a Fedora release number
         ci.log.error(f"FEDORA_VERSION '{ver}' is not a number")
         return 1
     base = f"{image}:{ver}"
+
     # a missing tag and an unreadable registry need different advice
     try:
         manifest = registry.read("raw", base)
@@ -106,6 +109,7 @@ def main(argv=None):
         return 1
     pin = registry.sha256_of(manifest)
     verified, errors, unfinished = verified_by(image, pin, manifest, key)
+
     # no signature verified the pin: say why, from the most to the least transient cause
     if verified is None:
         joined = " ".join(errors)

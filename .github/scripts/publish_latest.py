@@ -124,6 +124,7 @@ def must_be_signed(ref, fresh=False):
     ago, so a missing signature is retried first.
     """
     check = registry.cosign_check_fresh if fresh else registry.cosign_check
+
     # NotVerified is a refusal; ReadError is an unreadable registry
     try:
         check(["--key", "cosign.pub", ref])
@@ -154,6 +155,7 @@ def main(argv=None):
     owner = os.environ["OWNER"].lower()
     which = os.environ["IMAGE"]
     names = {"default": "octarine-os", "dx": "octarine-os-dx", "gx": "octarine-os-gx"}
+
     # only the three published images can be moved
     if which not in names:
         ci.log.error("IMAGE must be default, dx or gx")
@@ -166,6 +168,7 @@ def main(argv=None):
     write = os.environ.get("WRITE") or "false"
     reason = os.environ.get("REASON", "")
     back = os.environ.get("ALLOW_BACKWARDS") or "false"
+
     # Stop carries the exit status to return after its message was logged
     try:
         return publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back)
@@ -186,6 +189,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
     # ---- 1. the candidate
     cand = os.environ.get("DIGEST", "")
     ctag = ""
+
     # no digest given: find the candidate by tag or by walking main
     if not cand:
         ctag = os.environ.get("TAG", "")
@@ -217,6 +221,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
             raise Stop(
                 f"{img}: a dated tag is required (TAG), there is no main commit to look it up by"
             )
+
     # whatever the source, the candidate must be a well-formed digest
     if not DIGEST_RE.fullmatch(cand):
         raise Stop(f"'{cand}' is not a sha256 digest")
@@ -224,6 +229,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
     # ---- 2. verification: the candidate is signed; the default image was built from
     # main; a variant stands on such a default image
     must_be_signed(f"{img}@{cand}")
+
     # the default image carries its own revision; a variant carries its base's
     if which == "default":
         rev = label(img, cand, L_REV)
@@ -236,11 +242,13 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         must_be_signed(f"{bimg}@{base}")
         rev = label(bimg, base, L_REV)
         root_desc = f"{bimg}@{base} (the base of {img}@{cand})"
+
     # the revision label must name a commit of this repository
     if not is_commit(rev):
         raise Stop(
             f"{root_desc}: its revision label '{rev}' is not a commit of this repository"
         )
+
     # only images built from main may become latest
     if not ci.git_ok("merge-base", "--is-ancestor", rev, main_ref):
         raise Stop(
@@ -252,6 +260,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         """True when the candidate is older than the one under latest now."""
         cr, ur = label(img, candidate, L_REV), label(img, current, L_REV)
         cc, uc = label(img, candidate, L_CREATED), label(img, current, L_CREATED)
+
         # a latest without a usable revision cannot be compared: do not hold the
         # candidate
         if not is_commit(ur):
@@ -259,6 +268,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
                 f"the image under {img}:latest has no usable revision label ({ur or 'none'}): the ordering guard cannot compare"
             )
             return False
+
         # the same commit: the creation time decides which image is older
         if cr == ur:
             return bool(cc and uc and cc < uc)
@@ -267,6 +277,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
     # absent means none yet; a read error fails the run (it must not look like
     # "nothing is published", which would move latest unguarded)
     cur = tag_digest(img, "latest") or ""
+
     # a rollback may put an older verified image under latest
     if back == "true":
         ci.log.info(
@@ -285,6 +296,7 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         )
         return 0
     plan = f"{img}: latest {cur or 'none'} -> {cand} ({ctag or 'from the build run'}, main commit {rev[:7]})"
+
     # a dry run, or a run without permission to write, only reports the plan
     if dry == "true" or write != "true":
         ci.summary(f"DRY RUN ({dry}, write allowed: {write}): would move latest:")

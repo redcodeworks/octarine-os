@@ -58,10 +58,12 @@ def inspect_once(mode, ref, linux_amd64=False):
     proc = ci.run(
         ["skopeo", "inspect", *platform, flag, f"docker://{ref}"], capture=True
     )
+
     # a zero exit with output is the manifest or config
     if proc.returncode == 0 and proc.stdout:
         return proc.stdout
     err = ci.stderr_of(proc)
+
     # a missing manifest is a definite answer; anything else is a read error to retry
     if ABSENT.search(err):
         raise Absent(f"{ref} does not exist ({ci.text(err, 500)})")
@@ -112,6 +114,7 @@ def settled(image, tag, want):
             got = "absent"
         except ReadError:
             got = "unreadable"
+
         # a stale or missing tag is a read error so that the poll tries again
         if got != want:
             raise ReadError(f"{image}:{tag} is {got}, expected {want}")
@@ -126,10 +129,12 @@ def cosign_check(args):
     complete, or the image or tag is not visible yet: 5 tries, 5 to 20 s apart).
     """
     proc = ci.run(["cosign", "verify", *args], capture=True)
+
     # exit 0 means the signature verified
     if proc.returncode == 0:
         return
     err = ci.stderr_of(proc)
+
     # text that says the signature is missing or wrong is a verdict, not a flaky read
     if UNSIGNED.search(err):
         raise NotVerified(f"not verified: {ci.text(err)}")
@@ -146,6 +151,7 @@ def write(cmd, quiet=False):
     proc = ci.run(
         cmd, stdout=subprocess.DEVNULL if quiet else None, stderr=subprocess.PIPE
     )
+
     # a failed command must not pass silently: raise with the stderr tail
     if proc.returncode != 0:
         raise ci.NetworkError(
@@ -180,6 +186,7 @@ def push(local_image, target):
         digestfile = Path(tmp) / "digest"
         write(["podman", "push", f"--digestfile={digestfile}", local_image, target])
         value = digestfile.read_text().strip() if digestfile.exists() else ""
+
     # podman must have reported a well-formed digest
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", value):
         raise ci.NetworkError(f"podman push gave no digest for {target} ('{value}')")

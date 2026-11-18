@@ -27,6 +27,7 @@ def main(argv=None):
     ap.add_argument("image", help="registry/owner/name")
     ap.add_argument("tag")
     args = ap.parse_args(argv)
+
     # keep a missing tag (3) apart from a read error (4)
     try:
         ci.result(registry.digest(args.image, args.tag))

@@ -28,6 +28,7 @@ def main(argv=None):
     ap.add_argument("tag")
     ap.add_argument("digest")
     args = ap.parse_args(argv)
+
     # poll the tag; the registry may lag behind a push or a copy
     try:
         registry.settled(args.image, args.tag, args.digest)

@@ -38,12 +38,14 @@ def main(argv=None):
     args = ap.parse_args(argv)
     kernel, fedora = args.kernel, args.fedora
     image = os.environ.get("AKMODS_IMAGE") or "ghcr.io/ublue-os/akmods-nvidia-lts"
+
     # the kernel release must look like 7.2.15-300.fc45.x86_64
     if not (
         m := re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.fc([0-9]+)\.x86_64", kernel)
     ):
         ci.log.error(f"'{kernel}' is not a kernel release like 7.2.15-300.fc45.x86_64")
         return 1
+
     # the Fedora number inside the release must match the requested one
     if m[1] != fedora:
         ci.log.error(f"kernel {kernel} belongs to Fedora {m[1]}, not {fedora}")
@@ -52,6 +54,7 @@ def main(argv=None):
         f"main-{fedora}-{kernel}",
         f"main-{fedora}-{kernel.removesuffix('.x86_64')}",
     ]
+
     # try the tag with the architecture suffix, then without it
     for tag in tags:
         # a missing tag and a read error both mean: try the next form

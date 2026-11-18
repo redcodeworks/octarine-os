@@ -24,6 +24,7 @@ def main(argv=None):
     the retries and 2 when called without arguments.
     """
     argv = sys.argv[1:] if argv is None else argv
+
     # cosign needs something to verify
     if not argv:
         ci.log.error("usage: cosign_check.py <cosign verify arguments...>")

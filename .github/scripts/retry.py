@@ -44,6 +44,7 @@ def main(argv=None):
     ap.add_argument("command", nargs=argparse.REMAINDER)
     args = ap.parse_args(argv)
     cmd = args.command[1:] if args.command[:1] == ["--"] else args.command
+
     # a command, at least one try and a non-negative delay are required
     if not cmd or args.tries < 1 or args.delay < 0:
         ap.error("a command, TRIES of at least 1 and a DELAY of 0 or more are required")
@@ -54,6 +55,7 @@ def main(argv=None):
         retries it.
         """
         code = ci.run(cmd, stdin=None).returncode
+
         # any non-zero exit counts as a failed try
         if code:
             raise Failed(cmd, code)
