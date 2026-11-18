@@ -12,20 +12,27 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scx-lib.sh
 . "${here}/scx-lib.sh"
 name=${1-}
-scx_find_instance "${name}" > /dev/null || { scx_log "wait-idle: unknown scheduler instance"; exit 2; }
+scx_find_instance "${name}" >/dev/null || {
+	scx_log "wait-idle: unknown scheduler instance"
+	exit 2
+}
 trap 'exit 143' TERM INT
 state=${SCX_SYSFS}/state
-busy() { local s; s=$(cat "${state}" 2> /dev/null) || return 1; [[ -n "${s}" && "${s}" != disabled ]]; }
+busy() {
+	local s
+	s=$(cat "${state}" 2>/dev/null) || return 1
+	[[ -n "${s}" && "${s}" != disabled ]]
+}
 busy || exit 0
-scx_log "wait-idle ${name}: sched_ext is '$(cat "${state}" 2> /dev/null)' (ops '$(cat "${SCX_SYSFS}/root/ops" 2> /dev/null)'), waiting up to ${SCX_IDLE_SECONDS} s for it to become disabled"
+scx_log "wait-idle ${name}: sched_ext is '$(cat "${state}" 2>/dev/null)' (ops '$(cat "${SCX_SYSFS}/root/ops" 2>/dev/null)'), waiting up to ${SCX_IDLE_SECONDS} s for it to become disabled"
 deadline=$((SECONDS + SCX_IDLE_SECONDS))
 while busy; do
-    if ((SECONDS >= deadline)); then
-        scx_log "wait-idle ${name}: still '$(cat "${state}" 2> /dev/null)' after ${SCX_IDLE_SECONDS} s; starting anyway (it fails visibly if sched_ext stays held)"
-        exit 0
-    fi
-    sleep 0.2 &
-    wait $!
+	if ((SECONDS >= deadline)); then
+		scx_log "wait-idle ${name}: still '$(cat "${state}" 2>/dev/null)' after ${SCX_IDLE_SECONDS} s; starting anyway (it fails visibly if sched_ext stays held)"
+		exit 0
+	fi
+	sleep 0.2 &
+	wait $!
 done
 scx_log "wait-idle ${name}: sched_ext is disabled, starting"
 exit 0

@@ -24,55 +24,63 @@
 #   kargs_notice ARG...    the text a recipe prints after it applied arguments
 
 kargs_words() { tr -s ' \t\n' '\n' | grep -vE '^(BOOT_IMAGE|initrd|ostree)=|^$' | sort -u; }
-kargs_booted() { kargs_words < "${OCTARINE_CMDLINE:-/proc/cmdline}" 2> /dev/null; }
-kargs_next() { rpm-ostree kargs 2> /dev/null | kargs_words; }
+kargs_booted() { kargs_words <"${OCTARINE_CMDLINE:-/proc/cmdline}" 2>/dev/null; }
+kargs_next() { rpm-ostree kargs 2>/dev/null | kargs_words; }
 
 # 0 pending deployment exists, 1 none (the booted one is the newest), 2 unknown
 kargs_has_pending() {
-    local b
-    b=$(rpm-ostree status --json 2> /dev/null | jq -r '.deployments[0].booted | if . == null then "unknown" else tostring end' 2> /dev/null) || b=unknown
-    case "${b}" in false) return 0 ;; true) return 1 ;; *) return 2 ;; esac
+	local b
+	b=$(rpm-ostree status --json 2>/dev/null | jq -r '.deployments[0].booted | if . == null then "unknown" else tostring end' 2>/dev/null) || b=unknown
+	case "${b}" in false) return 0 ;; true) return 1 ;; *) return 2 ;; esac
 }
 
 kargs_pending_change() {
-    local booted next gate diff
-    kargs_has_pending
-    gate=$?
-    [[ "${gate}" != 1 ]] || return 1
-    booted=$(kargs_booted) || return 1
-    next=$(kargs_next)
-    [[ -n "${booted}" && -n "${next}" ]] || return 1
-    diff=$(diff <(printf '%s\n' "${booted}") <(printf '%s\n' "${next}") | sed -n 's/^< /-/p; s/^> /+/p')
-    [[ -n "${diff}" ]] || return 1
-    printf '%s\n' "${diff}"
+	local booted next gate diff
+	kargs_has_pending
+	gate=$?
+	[[ "${gate}" != 1 ]] || return 1
+	booted=$(kargs_booted) || return 1
+	next=$(kargs_next)
+	[[ -n "${booted}" && -n "${next}" ]] || return 1
+	diff=$(diff <(printf '%s\n' "${booted}") <(printf '%s\n' "${next}") | sed -n 's/^< /-/p; s/^> /+/p')
+	[[ -n "${diff}" ]] || return 1
+	printf '%s\n' "${diff}"
 }
 
 kargs_pending_arg() {
-    local want=$1 w
-    case "${want}" in
-        *=) while IFS= read -r w; do [[ "${w}" == "${want}"* ]] && return 1; done < <(kargs_booted)
-            kargs_next | grep -q -- "^${want}" ;;
-        *) kargs_booted | grep -qxF -- "${want}" && return 1; kargs_next | grep -qxF -- "${want}" ;;
-    esac
+	local want=$1 w
+	case "${want}" in
+	*=)
+		while IFS= read -r w; do [[ "${w}" == "${want}"* ]] && return 1; done < <(kargs_booted)
+		kargs_next | grep -q -- "^${want}"
+		;;
+	*)
+		kargs_booted | grep -qxF -- "${want}" && return 1
+		kargs_next | grep -qxF -- "${want}"
+		;;
+	esac
 }
 
 kargs_notice() {
-    local a grepline=""
-    for a in "$@"; do grepline="${grepline:+${grepline} && }grep -qw -- ${a} /proc/cmdline"; done
-    echo "Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging): a newer staged image replaces this pending change and drops the argument. Check after the reboot: ${grepline}"
+	local a grepline=""
+	for a in "$@"; do grepline="${grepline:+${grepline} && }grep -qw -- ${a} /proc/cmdline"; done
+	echo "Reboot before the next image update (bootc upgrade, ujust update, switch-image, automatic update staging): a newer staged image replaces this pending change and drops the argument. Check after the reboot: ${grepline}"
 }
 
 # kargs_confirm_update <mode> <what>: before an image update or switch. mode: yes (warn, go on), no (plan only: warn, return 0) or ask
 # (warn, ask with default no). Returns 0 to go on, 1 when the user declined. Prints nothing when no kernel-argument change is pending.
 kargs_confirm_update() {
-    local mode=$1 what=$2 d
-    d=$(kargs_pending_change) || return 0
-    echo "WARNING: a pending kernel-argument change would be lost by ${what}:"
-    printf '%s\n' "${d}" | sed 's/^/  /'
-    echo "  A newer staged image replaces the pending deployment that carries it (the arguments are taken from the booted deployment). Reboot first, then update."
-    case "${mode}" in
-        yes) echo "  --yes: going on anyway."; return 0 ;;
-        no) return 0 ;;
-    esac
-    if declare -F menu_confirm > /dev/null; then menu_confirm "Go on anyway and lose the pending kernel arguments?" n; else return 1; fi
+	local mode=$1 what=$2 d
+	d=$(kargs_pending_change) || return 0
+	echo "WARNING: a pending kernel-argument change would be lost by ${what}:"
+	printf '%s\n' "${d}" | sed 's/^/  /'
+	echo "  A newer staged image replaces the pending deployment that carries it (the arguments are taken from the booted deployment). Reboot first, then update."
+	case "${mode}" in
+	yes)
+		echo "  --yes: going on anyway."
+		return 0
+		;;
+	no) return 0 ;;
+	esac
+	if declare -F menu_confirm >/dev/null; then menu_confirm "Go on anyway and lose the pending kernel arguments?" n; else return 1; fi
 }

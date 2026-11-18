@@ -18,60 +18,60 @@ tap_dir="$brew_prefix/opt/sdkman-cli/libexec"
 # merge_into <src dir> <dst dir>: move every entry of src into dst (one level deeper when both have a directory of the
 # same name, as for java/<version>); an entry that exists on both sides is left where it is and the merge fails
 merge_into() {
-    local src=$1 dst=$2 e name c
-    for e in "$src"/* "$src"/.[!.]*; do
-        [ -e "$e" ] || [ -L "$e" ] || continue
-        name=$(basename -- "$e")
-        if [ -d "$e" ] && [ ! -L "$e" ] && [ -d "$dst/$name" ] && [ ! -L "$dst/$name" ]; then
-            for c in "$e"/* "$e"/.[!.]*; do
-                [ -e "$c" ] || [ -L "$c" ] || continue
-                if [ -e "$dst/$name/$(basename -- "$c")" ] || [ -L "$dst/$name/$(basename -- "$c")" ]; then
-                    echo "sdk: $c and $dst/$name/$(basename -- "$c") both exist; left both in place" >&2
-                    return 1
-                fi
-                mv -- "$c" "$dst/$name/" || return 1
-            done
-            rmdir -- "$e" || return 1
-        elif [ -e "$dst/$name" ] || [ -L "$dst/$name" ]; then
-            echo "sdk: $e and $dst/$name both exist; left both in place" >&2
-            return 1
-        else
-            mv -- "$e" "$dst/$name" || return 1
-        fi
-    done
+	local src=$1 dst=$2 e name c
+	for e in "$src"/* "$src"/.[!.]*; do
+		[ -e "$e" ] || [ -L "$e" ] || continue
+		name=$(basename -- "$e")
+		if [ -d "$e" ] && [ ! -L "$e" ] && [ -d "$dst/$name" ] && [ ! -L "$dst/$name" ]; then
+			for c in "$e"/* "$e"/.[!.]*; do
+				[ -e "$c" ] || [ -L "$c" ] || continue
+				if [ -e "$dst/$name/$(basename -- "$c")" ] || [ -L "$dst/$name/$(basename -- "$c")" ]; then
+					echo "sdk: $c and $dst/$name/$(basename -- "$c") both exist; left both in place" >&2
+					return 1
+				fi
+				mv -- "$c" "$dst/$name/" || return 1
+			done
+			rmdir -- "$e" || return 1
+		elif [ -e "$dst/$name" ] || [ -L "$dst/$name" ]; then
+			echo "sdk: $e and $dst/$name both exist; left both in place" >&2
+			return 1
+		else
+			mv -- "$e" "$dst/$name" || return 1
+		fi
+	done
 }
 
 # link_candidates: make <tap libexec>/candidates a symlink to ~/.sdkman/candidates
 link_candidates() {
-    local cand="$tap_dir/candidates" target="$home_dir/candidates"
-    mkdir -p -- "$target" || return 1
-    if [ -L "$cand" ]; then
-        [ "$(readlink -- "$cand")" = "$target" ] && return 0
-        rm -f -- "$cand" || return 1
-    elif [ -d "$cand" ]; then
-        merge_into "$cand" "$target" || return 1
-        rmdir -- "$cand" || return 1
-    elif [ -e "$cand" ]; then
-        echo "sdk: $cand is not a directory or symlink; left alone" >&2
-        return 1
-    fi
-    ln -s -- "$target" "$cand"
+	local cand="$tap_dir/candidates" target="$home_dir/candidates"
+	mkdir -p -- "$target" || return 1
+	if [ -L "$cand" ]; then
+		[ "$(readlink -- "$cand")" = "$target" ] && return 0
+		rm -f -- "$cand" || return 1
+	elif [ -d "$cand" ]; then
+		merge_into "$cand" "$target" || return 1
+		rmdir -- "$cand" || return 1
+	elif [ -e "$cand" ]; then
+		echo "sdk: $cand is not a directory or symlink; left alone" >&2
+		return 1
+	fi
+	ln -s -- "$target" "$cand"
 }
 
 if [ -r "$home_dir/bin/sdkman-init.sh" ]; then
-    SDKMAN_DIR=$home_dir
+	SDKMAN_DIR=$home_dir
 elif [ -r "$tap_dir/bin/sdkman-init.sh" ]; then
-    SDKMAN_DIR=$tap_dir
-    link_candidates || echo "sdk: could not link the candidates directory to $home_dir/candidates" >&2
+	SDKMAN_DIR=$tap_dir
+	link_candidates || echo "sdk: could not link the candidates directory to $home_dir/candidates" >&2
 else
-    echo "sdk: SDKMAN is not installed. Install it with: ujust dev --only java" >&2
-    exit 1
+	echo "sdk: SDKMAN is not installed. Install it with: ujust dev --only java" >&2
+	exit 1
 fi
 export SDKMAN_DIR
 
 if [ "${1:-}" = "--octarine-relink" ]; then
-    echo "SDKMAN_DIR=$SDKMAN_DIR"
-    exit 0
+	echo "SDKMAN_DIR=$SDKMAN_DIR"
+	exit 0
 fi
 
 # sdkman-init.sh is not written for `set -u`; the sourcing and the call run in a plain bash

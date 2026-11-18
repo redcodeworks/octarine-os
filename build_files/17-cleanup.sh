@@ -7,7 +7,6 @@ echo "::group:: ===$(basename "$0")==="
 
 set -eoux pipefail
 
-
 # Only what has to run by default. sshd, tailscaled, cockpit.socket and the snapper
 # timers are installed but left off; enable them on demand, e.g.
 #   sudo systemctl enable --now tailscaled
@@ -18,7 +17,7 @@ set -eoux pipefail
 
 # pcp is an optional package: enable its units only when it was installed
 if rpm -q pcp &>/dev/null; then
-    systemctl enable pmcd.service pmlogger.service
+	systemctl enable pmcd.service pmlogger.service
 fi
 
 # Homebrew (files from the pinned ublue-os/brew image, copied in by the Containerfile). The first-boot

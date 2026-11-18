@@ -12,24 +12,24 @@ if [ "${OCTARINE_MOTD_FORCE_TTY:-}" != 1 ] && [ ! -t 1 ]; then exit 0; fi
 [ -n "${HOME:-}" ] && [ -d "${HOME}" ] || exit 0
 [ ! -e "${HOME}/.config/no-show-user-motd" ] || exit 0
 
-if command -v fastfetch > /dev/null 2>&1; then
-    # exactly one blank line below the fastfetch output, only when it ran and succeeded (the tip and /etc/user-motd branches below stay as they are)
-    if fastfetch 2> /dev/null; then printf '\n'; fi
-    exit 0
+if command -v fastfetch >/dev/null 2>&1; then
+	# exactly one blank line below the fastfetch output, only when it ran and succeeded (the tip and /etc/user-motd branches below stay as they are)
+	if fastfetch 2>/dev/null; then printf '\n'; fi
+	exit 0
 fi
 
 tips_dir="${OCTARINE_MOTD_TIPS:-/usr/share/ublue-os/motd/tips}"
 shopt -s nullglob
 tip_files=("${tips_dir}"/*.md)
 if [ "${#tip_files[@]}" -gt 0 ]; then
-    # the base image ships one tip per line (markdown emphasis and code quotes); pick one at random and drop the markup
-    tips=$(cat -- "${tip_files[@]}" 2> /dev/null | grep -v '^[[:space:]]*$')
-    if [ -n "${tips}" ]; then
-        if command -v shuf > /dev/null 2>&1; then tip=$(printf '%s\n' "${tips}" | shuf -n 1); else tip=$(printf '%s\n' "${tips}" | head -n 1); fi
-        printf 'Tip: %s\n' "$(printf '%s' "${tip}" | sed 's/[*`]//g')"
-        exit 0
-    fi
+	# the base image ships one tip per line (markdown emphasis and code quotes); pick one at random and drop the markup
+	tips=$(cat -- "${tip_files[@]}" 2>/dev/null | grep -v '^[[:space:]]*$')
+	if [ -n "${tips}" ]; then
+		if command -v shuf >/dev/null 2>&1; then tip=$(printf '%s\n' "${tips}" | shuf -n 1); else tip=$(printf '%s\n' "${tips}" | head -n 1); fi
+		printf 'Tip: %s\n' "$(printf '%s' "${tip}" | sed 's/[*`]//g')"
+		exit 0
+	fi
 fi
 user_motd="${OCTARINE_MOTD_FILE:-/etc/user-motd}"
-if [ -s "${user_motd}" ]; then cat -- "${user_motd}" 2> /dev/null || true; fi
+if [ -s "${user_motd}" ]; then cat -- "${user_motd}" 2>/dev/null || true; fi
 exit 0

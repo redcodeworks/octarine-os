@@ -18,14 +18,21 @@ os_release="${OS_RELEASE:-/etc/os-release}"
 expect_image_id="${EXPECT_IMAGE_ID:-octarine-os-nvidia}"
 local_dir="${LOCAL_DIR:-/usr/local}"
 fail=0
-check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+check() { if eval "$2" >/dev/null 2>&1; then echo "PASS $1"; else
+	echo "FAIL $1"
+	fail=1
+fi; }
 
 # The VM-hosting set (the meta packages and its tools) belongs to the dx variants only; the libguestfs tools stay everywhere.
 vmhost_pkgs() { rpm -qa --qf '%{NAME}\n' | grep -xE 'libvirt|qemu-kvm|cockpit-machines|virt-manager|virt-viewer|libvirt-nss'; }
 nvidia_pkgs() { rpm -qa | grep -i nvidia | grep -vi firmware; }
 # The CUDA toolkit (nvcc and friends) is never part of an image: NVIDIA's license does not allow shipping it, and `ujust dev`
 # installs it in a distrobox. Only the driver's own userspace (nvidia-driver-cuda*, libcuda) belongs here.
-toolkit_pkgs() { local all; all=$(rpm -qa); grep -iE '^(cuda-toolkit|cuda-nvcc|cuda-compiler|nvidia-cuda-toolkit)' <<<"${all}"; }
+toolkit_pkgs() {
+	local all
+	all=$(rpm -qa)
+	grep -iE '^(cuda-toolkit|cuda-nvcc|cuda-compiler|nvidia-cuda-toolkit)' <<<"${all}"
+}
 no_toolkit_files() { [ -z "$(find "${local_dir}" -maxdepth 1 -name 'cuda*' 2>/dev/null)" ] && ! command -v nvcc; }
 # Exact names of the proprietary driver's modules, anywhere under the modules directory. A glob like nvidia*.ko* also
 # matches the stock kernel's nvidia-wmi-ec-backlight.ko.xz (a laptop backlight helper, no relation to the driver).
@@ -35,90 +42,106 @@ nvidia_modules() { find "${modules_dir}" -type f 2>/dev/null | grep -E "/${nvidi
 # The listing goes to a file first: with pipefail, "lsinitrd | grep -q" fails whenever grep exits at the first match and
 # lsinitrd (a long bash script) dies of SIGPIPE (status 141), which made a good initramfs fail this check.
 initrd_list() { # initramfs, output file; the exit status is lsinitrd's
-    lsinitrd "$1" >"$2" 2>"$2.err"
+	lsinitrd "$1" >"$2" 2>"$2.err"
 }
 initrd_has_nvidia() {
-    local list rc
-    list=$(mktemp) || return 1
-    initrd_list "$1" "${list}"; rc=$?
-    # a failing lsinitrd is not proof of absence, but an empty listing is no proof of presence either
-    if [ "${rc}" -eq 0 ] && grep -qE "(^|[ /])${nvidia_re}( |\$)" "${list}"; then rm -f "${list}" "${list}.err"; return 0; fi
-    rm -f "${list}" "${list}.err"
-    return 1
+	local list rc
+	list=$(mktemp) || return 1
+	initrd_list "$1" "${list}"
+	rc=$?
+	# a failing lsinitrd is not proof of absence, but an empty listing is no proof of presence either
+	if [ "${rc}" -eq 0 ] && grep -qE "(^|[ /])${nvidia_re}( |\$)" "${list}"; then
+		rm -f "${list}" "${list}.err"
+		return 0
+	fi
+	rm -f "${list}" "${list}.err"
+	return 1
 }
 # Printed when the initramfs check fails, so the log explains itself (stderr is kept here, unlike in the check)
 initrd_diagnose() {
-    local img=$1 list rc
-    list=$(mktemp) || return 0
-    initrd_list "${img}" "${list}"; rc=$?
-    echo "DIAG lsinitrd exit status: ${rc}"
-    echo "DIAG lsinitrd stderr:"; head -20 "${list}.err" | sed 's/^/DIAG   /'
-    echo "DIAG first 5 lines of lsinitrd:"; head -5 "${list}" | sed 's/^/DIAG   /'
-    echo "DIAG lsinitrd lines matching nvidia (max 20):"; grep -i nvidia "${list}" | head -20 | sed 's/^/DIAG   /'
-    echo "DIAG ls -l of the initramfs:"; ls -l "${img}" 2>&1 | sed 's/^/DIAG   /'
-    rm -f "${list}" "${list}.err"
+	local img=$1 list rc
+	list=$(mktemp) || return 0
+	initrd_list "${img}" "${list}"
+	rc=$?
+	echo "DIAG lsinitrd exit status: ${rc}"
+	echo "DIAG lsinitrd stderr:"
+	head -20 "${list}.err" | sed 's/^/DIAG   /'
+	echo "DIAG first 5 lines of lsinitrd:"
+	head -5 "${list}" | sed 's/^/DIAG   /'
+	echo "DIAG lsinitrd lines matching nvidia (max 20):"
+	grep -i nvidia "${list}" | head -20 | sed 's/^/DIAG   /'
+	echo "DIAG ls -l of the initramfs:"
+	ls -l "${img}" 2>&1 | sed 's/^/DIAG   /'
+	rm -f "${list}" "${list}.err"
 }
 
 case "${mode}" in
-    present)
-        kver=$(ls "${modules_dir}" | head -1)
-        check "an NVIDIA driver package is installed" "nvidia_pkgs | grep -q ."
-        check "an NVIDIA kernel module exists for the kernel" "nvidia_modules | grep -q ."
-        check "exactly one kernel is installed" "test \"\$(ls '${modules_dir}' | wc -l)\" = 1"
-        check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "test -n '${BASE_KERNEL:-}' && test '${kver}' = '${BASE_KERNEL:-}'"
-        # Secure Boot: the NVIDIA modules must be signed with the key whose certificate the image ships for the MOK enrollment
-        # (/etc/pki/akmods/certs/akmods-ublue.der, imported by `ujust hardware-setup`): the module's sig_key must equal that certificate's subject key
-        # identifier or serial number (see below), otherwise an enrolled machine would refuse the modules. The modules must also be built for THIS kernel (vermagic starts with the
-        # kernel release). EXPECT_MODULE_SIGNER (keys/secureboot.env NVIDIA_MODULE_SIGNER, optional) pins the signer name as well. The DIAG line shows the real values.
-        akmods_der=${AKMODS_CERT:-/etc/pki/akmods/certs/akmods-ublue.der}
-        skid() { openssl x509 -inform DER -in "${akmods_der}" -noout -ext subjectKeyIdentifier 2>/dev/null | tail -n 1 | tr -d ' :' | tr 'a-f' 'A-F'; }
-        # The kernel reports a module's sig_key as the identifier the signature carries: the signing certificate's subject key identifier OR its serial
-        # number, depending on how the signer encoded it. Universal Blue's akmods build (ublue-os/akmods #632, 2026-11-11) switched from the first to the
-        # second for the SAME key: sig_key 7D:F8:... is the serial number of the published 2024 certificate certs/public_key.der (subject key identifier
-        # 2C:25:...). Both name this one certificate; the serial form must also come with the certificate's own common name as the module's signer.
-        serial() { openssl x509 -inform DER -in "${akmods_der}" -noout -serial 2>/dev/null | sed 's/^serial=//' | tr -d ' :' | tr 'a-f' 'A-F'; }
-        certcn() { openssl x509 -inform DER -in "${akmods_der}" -noout -subject -nameopt multiline 2>/dev/null | sed -n 's/^ *commonName *= *//p'; }
-        modkey() { modinfo -F sig_key "$1" 2>/dev/null | tr -d ' :' | tr 'a-f' 'A-F'; }
-        modok() { local k; k=$(modkey "$1"); [ -n "${k}" ] && { [ "${k}" = "$(skid)" ] || { [ "${k}" = "$(serial)" ] && [ "$(modinfo -F signer "$1")" = "$(certcn)" ]; }; }; }
-        for m in $(nvidia_modules | head -n 1); do echo "DIAG ${m}: signer='$(modinfo -F signer "${m}" 2>&1)' sig_key='$(modinfo -F sig_key "${m}" 2>&1)' vermagic='$(modinfo -F vermagic "${m}" 2>&1)'; akmods cert skid='$(skid)' serial='$(serial)' cn='$(certcn)'"; done
-        check "every NVIDIA kernel module is signed with the key of ${akmods_der} (sig_key equals its subject key identifier, or its serial number with the certificate's common name as signer)" "test -n \"\$(skid)\" && nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do modok \"\$m\" || exit 1; done )"
-        if [ -n "${EXPECT_MODULE_SIGNER:-}" ]; then
-            check "every NVIDIA kernel module names the pinned signer (${EXPECT_MODULE_SIGNER})" "( for m in \$(nvidia_modules); do test \"\$(modinfo -F signer \"\$m\")\" = '${EXPECT_MODULE_SIGNER}' || exit 1; done )"
-        fi
-        check "every NVIDIA kernel module was built for the installed kernel (vermagic ${kver})" "nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do test \"\$(modinfo -F vermagic \"\$m\" | cut -d' ' -f1)\" = '${kver}' || exit 1; done )"
-        check "the initramfs for the kernel exists" "test -s '${modules_dir}/${kver}/initramfs.img'"
-        if command -v lsinitrd >/dev/null 2>&1; then
-            before_fail=${fail}
-            check "the initramfs contains the nvidia modules" "initrd_has_nvidia '${modules_dir}/${kver}/initramfs.img'"
-            if [ "${fail}" != "${before_fail}" ]; then initrd_diagnose "${modules_dir}/${kver}/initramfs.img"; fi
-        else
-            echo "INFO lsinitrd not available: initramfs content not checked"
-        fi
-        check "kernel arguments file blacklists nouveau and sets modeset" "grep -q nvidia-drm.modeset=1 '${kargs_file}' && grep -q rd.driver.blacklist=nouveau '${kargs_file}'"
-        check "nouveau is blacklisted for modprobe" "grep -qx 'blacklist nouveau' '${modprobe_file}'"
-        check "the NVIDIA SELinux module is installed" "semodule -l | grep -qi nvidia"
-        check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
-        check "image id (${expect_image_id})" "grep -qx 'IMAGE_ID=\"${expect_image_id}\"' '${os_release}'"
-        check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
-        case "${expect_image_id}" in
-            *-dx) ;;
-            *) check "no VM-hosting package in the plain NVIDIA image (dx only)" "test -z \"\$(vmhost_pkgs)\"" ;;
-        esac
-        check "no CUDA toolkit package is installed" "test -z \"\$(toolkit_pkgs)\""
-        check "no /usr/local/cuda* and no nvcc" "no_toolkit_files"
-        # what a container needs to get the GPU through CDI (informational: whether the driver install brings them is unverified)
-        for p in nvidia-container-toolkit nvidia-container-toolkit-base; do
-            if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO package ${p} installed"; else echo "INFO package ${p} NOT installed (needed for CDI)"; fi
-        done
-        for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
-            if systemctl is-enabled "${u}" >/dev/null 2>&1; then echo "INFO ${u} enabled"; else echo "WARNING ${u} not enabled (CDI spec is not regenerated at boot; unverified)"; fi
-        done
-        if command -v nvidia-ctk >/dev/null 2>&1; then echo "INFO nvidia-ctk present"; else echo "INFO nvidia-ctk NOT present (needed for CDI)"; fi
-        ;;
-    absent)
-        check "no NVIDIA driver package in the default image" "! nvidia_pkgs | grep -q ."
-        check "no NVIDIA kernel module in the default image" "! nvidia_modules | grep -q ."
-        ;;
-    *) echo "unknown mode ${mode}" >&2; exit 2 ;;
+present)
+	kver=$(ls "${modules_dir}" | head -1)
+	check "an NVIDIA driver package is installed" "nvidia_pkgs | grep -q ."
+	check "an NVIDIA kernel module exists for the kernel" "nvidia_modules | grep -q ."
+	check "exactly one kernel is installed" "test \"\$(ls '${modules_dir}' | wc -l)\" = 1"
+	check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "test -n '${BASE_KERNEL:-}' && test '${kver}' = '${BASE_KERNEL:-}'"
+	# Secure Boot: the NVIDIA modules must be signed with the key whose certificate the image ships for the MOK enrollment
+	# (/etc/pki/akmods/certs/akmods-ublue.der, imported by `ujust hardware-setup`): the module's sig_key must equal that certificate's subject key
+	# identifier or serial number (see below), otherwise an enrolled machine would refuse the modules. The modules must also be built for THIS kernel (vermagic starts with the
+	# kernel release). EXPECT_MODULE_SIGNER (keys/secureboot.env NVIDIA_MODULE_SIGNER, optional) pins the signer name as well. The DIAG line shows the real values.
+	akmods_der=${AKMODS_CERT:-/etc/pki/akmods/certs/akmods-ublue.der}
+	skid() { openssl x509 -inform DER -in "${akmods_der}" -noout -ext subjectKeyIdentifier 2>/dev/null | tail -n 1 | tr -d ' :' | tr 'a-f' 'A-F'; }
+	# The kernel reports a module's sig_key as the identifier the signature carries: the signing certificate's subject key identifier OR its serial
+	# number, depending on how the signer encoded it. Universal Blue's akmods build (ublue-os/akmods #632, 2026-11-11) switched from the first to the
+	# second for the SAME key: sig_key 7D:F8:... is the serial number of the published 2024 certificate certs/public_key.der (subject key identifier
+	# 2C:25:...). Both name this one certificate; the serial form must also come with the certificate's own common name as the module's signer.
+	serial() { openssl x509 -inform DER -in "${akmods_der}" -noout -serial 2>/dev/null | sed 's/^serial=//' | tr -d ' :' | tr 'a-f' 'A-F'; }
+	certcn() { openssl x509 -inform DER -in "${akmods_der}" -noout -subject -nameopt multiline 2>/dev/null | sed -n 's/^ *commonName *= *//p'; }
+	modkey() { modinfo -F sig_key "$1" 2>/dev/null | tr -d ' :' | tr 'a-f' 'A-F'; }
+	modok() {
+		local k
+		k=$(modkey "$1")
+		[ -n "${k}" ] && { [ "${k}" = "$(skid)" ] || { [ "${k}" = "$(serial)" ] && [ "$(modinfo -F signer "$1")" = "$(certcn)" ]; }; }
+	}
+	for m in $(nvidia_modules | head -n 1); do echo "DIAG ${m}: signer='$(modinfo -F signer "${m}" 2>&1)' sig_key='$(modinfo -F sig_key "${m}" 2>&1)' vermagic='$(modinfo -F vermagic "${m}" 2>&1)'; akmods cert skid='$(skid)' serial='$(serial)' cn='$(certcn)'"; done
+	check "every NVIDIA kernel module is signed with the key of ${akmods_der} (sig_key equals its subject key identifier, or its serial number with the certificate's common name as signer)" "test -n \"\$(skid)\" && nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do modok \"\$m\" || exit 1; done )"
+	if [ -n "${EXPECT_MODULE_SIGNER:-}" ]; then
+		check "every NVIDIA kernel module names the pinned signer (${EXPECT_MODULE_SIGNER})" "( for m in \$(nvidia_modules); do test \"\$(modinfo -F signer \"\$m\")\" = '${EXPECT_MODULE_SIGNER}' || exit 1; done )"
+	fi
+	check "every NVIDIA kernel module was built for the installed kernel (vermagic ${kver})" "nvidia_modules | grep -q . && ( for m in \$(nvidia_modules); do test \"\$(modinfo -F vermagic \"\$m\" | cut -d' ' -f1)\" = '${kver}' || exit 1; done )"
+	check "the initramfs for the kernel exists" "test -s '${modules_dir}/${kver}/initramfs.img'"
+	if command -v lsinitrd >/dev/null 2>&1; then
+		before_fail=${fail}
+		check "the initramfs contains the nvidia modules" "initrd_has_nvidia '${modules_dir}/${kver}/initramfs.img'"
+		if [ "${fail}" != "${before_fail}" ]; then initrd_diagnose "${modules_dir}/${kver}/initramfs.img"; fi
+	else
+		echo "INFO lsinitrd not available: initramfs content not checked"
+	fi
+	check "kernel arguments file blacklists nouveau and sets modeset" "grep -q nvidia-drm.modeset=1 '${kargs_file}' && grep -q rd.driver.blacklist=nouveau '${kargs_file}'"
+	check "nouveau is blacklisted for modprobe" "grep -qx 'blacklist nouveau' '${modprobe_file}'"
+	check "the NVIDIA SELinux module is installed" "semodule -l | grep -qi nvidia"
+	check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
+	check "image id (${expect_image_id})" "grep -qx 'IMAGE_ID=\"${expect_image_id}\"' '${os_release}'"
+	check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
+	case "${expect_image_id}" in
+	*-dx) ;;
+	*) check "no VM-hosting package in the plain NVIDIA image (dx only)" "test -z \"\$(vmhost_pkgs)\"" ;;
+	esac
+	check "no CUDA toolkit package is installed" "test -z \"\$(toolkit_pkgs)\""
+	check "no /usr/local/cuda* and no nvcc" "no_toolkit_files"
+	# what a container needs to get the GPU through CDI (informational: whether the driver install brings them is unverified)
+	for p in nvidia-container-toolkit nvidia-container-toolkit-base; do
+		if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO package ${p} installed"; else echo "INFO package ${p} NOT installed (needed for CDI)"; fi
+	done
+	for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
+		if systemctl is-enabled "${u}" >/dev/null 2>&1; then echo "INFO ${u} enabled"; else echo "WARNING ${u} not enabled (CDI spec is not regenerated at boot; unverified)"; fi
+	done
+	if command -v nvidia-ctk >/dev/null 2>&1; then echo "INFO nvidia-ctk present"; else echo "INFO nvidia-ctk NOT present (needed for CDI)"; fi
+	;;
+absent)
+	check "no NVIDIA driver package in the default image" "! nvidia_pkgs | grep -q ."
+	check "no NVIDIA kernel module in the default image" "! nvidia_modules | grep -q ."
+	;;
+*)
+	echo "unknown mode ${mode}" >&2
+	exit 2
+	;;
 esac
 exit "${fail}"

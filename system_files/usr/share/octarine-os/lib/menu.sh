@@ -32,14 +32,14 @@
 # gum colors: ANSI palette colors 0-15 only (no 256-color or hex values), so menus follow the terminal theme. Each is
 # exported only when the user has not set it (an empty value counts as set), so a user's own GUM_* settings win.
 menu_palette() {
-    local pair var val
-    for pair in GUM_CHOOSE_CURSOR_FOREGROUND=2 GUM_CHOOSE_SELECTED_FOREGROUND=2 GUM_CHOOSE_HEADER_FOREGROUND=4 \
-        GUM_CONFIRM_PROMPT_FOREGROUND=4 GUM_CONFIRM_SELECTED_FOREGROUND=0 GUM_CONFIRM_SELECTED_BACKGROUND=2 \
-        GUM_CONFIRM_UNSELECTED_FOREGROUND=7 GUM_CONFIRM_UNSELECTED_BACKGROUND=8; do
-        var=${pair%%=*}
-        val=${pair#*=}
-        if [ -z "${!var+x}" ]; then export "$var=$val"; fi
-    done
+	local pair var val
+	for pair in GUM_CHOOSE_CURSOR_FOREGROUND=2 GUM_CHOOSE_SELECTED_FOREGROUND=2 GUM_CHOOSE_HEADER_FOREGROUND=4 \
+		GUM_CONFIRM_PROMPT_FOREGROUND=4 GUM_CONFIRM_SELECTED_FOREGROUND=0 GUM_CONFIRM_SELECTED_BACKGROUND=2 \
+		GUM_CONFIRM_UNSELECTED_FOREGROUND=7 GUM_CONFIRM_UNSELECTED_BACKGROUND=8; do
+		var=${pair%%=*}
+		val=${pair#*=}
+		if [ -z "${!var+x}" ]; then export "$var=$val"; fi
+	done
 }
 menu_palette
 
@@ -48,94 +48,97 @@ menu_ready() { menu_tty && command -v gum >/dev/null 2>&1; }
 menu_ready_one() { menu_tty && command -v ugum >/dev/null 2>&1; }
 
 menu_title() {
-    if menu_ready; then gum style --bold --foreground 4 "$1"; else printf '%s\n' "$1"; fi
+	if menu_ready; then gum style --bold --foreground 4 "$1"; else printf '%s\n' "$1"; fi
 }
 
 # menu_height N: the list height for N rows, min(N, terminal rows - 4), at least 3 (a list that fits the screen never pages).
 menu_height() {
-    local rows h
-    rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
-    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
-    h=$((rows - 4))
-    if [ "$1" -lt "$h" ]; then h=$1; fi
-    if [ "$h" -lt 3 ]; then h=3; fi
-    echo "$h"
+	local rows h
+	rows=${LINES:-$(tput lines 2>/dev/null || echo 24)}
+	[[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+	h=$((rows - 4))
+	if [ "$1" -lt "$h" ]; then h=$1; fi
+	if [ "$h" -lt 3 ]; then h=3; fi
+	echo "$h"
 }
 
 menu_multi() {
-    local header=$1 spec id text sel line out h group=""
-    shift
-    MENU_RESULT=()
-    menu_ready || return 3
-    local -A id_of=()
-    local items=() selected=() args
-    for spec in "$@"; do
-        IFS='^' read -r id text sel <<<"$spec"
-        if [ -z "$id" ]; then
-            group=${text//─/}
-            group=${group#"${group%%[![:space:]]*}"}
-            group=${group%"${group##*[![:space:]]}"}
-            continue
-        fi
-        text=${group:+$group: }${text//,/;}
-        items+=("$text")
-        id_of["$text"]=$id
-        if [ "${MENU_KEEP_SELECTED:-0}" = 1 ] && [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
-    done
-    h=$(menu_height "${#items[@]}")
-    args=(choose --no-limit --height "$h" --selected-prefix "◉  " --unselected-prefix "○  " --cursor "▸  ")
-    args+=(--header "${header:+$header$'\n'}x or space ticks an entry, ENTER confirms the ticked ones, Esc cancels")
-    if [ "${#selected[@]}" -gt 0 ]; then args+=(--selected "$(IFS=,; echo "${selected[*]}")"); fi
-    out=$(gum "${args[@]}" "${items[@]}") || true
-    while IFS= read -r line; do
-        if [ -n "$line" ] && [ -n "${id_of[$line]:-}" ]; then MENU_RESULT+=("${id_of[$line]}"); fi
-    done <<<"$out"
-    if [ "${#MENU_RESULT[@]}" -eq 0 ]; then
-        echo "Nothing ticked: press x (or space) on an entry first, then ENTER." >&2
-    fi
-    return 0
+	local header=$1 spec id text sel line out h group=""
+	shift
+	MENU_RESULT=()
+	menu_ready || return 3
+	local -A id_of=()
+	local items=() selected=() args
+	for spec in "$@"; do
+		IFS='^' read -r id text sel <<<"$spec"
+		if [ -z "$id" ]; then
+			group=${text//─/}
+			group=${group#"${group%%[![:space:]]*}"}
+			group=${group%"${group##*[![:space:]]}"}
+			continue
+		fi
+		text=${group:+$group: }${text//,/;}
+		items+=("$text")
+		id_of["$text"]=$id
+		if [ "${MENU_KEEP_SELECTED:-0}" = 1 ] && [ "${sel:-0}" = 1 ]; then selected+=("$text"); fi
+	done
+	h=$(menu_height "${#items[@]}")
+	args=(choose --no-limit --height "$h" --selected-prefix "◉  " --unselected-prefix "○  " --cursor "▸  ")
+	args+=(--header "${header:+$header$'\n'}x or space ticks an entry, ENTER confirms the ticked ones, Esc cancels")
+	if [ "${#selected[@]}" -gt 0 ]; then args+=(--selected "$(
+		IFS=,
+		echo "${selected[*]}"
+	)"); fi
+	out=$(gum "${args[@]}" "${items[@]}") || true
+	while IFS= read -r line; do
+		if [ -n "$line" ] && [ -n "${id_of[$line]:-}" ]; then MENU_RESULT+=("${id_of[$line]}"); fi
+	done <<<"$out"
+	if [ "${#MENU_RESULT[@]}" -eq 0 ]; then
+		echo "Nothing ticked: press x (or space) on an entry first, then ENTER." >&2
+	fi
+	return 0
 }
 
 menu_one() {
-    local header=$1 spec id text sel out
-    shift
-    MENU_ONE=""
-    menu_ready_one || return 3
-    local -A id_of=()
-    local items=()
-    for spec in "$@"; do
-        IFS='^' read -r id text sel <<<"$spec"
-        [ -n "$id" ] || continue
-        items+=("$text")
-        id_of["$text"]=$id
-    done
-    if [ -n "$header" ]; then printf '%s\n' "$header"; fi
-    # Real gum shows 10 rows and pages the rest; a flag would be dropped by ugum's fzf fallback (and its value taken as an
-    # item), so the height goes in through the environment (the fallback ignores it), unless the user set it.
-    if [ -z "${GUM_CHOOSE_HEIGHT+x}" ]; then
-        out=$(GUM_CHOOSE_HEIGHT=$(menu_height "${#items[@]}") ugum choose "${items[@]}") || true
-    else
-        out=$(ugum choose "${items[@]}") || true
-    fi
-    out=${out%%$'\n'*}
-    [ -n "$out" ] && [ -n "${id_of[$out]:-}" ] || return 1
-    MENU_ONE=${id_of[$out]}
-    return 0
+	local header=$1 spec id text sel out
+	shift
+	MENU_ONE=""
+	menu_ready_one || return 3
+	local -A id_of=()
+	local items=()
+	for spec in "$@"; do
+		IFS='^' read -r id text sel <<<"$spec"
+		[ -n "$id" ] || continue
+		items+=("$text")
+		id_of["$text"]=$id
+	done
+	if [ -n "$header" ]; then printf '%s\n' "$header"; fi
+	# Real gum shows 10 rows and pages the rest; a flag would be dropped by ugum's fzf fallback (and its value taken as an
+	# item), so the height goes in through the environment (the fallback ignores it), unless the user set it.
+	if [ -z "${GUM_CHOOSE_HEIGHT+x}" ]; then
+		out=$(GUM_CHOOSE_HEIGHT=$(menu_height "${#items[@]}") ugum choose "${items[@]}") || true
+	else
+		out=$(ugum choose "${items[@]}") || true
+	fi
+	out=${out%%$'\n'*}
+	[ -n "$out" ] && [ -n "${id_of[$out]:-}" ] || return 1
+	MENU_ONE=${id_of[$out]}
+	return 0
 }
 
 menu_confirm() {
-    local q=$1 def=${2:-n} reply
-    if menu_ready; then
-        if [ "$def" = y ]; then gum confirm "$q" && return 0; else gum confirm --default=false "$q" && return 0; fi
-        return 1
-    fi
-    if [ "$def" = y ]; then printf '%s [Y/n] ' "$q"; else printf '%s [y/N] ' "$q"; fi
-    IFS= read -r reply || return 1
-    case "$reply" in
-        [Yy]*) return 0 ;;
-        "") [ "$def" = y ] && return 0 ;;
-    esac
-    return 1
+	local q=$1 def=${2:-n} reply
+	if menu_ready; then
+		if [ "$def" = y ]; then gum confirm "$q" && return 0; else gum confirm --default=false "$q" && return 0; fi
+		return 1
+	fi
+	if [ "$def" = y ]; then printf '%s [Y/n] ' "$q"; else printf '%s [y/N] ' "$q"; fi
+	IFS= read -r reply || return 1
+	case "$reply" in
+	[Yy]*) return 0 ;;
+	"") [ "$def" = y ] && return 0 ;;
+	esac
+	return 1
 }
 
 # Emoji prefixes on selected message lines (terminal only, off with NO_EMOJI or OCTARINE_PLAIN); see emoji.sh.

@@ -18,39 +18,42 @@ SCX_MAX_FAILURES=${OCTARINE_SCX_MAX_FAILURES:-3}
 SCX_VERIFY_SECONDS=${OCTARINE_SCX_VERIFY_SECONDS:-5}
 SCX_IDLE_SECONDS=${OCTARINE_SCX_IDLE_SECONDS:-8}
 
-scx_log() { logger -t octarine-scx -- "$*" 2>/dev/null || true; echo "octarine-scx: $*" >&2; }
+scx_log() {
+	logger -t octarine-scx -- "$*" 2>/dev/null || true
+	echo "octarine-scx: $*" >&2
+}
 
 scx_kernel() { echo "${OCTARINE_SCX_KERNEL:-$(uname -r)}"; }
 
 # scx_reg_get <registry file> <KEY>: the value of KEY=value (first match), parsed, never sourced
 scx_reg_get() {
-    awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$1"
+	awk -v k="$2" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$1"
 }
 
 # scx_find_instance <name>: prints the registry file of the exact instance name and returns 0; returns 1 otherwise.
 # The name must look like an instance (lower case letters, digits, underscore) AND equal the name of a registry file.
 scx_find_instance() {
-    local want=${1-} f base
-    [[ "${want}" =~ ^[a-z0-9][a-z0-9_]*$ ]] || return 1
-    for f in "${SCX_REGISTRY}"/*.conf; do
-        [[ -f "${f}" ]] || continue
-        base=${f##*/}
-        if [[ "${base%.conf}" == "${want}" ]]; then
-            printf '%s\n' "${f}"
-            return 0
-        fi
-    done
-    return 1
+	local want=${1-} f base
+	[[ "${want}" =~ ^[a-z0-9][a-z0-9_]*$ ]] || return 1
+	for f in "${SCX_REGISTRY}"/*.conf; do
+		[[ -f "${f}" ]] || continue
+		base=${f##*/}
+		if [[ "${base%.conf}" == "${want}" ]]; then
+			printf '%s\n' "${f}"
+			return 0
+		fi
+	done
+	return 1
 }
 
 # scx_instances: the instance names of the registry, one per line
 scx_instances() {
-    local f base
-    for f in "${SCX_REGISTRY}"/*.conf; do
-        [[ -f "${f}" ]] || continue
-        base=${f##*/}
-        printf '%s\n' "${base%.conf}"
-    done
+	local f base
+	for f in "${SCX_REGISTRY}"/*.conf; do
+		[[ -f "${f}" ]] || continue
+		base=${f##*/}
+		printf '%s\n' "${base%.conf}"
+	done
 }
 
 # scx_ops_instance <ops string>: the registered instance a root/ops value belongs to, or nothing. The kernel reports the ops name
@@ -58,14 +61,14 @@ scx_instances() {
 # string equals its name or starts with `<name>_`; the longest match wins (the registry must have no name that is `<other>_...`:
 # tests/schedulers.sh fails when a new entry makes that ambiguous). An empty or unknown string gives nothing.
 scx_ops_instance() {
-    local ops=${1-} best="" i
-    [[ -n "${ops}" ]] || return 0
-    while IFS= read -r i; do
-        if [[ "${ops}" == "${i}" || "${ops}" == "${i}_"* ]]; then
-            ((${#i} > ${#best})) && best=${i}
-        fi
-    done < <(scx_instances)
-    [[ -z "${best}" ]] || printf '%s\n' "${best}"
+	local ops=${1-} best="" i
+	[[ -n "${ops}" ]] || return 0
+	while IFS= read -r i; do
+		if [[ "${ops}" == "${i}" || "${ops}" == "${i}_"* ]]; then
+			((${#i} > ${#best})) && best=${i}
+		fi
+	done < <(scx_instances)
+	[[ -z "${best}" ]] || printf '%s\n' "${best}"
 }
 
 scx_marker_dir() { echo "${SCX_STATE}/scx-disabled"; }

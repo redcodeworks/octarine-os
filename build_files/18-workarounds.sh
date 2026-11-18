@@ -11,11 +11,11 @@ set -eoux pipefail
 # /usr/lib/modules/ entries and fails on those with no matching kernel headers.
 # (Bluefin PR #4677; here dracut would otherwise find two kernel directories.)
 for kver_dir in /usr/lib/modules/*/; do
-    kver=$(basename "${kver_dir}")
-    if ! rpm -q "kernel-core-${kver}" &>/dev/null; then
-        echo "Removing orphan /usr/lib/modules/${kver} (no matching kernel-core RPM)"
-        rm -rf "${kver_dir}"
-    fi
+	kver=$(basename "${kver_dir}")
+	if ! rpm -q "kernel-core-${kver}" &>/dev/null; then
+		echo "Removing orphan /usr/lib/modules/${kver} (no matching kernel-core RPM)"
+		rm -rf "${kver_dir}"
+	fi
 done
 
 echo "::endgroup::"

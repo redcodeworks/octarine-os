@@ -13,7 +13,10 @@ echo "::group::nvidia: driver install"
 before=$(kernel_of)
 test "$(ls /usr/lib/modules | wc -l)" = 1
 kver=$(ls /usr/lib/modules)
-[[ "${kver}" == "${before}" ]] || { echo "ERROR: /usr/lib/modules holds ${kver} but kernel-core is ${before}"; exit 1; }
+[[ "${kver}" == "${before}" ]] || {
+	echo "ERROR: /usr/lib/modules holds ${kver} but kernel-core is ${before}"
+	exit 1
+}
 echo "Kernel of the base image: ${before}"
 
 test -x /tmp/akmods-rpms/ublue-os/nvidia-install.sh
@@ -23,23 +26,29 @@ echo "::endgroup::"
 echo "::group::nvidia: image identity and kernel check"
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
 # version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
-set_os_release_field() { # key value: replace the line when it exists, append it otherwise
-    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
-    if grep -q "^${key}=" "${file}"; then
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
-    else
-        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
-        echo "${key}=\"${value}\"" >> "${file}"
-    fi
-    grep -qx "${key}=\"${value}\"" "${file}"
+set_os_release_field() {                                                  # key value: replace the line when it exists, append it otherwise
+	local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}" # the override is for tests
+	if grep -q "^${key}=" "${file}"; then
+		sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+	else
+		[[ -z "$(tail -c1 "${file}")" ]] || echo >>"${file}"
+		echo "${key}=\"${value}\"" >>"${file}"
+	fi
+	grep -qx "${key}=\"${value}\"" "${file}"
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
 # the two fields are written after the dracut run below (dracut copies os-release into the initramfs; a per-build IMAGE_VERSION there changed it every build)
 
 after=$(kernel_of)
-[[ "${after}" == "${before}" ]] || { echo "ERROR: the NVIDIA install changed the kernel (${before} -> ${after})"; exit 1; }
+[[ "${after}" == "${before}" ]] || {
+	echo "ERROR: the NVIDIA install changed the kernel (${before} -> ${after})"
+	exit 1
+}
 test "$(ls /usr/lib/modules | wc -l)" = 1
-[[ "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: kernel module directory changed"; exit 1; }
+[[ "$(ls /usr/lib/modules)" == "${before}" ]] || {
+	echo "ERROR: kernel module directory changed"
+	exit 1
+}
 
 echo "::endgroup::"
 echo "::group::nvidia: CDI, kernel arguments and initramfs"
@@ -48,10 +57,10 @@ echo "::group::nvidia: CDI, kernel arguments and initramfs"
 # sources, read 2026-11-10; the spec is written to /var/run/cdi/nvidia.yaml at boot). This is only a guarded fallback for when
 # neither toolkit package is there: try the base package once (a warning on failure). The units are enabled when they exist.
 if ! rpm -q nvidia-container-toolkit >/dev/null 2>&1 && ! rpm -q nvidia-container-toolkit-base >/dev/null 2>&1; then
-    dnf5 -y install nvidia-container-toolkit-base || echo "WARNING: nvidia-container-toolkit-base is not installed; CDI needs it (nvidia-ctk cdi generate)"
+	dnf5 -y install nvidia-container-toolkit-base || echo "WARNING: nvidia-container-toolkit-base is not installed; CDI needs it (nvidia-ctk cdi generate)"
 fi
 for u in nvidia-cdi-refresh.path nvidia-cdi-refresh.service; do
-    if [[ -e "/usr/lib/systemd/system/${u}" ]]; then systemctl enable "${u}" || echo "WARNING: could not enable ${u}"; else echo "NOTE: ${u} does not exist in this image"; fi
+	if [[ -e "/usr/lib/systemd/system/${u}" ]]; then systemctl enable "${u}" || echo "WARNING: could not enable ${u}"; else echo "NOTE: ${u} does not exist in this image"; fi
 done
 
 # nvidia-install.sh writes neither of these (UNVERIFIED for Fedora; the shape Bluefin LTS uses). bootc merges this
@@ -74,7 +83,10 @@ rc=0
 DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${before}" --reproducible --add ostree -f "${img}" || rc=$?
 echo "dracut exit status: ${rc}"
 show_img "after dracut"
-[[ "${rc}" == 0 ]] || { echo "ERROR: dracut failed with status ${rc}, the initramfs is not trustworthy"; exit 1; }
+[[ "${rc}" == 0 ]] || {
+	echo "ERROR: dracut failed with status ${rc}, the initramfs is not trustworthy"
+	exit 1
+}
 chmod 0600 "${img}"
 
 set_os_release_field IMAGE_ID octarine-os-nvidia
@@ -97,11 +109,11 @@ echo "::endgroup::"
 staging="copr:copr.fedorainfracloud.org:ublue-os:staging"
 dnf5 config-manager setopt "${staging}.enabled=0"
 for f in /etc/yum.repos.d/*.repo; do
-    [[ -f "${f}" ]] || continue
-    if grep -qF "[${staging}]" "${f}"; then
-        sed -i -E 's/^(enabled[[:space:]]*=[[:space:]]*)(1|[Tt]rue)[[:space:]]*$/\10/' "${f}"
-        echo "staging COPR disabled in ${f}"
-    fi
+	[[ -f "${f}" ]] || continue
+	if grep -qF "[${staging}]" "${f}"; then
+		sed -i -E 's/^(enabled[[:space:]]*=[[:space:]]*)(1|[Tt]rue)[[:space:]]*$/\10/' "${f}"
+		echo "staging COPR disabled in ${f}"
+	fi
 done
 
 # Every repository that is enabled must be one the base enables (prints its own log group)

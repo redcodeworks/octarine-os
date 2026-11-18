@@ -12,9 +12,21 @@ root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0
 failn=0
-ok() { pass=$((pass + 1)); echo "ok   $1"; }
-bad() { failn=$((failn + 1)); echo "FAIL $1"; sed 's/^/     /' "$root/out" 2>/dev/null; echo "     rc=$rc"; }
-check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
+ok() {
+	pass=$((pass + 1))
+	echo "ok   $1"
+}
+bad() {
+	failn=$((failn + 1))
+	echo "FAIL $1"
+	sed 's/^/     /' "$root/out" 2>/dev/null
+	echo "     rc=$rc"
+}
+check() {
+	local d=$1
+	shift
+	if "$@"; then ok "$d"; else bad "$d"; fi
+}
 has() { grep -qF -- "$1" "$root/out"; }
 hasnt() { ! grep -qF -- "$1" "$root/out"; }
 logged() { grep -qF -- "$1" "$root/log" 2>/dev/null; }
@@ -58,12 +70,12 @@ export OCTARINE_SYSFS_DRM="$root/drm-nvidia"
 pub_all="octarine-os:latest octarine-os:testing octarine-os-dx:latest octarine-os-dx:testing octarine-os-nvidia:latest"
 
 run() { # current ref, args...
-    local cur=$1
-    shift
-    : >"$LOG"
-    PATH="$root/fakebin:$PATH" OCTARINE_SWITCH_CURRENT_REF="$cur" OCTARINE_SWITCH_STAGED_REF="${STAGED-}" FAKE_PUBLISHED="${FAKE_PUBLISHED:-$pub_all}" \
-        just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
-    rc=$?
+	local cur=$1
+	shift
+	: >"$LOG"
+	PATH="$root/fakebin:$PATH" OCTARINE_SWITCH_CURRENT_REF="$cur" OCTARINE_SWITCH_STAGED_REF="${STAGED-}" FAKE_PUBLISHED="${FAKE_PUBLISHED:-$pub_all}" \
+		just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+	rc=$?
 }
 rc=0
 base="ostree-image-signed:docker://ghcr.io/redcodeworks/octarine-os:latest"
@@ -81,9 +93,9 @@ EOF2
 chmod +x "$root/kbin/rpm-ostree"
 echo "root=UUID=1 rw quiet" >"$root/cmdline"
 krun() { # args...
-    : >"$LOG"
-    PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline"         OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
-    rc=$?
+	: >"$LOG"
+	PATH="$root/kbin:$root/fakebin:$PATH" OCTARINE_KARGS_LIB="$here/system_files/usr/share/octarine-os/lib/kargs.sh" OCTARINE_CMDLINE="$root/cmdline" OCTARINE_SWITCH_CURRENT_REF="$base" FAKE_PUBLISHED="$pub_all" just --justfile "$justfile" switch-image "$@" >"$root/out" 2>&1 </dev/null
+	rc=$?
 }
 FAKE_NEXT_EXTRA="iommu=pt" krun dx
 check "pending kernel argument, asked (default no): WARNING with the change, nothing switched, exit 0" bash -c "[ $rc = 0 ] && grep -q 'WARNING: a pending kernel-argument change would be lost by this switch' '$root/out' && grep -q '+iommu=pt' '$root/out' && grep -q 'Left as it is' '$root/out' && ! grep -q 'bootc switch' '$LOG'"
