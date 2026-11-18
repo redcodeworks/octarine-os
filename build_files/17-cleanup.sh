@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Derived from ublue-os/bluefin build_files/base/17-cleanup.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@7978919848864af3fc6e1688051a321e47fe4987 build_files/base/17-cleanup.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: Bluefin enables its systemd units and disables third-party repos here. Ours enables only what runs by default; the
 # repository check is validate-repos.sh (an allow-list, called by build.sh) and the /var, /boot and /tmp cleanup is final-cleanup.sh.
 

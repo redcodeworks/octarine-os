@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Derived from ublue-os/bluefin build_files/base/18-workarounds.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@c020f2101db64e0fa8638edab315f4da4c5e847a build_files/base/18-workarounds.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: Bluefin's bling.sh copy is left out (we have no bling files). The orphan-directory loop sits inside the group.
 
 echo "::group:: ===$(basename "$0")==="

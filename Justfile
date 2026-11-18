@@ -371,6 +371,11 @@ bins-bump tag="latest":
     sed -i -e "s/^ARG BINS_TAG=.*/ARG BINS_TAG=${version}/" -e "s/^ARG BINS_DIGEST=.*/ARG BINS_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ${ref}:${version}@sha256:${digest} (signature valid)"
 
+# Show which files derived from Bluefin changed upstream since the commit their header records (read-only; prints nothing when nothing changed)
+[group('Image')]
+bluefin-diff:
+    @.github/scripts/bluefin-diff.sh
+
 # Use this repository's git hooks (a gitleaks scan of what you push)
 [group('Security')]
 install-hooks:

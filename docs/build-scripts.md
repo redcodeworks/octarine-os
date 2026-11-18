@@ -14,3 +14,7 @@ The shell scripts that turn the Universal Blue base into this image. They are no
 
 Before editing: a failing script fails the whole image build, and any change here makes the image rebuild. System-level
 packages belong in `04-packages.sh` (through the octarine-bins lists); files that land in the image belong in `system_files/`.
+
+Each file derived from a Bluefin file has one header line `# Derived from ublue-os/bluefin@<sha> <path> (...)`, where the sha is the last Bluefin
+commit that touched that path when it was copied. `just bluefin-diff` shows which of those files changed in Bluefin since, with the commits and the
+diff, and prints nothing when nothing changed (read-only, needs `gh`). After merging an upstream change, update the sha in the header.

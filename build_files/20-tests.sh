@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Derived from ublue-os/bluefin build_files/base/20-tests.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@423566267aa119b4ef314d050e2770a7f1330524 build_files/base/20-tests.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviations: only what this image really ships is asserted. Not taken: the ublue signing-key hash check (we pull only our own images, whose
 # policy 01-signature-policy.sh writes), the flatpak-add-fedora-repos.service test (our ujust flathub recipe relies on that unit), the Bluefin
 # package names we do not ship (uupd; fish is optional here), fedora-logos (kept on purpose), podman-docker (optional here) and the NVIDIA

@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Derived from ublue-os/bluefin build_files/base/04-packages.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@05dd351ba3f85d4c3b84281bca9061a6c1c5db2f build_files/base/04-packages.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: Bluefin lists its Fedora and COPR packages here. Ours come from the pinned octarine-bins image (its own installer runs
 # below), so there are no package arrays in this file; the zsh and session checks and the removal of base packages stay ours.
 

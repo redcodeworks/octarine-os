@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-# Derived from ublue-os/bluefin build_files/base/19-initramfs.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@3e29481c06c050d66b43111d5800daa6bdb73716 build_files/base/19-initramfs.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: the Plymouth watermark check after dracut (the initramfs carries our Plymouth theme).
 
 echo "::group:: ===$(basename "$0")==="

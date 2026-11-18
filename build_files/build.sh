@@ -1,7 +1,7 @@
 #!/bin/bash
 # The orchestrator of the image build, in the shape of Bluefin's build_files/shared/build.sh (one script per concern, numbered, each with its
 # own log group, called in order).
-# Derived from ublue-os/bluefin build_files/shared/build.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
+# Derived from ublue-os/bluefin@64de5bcd0c67dc807686991c98110d708f245a60 build_files/shared/build.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 #
 # Deviations from Bluefin, in short:
 #   - the scripts sit directly in build_files/ (the Containerfile mounts it at /ctx), not in base/ and shared/
