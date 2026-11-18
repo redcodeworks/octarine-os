@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Fake skopeo: `inspect` and `copy` against a directory of tags (STATE, one file per tag holding the manifest), with failure modes picked by MODE and a call log in LOG."""
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+if "LOG" in os.environ:
+    with open(os.environ["LOG"], "a") as log:
+        log.write("skopeo " + " ".join(args) + "\n")
+
+count_file = Path(os.environ["COUNT"]) if "COUNT" in os.environ else None
+calls = (int(count_file.read_text()) if count_file and count_file.exists() else 0) + 1
+if count_file:
+    count_file.write_text(str(calls))
+
+mode = os.environ.get("MODE", "ok")  # ok | absent | down | flaky (fails twice, then works) | empty
+state = Path(os.environ["STATE"]) if "STATE" in os.environ else None
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+# A registry with several images (REG): REG/<image, / as _>/tags/<tag> holds the raw manifest of a tag, REG/<image>/cfg/<sha256 hex of a manifest> its image config JSON, and
+# REG_READ_ERROR=<image:tag> makes reads of that reference fail like a down registry. `copy` makes the target tag a copy of the source (a digest or a tag).
+reg = Path(os.environ["REG"]) if "REG" in os.environ else None
+
+
+def reg_split(ref):
+    """(image directory, tag or None, digest or None) of a reference without docker://."""
+    if "@" in ref:
+        image, digest = ref.split("@")
+        return reg / image.replace("/", "_"), None, digest.removeprefix("sha256:")
+    image, tag = ref.rsplit(":", 1)
+    return reg / image.replace("/", "_"), tag, None
+
+
+def reg_find(ref):
+    """The manifest bytes of a reference (a tag, or a digest that some tag holds), or None."""
+    import hashlib
+    directory, tag, digest = reg_split(ref)
+    if tag:
+        f = directory / "tags" / tag
+        return f.read_bytes() if f.exists() else None
+    for f in (directory / "tags").glob("*") if (directory / "tags").exists() else []:
+        if hashlib.sha256(f.read_bytes()).hexdigest() == digest:
+            return f.read_bytes()
+    return None
+
+
+if reg is not None:
+    if args[0] == "inspect":
+        flag, ref = args[-2], args[-1].removeprefix("docker://")
+        if os.environ.get("REG_READ_ERROR") and ref.startswith(os.environ["REG_READ_ERROR"]):
+            fail("dial tcp: i/o timeout")
+        manifest = reg_find(ref)
+        if manifest is None:
+            fail("Error: manifest unknown")
+        if flag == "--config":
+            import hashlib
+            directory = reg_split(ref)[0]
+            cfg = directory / "cfg" / hashlib.sha256(manifest).hexdigest()
+            print(cfg.read_text() if cfg.exists() else json.dumps({"config": {"Labels": {}}}))
+        else:
+            sys.stdout.buffer.write(manifest)
+        sys.exit(0)
+    if args[0] == "list-tags":
+        tags = reg_split(args[-1].removeprefix("docker://") + ":x")[0] / "tags"
+        print(json.dumps({"Tags": sorted(f.name for f in tags.glob("*")) if tags.exists() else []}))
+        sys.exit(0)
+    if args[0] == "copy":
+        source, target = args[-2].removeprefix("docker://"), args[-1].removeprefix("docker://")
+        manifest = reg_find(source)
+        if manifest is None:
+            fail("Error: manifest unknown")
+        t_dir, t_tag, _ = reg_split(target)
+        (t_dir / "tags").mkdir(parents=True, exist_ok=True)
+        (t_dir / "tags" / t_tag).write_bytes(manifest)
+        sys.exit(0)
+
+if args[0] == "inspect":
+    flag, ref = args[-2], args[-1].removeprefix("docker://")
+    if mode == "absent":
+        fail("Error: reading manifest x in ghcr.io/o/i: manifest unknown")
+    if mode == "down":
+        fail("Get https://ghcr.io: 503 Service Unavailable")
+    if mode == "flaky" and calls <= 2:
+        fail("dial tcp: i/o timeout")
+    if mode == "empty":
+        sys.exit(0)
+    if flag == "--config":
+        print(json.dumps({"config": {"Labels": {}}}))
+    elif state is None:
+        sys.stdout.write('{"manifest":1}')
+    else:
+        manifest = state / ref.rsplit(":", 1)[-1]
+        if not manifest.exists():
+            fail("manifest unknown")
+        sys.stdout.buffer.write(manifest.read_bytes())
+elif args[0] == "copy" and state is not None:
+    shutil.copy(state / "testing", state / "latest")

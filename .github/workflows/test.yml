@@ -62,6 +62,26 @@ jobs:
       - name: Check Just format
         run: just check
 
+  # The pytest suite of the CI scripts (tests/py): each script runs as a real subprocess against fake skopeo, cosign, podman and sbverify (executable files in tests/py/fakes), real git
+  # repositories and a fake GitHub API on localhost. Not a required check, like `suite`; not run for the dispatched bump runs.
+  pytest:
+    name: pytest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
+      - name: Run the pytest suite
+        run: uv run --frozen pytest tests/py -q
+
   # The groups of the behavior tests: one per directory under tests/ (tests/{pipeline,supply,image,recipes}/; the directory tree is the only list). The job fails when a
   # tests/*.sh sits outside a group or a group has no *.sh. Not run for the dispatched bump runs, like `suite`.
   plan-tests:

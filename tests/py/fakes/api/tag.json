@@ -1,0 +1,10 @@
+{
+ "commit": {
+  "sha": "e7b3a219617472cf78880ac424714e52c932db61",
+  "url": "https://api.github.com/repos/sched-ext/scx/commits/e7b3a219617472cf78880ac424714e52c932db61"
+ },
+ "name": "v1.1.4",
+ "node_id": "REF_kwDOKy0w_rByZWZzL3RhZ3MvdjEuMS40",
+ "tarball_url": "https://api.github.com/repos/sched-ext/scx/tarball/refs/tags/v1.1.4",
+ "zipball_url": "https://api.github.com/repos/sched-ext/scx/zipball/refs/tags/v1.1.4"
+}
