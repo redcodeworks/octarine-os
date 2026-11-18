@@ -5,12 +5,11 @@
 # cannot be reached, a signature that does not verify, a bad pin); the working tree is restored then. Prints one line per pin (also into the job summary).
 # Run from the repository root on a clean checkout, with GH_TOKEN set, a git identity, and skopeo, cosign and just for the kinds that use them.
 #
-#   bump-run.sh chunkah|brew|bins|bins-dx|bins-gx
+#   bump-run.sh chunkah|brew|bins
 #
 # Kinds: the image digest pin of chunkah (bump-pin.sh), the Homebrew files image (the `just brew-bump` recipe is the pin writer, so its cosign verification runs
 # on every write) and the octarine-bins image (`just bins-bump` is the pin writer: it resolves octarine-bins:latest, verifies the digest with keys/octarine-bins.pub
-# and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository) and the dx and gx images of the same repository (octarine-bins-dx and octarine-bins-gx, the package lists and later binaries of those variants:
-# pinned in variants/dx/Containerfile and variants/gx/Containerfile; resolve `latest`, verify the digest with keys/octarine-bins.pub, write the digest and the image's version label as the tag).
+# and writes it; the scx, extest, Ghostty and builder pins live in the octarine-bins repository).
 set -uo pipefail
 pin=${1:?pin name}
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -78,26 +77,6 @@ case "${pin}" in
             just bins-bump latest || fail "just bins-bump failed (digest, signature or version label; nothing changed)"
             proposed="$(sed -n 's/^ARG BINS_TAG=//p' Containerfile) $(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile | cut -c1-19)"
             commit_pin "Bump the octarine-bins image to ${proposed%% *}" "a new octarine-bins digest, ${ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries" "$(image_age "${ref}:latest")"
-        fi ;;
-    bins-dx | bins-gx)
-        # the dx and gx binaries images of octarine-bins (package lists, installer, later binaries), pinned like the base image but in the Containerfile of the variant that installs them
-        variant=${pin#bins-}; prefix=BINS_${variant^^}; ref=ghcr.io/redcodeworks/octarine-${pin}
-        files=("variants/${variant}/Containerfile")
-        cur=$(sed -n "s/^ARG ${prefix}_DIGEST=//p" "${files[0]}"); curtag=$(sed -n "s/^ARG ${prefix}_TAG=//p" "${files[0]}")
-        [[ "${cur}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "${prefix}_DIGEST in ${files[0]} is missing or malformed"
-        current="${curtag} ${cur:0:19}"
-        manifest=$(skopeo inspect --raw "docker://${ref}:latest" 2> /dev/null) || manifest=""
-        [[ -n "${manifest}" ]] || fail "cannot resolve ${ref}:latest"
-        new="sha256:$(printf '%s' "${manifest}" | sha256sum | sed 's/ .*//')"
-        if [[ "${new}" == "${cur}" ]]; then status="nothing to bump: the pin equals ${ref}:latest (${curtag})"
-        else
-            "${here}/retry.sh" cosign verify --key keys/octarine-bins.pub "${ref}@${new}" > /dev/null || fail "${ref}@${new} does not verify with keys/octarine-bins.pub (nothing changed)"
-            # the image's own version label (<date>-<sha7>, a name for humans), as `just bins-bump` reads it
-            newtag=$(skopeo inspect --config "docker://${ref}@${new}" 2> /dev/null | jq -r '.config.Labels["org.opencontainers.image.version"] // empty' 2> /dev/null) || newtag=""
-            [[ "${newtag}" =~ ^[0-9]{8}-[0-9a-f]{7}$ ]] || fail "${ref}@${new} has no usable org.opencontainers.image.version label ('${newtag}')"
-            sed -i -e "s/^ARG ${prefix}_TAG=.*/ARG ${prefix}_TAG=${newtag}/" -e "s/^ARG ${prefix}_DIGEST=.*/ARG ${prefix}_DIGEST=${new}/" "${files[0]}"
-            proposed="${newtag} ${new:0:19}"
-            commit_pin "Bump the ${pin} image to ${newtag}" "a new ${pin} digest, ${ref}:latest verified with keys/octarine-bins.pub; its ${variant} testing build is the first with these package lists" "$(image_age "${ref}:latest")"
         fi ;;
     *) fail "unknown pin '${pin}'" ;;
 esac

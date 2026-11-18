@@ -36,7 +36,7 @@ has_text() { # file, fixed text
     [ -r "$1" ] && grep -qF -- "$2" "$1"
 }
 
-echo "== developer toolchain (required-fedora.txt of the octarine-bins-dx image)"
+echo "== developer toolchain (packages/dx/required-fedora.txt)"
 for c in gcc g++ clang cmake ninja meson gdb pkgconf uv fish; do
     check "command ${c}" "have ${c}"
 done
@@ -48,7 +48,7 @@ for p in glib2-devel openssl-devel; do
 done
 check "pkgconf finds glib-2.0 and openssl" "pkgconf --exists glib-2.0 openssl"
 
-echo "== virtualization (required-fedora.txt of octarine-bins-dx)"
+echo "== virtualization (packages/dx/required-fedora.txt)"
 for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     check "ROCm package ${p} is NOT installed (ujust hardware-setup provides ROCm in a distrobox)" "! rpm -q ${p}"
 done
@@ -74,7 +74,7 @@ check "the sdk wrapper is executable" "test -x ${bin_dir}/sdk"
 check "the cargo PATH snippet for sh exists and parses" "test -s ${etc_dir}/profile.d/octarine-dx-cargo.sh && sh -n ${etc_dir}/profile.d/octarine-dx-cargo.sh"
 check "the fish rustup snippet adds ~/.cargo/bin" "has_text ${share_dir}/fish/vendor_conf.d/octarine-os-30-rustup.fish 'fish_add_path'"
 
-echo "== tracing and developer extras (optional-fedora.txt of octarine-bins-dx, informational)"
+echo "== tracing and developer extras (packages/dx/optional-fedora.txt, informational)"
 for p in bcc bpftrace trace-cmd numactl git-subtree git-svn ydotool cascadia-code-fonts; do
     if rpm -q "${p}" >/dev/null 2>&1; then echo "INFO extra package ${p} installed"; else echo "INFO extra package ${p} NOT installed"; fi
 done

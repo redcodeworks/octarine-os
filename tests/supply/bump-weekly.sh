@@ -52,7 +52,7 @@ F
     chmod +x .github/scripts/*.sh; printf 'chunkah=1\nbrew=1\nbins=1\n' > pins.txt
     git add -A && git commit -q -m init && git push -q origin testing
 }
-run() { (cd "$root/clone" && PATH="$bin:$PATH" BUMP_CHECKS_WAIT=0 env BUMP_PINS="${BUMP_PINS:-chunkah brew bins bins-dx bins-gx}" "$@" bash .github/scripts/bump-weekly.sh) > "$root/run" 2>&1; rc=$?; }
+run() { (cd "$root/clone" && PATH="$bin:$PATH" BUMP_CHECKS_WAIT=0 env BUMP_PINS="${BUMP_PINS:-chunkah brew bins}" "$@" bash .github/scripts/bump-weekly.sh) > "$root/run" 2>&1; rc=$?; }
 branches() { git -C "$root/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/bump/*' | sort | tr '\n' ' '; }
 
 setup; run UPSTREAM_CHUNKAH=2 UPSTREAM_BREW=1 UPSTREAM_BINS=2

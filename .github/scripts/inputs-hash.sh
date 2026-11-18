@@ -17,17 +17,17 @@ set -euo pipefail
 # shellcheck source=docs-only.sh
 source "$(dirname "${BASH_SOURCE[0]}")/docs-only.sh"
 
-# The paths of ONE variant: the dx directory and its smoke test; the gx directory and its smoke test (the workflow files are shared since 2026-11-17, see below). The tests are no input of any image (docs-only.sh lists tests/** with the docs). Everything else (Containerfile, build_files, system_files, Justfile, the other
+# The paths of ONE variant: the dx directory, its package lists (packages/dx) and its smoke test; the gx directory, its package lists (packages/gx) and its smoke test (the workflow files are shared since 2026-11-17, see below). The tests are no input of any image (docs-only.sh lists tests/** with the docs). Everything else (Containerfile, build_files, system_files, packages/default, Justfile, the other
 # workflows and scripts) belongs to the default image: a change there rebuilds it, and then the variants follow its new digest.
 is_dx_only() {
     case "$1" in
-        variants/dx/* | .github/scripts/dx-smoke.sh) return 0 ;;
+        variants/dx/* | packages/dx/* | .github/scripts/dx-smoke.sh) return 0 ;;
         *) return 1 ;;
     esac
 }
 is_gx_only() {
     case "$1" in
-        variants/gx/* | .github/scripts/gx-smoke.sh) return 0 ;;
+        variants/gx/* | packages/gx/* | .github/scripts/gx-smoke.sh) return 0 ;;
         *) return 1 ;;
     esac
 }

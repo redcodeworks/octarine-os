@@ -11,7 +11,7 @@ ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # Wayland (32-bit and 64-bit, MIT) and Ghostty. Pinned by DIGEST like the brew image above: it changes only through a bump PR
 # (the weekly bump-pins.yml or `just bins-bump [tag]`, which resolve the digest and verify it with cosign before writing it); CI
 # verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr
-# and runs the image's /packages/install.sh (the package lists of the default image live in octarine-bins, not here; the dx and gx variants pin octarine-bins-dx and -gx the same way).
+# (the package lists of the images are text files in this repository, packages/<kind>, installed by build_files/install-packages.sh).
 ARG BINS_TAG=20261117-f1507cc
 ARG BINS_DIGEST=sha256:7f762f58d7773656e51c4cf28d9fe2bf63e1b7dc9c5e03dd70c799c1dc8ebfe9
 ARG BINS_IMAGE=ghcr.io/redcodeworks/octarine-bins:${BINS_TAG}@${BINS_DIGEST}
@@ -27,6 +27,7 @@ FROM ${BINS_IMAGE} AS binaries
 # Allow build scripts to be referenced without being copied into the final image
 FROM scratch AS ctx
 COPY build_files /
+COPY packages/default /packages
 COPY system_files /system_files
 COPY cosign.pub /cosign.pub
 
@@ -70,7 +71,7 @@ ARG IMAGE_VERSION
 COPY --from=brew /system_files /
 
 # The pinned octarine-bins image is bind-mounted, not copied, so build.sh installs exactly what it checks (layout and contract:
-# the header of install-binaries.sh). /binaries/packages/install.sh installs the package lists; /binaries/COMPONENTS names the components;
+# the header of install-binaries.sh). /binaries/COMPONENTS names the components;
 # install-binaries.sh installs them and checks that the shared libraries the binaries need are in this image
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=bind,from=binaries,source=/,target=/binaries \

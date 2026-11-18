@@ -1,0 +1,29 @@
+# OPTIONAL packages of the octarine-os gx image (/packages/optional-fedora.txt): Fedora's own repositories, ONE transaction that never fails the build; when it fails it
+# is retried once as a whole, then package by package, and what still cannot be installed is printed as "OPTIONAL PACKAGE MISSING: <name>" and written to MISSING_FILE
+# (installer/install.sh). Nice to have, not what makes the image a gaming image. One entry per line; the .i686/.x86_64 pairing rule of required-fedora.txt applies.
+
+# --- Tuning ---
+vkBasalt
+
+# --- Controllers and input (Bazzite extras) ---
+joystick-support
+input-remapper
+
+# --- Capture hook libraries for OBS (vkcapture); the OBS plugin itself would pull in obs-studio ---
+obs-studio-plugin-vkcapture-hook-libs.x86_64
+obs-studio-plugin-vkcapture-hook-libs.i686
+
+# --- Diagnostics ---
+vulkan-tools
+mesa-demos
+libva-utils
+
+# --- Proton and Wine helpers ---
+protontricks
+winetricks
+
+# --- Not installed, off by default ---
+# wine
+# lutris
+# goverlay
+# obs-studio-plugin-vkcapture   (pulls in obs-studio)

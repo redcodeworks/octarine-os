@@ -11,24 +11,12 @@ ARG BASE_IMAGE=ghcr.io/redcodeworks/octarine-os
 ARG BASE_TAG=latest
 ARG BASE_DIGEST=
 
-# The gx binaries image, ghcr.io/redcodeworks/octarine-bins-gx: a signed FROM scratch image built by the octarine-bins repository (with its OWN key,
-# keys/octarine-bins.pub). It carries the gaming package lists and their installer under /packages (required-fedora, required-negativo17 (Steam), required-copr (Sunshine,
-# exact version), optional-fedora, install.sh) and, so far, no binary component (/COMPONENTS is empty). PINNED by digest, like octarine-bins in the default Containerfile:
-# BINS_GX_DIGEST changes only through the weekly bump pull request (bump-run.sh, kind bins-gx), the gx build verifies the pinned digest on every build (dx-image.yml) and
-# records it in the bins-gx label. BINS_GX_TAG is only for humans. The pin covers the lists and the installer (the package names, the exact Sunshine version); the
-# other packages still float through dnf.
-ARG BINS_GX_TAG=20261117-f1507cc
-ARG BINS_GX_DIGEST=sha256:09dad5a13224c86c602d4f7fe40c2dc13a66deec4cc5d24d33e7b431e6a832f5
-ARG BINS_GX_REF=ghcr.io/redcodeworks/octarine-bins-gx:${BINS_GX_TAG}@${BINS_GX_DIGEST}
-
-FROM ${BINS_GX_REF} AS binsgx
-# (the ARGs above sit before the first FROM: only ARGs declared there are visible in a FROM line)
-
 FROM scratch AS ctx
 COPY variants/gx/gx.sh /gx.sh
 COPY build_files/final-cleanup.sh /final-cleanup.sh
 COPY build_files/validate-repos.sh /validate-repos.sh
-COPY build_files/install-binaries.sh /install-binaries.sh
+COPY build_files/install-packages.sh /install-packages.sh
+COPY packages/gx /packages
 COPY variants/gx/system_files /system_files
 
 FROM ${BASE_IMAGE}:${BASE_TAG}${BASE_DIGEST:+@}${BASE_DIGEST}
@@ -38,9 +26,8 @@ ARG IMAGE_VERSION
 # os-release IMAGE_ID: octarine-os-gx, octarine-os-nvidia-gx when the base is the NVIDIA variant, or octarine-os-dx-gx when the base is the dx image (same layer, same packages)
 ARG GX_IMAGE_ID=octarine-os-gx
 
-# The pinned bins-gx image through a bind mount at /binaries (its package lists, then its zero components), in gx.sh (which also keeps the kernel unchanged)
-RUN --mount=type=bind,from=binsgx,source=/,target=/binaries \
-    --mount=type=bind,from=ctx,source=/,target=/ctx \
+# gx.sh installs packages/gx (its lists, copied to /ctx/packages) and keeps the kernel unchanged
+RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     --mount=type=cache,dst=/var/cache \
     --mount=type=cache,dst=/var/log \
     /ctx/gx.sh

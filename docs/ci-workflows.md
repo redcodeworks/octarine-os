@@ -32,8 +32,6 @@ The rule: anything that comes from another repository is pinned by digest and mo
 |---|---|
 | Base image `silverblue-main` | floats at the tag; resolved to a digest and signature-checked on every build |
 | Fedora packages, negativo17 multimedia packages | float (installed from the live repositories); a COPR or vendor repository would be pinned and optional only (none today) |
-| `octarine-bins-dx` (the dx binaries image of the owner's octarine-bins repository: the developer package lists and their installer, no binary yet; the packages themselves still float) | pinned by digest in the dx `Containerfile`, verified on every dx build with the octarine-bins key, moved by the weekly bump pull request |
-| `octarine-bins-gx` (the gx binaries image of the owner's octarine-bins repository: the gamer package lists and their installer, no binary yet; the packages themselves still float, except Sunshine, which the list pins to an exact version) | pinned by digest in the gx `Containerfile`, verified on every gx build with the octarine-bins key, moved by the weekly bump pull request |
 | `datastore-images` (the owner's octarine-images repository) | float at `latest`; the digest is checked and recorded in an image label |
 | `octarine-bins` (prebuilt scx, extest, Ghostty; the owner's octarine-bins repository) | pinned by digest in the `Containerfile`, verified on every build with its own key, moved by the weekly bump pull request |
 | Homebrew files image, chunkah | pinned, moved by the weekly bump pull request |
