@@ -47,7 +47,7 @@ def is_dx_only(path: str) -> bool:
     """
     return (
         path.startswith(("variants/dx/", "packages/dx/"))
-        or path == ".github/scripts/dx-smoke.sh"
+        or path == ".github/scripts/60-smoke/dx-smoke.sh"
     )
 
 
@@ -60,7 +60,7 @@ def is_gx_only(path: str) -> bool:
     """
     return (
         path.startswith(("variants/gx/", "packages/gx/"))
-        or path == ".github/scripts/gx-smoke.sh"
+        or path == ".github/scripts/60-smoke/gx-smoke.sh"
     )
 
 
@@ -119,7 +119,7 @@ def is_pipeline_only(path: str) -> bool:
     if path in (
         ".github/workflows/build-nvidia.yml",
         ".github/workflows/build-extra.yml",
-        ".github/scripts/nvidia-smoke.sh",
+        ".github/scripts/60-smoke/nvidia-smoke.sh",
         ".github/scripts/10-plan/nvidia_akmods_ref.py",
     ) or path.startswith("variants/nvidia/"):
         return True

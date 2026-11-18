@@ -95,7 +95,7 @@ jobs:
 
       - name: Default image has no NVIDIA driver
         run: |
-          podman run --rm -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" "${BASE_REF}" bash /smoke.sh absent
+          podman run --rm -v "${PWD}/.github/scripts/60-smoke/nvidia-smoke.sh:/smoke.sh:ro" "${BASE_REF}" bash /smoke.sh absent
 
       # Fails (and nothing is published) when no akmods image exists for exactly this kernel; never falls back to a moving tag
       - name: Resolve the akmods image for this kernel
@@ -146,7 +146,7 @@ jobs:
       - name: Smoke test the variant
         run: |
           podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_MODULE_SIGNER="$(sed -n 's/^NVIDIA_MODULE_SIGNER=//p' keys/secureboot.env)" \
-            -v "${PWD}/.github/scripts/nvidia-smoke.sh:/smoke.sh:ro" octarine-os-nvidia:build bash /smoke.sh present
+            -v "${PWD}/.github/scripts/60-smoke/nvidia-smoke.sh:/smoke.sh:ro" octarine-os-nvidia:build bash /smoke.sh present
 
       # Secure Boot: the kernel verifies against the pinned certificate (the variant adds modules, never a kernel)
       - name: Secure Boot check of the kernel

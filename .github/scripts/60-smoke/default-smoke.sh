@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Smoke test of the default octarine-os image, run INSIDE the freshly built image (build.yml mounts this
-# file and runs it with bash; the dx and gx variants have .github/scripts/dx-smoke.sh and gx-smoke.sh).
+# file and runs it with bash; the dx and gx variants have .github/scripts/60-smoke/dx-smoke.sh and gx-smoke.sh).
 #
 # Environment: REF (registry path of the image, for the signature policy), BASE_TAG (the base tag the build resolved).
 # `check "<description>" "<command>"`: the command runs under eval, so quote it as ONE string (tests/check-call-shape.sh

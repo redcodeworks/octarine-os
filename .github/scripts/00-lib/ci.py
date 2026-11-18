@@ -4,8 +4,9 @@ the @retry decorator (THE retry for network calls), the GitHub API through githu
 outputs.
 
 The scripts run through uv with the locked dependencies (`uv run --frozen python -I
-.github/scripts/<name>.py`). `-I` keeps the script's own directory off sys.path, so each
-script adds it back with two lines (see any script) before it imports this module.
+.github/scripts/<stage>/<name>.py`). `-I` keeps the script's own directory off sys.path,
+so each script puts this directory (00-lib) and its own directory on it with two lines
+(see any script) before it imports this module.
 """
 
 import argparse

@@ -114,7 +114,7 @@ jobs:
       description: ${{ fromJSON('{"dx-gx":"octarineOS developer tools, Steam, gamescope, MangoHud, GameMode and Sunshine (experimental developer and gamer image, built on request from octarine-os-dx)","nvidia-dx":"octarineOS with the proprietary NVIDIA driver and the developer toolchain of dev-toolbox, VM tooling and tracing tools (NVIDIA developer image, built on request from the NVIDIA variant; no CUDA toolkit, ujust dev installs it in a distrobox)","nvidia-gx":"octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)"}')[inputs.variant] }}
       # dx-gx: the gx smoke test runs by itself (layer gx); this second one checks that the developer layer below it is intact. NVIDIA: the driver, the kernel
       # module, the initramfs, and no CUDA toolkit anywhere in the image
-      extra_smoke: ${{ inputs.variant == 'dx-gx' && '.github/scripts/dx-smoke.sh' || '.github/scripts/nvidia-smoke.sh present' }}
+      extra_smoke: ${{ inputs.variant == 'dx-gx' && '.github/scripts/60-smoke/dx-smoke.sh' || '.github/scripts/60-smoke/nvidia-smoke.sh present' }}
       # dx-gx measured locally at 14.4 GiB (default 8.9, dx 11.4): the default limit of 15 GiB would sit on the edge
       max_image_gib: ${{ inputs.variant == 'dx-gx' && 18 || 15 }}
 

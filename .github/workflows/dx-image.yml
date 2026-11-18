@@ -2,7 +2,7 @@
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-variant.yml (octarine-os-dx and octarine-os-gx, the two required variants, one run
 # each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
-# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
+# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/60-smoke/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
 # concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
 # by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/10-plan/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
@@ -313,7 +313,7 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the image
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/${VARIANT}-smoke.sh:/smoke.sh:ro" \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/60-smoke/${VARIANT}-smoke.sh:/smoke.sh:ro" \
             "${DX_NAME}:${CHANNEL}" bash /smoke.sh
 
       # The caller's own checks (the NVIDIA caller: driver, kernel module, initramfs, no CUDA toolkit): a script of the repository and its arguments
