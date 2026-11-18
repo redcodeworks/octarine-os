@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests the orchestration of the weekly bump (bump-weekly.sh): one independent branch, commit and pull request per pin, an unchanged rerun, a moved upstream
+# Tests the orchestration of the weekly bump (bump_weekly.py): one independent branch, commit and pull request per pin, an unchanged rerun, a moved upstream
 # (new PR, older one closed), a stale PR, a failing pin, the dry run and the refusal to start from another checkout. Real git (a bare origin and a clone in a temp
-# dir); gh, bump-run.sh and bump-checks.sh are stubs (the decisions per pin are bump-run.sh's own business). Needs: bash, git, jq. Run: tests/supply/bump-weekly.sh
+# dir); gh, bump_run.py and bump_checks.py are stubs (the decisions per pin are bump_run.py's own business). Needs: bash, git, jq. Run: tests/supply/bump-weekly.sh
 set -uo pipefail
 here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d)
@@ -35,24 +35,28 @@ setup() { # a fresh origin (testing with pins.txt and the stub scripts) and a cl
     git init -q --bare -b testing "$root/origin.git"; git clone -q "$root/origin.git" "$root/clone" 2> /dev/null
     cd "$root/clone" || exit 1
     git checkout -q -b testing 2> /dev/null; mkdir -p .github/scripts
-    cp "$here/.github/scripts/bump-weekly.sh" .github/scripts/
+    cp "$here/.github/scripts/bump_weekly.py" "$here/.github/scripts/ci.py" .github/scripts/
     # the stub writer: moves its pin in pins.txt to UPSTREAM_<PIN> when that differs (UPSTREAM_<PIN>=fail: a failing check), one commit with the table row
-    cat > .github/scripts/bump-run.sh << 'F'
-#!/usr/bin/env bash
-pin=$1; var="UPSTREAM_${pin^^}"; new=${!var}
-[[ "${new}" != fail ]] || { echo "::error::${pin}: cannot read upstream"; exit 1; }
-cur=$(sed -n "s/^${pin}=//p" pins.txt)
-[[ "${new}" != "${cur}" ]] || { echo "${pin}: nothing to bump"; exit 0; }
-sed -i "s/^${pin}=.*/${pin}=${new}/" pins.txt
-git commit -q -a -m "Bump ${pin} to ${new}
-
-${pin} | ${cur} | ${new} | upstream | 3"
+    cat > .github/scripts/bump_run.py << 'F'
+import os, re, subprocess, sys
+pin = sys.argv[1]
+new = os.environ.get("UPSTREAM_" + pin.upper(), "")
+if new == "fail":
+    print(f"::error::{pin}: cannot read upstream")
+    sys.exit(1)
+text = open("pins.txt").read()
+cur = re.search(rf"^{pin}=(.*)$", text, re.M).group(1)
+if new == cur:
+    print(f"{pin}: nothing to bump")
+    sys.exit(0)
+open("pins.txt", "w").write(re.sub(rf"^{pin}=.*$", f"{pin}={new}", text, flags=re.M))
+subprocess.run(["git", "commit", "-q", "-a", "-m", f"Bump {pin} to {new}\n\n{pin} | {cur} | {new} | upstream | 3"], check=True)
 F
-    printf '#!/usr/bin/env bash\necho "$@" >> "$DB/checks"\n' > .github/scripts/bump-checks.sh
-    chmod +x .github/scripts/*.sh; printf 'chunkah=1\nbrew=1\nbins=1\n' > pins.txt
+    printf 'import os, sys\nopen(os.environ["DB"] + "/checks", "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > .github/scripts/bump_checks.py
+    printf 'chunkah=1\nbrew=1\nbins=1\n' > pins.txt
     git add -A && git commit -q -m init && git push -q origin testing
 }
-run() { (cd "$root/clone" && PATH="$bin:$PATH" BUMP_CHECKS_WAIT=0 env BUMP_PINS="${BUMP_PINS:-chunkah brew bins}" "$@" bash .github/scripts/bump-weekly.sh) > "$root/run" 2>&1; rc=$?; }
+run() { (cd "$root/clone" && PATH="$bin:$PATH" BUMP_CHECKS_WAIT=0 env BUMP_PINS="${BUMP_PINS:-chunkah brew bins}" "$@" python3 -I .github/scripts/bump_weekly.py) > "$root/run" 2>&1; rc=$?; }
 branches() { git -C "$root/origin.git" for-each-ref --format='%(refname:short)' 'refs/heads/bump/*' | sort | tr '\n' ' '; }
 
 setup; run UPSTREAM_CHUNKAH=2 UPSTREAM_BREW=1 UPSTREAM_BINS=2

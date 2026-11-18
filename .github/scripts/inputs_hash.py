@@ -47,9 +47,9 @@ def is_pipeline_only(path: str) -> bool:
     the failure issue, the bump automation, the daily prune, the required-branch and test workflows, the audit and secret-scan config, the git hooks, and the NVIDIA variant and the extra variants
     (built by their own dispatch-only workflows from a published image). (build.yml, build-variant.yml and the scripts they call still count: they contain the builds.) The prebuilt binaries are no
     special case any more (2026-11-16): the digest pin of octarine-bins in the Containerfile is an ordinary image input, so a bump rebuilds the image on testing."""
-    if path in (".github/scripts/dispatch_variant.py", ".github/scripts/publish_latest.py", ".github/scripts/ci_issue.py", ".github/scripts/sanity.py", ".github/scripts/prune-daily.py"):
+    if path in (".github/scripts/dispatch_variant.py", ".github/scripts/publish_latest.py", ".github/scripts/ci_issue.py", ".github/scripts/sanity.py", ".github/scripts/prune_daily.py"):
         return True
-    if path.startswith(".github/scripts/bump-") and path.endswith(".sh"):
+    if path.startswith(".github/scripts/bump_") and path.endswith(".py"):
         return True
     if path in (".github/workflows/publish-latest.yml", ".github/workflows/rollback-latest.yml", ".github/workflows/bump-pins.yml", ".github/workflows/prune-daily.yml",
                 ".github/workflows/require-testing-branch.yml", ".github/workflows/test.yml"):

@@ -1,6 +1,6 @@
 name: Test
-# The run of a push is named after the commit; a dispatch with `ref` (the bump workflow tests a bump branch tip from the testing ref, see bump-checks.sh) is named "Test of <sha>" so
-# bump-checks.sh finds it. A dispatch on a branch itself (no ref) still works.
+# The run of a push is named after the commit; a dispatch with `ref` (the bump workflow tests a bump branch tip from the testing ref, see bump_checks.py) is named "Test of <sha>" so
+# bump_checks.py finds it. A dispatch on a branch itself (no ref) still works.
 run-name: ${{ inputs.ref && format('Test of {0}', inputs.ref) || github.event.head_commit.message || 'Test' }}
 
 # The fast lane: every push to a dev branch runs the quick sanity check (bash -n, workflow parse) and the behavior tests and a secret scan. A push to `testing` runs them too (since 2026-11-15):

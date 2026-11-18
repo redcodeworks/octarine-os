@@ -5,9 +5,11 @@ with two lines (see any script) before it imports this module. Behavior notes: t
 workflows and the tests read), and the environment names (RETRY_TRIES, RETRY_DELAY, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY ...) are unchanged.
 """
 import os
+import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -101,3 +103,9 @@ def retry_command(cmd, tries: int | None = None, delay: int | None = None, quiet
     err(f"::error::{name} failed {tries} times (last exit {rc}); a transient network error would have passed by now, so treat this as a real failure "
         "(bad signature, missing package or tag, or a longer outage)")
     return rc
+
+
+def epoch(iso: str) -> int:
+    """An ISO 8601 date as seconds since the epoch (a date without a zone is UTC, like `date -u -d`); ValueError when it cannot be read."""
+    d = datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", iso.strip()))
+    return int((d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp())

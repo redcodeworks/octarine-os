@@ -18,20 +18,15 @@ The decision is a pure function of its environment, so it can be tried locally (
 Anything missing or unreadable means build (fail safe): an image from before the labels existed has no LATEST_BASE or REPO_SAME and therefore gets one normal build that records them.
 """
 import os
-import re
 import sys
 import time
-from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci  # noqa: E402
 
 
 env = os.environ.get
-
-
-def epoch(iso: str) -> int:
-    """An ISO 8601 date as seconds since the epoch (a date without a zone is UTC); ValueError when it cannot be read."""
-    iso = re.sub(r"(\.\d{6})\d+", r"\1", iso.strip())
-    d = datetime.fromisoformat(iso)
-    return int((d if d.tzinfo else d.replace(tzinfo=timezone.utc)).timestamp())
 
 
 def decide() -> str:
@@ -53,7 +48,7 @@ def decide() -> str:
     if not created_text:
         return "build: age of latest unknown"
     try:
-        created = epoch(created_text)
+        created = ci.epoch(created_text)
     except ValueError:
         return f"build: cannot read created date '{created_text}'"
     now = int(env("NOW_EPOCH") or time.time())
