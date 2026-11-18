@@ -31,7 +31,7 @@ from pathlib import Path
 from githubkit.exception import RequestFailed
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE / "00-lib"), str(HERE)]
+sys.path[:0] = [str(HERE.parent / "00-lib"), str(HERE)]
 import ci  # noqa: E402
 
 NOTES = {
@@ -142,7 +142,7 @@ def main(argv=None):
     could not start.
     """
     ci.arg_parser(__doc__).parse_args(argv)
-    os.chdir(os.environ.get("REPO_ROOT") or HERE.parents[1])
+    os.chdir(os.environ.get("REPO_ROOT") or HERE.parents[2])
     base = os.environ.get("BUMP_BASE", "testing")
     pins = os.environ.get("BUMP_PINS", "").split()
 

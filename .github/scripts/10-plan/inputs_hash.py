@@ -97,12 +97,12 @@ def is_pipeline_only(path: str) -> bool:
         ".github/scripts/30-publish/publish_latest.py",
         ".github/scripts/40-report/ci_issue.py",
         ".github/scripts/sanity.py",
-        ".github/scripts/prune_daily.py",
+        ".github/scripts/50-bump/prune_daily.py",
     ):
         return True
 
     # every bump script, however many there are
-    if path.startswith(".github/scripts/bump_") and path.endswith(".py"):
+    if path.startswith(".github/scripts/50-bump/bump_") and path.endswith(".py"):
         return True
     # workflows that publish, roll back, bump, prune or guard branches
     if path in (
