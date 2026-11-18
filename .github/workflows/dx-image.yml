@@ -2,15 +2,15 @@
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-variant.yml (octarine-os-dx and octarine-os-gx, the two required variants, one run
 # each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
-# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
+# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/60-smoke/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
 # concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
-# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
+# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/10-plan/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
 # NO SIGNING HERE: the sign job lives in each caller (`environment: signing`, the composite action .github/actions/sign-images) because the
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed
 # 2026-11-16 on two runs: with a declared workflow_call secret and without one). The `summary` job hands the plan, build and promote results, the
 # digests, the image name and the tags to the caller (a caller sees only one job result for a called workflow, and the sign job and
-# .github/scripts/aggregate_dx.py need them). Design in CLAUDE.md ("dx image").
+# .github/scripts/40-report/aggregate_dx.py need them). Design in CLAUDE.md ("dx image").
 on:
   workflow_call:
     inputs:
@@ -169,7 +169,7 @@ jobs:
           VARIANT: ${{ inputs.variant }}
           FORCE: ${{ inputs.force }}
           PROMOTE_FROM_TESTING: ${{ inputs.promote_from_testing }}
-        run: uv run --frozen --no-dev python -I .github/scripts/plan_dx.py
+        run: uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_dx.py
 
   build:
     name: Build ${{ inputs.variant }} image
@@ -257,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           set -a; . ./config/image.env; set +a
-          version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)
+          version=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/image_version.py)
           sha=$(git rev-parse HEAD)
           # the variant's image id argument, and the keyword of the Artifact Hub label
           case "${VARIANT}" in
@@ -313,7 +313,7 @@ jobs:
       # Anything missing fails the build before anything is pushed
       - name: Smoke test the image
         run: |
-          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/${VARIANT}-smoke.sh:/smoke.sh:ro" \
+          podman run --rm -e BASE_KERNEL="${BASE_KERNEL}" -e EXPECT_IMAGE_ID="${DX_NAME}" -v "${PWD}/.github/scripts/60-smoke/${VARIANT}-smoke.sh:/smoke.sh:ro" \
             "${DX_NAME}:${CHANNEL}" bash /smoke.sh
 
       # The caller's own checks (the NVIDIA caller: driver, kernel module, initramfs, no CUDA toolkit): a script of the repository and its arguments
@@ -345,7 +345,7 @@ jobs:
             podman image inspect "${DX_NAME}:${CHANNEL}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
             podman run --rm "${DX_NAME}:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
-          } | uv run --frozen --no-dev python -I .github/scripts/check_version_neutral.py
+          } | uv run --frozen --no-dev python -I .github/scripts/40-report/check_version_neutral.py
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -365,7 +365,7 @@ jobs:
           if [[ "${CHANNEL}" == latest ]]; then
             # same tag as the daily run of the base (set by build.yml's scheduled run, which dispatches the dx workflow right after), so prune-daily.yml counts both packages alike
             today="daily-$(date -u +%Y%m%d)"
-            seen=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${BASE_IMAGE}" "${today}" 2> /dev/null || true)
+            seen=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_digest.py "${BASE_IMAGE}" "${today}" 2> /dev/null || true)
             if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
           fi
           # testing: the moving tag `testing` is NOT pushed here; the caller's sign job moves it to the digest once it is signed and verified, so a run cancelled
@@ -389,7 +389,7 @@ jobs:
         run: |
           set -euox pipefail
           # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
-          uv run --frozen --no-dev python -I .github/scripts/push_tags.py "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/push_tags.py "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
@@ -449,12 +449,12 @@ jobs:
           set -euo pipefail
           IMAGE="${IMAGE,,}"
           export IMAGE
-          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
             # the read-back polls (registry_settled.py): a registry may show the previous manifest or fail a read for a moment after a copy
-            uv run --frozen --no-dev python -I .github/scripts/registry_settled.py "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_settled.py "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
             echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 

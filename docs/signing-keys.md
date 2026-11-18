@@ -17,7 +17,7 @@ as a warning in the build, never skipped silently).
 README of `ghcr.io/redcodeworks/dev-packages`). Since 2026-11-16 it no longer verifies the package list images of the dx and gx variants (the lists are text files in this repository since 2026-11-18). It signs `ghcr.io/redcodeworks/datastore-images`, the opt-in datastore bundle: the dx image installs
 the key as `/etc/pki/containers/redcodeworks-toolbox.pub` and a container policy rule for that repository, so `ujust datastore-install` pulls only a bundle signed with it. The same key signs the datastore box image `ghcr.io/redcodeworks/datastore`, which gets its own rule and registries.d entry next to the bundle's (`ujust datastore-box-create`). Not this image's own signing key.
 
-Secure Boot of the kernel (no file here): `.github/scripts/secureboot_check.py` is Bluefin's and Aurora's `secureboot` recipe. It copies `vmlinuz` out of the built image and runs
+Secure Boot of the kernel (no file here): `.github/scripts/40-report/secureboot_check.py` is Bluefin's and Aurora's `secureboot` recipe. It copies `vmlinuz` out of the built image and runs
 `sbverify --cert` with Universal Blue's kernel signing key, downloaded on every run from
 https://github.com/ublue-os/akmods/raw/main/certs/public_key.der (DER, converted to PEM; subject `O=Universal Blue, OU=kernel signing, CN=ublue kernel`, valid until 2124,
 SHA-256 fingerprint `4E:5C:68:47:4C:B1:33:FD:89:84:D9:59:97:62:CE:CE:91:00:C3:E6:CD:8A:97:09:AE:AA:BD:85:DD:9E:70:D1`). On 2026-11-14 this file was byte-identical to

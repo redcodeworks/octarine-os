@@ -1,7 +1,7 @@
 ---
 name: Prune daily images
 # Images built by the scheduled daily build carry an extra tag `daily-YYYYMMDD` (octarine-os, and octarine-os-dx and octarine-os-gx built on it). Weekly, only the
-# newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/prune_daily.py). Testing builds, the
+# newest 14 of them are kept: older ones and their cosign signatures are deleted (.github/scripts/50-bump/prune_daily.py). Testing builds, the
 # NVIDIA images, the bare `latest` and anything else are never touched. Scheduled runs delete for real; start it by hand with dry_run on
 # (the default) to see the plan: `gh workflow run prune-daily.yml -f dry_run=true`. A failed run is just a red scheduled run.
 #
@@ -61,11 +61,11 @@ jobs:
           protect=""
           for name in ${names}; do
             image="ghcr.io/${owner}/${name}"
-            rc=0; digest=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${image}" latest) || rc=$?
+            rc=0; digest=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_digest.py "${image}" latest) || rc=$?
             [[ "${rc}" == 0 && "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::cannot read ${image}:latest (status ${rc})"; exit 1; }
             protect="${protect} ${digest}"
             if [[ "${name}" != octarine-os ]]; then
-              base=$(uv run --frozen --no-dev python -I .github/scripts/registry_read.py config "${image}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
+              base=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_read.py config "${image}@${digest}" | jq -r '.config.Labels["org.opencontainers.image.base.digest"] // empty')
               [[ "${base}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${image}@${digest} has no readable base digest label"; exit 1; }
               protect="${protect} ${base}"
             fi
@@ -111,4 +111,4 @@ jobs:
           export API_BASE="${scope}/packages/container/${NAME}"
           echo "== ${API_BASE}, dry run: ${DRY_RUN}"
           echo "Protected: ${PROTECT}"
-          gh api --paginate "${API_BASE}/versions?per_page=100" | uv run --frozen --no-dev python -I .github/scripts/prune_daily.py
+          gh api --paginate "${API_BASE}/versions?per_page=100" | uv run --frozen --no-dev python -I .github/scripts/50-bump/prune_daily.py

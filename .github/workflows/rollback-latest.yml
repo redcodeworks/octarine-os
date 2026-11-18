@@ -115,4 +115,4 @@ jobs:
         run: |
           set -euo pipefail
           [[ -n "${TAG}" && -n "${REASON}" ]] || { echo "::error::tag and reason are required"; exit 1; }
-          uv run --frozen --no-dev python -I .github/scripts/publish_latest.py
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/publish_latest.py

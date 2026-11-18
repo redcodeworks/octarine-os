@@ -103,4 +103,4 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run || false }}
           # writes only on main; any other ref is a dry run whatever the input says
           WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
-        run: uv run --frozen --no-dev python -I .github/scripts/publish_latest.py
+        run: uv run --frozen --no-dev python -I .github/scripts/30-publish/publish_latest.py
