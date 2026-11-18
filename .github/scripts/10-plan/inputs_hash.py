@@ -75,7 +75,7 @@ def is_variant_shared(path: str) -> bool:
         ".github/workflows/dx-image.yml",
         ".github/workflows/build-variant.yml",
         ".github/scripts/10-plan/plan_dx.py",
-        ".github/scripts/aggregate_dx.py",
+        ".github/scripts/40-report/aggregate_dx.py",
         "keys/redcodeworks-toolbox-cosign.pub",
     )
 
@@ -95,7 +95,7 @@ def is_pipeline_only(path: str) -> bool:
     if path in (
         ".github/scripts/30-publish/dispatch_variant.py",
         ".github/scripts/30-publish/publish_latest.py",
-        ".github/scripts/ci_issue.py",
+        ".github/scripts/40-report/ci_issue.py",
         ".github/scripts/sanity.py",
         ".github/scripts/prune_daily.py",
     ):

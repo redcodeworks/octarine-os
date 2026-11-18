@@ -190,4 +190,4 @@ jobs:
           PROMOTE: skipped
           SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
-        run: uv run --frozen --no-dev python -I .github/scripts/aggregate_dx.py
+        run: uv run --frozen --no-dev python -I .github/scripts/40-report/aggregate_dx.py

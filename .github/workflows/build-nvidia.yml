@@ -153,7 +153,7 @@ jobs:
         run: |
           uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py sudo apt-get update -qq
           uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py sudo apt-get install -y --no-install-recommends sbsigntool
-          uv run --frozen --no-dev python -I .github/scripts/secureboot_check.py octarine-os-nvidia:build
+          uv run --frozen --no-dev python -I .github/scripts/40-report/secureboot_check.py octarine-os-nvidia:build
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

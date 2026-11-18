@@ -183,7 +183,7 @@ jobs:
           PROMOTE: ${{ needs.image.result == 'skipped' && 'skipped' || needs.image.outputs.promote || 'failure' }}
           SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
-        run: uv run --frozen --no-dev python -I .github/scripts/aggregate_dx.py
+        run: uv run --frozen --no-dev python -I .github/scripts/40-report/aggregate_dx.py
 
       - name: Post the result as a commit status on the built commit
         # a superseded (cancelled) run posts nothing: no failing status may appear on a commit because a newer tip replaced its run
@@ -250,7 +250,7 @@ jobs:
           ISSUE_TITLE: "The ${{ inputs.variant }} image build on main failed"
           ISSUE_BODY: "The build or promotion of octarine-os-${{ inputs.variant }} on main (or the move of its latest) failed, so octarine-os-${{ inputs.variant }}:latest stays on the previous image (the other images publish their own latest independently and are not held back). See the run for the failed job and re-run the failed jobs. Later failures are added to this issue as comments; it closes itself when a run succeeds. Where to look: CLAUDE.md, dx image and gx image."
           FAIL_COMMENT: "${{ inputs.variant }} build or publish failed again"
-        run: uv run --frozen --no-dev python -I .github/scripts/ci_issue.py fail
+        run: uv run --frozen --no-dev python -I .github/scripts/40-report/ci_issue.py fail
 
       - name: Close the issue when the run succeeded
         if: needs.result.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
@@ -260,4 +260,4 @@ jobs:
           CHANNEL: latest
           LABEL: ci-failure-${{ inputs.variant }}
           RECOVER_COMMENT: "the next ${{ inputs.variant }} build or promotion succeeded"
-        run: uv run --frozen --no-dev python -I .github/scripts/ci_issue.py recover
+        run: uv run --frozen --no-dev python -I .github/scripts/40-report/ci_issue.py recover

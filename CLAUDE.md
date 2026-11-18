@@ -460,7 +460,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   (`podman inspect`), so every label stays; it drops only `ostree.commit` and `ostree.final-diffid`. (The earlier
   `rpm-ostree compose build-chunked-oci` started from the rootfs and had to re-pass the labels one by one.)
 - **Secure Boot check of the kernel (2026-11-14, Bluefin's way).** After the rechunk, `build.yml` and (after its smoke test) `build-nvidia.yml` run
-  `.github/scripts/secureboot_check.py <image>`, the same as Bluefin's and Aurora's `secureboot` recipe: the single kernel of the image is copied out, Universal Blue's kernel signing key is downloaded
+  `.github/scripts/40-report/secureboot_check.py <image>`, the same as Bluefin's and Aurora's `secureboot` recipe: the single kernel of the image is copied out, Universal Blue's kernel signing key is downloaded
   (`fetch_key`, curl with 3 retries, from `https://github.com/ublue-os/akmods/raw/main/certs/public_key.der`; a failed download fails the check clearly), converted DER to PEM, `sbverify --list` is printed
   and `sbverify --cert` must accept the kernel, otherwise the build FAILS ("Secureboot Signature Failed"). The Fedora signature is not checked. The earlier attempt to pin Fedora's leaf or CA certificate was dropped (Kevin,
   2026-11-14: the leaf is one signing builder's, the CA is not in the image, and Bluefin's mechanism is proven). The key is read LIVE from the `main` branch of `ublue-os/akmods` on every run, so that repository's

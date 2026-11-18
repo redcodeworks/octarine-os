@@ -10,7 +10,7 @@ name: dx image (reusable)
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed
 # 2026-11-16 on two runs: with a declared workflow_call secret and without one). The `summary` job hands the plan, build and promote results, the
 # digests, the image name and the tags to the caller (a caller sees only one job result for a called workflow, and the sign job and
-# .github/scripts/aggregate_dx.py need them). Design in CLAUDE.md ("dx image").
+# .github/scripts/40-report/aggregate_dx.py need them). Design in CLAUDE.md ("dx image").
 on:
   workflow_call:
     inputs:
@@ -345,7 +345,7 @@ jobs:
             podman image inspect "${DX_NAME}:${CHANNEL}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
             podman run --rm "${DX_NAME}:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
-          } | uv run --frozen --no-dev python -I .github/scripts/check_version_neutral.py
+          } | uv run --frozen --no-dev python -I .github/scripts/40-report/check_version_neutral.py
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
