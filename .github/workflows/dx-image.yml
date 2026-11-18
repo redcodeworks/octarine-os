@@ -389,7 +389,7 @@ jobs:
         run: |
           set -euox pipefail
           # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
-          uv run --frozen --no-dev python -I .github/scripts/push_tags.py "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/push_tags.py "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.

@@ -12,7 +12,7 @@ run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.s
 # so the concurrency group, the sign job, the publish of its own `latest`, the failure issue and the required result belong to one variant and a failed or
 # cancelled gx run can never block or cancel dx, nor the other way round. Find a variant's run by its title (the run-name): `<variant> <channel> <sha>`.
 # A SEPARATE workflow, started by the last jobs of the default pipeline (`gh workflow run build-variant.yml --ref <ref> -f variant=<variant> -f channel=<channel>
-# -f sha=<built commit>`, .github/scripts/dispatch_variant.py) after the base succeeded, and that can be re-run on its own. A dispatched run uses the file of the ref
+# -f sha=<built commit>`, .github/scripts/30-publish/dispatch_variant.py) after the base succeeded, and that can be re-run on its own. A dispatched run uses the file of the ref
 # it was dispatched on and is recorded on that branch, so a change here runs on `testing` before it is promoted and the README can show a badge per branch. It never
 # runs for pull requests or feature branches (the plan job's guard; a DRY RUN is the one exception, it writes nothing). `sha` is the commit the pipeline built: the ref
 # may have moved on since, so every job checks out exactly that commit, and the plan job refuses a commit that is not an ancestor of the ref. The plan job

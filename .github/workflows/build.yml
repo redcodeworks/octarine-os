@@ -540,7 +540,7 @@ jobs:
           # One push, the other tags are registry-side copies of its digest: every tag shares one manifest digest and
           # one signature, which is what lets the dx promotion match the tested image
           read -r first _ <<< "${ALIAS_TAGS}"
-          uv run --frozen --no-dev python -I .github/scripts/push_tags.py "${IMAGE_NAME}:${first}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/push_tags.py "${IMAGE_NAME}:${first}" "${IMAGE_REGISTRY}/${IMAGE_NAME}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed `testing` digest as latest and its dated aliases, no
   # rebuild. The digest is compared before and after every copy.
@@ -721,7 +721,7 @@ jobs:
           MOVING_TAGS: ${{ needs.build_push.outputs.moving_tags }}
         run: |
           set -euo pipefail
-          uv run --frozen --no-dev python -I .github/scripts/move_tags.py "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/move_tags.py "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
           for tag in ${MOVING_TAGS}; do
             uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
@@ -764,7 +764,7 @@ jobs:
           # merge or an unchanged scheduled run); the variant builds on exactly that digest. The default image's own `latest` moves in the
           # `publish` job, which does not wait for the variants and which they do not wait for. Empty on testing.
           BASE_DIGEST: ${{ github.ref == 'refs/heads/main' && (needs.build_push.outputs.digests || needs.promote.outputs.digests) || '' }}
-        run: uv run --frozen --no-dev python -I .github/scripts/dispatch_variant.py "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
+        run: uv run --frozen --no-dev python -I .github/scripts/30-publish/dispatch_variant.py "${{ github.ref == 'refs/heads/testing' && 'testing' || 'latest' }}" "${GITHUB_SHA}" "${BASE_DIGEST}"
 
   # Main only: the default image's OWN `latest` moves to the digest this run built or promoted, after its signature was checked by the sign job (the dated tags
   # exist already). Independent of the dx image (2026-11-16): nothing waits for dx and dx never gates it. Nothing new (a docs-only merge, an unchanged

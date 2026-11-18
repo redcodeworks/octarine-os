@@ -179,7 +179,7 @@ jobs:
         run: |
           set -euox pipefail
           # One push, the other tags are registry-side copies of its digest (one manifest digest for every tag)
-          uv run --frozen --no-dev python -I .github/scripts/push_tags.py octarine-os-nvidia:build "${VARIANT_IMAGE}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/30-publish/push_tags.py octarine-os-nvidia:build "${VARIANT_IMAGE}" ${ALIAS_TAGS}
 
   sign:
     name: Sign and verify NVIDIA image

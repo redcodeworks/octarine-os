@@ -93,8 +93,8 @@ def is_pipeline_only(path: str) -> bool:
     """
     # the scripts and workflows of the pipeline itself
     if path in (
-        ".github/scripts/dispatch_variant.py",
-        ".github/scripts/publish_latest.py",
+        ".github/scripts/30-publish/dispatch_variant.py",
+        ".github/scripts/30-publish/publish_latest.py",
         ".github/scripts/ci_issue.py",
         ".github/scripts/sanity.py",
         ".github/scripts/prune_daily.py",
