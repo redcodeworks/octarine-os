@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""One issue per ongoing failure of a variant image (dx or gx, one label each: ci-failure-dx, ci-failure-gx) / its `latest` publishing on main, without duplicates (deduplicated on the LABEL,
-not on the title). Usage: ci_issue.py fail|recover
+"""One issue per ongoing failure of a variant image (dx or gx, one label each:
+ci-failure-dx, ci-failure-gx) / its `latest` publishing on main, without duplicates
+(deduplicated on the LABEL, not on the title). Usage: ci_issue.py fail|recover
 
-  fail      a run failed: open the issue, or add a comment to the one that is already open
-  recover   `latest` moved: comment "recovered" on the open issue and close it (nothing to do when none is open)
+  fail      a run failed: open the issue, or add a comment to the one that is already
+            open
+  recover   `latest` moved: comment "recovered" on the open issue and close it (nothing
+            to do when none is open)
 
-Why it exists: a run that was started by a dispatch with the default GITHUB_TOKEN probably sends no failure e-mail to anybody (undocumented), and a daily failure that holds `latest` back must
-reach the repository owner. The issue does (owner and watchers).
+Why it exists: a run that was started by a dispatch with the default GITHUB_TOKEN
+probably sends no failure e-mail to anybody (undocumented), and a daily failure that
+holds `latest` back must reach the repository owner. The issue does (owner and
+watchers).
 
-Environment: GITHUB_TOKEN (permission issues: write), GITHUB_REPOSITORY, SHA (the commit of the run), CHANNEL (default latest), RUN_URL (default: this run), NEEDS_JSON (toJSON(needs), optional: names
-the failed jobs), LABEL (default ci-failure-dx), DOCS_URL (the CLAUDE.md section), NOW (default: today's date, for tests), and for the default build's alert (LABEL=ci-failure-default): ISSUE_TITLE,
-ISSUE_BODY (the text of a new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT.
+Environment: GITHUB_TOKEN (permission issues: write), GITHUB_REPOSITORY, SHA (the commit
+of the run), CHANNEL (default latest), RUN_URL (default: this run), NEEDS_JSON
+(toJSON(needs), optional: names the failed jobs), LABEL (default ci-failure-dx),
+DOCS_URL (the CLAUDE.md section), NOW (default: today's date, for tests), and for the
+default build's alert (LABEL=ci-failure-default): ISSUE_TITLE, ISSUE_BODY (the text of a
+new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT.
 """
 
 import json
@@ -29,7 +37,9 @@ env = os.environ.get
 
 def failed_jobs() -> str:
     """The names of the jobs of NEEDS_JSON (toJSON(needs)) whose result is failure."""
+    # NEEDS_JSON may be missing or malformed when the workflow wiring is wrong
     try:
+        # the names of the jobs whose result is failure, comma separated
         return ", ".join(
             k
             for k, v in json.loads(env("NEEDS_JSON") or "{}").items()
@@ -40,6 +50,13 @@ def failed_jobs() -> str:
 
 
 def main(argv=None):
+    """Open, update or close the failure issue of a dx or latest publication.
+
+    Receives the mode: `fail` opens an issue or comments on the open one, `recover`
+    comments and closes it. Reads GITHUB_REPOSITORY, SHA and the optional CHANNEL,
+    LABEL, LABEL_DESC, RUN_URL, DOCS_URL, NOW, NEEDS_JSON, ISSUE_TITLE, ISSUE_BODY,
+    FAIL_COMMENT and RECOVER_COMMENT. Returns 0; a GitHub API error raises.
+    """
     ap = ci.arg_parser(__doc__)
     ap.add_argument("mode", choices=["fail", "recover"])
     mode = ap.parse_args(argv).mode
@@ -62,15 +79,22 @@ def main(argv=None):
     rest = gh.rest
 
     def open_issue():
+        """Return the number of the open issue with the label, or None."""
         issues = rest.issues.list_for_repo(
             labels=label, state="open", per_page=1, **repo
         ).parsed_data
         return issues[0].number if issues else None
 
     def comment(number, body):
+        """Add a comment to an issue.
+
+        Receives the issue number and the text.
+        """
         rest.issues.create_comment(issue_number=number, data={"body": body}, **repo)
 
+    # fail: record the failure on the one open issue, or open it
     if mode == "fail":
+        # creating the label is idempotent: an existing label is fine
         try:
             rest.issues.create_label(
                 data={
@@ -84,6 +108,7 @@ def main(argv=None):
         except RequestFailed:
             pass  # the label exists already
         number = open_issue()
+        # no open issue and a body was given: open one with that body
         if number is None and env("ISSUE_BODY"):
             rest.issues.create(
                 data={
@@ -125,6 +150,7 @@ Later failures are added to this issue as comments; it closes itself when `lates
             ci.log.info(f"commented on #{number} for {run_url}")
         return 0
     number = open_issue()
+    # recover: only an open issue can be closed
     if number is None:
         ci.log.info(f"no open {label} issue: nothing to close")
         return 0
@@ -139,5 +165,6 @@ Later failures are added to this issue as comments; it closes itself when `lates
     return 0
 
 
+# run as a script, not when imported by a test
 if __name__ == "__main__":
     sys.exit(main())
