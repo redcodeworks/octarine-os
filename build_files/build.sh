@@ -219,8 +219,12 @@ grep -qx 'Theme=octarine' /etc/plymouth/plymouthd.conf
 
 # The initramfs carries the Plymouth theme (boot and LUKS passphrase screens), so regenerate it for the image's
 # kernel, the way Universal Blue images do (dracut with the ostree module). Riskiest step: CI cannot boot it.
-test "$(ls /usr/lib/modules | wc -l)" = 1
-kver=$(ls /usr/lib/modules)
+# Remove orphan /usr/lib/modules/* directories (a kernel-tools bump without the matching kernel-core leaves one;
+# same workaround as Bluefin's 18-workarounds.sh, ublue-os/bluefin PR #4677), then take the version from rpm.
+for kdir in /usr/lib/modules/*/; do
+    rpm -q "kernel-core-$(basename "${kdir}")" &>/dev/null || rm -rf "${kdir}"
+done
+kver=$(rpm -q --qf '%{VERSION}-%{RELEASE}.%{ARCH}' kernel-core)
 DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add ostree \
     -f "/usr/lib/modules/${kver}/initramfs.img"
 chmod 0600 "/usr/lib/modules/${kver}/initramfs.img"
