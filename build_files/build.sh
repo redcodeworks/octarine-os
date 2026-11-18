@@ -219,12 +219,6 @@ grep -qx 'Theme=octarine' /etc/plymouth/plymouthd.conf
 
 # The initramfs carries the Plymouth theme (boot and LUKS passphrase screens), so regenerate it for the image's
 # kernel, the way Universal Blue images do (dracut with the ostree module). Riskiest step: CI cannot boot it.
-# The base can carry a leftover /usr/lib/modules/<ver> that holds only depmod output and no vmlinuz (seen 2026-11-18
-# in silverblue-main:45: 7.3.4 next to the installed kernel-core 7.3.3, the files owned by no package). Remove such
-# directories; any other second kernel directory still fails the next check.
-for d in /usr/lib/modules/*/; do
-    [[ -e "${d}vmlinuz" ]] || { echo "Removing leftover ${d} (no vmlinuz)"; rm -rf "${d}"; }
-done
 test "$(ls /usr/lib/modules | wc -l)" = 1
 kver=$(ls /usr/lib/modules)
 DRACUT_NO_XATTR=1 dracut --no-hostonly --kver "${kver}" --reproducible -v --add ostree \
