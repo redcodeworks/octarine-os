@@ -1,7 +1,10 @@
-"""Fixtures of the tests: the scripts on sys.path, and the fake skopeo, cosign and gh programs of tests/fakes/ on PATH (no network, nothing is pulled).
+"""Fixtures of the tests: the scripts on sys.path, and the fake skopeo, cosign and gh
+programs of tests/fakes/ on PATH (no network, nothing is pulled).
 
-The fakes are real executable Python files that the scripts under test start as they would start the real tools, so the tests run the real script into the real
-reader. Their behavior comes from the environment: STATE (a directory with one file per tag, the manifest), MODE, COSIGN_MODE, LOG, COUNT, DB.
+The fakes are real executable Python files that the scripts under test start as they
+would start the real tools, so the tests run the real script into the real reader. Their
+behavior comes from the environment: STATE (a directory with one file per tag, the
+manifest), MODE, COSIGN_MODE, LOG, COUNT, DB.
 """
 
 import importlib.util
@@ -16,12 +19,23 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / ".github" / "scripts"
 FAKES = ROOT / "tests" / "py" / "fakes"
-sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(SCRIPTS / "00-lib"))
+
+
+def script_path(name):
+    """Return the path of a script of .github/scripts, found by name in its stage
+    directory (00-lib, 10-plan, ...).
+
+    Raises StopIteration for a name that no directory holds.
+    """
+    return next(p for p in sorted(SCRIPTS.rglob(name)) if "__pycache__" not in p.parts)
 
 
 @pytest.fixture
 def fakes(tmp_path, monkeypatch):
-    """tests/fakes on PATH in front; returns the environment for subprocesses (also applied to this process)."""
+    """tests/fakes on PATH in front; returns the environment for subprocesses (also
+    applied to this process).
+    """
     state = tmp_path / "state"
     state.mkdir()
     env = {
@@ -33,6 +47,8 @@ def fakes(tmp_path, monkeypatch):
         "LOG": str(tmp_path / "log"),
         "COUNT": str(tmp_path / "count"),
     }
+
+    # apply the environment to this process as well, so scripts run in-process see it
     for k, v in env.items():
         monkeypatch.setenv(k, v)
     monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
@@ -40,10 +56,12 @@ def fakes(tmp_path, monkeypatch):
 
 
 def script(name, *args, cwd=None, env=None, extra=None):
-    """Run a script of .github/scripts the way a workflow does (`python3 -I`); returns the CompletedProcess with text output."""
+    """Run a script of .github/scripts the way a workflow does (`python3 -I`); returns
+    the CompletedProcess with text output.
+    """
     e = {**os.environ, **(env or {}), **(extra or {})}
     return subprocess.run(
-        [sys.executable, "-I", str(SCRIPTS / name), *args],
+        [sys.executable, "-I", str(script_path(name)), *args],
         cwd=cwd,
         env=e,
         capture_output=True,
@@ -52,6 +70,11 @@ def script(name, *args, cwd=None, env=None, extra=None):
 
 
 def git(repo, *args):
+    """Run git in a repository with a fixed identity and return its stripped stdout.
+
+    Receives the repository path and the git arguments; raises CalledProcessError on
+    failure.
+    """
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         check=True,
@@ -68,7 +91,9 @@ def git(repo, *args):
 
 
 def load_fake(name):
-    """Import a Python file of tests/fakes by path (the directory is not on sys.path: the stub bump_run.py there must not shadow the real one)."""
+    """Import a Python file of tests/fakes by path (the directory is not on sys.path:
+    the stub bump_run.py there must not shadow the real one).
+    """
     spec = importlib.util.spec_from_file_location(name, FAKES / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -76,15 +101,15 @@ def load_fake(name):
 
 
 github_api = load_fake("github_api")
-fixture, pull = (
-    github_api.fixture,
-    github_api.pull,
-)  # captured GitHub answers for the tests to adjust
+# captured GitHub answers for the tests to adjust
+fixture, pull = github_api.fixture, github_api.pull
 
 
 @pytest.fixture
 def github(monkeypatch):
-    """A fake GitHub API: the scripts (this process and subprocesses) talk to it through GITHUB_API_URL, GITHUB_REPOSITORY is o/r."""
+    """A fake GitHub API: the scripts (this process and subprocesses) talk to it through
+    GITHUB_API_URL, GITHUB_REPOSITORY is o/r.
+    """
     api = github_api.FakeGitHub()
     monkeypatch.setenv("GITHUB_API_URL", api.url)
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
@@ -95,16 +120,25 @@ def github(monkeypatch):
 
 
 class Registry:
-    """A fake registry directory for fakes/skopeo (env REG): images with tags and image configs (labels), and the digests they get (the sha256 of the manifest bytes)."""
+    """A fake registry directory for fakes/skopeo (env REG): images with tags and image
+    configs (labels), and the digests they get (the sha256 of the manifest bytes).
+    """
 
     def __init__(self, root):
+        """Remember the root directory that holds the fake registry."""
         self.root = root
 
     def directory(self, image):
+        """Return the directory of one image inside the fake registry.
+
+        Receives the image name; slashes become underscores.
+        """
         return self.root / image.replace("/", "_")
 
     def put(self, image, tag, content, labels=None):
-        """Publish `content` (bytes or str, the manifest) under image:tag with the given labels; returns its digest."""
+        """Publish `content` (bytes or str, the manifest) under image:tag with the given
+        labels; returns its digest.
+        """
         import hashlib
 
         data = content.encode() if isinstance(content, str) else content
@@ -132,6 +166,11 @@ class Registry:
 
 @pytest.fixture
 def reg(tmp_path, fakes, monkeypatch):
+    """The fake registry fixture: an empty registry directory that fakes/skopeo reads
+    (env REG).
+
+    Returns a Registry for the test to fill.
+    """
     root = tmp_path / "registry"
     root.mkdir()
     monkeypatch.setenv("REG", str(root))
@@ -139,10 +178,14 @@ def reg(tmp_path, fakes, monkeypatch):
 
 
 def make_repo(path, *messages):
-    """A git repository on branch main with one commit per message; returns the commit ids oldest first."""
+    """A git repository on branch main with one commit per message; returns the commit
+    ids oldest first.
+    """
     path.mkdir(parents=True, exist_ok=True)
     git(path, "init", "-q", "-b", "main", ".")
     ids = []
+
+    # one commit per message, each changing the file so the commit is not empty
     for i, message in enumerate(messages):
         (path / "f").write_text(f"{i}\n")
         git(path, "add", "-A")

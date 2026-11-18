@@ -11,7 +11,7 @@ run-name: ${{ inputs.variant && format('{0} latest {1}', inputs.variant, inputs.
 # not rebuild dx: dispatch it again after dx changed). EACH VARIANT IS ITS OWN RUN: its own concurrency group (never cancelled, a newer trigger waits), plan,
 # `sign` job (`environment: signing`, in this file because the environment secret did not reach a job of a reusable workflow; the composite action
 # .github/actions/sign-images signs) and result job, so one variant failing never blocks or cancels another. Plan, build and promote are the reusable
-# dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/plan_dx.py) skips when the base digest and the layer's inputs
+# dx-image.yml (variant = the layer, dx or gx; promote_from_testing off): the plan job (.github/scripts/10-plan/plan_dx.py) skips when the base digest and the layer's inputs
 # are unchanged (`force` builds anyway). Dispatch on `main` only (a DRY RUN, which writes nothing, is allowed on any branch).
 # The chain after the NVIDIA base: when "Build NVIDIA variant" (build-nvidia.yml, untouched) finishes on `main` after a dispatch, the `fanout` job below (workflow_run,
 # which always runs the file of the default branch; `actions: write`) dispatches this workflow for nvidia-dx and nvidia-gx at the commit the NVIDIA build ran for. The
@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
-          uv run --frozen --no-dev python -I .github/scripts/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
           echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
 
   # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
@@ -114,7 +114,7 @@ jobs:
       description: ${{ fromJSON('{"dx-gx":"octarineOS developer tools, Steam, gamescope, MangoHud, GameMode and Sunshine (experimental developer and gamer image, built on request from octarine-os-dx)","nvidia-dx":"octarineOS with the proprietary NVIDIA driver and the developer toolchain of dev-toolbox, VM tooling and tracing tools (NVIDIA developer image, built on request from the NVIDIA variant; no CUDA toolkit, ujust dev installs it in a distrobox)","nvidia-gx":"octarineOS with the proprietary NVIDIA driver, Steam, gamescope, MangoHud, GameMode and Sunshine (NVIDIA gamer image, built on request from the NVIDIA variant)"}')[inputs.variant] }}
       # dx-gx: the gx smoke test runs by itself (layer gx); this second one checks that the developer layer below it is intact. NVIDIA: the driver, the kernel
       # module, the initramfs, and no CUDA toolkit anywhere in the image
-      extra_smoke: ${{ inputs.variant == 'dx-gx' && '.github/scripts/dx-smoke.sh' || '.github/scripts/nvidia-smoke.sh present' }}
+      extra_smoke: ${{ inputs.variant == 'dx-gx' && '.github/scripts/60-smoke/dx-smoke.sh' || '.github/scripts/60-smoke/nvidia-smoke.sh present' }}
       # dx-gx measured locally at 14.4 GiB (default 8.9, dx 11.4): the default limit of 15 GiB would sit on the edge
       max_image_gib: ${{ inputs.variant == 'dx-gx' && 18 || 15 }}
 
@@ -190,4 +190,4 @@ jobs:
           PROMOTE: skipped
           SIGN: ${{ needs.sign.result }}
           DRY_RUN: ${{ inputs.dry_run || false }}
-        run: uv run --frozen --no-dev python -I .github/scripts/aggregate_dx.py
+        run: uv run --frozen --no-dev python -I .github/scripts/40-report/aggregate_dx.py

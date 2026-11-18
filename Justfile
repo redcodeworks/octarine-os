@@ -77,7 +77,7 @@ sudoif command *args:
 #   $target_image - The tag you want to apply to the image (default: $image_name).
 #   $tag - The tag for the image (default: $default_tag).
 #
-# The version label is `<YYYYMMDD>-<short sha>` (.github/scripts/image_version.py), the same for testing and
+# The version label is `<YYYYMMDD>-<short sha>` (.github/scripts/10-plan/image_version.py), the same for testing and
 # main builds, and only set when the git working directory is clean.
 #
 # just build $target_image $tag
@@ -107,7 +107,7 @@ build $target_image=image_name $tag=default_tag:
     # CI resolves the floating base to a digest once and verifies its signature (base_pin.py): the build is FROM that digest
     if [[ -n "${BASE_PIN:-}" ]]; then BUILD_ARGS+=("--build-arg" "BASE_PIN=${BASE_PIN}"); fi
     # os-release IMAGE_VERSION: the build's version
-    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)")
+    BUILD_ARGS+=("--build-arg" "IMAGE_VERSION=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/image_version.py)")
     LABELS=()
     # Trace the image to its base (CI exports BASE_DIGEST after pulling the base)
     if [[ -n "${BASE_IMAGE:-}" && -n "${FEDORA_VERSION:-}" ]]; then LABELS+=("--label" "org.opencontainers.image.base.name=${BASE_IMAGE}:${FEDORA_VERSION}"); fi
@@ -122,12 +122,12 @@ build $target_image=image_name $tag=default_tag:
         LABELS+=("--label" "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.documentation=https://raw.githubusercontent.com/{{ repo_organization }}/{{ repo_name }}/${GIT_SHA}/README.md")
         LABELS+=("--label" "org.opencontainers.image.url=https://github.com/{{ repo_organization }}/{{ repo_name }}/tree/${GIT_SHA}")
-        LABELS+=("--label" "org.opencontainers.image.version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)")
+        LABELS+=("--label" "org.opencontainers.image.version=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/image_version.py)")
         # The full commit this image was built from (the scheduled skip check compares its content with main)
         LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
         # The hash of the files that make the default image (not docs, not the dx-only files): a push whose hash is equal
-        # needs no new image, see .github/scripts/inputs_hash.py
-        LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(uv run --frozen --no-dev python -I .github/scripts/inputs_hash.py vanilla)")
+        # needs no new image, see .github/scripts/10-plan/inputs_hash.py
+        LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/inputs_hash.py vanilla)")
     fi
 
     # The pinned prebuilt binaries image this build installed from (the digest reference: the exact binaries of this image, for a rollback)
@@ -154,7 +154,7 @@ build $target_image=image_name $tag=default_tag:
     podman build "${PODMAN_BUILD_ARGS[@]}" .
 
 # Split the image into layers for smaller updates (chunkah, like Aurora and Bazzite). The chunkah image is pinned by digest in config/chunkah.env and its
-# cosign signature is verified before it runs (.github/scripts/chunkah_ref.py). chunkah starts from the image's own config (`podman inspect`), so
+# cosign signature is verified before it runs (.github/scripts/10-plan/chunkah_ref.py). chunkah starts from the image's own config (`podman inspect`), so
 # every label set by `just build` stays; CHUNKAH_EPOCH_BASE (see below) sets SOURCE_DATE_EPOCH; the labels of an earlier ostree commit are dropped, as chunkah's own documentation does.
 # You may run into space issues on runners: this makes a complete copy of the image.
 [group('Image')]
@@ -163,7 +163,7 @@ rechunk $target_image=image_name $tag=default_tag:
 
     set -xeuo pipefail
 
-    CHUNKAH_REF="$(uv run --frozen --no-dev python -I .github/scripts/chunkah_ref.py)"
+    CHUNKAH_REF="$(uv run --frozen --no-dev python -I .github/scripts/10-plan/chunkah_ref.py)"
     STARTED="$(date +%s)"
     CHUNKAH_CONFIG_FILE="$(mktemp)"
 

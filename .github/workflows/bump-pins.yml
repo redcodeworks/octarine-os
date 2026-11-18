@@ -5,7 +5,7 @@ name: Bump pins
 # that has the file (`gh workflow run bump-pins.yml --ref testing`; with `-f dry_run=true` it prints what it would open, keep or close, one pull request per pin, and
 # pushes and opens nothing, and may be dispatched from any branch to try its scripts).
 #
-# One job PER PIN (a matrix, the only list of pins: chunkah, brew, bins (the octarine-bins image digest); a new pin is one more entry, and a failing pin turns only its own job red), all running one script (.github/scripts/bump_weekly.py with BUMP_PINS set to the job's pin) through bump_run.py; each pin that moved gets its own
+# One job PER PIN (a matrix, the only list of pins: chunkah, brew, bins (the octarine-bins image digest); a new pin is one more entry, and a failing pin turns only its own job red), all running one script (.github/scripts/50-bump/bump_weekly.py with BUMP_PINS set to the job's pin) through bump_run.py; each pin that moved gets its own
 # branch, commit and pull request, an open pull request of the same pin that already proposes the same value stays, an older one is closed with a pointer to the new one (no
 # force-push, so a moved upstream means a new pull request), and a stale one (testing already has the value) is closed. A failing pin (a registry that cannot be reached, a
 # signature that does not verify) changes nothing and turns the run red, which scripts/scheduled-runs.sh reports; the other pins still go in. The jobs dispatch the Test workflow for their own commits at the same time without colliding (the check runs and the Test run are keyed by the commit sha). Stay manual by the owner's decision: the
@@ -78,4 +78,4 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          uv run --frozen --no-dev python -I .github/scripts/bump_weekly.py
+          uv run --frozen --no-dev python -I .github/scripts/50-bump/bump_weekly.py
