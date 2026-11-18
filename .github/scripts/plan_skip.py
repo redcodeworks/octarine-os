@@ -58,15 +58,18 @@ def decide() -> str:
     if env("REF") != "refs/heads/main":
         return f"build: not main ({env('REF') or 'unset'})"
     base_now, latest_base = env("BASE_NOW", ""), env("LATEST_BASE", "")
+
     # without both digests nothing can be compared
     if not (base_now and latest_base):
         return (
             f"build: base digest unknown (now '{base_now}', in latest '{latest_base}')"
         )
+
     # a changed base image needs a rebuild
     if base_now != latest_base:
         return "build: base image changed"
     missing = env("LATEST_MISSING", "")
+
     # optional packages that failed last time get another try
     if missing and missing != "none":
         return f"build: latest was built with optional packages missing ({missing}): trying again"
@@ -74,6 +77,7 @@ def decide() -> str:
     if env("REPO_SAME") != "true":
         return "build: repository content differs from, or is unknown for, the commit latest was built from"
     created_text = env("LATEST_CREATED", "")
+
     # without a creation date the age is unknown
     if not created_text:
         return "build: age of latest unknown"
@@ -84,6 +88,7 @@ def decide() -> str:
         return f"build: cannot read created date '{created_text}'"
     now = int(env("NOW_EPOCH") or time.time())
     maximum = env("MAX_AGE_DAYS") or "7"
+
     # the age limit must be a number of days
     if not maximum.isdigit():
         return "build: MAX_AGE_DAYS is not a number"

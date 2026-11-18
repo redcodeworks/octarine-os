@@ -58,6 +58,7 @@ def main(argv=None):
     ap.add_argument("after", nargs="?", default="HEAD")
     args = ap.parse_args(argv)
     event, ref, after = args.event, args.ref, args.after or "HEAD"
+
     # promotion can be switched off by the repository variable
     if os.environ.get("PROMOTE_ENABLED") != "true":
         no("PROMOTE_ENABLED is not 'true'")
@@ -71,6 +72,7 @@ def main(argv=None):
     if ci.git_ok("cat-file", "-e", f"{after}^3^{{commit}}"):
         no("octopus merge")
     tip = ci.git("rev-parse", f"{after}^2")
+
     # main must hold exactly the default-image inputs that the testing tip was built
     # from
     if ih.vanilla_inputs(tip) != ih.vanilla_inputs(after):

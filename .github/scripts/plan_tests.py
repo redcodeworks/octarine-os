@@ -27,6 +27,7 @@ def main(argv=None):
     tests = Path(__file__).resolve().parents[2] / "tests"
     # a *.sh directly under tests/ belongs to no group
     stray = sorted(p.name for p in tests.glob("*.sh"))
+
     # a stray test would never run, so fail
     if stray:
         ci.log.error(
@@ -34,6 +35,7 @@ def main(argv=None):
         )
         return 1
     groups = []
+
     # every directory except tests/py is a group; tests/py has its own job
     for d in sorted(
         p for p in tests.iterdir() if p.is_dir() and p.name != "py"
@@ -43,6 +45,7 @@ def main(argv=None):
             ci.log.error(f"the test group tests/{d.name} has no *.sh")
             return 1
         groups.append(d.name)
+
     # an empty list would make the matrix fail with a confusing message
     if not groups:
         ci.log.error("no test groups under tests/")

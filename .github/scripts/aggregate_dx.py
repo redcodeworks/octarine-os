@@ -55,6 +55,7 @@ def main(argv=None):
         f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} sign={sign}"
     )
     all_skipped = build == "skipped" and promote == "skipped" and sign == "skipped"
+
     # the plan itself was skipped: no later job may have run
     if plan == "skipped":
         # a later job ran although the plan was skipped
@@ -62,6 +63,7 @@ def main(argv=None):
             fail("Plan skipped but later jobs ran")
         ci.log.info("Not a run the dx image is built for: nothing to do")
         return 0
+
     # any other plan result than success is a failure
     if plan != "success":
         fail(f"The plan job did not succeed ({plan})")
@@ -78,6 +80,7 @@ def main(argv=None):
             f"Dry run: planned build={build_wanted} promote={promote_wanted}; nothing was built, pushed or signed"
         )
         return 0
+
     # each case is one plan outcome: build, promote or do nothing
     match build_wanted, promote_wanted:
         case "true", _:

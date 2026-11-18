@@ -33,6 +33,7 @@ def main(argv=None):
         if "version" in k.lower()
     }
     bad = False
+
     # every version value is shown, and a channel name in one is an error
     for key, value in versions.items():
         # a version that names a channel would make a dated tag mean different images
@@ -40,6 +41,7 @@ def main(argv=None):
             ci.log.error(f"{key}={value} names a channel")
             bad = True
         ci.log.info(f"{key}={value}")
+
     # both required keys must be present
     for key, what in (
         ("org.opencontainers.image.version", "org.opencontainers.image.version"),

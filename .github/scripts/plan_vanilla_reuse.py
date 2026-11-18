@@ -45,10 +45,12 @@ def main(argv=None):
     ap.add_argument("after", nargs="?", default="HEAD")
     args = ap.parse_args(argv)
     event, ref, after = args.event, args.ref, args.after or "HEAD"
+
     # only a push to testing looks for a reusable image
     if not (event == "push" and ref == "refs/heads/testing"):
         no(f"not a push to testing ({event} {ref})")
     ci.result(f"inputs={ih.vanilla_inputs(after)}")
+
     # walk back to the nearest image built from the same inputs; a read error means
     # build
     try:

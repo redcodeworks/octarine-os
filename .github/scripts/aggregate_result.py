@@ -77,10 +77,12 @@ def main(argv=None):
     ci.log.info(
         f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} publish={publish} sign={sign}"
     )
+
     # without a successful plan nothing else can be judged
     if plan != "success":
         fail("The plan job did not succeed")
     sign_expected = expects_sign(build_wanted, promote_wanted, publish, build, promote)
+
     # a signature is needed exactly when something was published or promoted
     if sign_expected:
         # signing is expected, so the sign job must have succeeded

@@ -46,6 +46,7 @@ def main(argv=None):
     ap.add_argument("ref", nargs="?", default="")
     args = ap.parse_args(argv)
     event, before, after, ref = args.event, args.before, args.after or "HEAD", args.ref
+
     # a scheduled or dispatched run always builds, whatever changed
     if event in ("schedule", "workflow_dispatch"):
         ci.result("true")
@@ -65,16 +66,19 @@ def main(argv=None):
         ci.result("true")
         return 0
     changed = ci.git("diff", "--name-only", before, after).splitlines()
+
     # an empty diff cannot prove docs-only, so it builds
     if not changed:
         ci.note("empty diff: building")
         ci.result("true")
         return 0
+
     # the first file that is not documentation decides: build
     if code := next((f for f in changed if not docs_only.is_docs(f)), None):
         ci.note(f"non-docs file changed ({code}): building")
         ci.result("true")
         return 0
+
     # testing is never skipped here: the reuse step decides whether an image covers the
     # tip
     if ref == "refs/heads/testing":

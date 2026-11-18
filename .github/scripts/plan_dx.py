@@ -103,12 +103,14 @@ def main(argv=None):
     """
     ci.arg_parser(__doc__).parse_args(argv)
     channel = os.environ["CHANNEL"]
+
     # only the two published channels have a base to build on
     if channel not in ("latest", "testing"):
         die(f"Unknown channel '{channel}' (latest or testing)")
     force = env("FORCE") or "false"
     owner = os.environ["GITHUB_REPOSITORY_OWNER"].lower()
     variant = env("VARIANT") or "dx"
+
     # the labels and names below exist for dx and gx only
     if variant not in ("dx", "gx"):
         die(f"Unknown variant '{variant}' (dx or gx)")
@@ -157,6 +159,7 @@ def main(argv=None):
                 f"Could not read {base}:{mine} (a registry read error, not a missing tag): not falling back to another base"
             )
     pin = env("BASE_DIGEST_PIN") or ""
+
     # a pinned digest (from the pipeline that just published the default image) is the
     # base
     if pin:
@@ -188,6 +191,7 @@ def main(argv=None):
             digest = raw_digest_of(f"{base}:{base_tag}")
         except registry.ReadError:
             die(f"Cannot read {base}:{base_tag}")
+
     # never build on a base whose signature does not verify
     if verdict(f"{base}@{digest}") != "verified":
         die(
@@ -214,6 +218,7 @@ def main(argv=None):
     build, promote = True, False
     source_tag = source_digest = ""
     rc, cur_base, cur_inputs = labels_of(channel)
+
     # an unreadable or absent published image never allows a skip
     if rc != "ok":
         # absent or unreadable: both mean "build, never skip" for the PUBLISHED image of
@@ -226,6 +231,7 @@ def main(argv=None):
             ci.log.warning(
                 f"{dx}:{channel} could not be read (a read error): building, never skipping on a failed read"
             )
+
     # a forced run builds whatever is published; otherwise compare base and inputs
     if force == "true":
         decision = (
@@ -302,10 +308,12 @@ def main(argv=None):
                 decision = f"building (no tested testing image with this base digest and these {variant} inputs)"
     ci.log.info(f"{variant} {channel}: {decision}")
     ci.append_to("GITHUB_STEP_SUMMARY", f"{variant} {channel}: {decision}")
+
     # tell the log when there is nothing to do at all
     if not build and not promote:
         ci.log.info(f"::notice::base unchanged, nothing to build ({channel}: {digest})")
     os.environ["GITHUB_OUTPUT"]  # required: the plan's answer goes there
+
     # publish the plan as step outputs
     for key, value in (
         ("build", str(build).lower()),

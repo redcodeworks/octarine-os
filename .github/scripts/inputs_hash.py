@@ -99,6 +99,7 @@ def is_pipeline_only(path: str) -> bool:
         ".github/scripts/prune_daily.py",
     ):
         return True
+
     # every bump script, however many there are
     if path.startswith(".github/scripts/bump_") and path.endswith(".py"):
         return True
@@ -112,6 +113,7 @@ def is_pipeline_only(path: str) -> bool:
         ".github/workflows/test.yml",
     ):
         return True
+
     # the NVIDIA variant and the extra variants have their own dispatch-only workflows
     if path in (
         ".github/workflows/build-nvidia.yml",
@@ -233,6 +235,7 @@ def nearest_image_for_inputs(tip: str, lookup_fn=None) -> tuple[str, str]:
     lookup_fn = lookup_fn or lookup
     maximum = int(os.environ.get("MAX_WALK") or 50)
     want = vanilla_inputs(tip)
+
     # walk the first-parent history from the tip, nearest commit first
     for n, c in enumerate(ci.git("rev-list", "--first-parent", tip).split()):
         # give up after MAX_WALK commits instead of walking the whole history
