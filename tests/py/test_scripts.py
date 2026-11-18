@@ -1,4 +1,7 @@
-"""The scripts that move tags, pin the base, verify refs, file issues and open bump pull requests, run as real subprocesses against the fake registry, fake cosign/podman/sbverify and the fake GitHub API."""
+"""The scripts that move tags, pin the base, verify refs, file issues and open bump pull
+requests, run as real subprocesses against the fake registry, fake
+cosign/podman/sbverify and the fake GitHub API.
+"""
 
 import json
 import os
@@ -14,6 +17,7 @@ D = "sha256:" + "a" * 64
 
 # ---- retry.py
 def test_retry_gives_the_last_exit_status_after_the_tries(fakes, tmp_path):
+    """Retry gives the last exit status after the tries."""
     p = script(
         "retry.py",
         "-n",
@@ -29,17 +33,20 @@ def test_retry_gives_the_last_exit_status_after_the_tries(fakes, tmp_path):
 
 
 def test_retry_runs_until_a_try_succeeds(fakes, tmp_path):
+    """Retry runs until a try succeeds."""
     marker = tmp_path / "n"
     code = f"import pathlib, sys; f = pathlib.Path({str(marker)!r}); n = int(f.read_text() or 0) + 1 if f.exists() else 1; f.write_text(str(n)); sys.exit(0 if n >= 3 else 1)"
     p = script("retry.py", "-d", "0", sys.executable, "-c", code)
     assert p.returncode == 0 and marker.read_text() == "3"
 
 
-# ---- registry_read, registry_digest, cosign_check: the exit contract the workflow steps read
+# ---- registry_read, registry_digest, cosign_check: the exit contract the workflow
+# steps read
 @pytest.mark.parametrize(
     "mode, code", [("ok", 0), ("absent", 3), ("down", 4), ("empty", 4)]
 )
 def test_registry_read_exit_contract(fakes, mode, code):
+    """Registry read exit contract."""
     open(fakes["STATE"] + "/t", "w").write('{"manifest":1}')
     assert (
         script(
@@ -53,6 +60,7 @@ def test_registry_read_exit_contract(fakes, mode, code):
     "mode, code", [("ok", 0), ("nosig", 5), ("badsig", 5), ("down", 4)]
 )
 def test_cosign_check_exit_contract(fakes, mode, code):
+    """Cosign check exit contract."""
     assert (
         script(
             "cosign_check.py",
@@ -66,6 +74,7 @@ def test_cosign_check_exit_contract(fakes, mode, code):
 
 
 def test_registry_digest_prints_the_digest_of_the_tag(reg):
+    """Registry digest prints the digest of the tag."""
     d = reg.put("ghcr.io/o/i", "t", "manifest")
     p = script("registry_digest.py", "ghcr.io/o/i", "t")
     assert p.returncode == 0 and p.stdout.strip() == d
@@ -74,6 +83,7 @@ def test_registry_digest_prints_the_digest_of_the_tag(reg):
 
 # ---- move_tags
 def test_move_tags_ends_every_tag_on_the_signed_digest(reg):
+    """Move tags ends every tag on the signed digest."""
     image = "ghcr.io/o/i"
     d = reg.put(image, "testing-20261116", "signed")
     reg.put(image, "testing", "old")
@@ -84,6 +94,7 @@ def test_move_tags_ends_every_tag_on_the_signed_digest(reg):
 
 
 def test_move_tags_fails_and_leaves_the_tag_when_the_copy_fails(reg):
+    """Move tags fails and leaves the tag when the copy fails."""
     old = reg.put("ghcr.io/o/i", "testing", "old")
     p = script(
         "move_tags.py", "ghcr.io/o/i", D, "testing"
@@ -92,6 +103,7 @@ def test_move_tags_fails_and_leaves_the_tag_when_the_copy_fails(reg):
 
 
 def test_move_tags_without_tags_does_nothing_and_a_bad_digest_is_refused(reg):
+    """Move tags without tags does nothing and a bad digest is refused."""
     assert script("move_tags.py", "ghcr.io/o/i", D).returncode == 0
     assert script("move_tags.py", "ghcr.io/o/i", "nope", "testing").returncode == 1
 
@@ -102,10 +114,17 @@ BASE = "ghcr.io/ublue-os/silverblue-main"
 
 @pytest.fixture
 def pin(reg, tmp_path):
+    """A fake registry with a base image, a key file and a runner for base_pin.py.
+
+    Returns the runner; the runner clears the output files, runs the script and
+    returns the process.
+    """
     reg.put(BASE, "45", '{"schemaVersion":2,"layers":[]}')
     (tmp_path / "key.pub").write_text("key\n")
 
     def run(**extra):
+        """Run base_pin.py with the test environment plus the given variables."""
+        # start every run with empty output files
         for name in ("env", "sum"):
             (tmp_path / name).write_text("")
         return script(
@@ -125,6 +144,7 @@ def pin(reg, tmp_path):
 
 
 def test_a_signed_base_is_pinned_once_and_exported(pin):
+    """A signed base is pinned once and exported."""
     p = pin()
     digest = pin.reg.tag(BASE, "45")
     assert (
@@ -144,6 +164,7 @@ def test_a_signed_base_is_pinned_once_and_exported(pin):
     ],
 )
 def test_an_unverified_base_fails_the_build_and_exports_nothing(pin, mode, message):
+    """An unverified base fails the build and exports nothing."""
     p = pin(COSIGN_MODE=mode)
     assert (
         p.returncode == 1
@@ -153,6 +174,7 @@ def test_an_unverified_base_fails_the_build_and_exports_nothing(pin, mode, messa
 
 
 def test_an_unreadable_registry_is_a_read_error_not_a_missing_tag(pin):
+    """An unreadable registry is a read error not a missing tag."""
     p = pin(REG_READ_ERROR=BASE)
     assert (
         p.returncode == 1
@@ -164,6 +186,7 @@ def test_an_unreadable_registry_is_a_read_error_not_a_missing_tag(pin):
 # ---- chunkah_ref
 @pytest.fixture
 def chunkah(tmp_path, fakes):
+    """A chunkah pin file with a digest, in a temporary directory; returns its path."""
     env = tmp_path / "chunkah.env"
     env.write_text(
         f"CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_TAG=latest\nCHUNKAH_DIGEST={D}\n"
@@ -172,6 +195,7 @@ def chunkah(tmp_path, fakes):
 
 
 def test_chunkah_ref_verifies_keyless_and_prints_the_pinned_reference(chunkah, fakes):
+    """Chunkah ref verifies keyless and prints the pinned reference."""
     p = script("chunkah_ref.py", str(chunkah))
     assert p.returncode == 0 and p.stdout.strip() == f"quay.io/coreos/chunkah@{D}"
     log = open(fakes["LOG"]).read()
@@ -182,6 +206,7 @@ def test_chunkah_ref_verifies_keyless_and_prints_the_pinned_reference(chunkah, f
 
 
 def test_chunkah_ref_refuses_an_unverified_image_without_pulling_it(chunkah, fakes):
+    """Chunkah ref refuses an unverified image without pulling it."""
     p = script("chunkah_ref.py", str(chunkah), extra={"COSIGN_MODE": "badsig"})
     assert (
         p.returncode == 1
@@ -191,6 +216,7 @@ def test_chunkah_ref_refuses_an_unverified_image_without_pulling_it(chunkah, fak
 
 
 def test_chunkah_ref_refuses_a_floating_pin_before_cosign_runs(tmp_path, fakes):
+    """Chunkah ref refuses a floating pin before cosign runs."""
     bad = tmp_path / "bad.env"
     bad.write_text("CHUNKAH_IMAGE=quay.io/coreos/chunkah\nCHUNKAH_DIGEST=latest\n")
     p = script("chunkah_ref.py", str(bad))
@@ -198,6 +224,7 @@ def test_chunkah_ref_refuses_a_floating_pin_before_cosign_runs(tmp_path, fakes):
 
 
 def test_chunkah_ref_fails_on_a_missing_file(tmp_path, fakes):
+    """Chunkah ref fails on a missing file."""
     assert script("chunkah_ref.py", str(tmp_path / "missing.env")).returncode == 1
 
 
@@ -215,6 +242,7 @@ AKMODS = "ghcr.io/ublue-os/akmods-nvidia-lts"
 def test_the_akmods_image_of_exactly_this_kernel_is_picked_in_either_tag_form(
     reg, kernel, tag
 ):
+    """The akmods image of exactly this kernel is picked in either tag form."""
     d = reg.put(AKMODS, tag, f"akmods {tag}")
     p = script("nvidia_akmods_ref.py", kernel, "45")
     assert p.returncode == 0 and p.stdout.splitlines() == [
@@ -225,6 +253,7 @@ def test_the_akmods_image_of_exactly_this_kernel_is_picked_in_either_tag_form(
 
 
 def test_no_kernel_specific_tag_never_falls_back_to_the_moving_tag(reg):
+    """No kernel specific tag never falls back to the moving tag."""
     reg.put(AKMODS, "main-45", "moving")
     assert (
         script("nvidia_akmods_ref.py", "7.2.15-300.fc45.x86_64", "45").returncode == 1
@@ -235,6 +264,7 @@ def test_no_kernel_specific_tag_never_falls_back_to_the_moving_tag(reg):
     "kernel, fedora", [("7.2.15", "45"), ("7.2.15-300.fc44.x86_64", "45")]
 )
 def test_a_malformed_kernel_or_one_of_another_fedora_is_refused(reg, kernel, fedora):
+    """A malformed kernel or one of another fedora is refused."""
     assert script("nvidia_akmods_ref.py", kernel, fedora).returncode == 1
 
 
@@ -250,6 +280,7 @@ ENV = {
 def test_the_first_failure_opens_one_issue_with_the_label_and_the_failed_job(
     github, fakes
 ):
+    """The first failure opens one issue with the label and the failed job."""
     p = script("ci_issue.py", "fail", extra=ENV)
     assert (
         p.returncode == 0
@@ -267,6 +298,7 @@ def test_the_first_failure_opens_one_issue_with_the_label_and_the_failed_job(
 
 
 def test_a_failure_with_an_open_issue_comments_and_opens_no_second_one(github, fakes):
+    """A failure with an open issue comments and opens no second one."""
     github.issues = [fixture("issue", number=41)]
     p = script("ci_issue.py", "fail", extra=ENV)
     assert (
@@ -278,6 +310,7 @@ def test_a_failure_with_an_open_issue_comments_and_opens_no_second_one(github, f
 
 
 def test_a_recovery_comments_and_closes_the_issue(github, fakes):
+    """A recovery comments and closes the issue."""
     github.issues = [fixture("issue", number=41)]
     assert script("ci_issue.py", "recover", extra=ENV).returncode == 0
     assert (
@@ -288,6 +321,7 @@ def test_a_recovery_comments_and_closes_the_issue(github, fakes):
 
 
 def test_a_recovery_without_an_open_issue_does_nothing(github, fakes):
+    """A recovery without an open issue does nothing."""
     p = script("ci_issue.py", "recover", extra=ENV)
     assert (
         p.returncode == 0
@@ -300,6 +334,10 @@ def test_a_recovery_without_an_open_issue_does_nothing(github, fakes):
 # ---- secureboot_check
 @pytest.fixture
 def secureboot(tmp_path, fakes):
+    """A throwaway signing key and kernel file, with a runner for secureboot_check.py.
+
+    Returns the runner; the url argument picks which downloaded file is the key.
+    """
     key = tmp_path / "key.der"
     subprocess.run(
         [
@@ -327,6 +365,9 @@ def secureboot(tmp_path, fakes):
     (tmp_path / "vmlinuz").write_text("kernel\n")
 
     def run(url="key.der", **extra):
+        """Run secureboot_check.py against the test kernel with the given key file and
+        variables.
+        """
         return script(
             "secureboot_check.py",
             "img:test",
@@ -342,6 +383,7 @@ def secureboot(tmp_path, fakes):
 
 
 def test_a_kernel_that_verifies_against_the_downloaded_key_passes(secureboot):
+    """A kernel that verifies against the downloaded key passes."""
     p = secureboot()
     log = open(secureboot.log).read()
     assert (
@@ -356,6 +398,7 @@ def test_a_kernel_that_verifies_against_the_downloaded_key_passes(secureboot):
 def test_a_kernel_that_does_not_verify_fails_the_build_and_lists_the_signatures(
     secureboot,
 ):
+    """A kernel that does not verify fails the build and lists the signatures."""
     p = secureboot(SB_FAIL="1")
     assert (
         p.returncode == 1
@@ -371,6 +414,7 @@ def test_a_kernel_that_does_not_verify_fails_the_build_and_lists_the_signatures(
 def test_a_bad_key_download_fails_clearly_without_running_the_verification(
     secureboot, url, message
 ):
+    """A bad key download fails clearly without running the verification."""
     p = secureboot(url)
     assert (
         p.returncode == 1
@@ -382,10 +426,17 @@ def test_a_bad_key_download_fails_clearly_without_running_the_verification(
 
 # ---- prune_daily
 def versions(n):
+    """Build n fake package versions the way the packages API lists them (id, name,
+    creation time and three tags each).
+    """
+
     def dg(k):
+        """Return the 64-digit hex digest string for the number k."""
         return format(k, "064x")
 
     out = []
+
+    # one version per number, each with a daily tag and two alias tags
     for k in range(1, n + 1):
         d = f"202601{min(k, 28):02d}"
         out.append(
@@ -404,6 +455,11 @@ def versions(n):
 
 
 def prune(vs, **env):
+    """Run prune_daily.py with the versions as JSON on stdin and the given environment;
+    returns the process.
+
+    Extra keyword arguments add or override environment variables.
+    """
     return subprocess.run(
         [sys.executable, "-I", str(SCRIPTS / "prune_daily.py")],
         input=json.dumps(vs),
@@ -414,6 +470,7 @@ def prune(vs, **env):
 
 
 def test_prune_keeps_the_newest_fourteen_daily_builds():
+    """Prune keeps the newest fourteen daily builds."""
     p = prune(versions(20))
     assert (
         p.returncode == 0
@@ -423,6 +480,7 @@ def test_prune_keeps_the_newest_fourteen_daily_builds():
 
 
 def test_prune_never_deletes_a_protected_digest_or_a_version_with_another_tag():
+    """Prune never deletes a protected digest or a version with another tag."""
     vs = versions(20)
     vs[0]["metadata"]["container"]["tags"].append("latest")
     p = prune(vs, PROTECT=vs[1]["name"])
@@ -430,11 +488,13 @@ def test_prune_never_deletes_a_protected_digest_or_a_version_with_another_tag():
 
 
 def test_prune_refuses_more_deletions_than_the_limit():
+    """Prune refuses more deletions than the limit."""
     p = prune(versions(60))
     assert p.returncode != 0 and "Refusing to delete" in p.stderr
 
 
 def test_prune_with_dry_run_off_deletes_through_the_api(github):
+    """Prune with dry run off deletes through the api."""
     p = prune(
         versions(16),
         DRY_RUN="false",
@@ -442,6 +502,7 @@ def test_prune_with_dry_run_off_deletes_through_the_api(github):
         GITHUB_API_URL=github.url,
         GITHUB_TOKEN="t",
     )
+    # only two versions are old enough to delete: newest first
     assert p.returncode == 0 and [r for r in github.requests if r[0] == "DELETE"] == [
         ("DELETE", "/users/o/packages/container/i/versions/102"),
         ("DELETE", "/users/o/packages/container/i/versions/101"),

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
-"""Start the dx or gx run of build-variant.yml for a commit the pipeline just built, and FAIL if no run appears. Usage: dispatch_variant.py <channel> <sha> [<base_digest>]
+"""Start the dx or gx run of build-variant.yml for a commit the pipeline just built, and
+FAIL if no run appears. Usage: dispatch_variant.py <channel> <sha> [<base_digest>]
 
-Environment: REF (the branch to dispatch on, main or testing), GITHUB_REPOSITORY, GITHUB_TOKEN (the default token with `actions: write`), POLL_TRIES (default 12), POLL_WAIT seconds between tries
-(default 10), VARIANT (required: dx or gx, the `variant` input of build-variant.yml and the run-name prefix; one call starts one variant, the two variants are dispatched by two independent matrix legs),
-GITHUB_STEP_SUMMARY (optional).
+Environment: REF (the branch to dispatch on, main or testing), GITHUB_REPOSITORY,
+GITHUB_TOKEN (the default token with `actions: write`), POLL_TRIES (default 12),
+POLL_WAIT seconds between tries (default 10), VARIANT (required: dx or gx, the `variant`
+input of build-variant.yml and the run-name prefix; one call starts one variant, the two
+variants are dispatched by two independent matrix legs), GITHUB_STEP_SUMMARY (optional).
 
-Finding the run: the ids of the runs of this workflow on this branch are listed BEFORE the dispatch, and the run is the first one that is not in that list, on this branch, with the run-name
-(`<variant> <channel> <sha>`) as its title (the variant is in it, so the other variant's concurrent run is never mistaken for this one). A fresh run carries the workflow name for its first
-seconds, so the poll waits for the title. No clock is used. No run found within the time fails the step (the base build stays green, this job is red, and re-running it dispatches again).
-The variant's run itself is not waited for.
+Finding the run: the ids of the runs of this workflow on this branch are listed BEFORE
+the dispatch, and the run is the first one that is not in that list, on this branch,
+with the run-name (`<variant> <channel> <sha>`) as its title (the variant is in it, so
+the other variant's concurrent run is never mistaken for this one). A fresh run carries
+the workflow name for its first seconds, so the poll waits for the title. No clock is
+used. No run found within the time fails the step (the base build stays green, this job
+is red, and re-running it dispatches again). The variant's run itself is not waited for.
 """
 
 import os
@@ -24,6 +30,14 @@ WORKFLOW = "build-variant.yml"
 
 
 def main(argv=None):
+    """Dispatch the variant build workflow and wait for the run it starts.
+
+    Receives the channel (testing or latest), the full commit sha and an optional
+    base digest; reads REF, VARIANT and GITHUB_REPOSITORY and the polling settings
+    POLL_WAIT and POLL_TRIES. Returns 0 once the new run appears (its URL goes to
+    the summary), 2 for an invalid argument or ref, 1 when the dispatch fails or no
+    run appears in time.
+    """
     ap = ci.arg_parser(__doc__)
     ap.add_argument("channel", choices=["testing", "latest"])
     ap.add_argument("sha")
@@ -32,6 +46,7 @@ def main(argv=None):
     ref, variant = os.environ["REF"], os.environ["VARIANT"]
     owner, name = os.environ["GITHUB_REPOSITORY"].split("/")
     repo = {"owner": owner, "repo": name}
+    # the first failed validation names the problem
     problem = next(
         (
             msg
@@ -52,6 +67,8 @@ def main(argv=None):
         ),
         None,
     )
+
+    # refuse before anything is dispatched
     if problem:
         ci.log.error(problem)
         return 2
@@ -61,6 +78,7 @@ def main(argv=None):
     rest = gh.rest
 
     def list_runs():
+        """List the recent dispatched runs of the workflow on the branch."""
         return rest.actions.list_workflow_runs(
             workflow_id=WORKFLOW,
             branch=ref,
@@ -69,6 +87,7 @@ def main(argv=None):
             **repo,
         ).parsed_data.workflow_runs
 
+    # runs that exist before the dispatch, to tell the new one apart
     before = {r.id for r in list_runs()}
     inputs = {
         "variant": variant,
@@ -76,18 +95,22 @@ def main(argv=None):
         "sha": args.sha,
         **({"base_digest": args.base_digest} if args.base_digest else {}),
     }
+
+    # a rejected dispatch is reported with the SDK's own message
     try:
         rest.actions.create_workflow_dispatch(
             workflow_id=WORKFLOW, data={"ref": ref, "inputs": inputs}, **repo
         )
-    except Exception as e:  # noqa: BLE001 - the SDK's own error, whatever its type, is the reason to print
+    except Exception as e:
+        # the SDK's own error, whatever its type, is the reason to print
         ci.log.error(
             f"could not dispatch {WORKFLOW} on {ref} (channel {args.channel}, {args.sha}): {e}"
         )
         return 1
-    for i in range(
-        1, tries + 1
-    ):  # a poll, not a retry: the dispatched run does not exist yet for a moment
+
+    # a poll, not a retry: the dispatched run does not exist yet for a moment
+    for i in range(1, tries + 1):
+        # the new run: right title and branch, and not one of the earlier runs
         new = next(
             (
                 r
@@ -98,6 +121,7 @@ def main(argv=None):
             ),
             None,
         )
+        # found: report it and finish
         if new:
             ci.summary(f"Started: {new.html_url}")
             ci.append_to(
@@ -105,6 +129,7 @@ def main(argv=None):
                 f"{variant} {args.channel} for {args.sha}: {new.html_url}",
             )
             return 0
+        # wait between polls, but not after the last one
         if i != tries:
             time.sleep(poll_wait)
     ci.log.error(
@@ -113,5 +138,6 @@ def main(argv=None):
     return 1
 
 
+# run as a script, not when imported by a test
 if __name__ == "__main__":
     sys.exit(main())
