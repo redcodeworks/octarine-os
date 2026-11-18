@@ -27,6 +27,7 @@ What it checks (nothing is loaded, no BPF runs; a real machine still has to load
 """
 
 import argparse
+import enum
 import glob
 import os
 import re
@@ -35,9 +36,16 @@ import subprocess
 import sys
 
 BTF_MAGIC = 0xEB9F
-KIND_INT, KIND_PTR, KIND_ARRAY, KIND_STRUCT, KIND_UNION, KIND_ENUM = 1, 2, 3, 4, 5, 6
-KIND_FWD, KIND_TYPEDEF, KIND_VOLATILE, KIND_CONST, KIND_RESTRICT, KIND_FUNC = 7, 8, 9, 10, 11, 12
-KIND_FUNC_PROTO, KIND_VAR, KIND_DATASEC, KIND_FLOAT, KIND_DECL_TAG, KIND_TYPE_TAG, KIND_ENUM64 = 13, 14, 15, 16, 17, 18, 19
+
+
+class Kind(enum.IntEnum):
+    """BTF type kinds (linux/btf.h)."""
+
+    INT, PTR, ARRAY, STRUCT, UNION, ENUM = 1, 2, 3, 4, 5, 6
+    FWD, TYPEDEF, VOLATILE, CONST, RESTRICT, FUNC = 7, 8, 9, 10, 11, 12
+    FUNC_PROTO, VAR, DATASEC, FLOAT, DECL_TAG, TYPE_TAG, ENUM64 = 13, 14, 15, 16, 17, 18, 19
+
+
 EM_BPF = 247
 
 
@@ -67,37 +75,32 @@ def parse_btf(blob):
         kind = (info >> 24) & 0x1F
         vlen = info & 0xFFFF
         t = {"kind": kind, "name": name(name_off), "vlen": vlen, "size": size_type, "members": []}
-        if kind == KIND_INT:
-            pos += 4
-        elif kind == KIND_ARRAY:
-            pos += 12
-        elif kind in (KIND_STRUCT, KIND_UNION):
-            for _ in range(vlen):
-                m_name, m_type, m_off = struct.unpack_from("<III", blob, pos)
+        match kind:
+            case Kind.INT | Kind.VAR | Kind.DECL_TAG:
+                pos += 4
+            case Kind.ARRAY:
                 pos += 12
-                # with kind_flag the offset field packs a bitfield size in its top byte
-                if info >> 31:
-                    m_off &= 0xFFFFFF
-                t["members"].append((name(m_name), m_off))
-        elif kind == KIND_ENUM:
-            pos += 8 * vlen
-        elif kind == KIND_ENUM64:
-            pos += 12 * vlen
-        elif kind == KIND_FUNC_PROTO:
-            pos += 8 * vlen
-        elif kind == KIND_VAR:
-            pos += 4
-        elif kind == KIND_DATASEC:
-            for _ in range(vlen):
-                v_type, v_off, v_size = struct.unpack_from("<III", blob, pos)
-                pos += 12
-                t["members"].append((v_type, v_off))
-        elif kind == KIND_DECL_TAG:
-            pos += 4
-        elif kind in (KIND_PTR, KIND_FWD, KIND_TYPEDEF, KIND_VOLATILE, KIND_CONST, KIND_RESTRICT, KIND_FUNC, KIND_FLOAT, KIND_TYPE_TAG):
-            pass
-        else:
-            raise CheckError("unknown BTF kind %d" % kind)
+            case Kind.STRUCT | Kind.UNION:
+                for _ in range(vlen):
+                    m_name, m_type, m_off = struct.unpack_from("<III", blob, pos)
+                    pos += 12
+                    # with kind_flag the offset field packs a bitfield size in its top byte
+                    if info >> 31:
+                        m_off &= 0xFFFFFF
+                    t["members"].append((name(m_name), m_off))
+            case Kind.ENUM | Kind.FUNC_PROTO:
+                pos += 8 * vlen
+            case Kind.ENUM64:
+                pos += 12 * vlen
+            case Kind.DATASEC:
+                for _ in range(vlen):
+                    v_type, v_off, v_size = struct.unpack_from("<III", blob, pos)
+                    pos += 12
+                    t["members"].append((v_type, v_off))
+            case Kind.PTR | Kind.FWD | Kind.TYPEDEF | Kind.VOLATILE | Kind.CONST | Kind.RESTRICT | Kind.FUNC | Kind.FLOAT | Kind.TYPE_TAG:
+                pass
+            case _:
+                raise CheckError("unknown BTF kind %d" % kind)
         types.append(t)
     return types
 
@@ -166,7 +169,7 @@ def analyse_object(obj):
     if not btf_sec:
         raise CheckError("the BPF object has no .BTF section")
     types = parse_btf(obj[btf_sec[0]["offset"] : btf_sec[0]["offset"] + btf_sec[0]["size"]])
-    ops = [t for t in types if t["kind"] == KIND_STRUCT and t["name"] == "sched_ext_ops"]
+    ops = [t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"]
     if not ops:
         raise CheckError("the BPF object's BTF has no struct sched_ext_ops")
     by_off = {}
@@ -255,9 +258,9 @@ def main():
         print("WARN kernel BTF could not be read (%s): the comparison below is skipped, only the config check counts" % e)
     if types is None:
         return 1 if failed else 0
-    kernel_funcs = {t["name"] for t in types if t["kind"] == KIND_FUNC}
-    kernel_vars = {t["name"] for t in types if t["kind"] == KIND_VAR}
-    kops = [t for t in types if t["kind"] == KIND_STRUCT and t["name"] == "sched_ext_ops"]
+    kernel_funcs = {t["name"] for t in types if t["kind"] == Kind.FUNC}
+    kernel_vars = {t["name"] for t in types if t["kind"] == Kind.VAR}
+    kops = [t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"]
     if not kops:
         print("FAIL the kernel BTF has no struct sched_ext_ops: this kernel has no usable sched_ext")
         return 1

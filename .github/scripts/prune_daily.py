@@ -72,11 +72,8 @@ def plan(versions):
     image_digests = {digest_of(v) for v in images}
     protect = {p.split(":")[-1] for p in PROTECT}
     dailies = sorted((v for v in images if any(DAILY.match(t) for t in tags_of(v))), key=lambda v: datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")), reverse=True)
-    kept, doomed = dailies[:KEEP], []
-    for v in dailies[KEEP:]:
-        tags = tags_of(v)
-        if all(DAILY.match(t) or ALIAS.match(t) for t in tags) and digest_of(v) not in protect:
-            doomed.append(v)
+    kept = dailies[:KEEP]
+    doomed = [v for v in dailies[KEEP:] if all(DAILY.match(t) or ALIAS.match(t) for t in tags_of(v)) and digest_of(v) not in protect]
     doomed_digests = {digest_of(v) for v in doomed}
     doomed_sigs = [s for d, s in sigs.items() if d in doomed_digests or d not in image_digests]
     return dailies, kept, doomed, doomed_sigs

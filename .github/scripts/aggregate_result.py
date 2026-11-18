@@ -27,20 +27,21 @@ def main(argv=None):
     print(f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} publish={publish} sign={sign}")
     if plan != "success":
         fail("The plan job did not succeed")
-    sign_expected = False
-    if build_wanted == "true":
-        if not (build == "success" and promote == "skipped"):
-            fail(f"The image build did not succeed ({build}, promote {promote})")
-        sign_expected = publish == "true"
-    elif promote_wanted == "true":
-        if not (promote == "success" and build == "skipped"):
-            fail(f"The promotion did not succeed ({promote}, build {build})")
-        sign_expected = True
-        print("Promoted a tested image: no rebuild")
-    else:
-        if not (build == "skipped" and promote == "skipped"):
-            fail(f"Unexpected results (build {build}, promote {promote})")
-        print("Docs-only change or unchanged scheduled run: heavy build skipped")
+    match build_wanted, promote_wanted:
+        case "true", _:
+            if not (build == "success" and promote == "skipped"):
+                fail(f"The image build did not succeed ({build}, promote {promote})")
+            sign_expected = publish == "true"
+        case _, "true":
+            if not (promote == "success" and build == "skipped"):
+                fail(f"The promotion did not succeed ({promote}, build {build})")
+            sign_expected = True
+            print("Promoted a tested image: no rebuild")
+        case _:
+            if not (build == "skipped" and promote == "skipped"):
+                fail(f"Unexpected results (build {build}, promote {promote})")
+            sign_expected = False
+            print("Docs-only change or unchanged scheduled run: heavy build skipped")
     if sign_expected:
         if sign != "success":
             fail(f"Signing and verification did not succeed ({sign})")

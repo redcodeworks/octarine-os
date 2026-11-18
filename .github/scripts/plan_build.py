@@ -45,11 +45,10 @@ def main(argv=None):
         ci.note("empty diff: building")
         print("true")
         return 0
-    for f in changed:
-        if not docs_only.is_docs(f):
-            ci.note(f"non-docs file changed ({f}): building")
-            print("true")
-            return 0
+    if code := next((f for f in changed if not docs_only.is_docs(f)), None):
+        ci.note(f"non-docs file changed ({code}): building")
+        print("true")
+        return 0
     if ref == "refs/heads/testing":
         ci.note(f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip")
         print("true")

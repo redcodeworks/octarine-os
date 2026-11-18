@@ -55,7 +55,7 @@ def read(mode, ref, linux_amd64=False):
 
 def digest(image, tag):
     """The manifest digest of image:tag: the sha256 of the raw manifest bytes, so it is the same for every tag that points at the same content."""
-    return "sha256:" + hashlib.sha256(read("raw", f"{image}:{tag}")).hexdigest()
+    return sha256_of(read("raw", f"{image}:{tag}"))
 
 
 def settled(image, tag, want):
@@ -65,7 +65,7 @@ def settled(image, tag, want):
     @ci.retry(attempts=ci.int_env("READBACK_TRIES", 6), delay=ci.int_env("READBACK_WAIT", 5), backoff=False, on=(ReadError,))
     def read_back():
         try:
-            got = "sha256:" + hashlib.sha256(inspect_once("raw", f"{image}:{tag}")).hexdigest()
+            got = sha256_of(inspect_once("raw", f"{image}:{tag}"))
         except Absent:
             got = "absent"
         except ReadError:

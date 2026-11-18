@@ -43,17 +43,18 @@ def main(argv=None):
             fail(f"Dry run, but later jobs ran (build {build}, promote {promote}, sign {sign})")
         print(f"Dry run: planned build={build_wanted} promote={promote_wanted}; nothing was built, pushed or signed")
         return 0
-    if build_wanted == "true":
-        if not (build == "success" and promote == "skipped" and sign == "success"):
-            fail(f"The dx build did not succeed (build {build}, promote {promote}, sign {sign})")
-    elif promote_wanted == "true":
-        if not (promote == "success" and build == "skipped" and sign == "success"):
-            fail(f"The dx promotion did not succeed (promote {promote}, build {build}, sign {sign})")
-        print("Promoted the tested dx image: no rebuild")
-    else:
-        if not all_skipped:
-            fail(f"Unexpected results (build {build}, promote {promote}, sign {sign})")
-        print("Base and dx inputs unchanged: nothing to build")
+    match build_wanted, promote_wanted:
+        case "true", _:
+            if not (build == "success" and promote == "skipped" and sign == "success"):
+                fail(f"The dx build did not succeed (build {build}, promote {promote}, sign {sign})")
+        case _, "true":
+            if not (promote == "success" and build == "skipped" and sign == "success"):
+                fail(f"The dx promotion did not succeed (promote {promote}, build {build}, sign {sign})")
+            print("Promoted the tested dx image: no rebuild")
+        case _:
+            if not all_skipped:
+                fail(f"Unexpected results (build {build}, promote {promote}, sign {sign})")
+            print("Base and dx inputs unchanged: nothing to build")
     print("ok")
     return 0
 

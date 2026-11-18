@@ -68,30 +68,27 @@ def is_pipeline_only(path: str) -> bool:
     return path in (".github/zizmor.yml", ".github/dependabot.yml", ".gitleaks.toml") or path.startswith("githooks/")
 
 
+def kinds_of(path: str) -> set[str]:
+    """The kinds whose hash a file belongs to (none for a pipeline-only or docs-only file)."""
+    if is_pipeline_only(path):
+        return set()
+    if is_variant_shared(path):
+        return {"dx", "gx"}
+    if is_dx_only(path):
+        return {"dx"}
+    if is_gx_only(path):
+        return {"gx"}
+    return set() if docs_only.is_docs(path) else {"vanilla"}
+
+
 def _inputs(kind: str, rev: str = "HEAD") -> str:
     """The hash of one kind (vanilla, dx or gx) at <rev>; SystemExit(1) for an unknown revision."""
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{tree}}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
         ci.log.error(f"inputs-hash: unknown revision '{rev}'")
         raise SystemExit(1)
     tree = subprocess.run(["git", "ls-tree", "-r", "--full-tree", rev], stdout=subprocess.PIPE, text=True, check=True).stdout
-    lines = []
-    for entry in tree.splitlines():
-        meta, _, path = entry.partition("\t")
-        if is_pipeline_only(path):
-            continue
-        if is_variant_shared(path):
-            if kind not in ("dx", "gx"):
-                continue
-        elif is_dx_only(path):
-            if kind != "dx":
-                continue
-        elif is_gx_only(path):
-            if kind != "gx":
-                continue
-        else:
-            if kind != "vanilla" or docs_only.is_docs(path):
-                continue
-        lines.append(f"{meta}\t{path}\n".encode())
+    entries = (entry.partition("\t") for entry in tree.splitlines())
+    lines = [f"{meta}\t{path}\n".encode() for meta, _, path in entries if kind in kinds_of(path)]
     return hashlib.sha256(b"".join(sorted(lines))).hexdigest()  # sorted bytes, like LC_ALL=C sort
 
 
