@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Builds the dx layer of octarine-os-dx: the developer package lists of the pinned octarine-bins-dx image (bind-mounted at /binaries; its /packages/install.sh installs
-# them), its binary components (none yet), the dx-only files and podman.socket. The kernel must be exactly the same before and after (nothing here may pull in a new one).
+# Builds the dx layer of octarine-os-dx: the developer package lists (packages/dx, copied to /ctx/packages; build_files/install-packages.sh installs
+# them), the dx-only files and podman.socket. The kernel must be exactly the same before and after (nothing here may pull in a new one).
 set -euo pipefail
 # Log groups: GitHub Actions folds each "::group::" ... "::endgroup::" pair in the build log (plain text elsewhere); never nested. The trap
 # closes a group left open by a failure and prints an "::error::" line outside it (exit status unchanged).
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::dx.sh failed (exit ${rc})"; fi' EXIT
 
 kernel_of() { rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core; }
-echo "::group::dx: developer packages (octarine-bins-dx)"
+echo "::group::dx: developer packages (packages/dx)"
 before=$(kernel_of)
 echo "Kernel of the base image: ${before}"
 
-# The lists (required-fedora strict, optional-fedora best effort) and the installer come from the pinned octarine-bins-dx image. What cannot be installed of the optional
+# The lists (required-fedora strict, optional-fedora best effort) are the text files of packages/dx and the installer is install-packages.sh. What cannot be installed of the optional
 # list is APPENDED to the file the default image's build created (the installer never truncates it), so one file lists the misses of the whole image.
-test -f /binaries/packages/install.sh
+test -f /ctx/packages/required-fedora.txt
 missing_file=/usr/share/octarine-os/optional-packages-missing
 test -f "${missing_file}"
 # kernel-devel must not come back, and certainly not at another version than the kernel: bcc (optional list) Recommends it and systemtap-devel
@@ -23,7 +23,7 @@ test -f "${missing_file}"
 dnf_dropin=/etc/dnf/libdnf5.conf.d/90-octarine-no-kernel-devel.conf
 mkdir -p "$(dirname "${dnf_dropin}")"
 printf '[main]\nexcludepkgs=kernel-devel,kernel-devel-matched\n' > "${dnf_dropin}"
-MISSING_FILE="${missing_file}" bash /binaries/packages/install.sh
+MISSING_FILE="${missing_file}" /ctx/install-packages.sh /ctx/packages
 rm -f "${dnf_dropin}"
 # ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB with its LLVM dependencies) is NOT part of the dx images (the lists leave it out):
 # `ujust hardware-setup` (step rocm) provides it in a rootless distrobox instead
@@ -31,9 +31,6 @@ for p in rocminfo rocm-smi rocm-hip rocm-opencl hipcc; do
     if rpm -q "${p}" >/dev/null 2>&1; then echo "ERROR: ${p} must not be installed in the dx image"; exit 1; fi
 done
 echo "::endgroup::"
-
-# The binary components of the dx image: none yet (an empty COMPONENTS is valid for an empty required list); the script prints its own log group
-BINARIES_REQUIRED="" /ctx/install-binaries.sh
 
 echo "::group::dx: files, recipes and the datastore signature policy"
 
