@@ -25,6 +25,7 @@ What it checks (nothing is loaded, no BPF runs; a real machine still has to load
   The check exits 1 when a required import or a set member is missing from the kernel. Limits (printed, not hidden): it does not
   prove that the verifier accepts the programs, that a member's meaning is unchanged, or that the userspace side works.
 """
+
 import argparse
 import glob
 import os
@@ -51,7 +52,7 @@ def parse_btf(blob):
     magic, version, flags, hdr_len, type_off, type_len, str_off, str_len = struct.unpack_from("<HBBIIIII", blob, 0)
     if magic != BTF_MAGIC:
         raise CheckError("not BTF (magic %#x)" % magic)
-    sdata = blob[hdr_len + str_off: hdr_len + str_off + str_len]
+    sdata = blob[hdr_len + str_off : hdr_len + str_off + str_len]
 
     def name(off):
         end = sdata.find(b"\0", off)
@@ -114,7 +115,7 @@ def elf_sections(data):
         sh_name, sh_type, sh_flags, sh_addr, sh_offset, sh_size, sh_link, sh_info, sh_align, sh_entsize = struct.unpack_from("<IIQQQQIIQQ", data, o)
         raw.append((sh_name, sh_type, sh_offset, sh_size, sh_link, sh_info, sh_entsize))
     shstr = raw[e_shstrndx]
-    strtab = data[shstr[2]: shstr[2] + shstr[3]]
+    strtab = data[shstr[2] : shstr[2] + shstr[3]]
     out = []
     for sh_name, sh_type, off, size, link, info, ent in raw:
         end = strtab.find(b"\0", sh_name)
@@ -126,7 +127,7 @@ def elf_symbols(data, sections):
     for s in sections:
         if s["type"] == 2:  # SHT_SYMTAB
             strs = sections[s["link"]]
-            stab = data[strs["offset"]: strs["offset"] + strs["size"]]
+            stab = data[strs["offset"] : strs["offset"] + strs["size"]]
             syms = []
             for i in range(s["size"] // 24):
                 st_name, st_info, st_other, st_shndx, st_value, st_size = struct.unpack_from("<IBBHQQ", data, s["offset"] + i * 24)
@@ -146,10 +147,10 @@ def embedded_bpf_objects(path):
             continue
         try:
             machine, size, _ = elf_sections(data[start:])
-        except (CheckError, struct.error, IndexError):
+        except CheckError, struct.error, IndexError:
             continue
         if machine == EM_BPF:
-            found.append(data[start: start + size])
+            found.append(data[start : start + size])
     return found
 
 
@@ -164,7 +165,7 @@ def analyse_object(obj):
     btf_sec = [s for s in secs if s["name"] == ".BTF"]
     if not btf_sec:
         raise CheckError("the BPF object has no .BTF section")
-    types = parse_btf(obj[btf_sec[0]["offset"]: btf_sec[0]["offset"] + btf_sec[0]["size"]])
+    types = parse_btf(obj[btf_sec[0]["offset"] : btf_sec[0]["offset"] + btf_sec[0]["size"]])
     ops = [t for t in types if t["kind"] == KIND_STRUCT and t["name"] == "sched_ext_ops"]
     if not ops:
         raise CheckError("the BPF object's BTF has no struct sched_ext_ops")
@@ -189,7 +190,7 @@ def decompress_vmlinuz(path):
     setup_sects = data[0x1F1] or 4
     start = (setup_sects + 1) * 512
     payload_off, payload_len = struct.unpack_from("<II", data, 0x248)
-    payload = data[start + payload_off: start + payload_off + payload_len]
+    payload = data[start + payload_off : start + payload_off + payload_len]
     tools = {b"\x28\xb5\x2f\xfd": ["zstd", "-dc"], b"\xfd7zXZ\x00": ["xz", "-dc"], b"\x1f\x8b": ["gzip", "-dc"]}
     for magic, cmd in tools.items():
         if payload.startswith(magic):
@@ -210,7 +211,7 @@ def kernel_btf(kernel_dir):
     btf = [s for s in secs if s["name"] == ".BTF"]
     if not btf:
         raise CheckError("the kernel has no .BTF section")
-    return parse_btf(vmlinux[btf[0]["offset"]: btf[0]["offset"] + btf[0]["size"]])
+    return parse_btf(vmlinux[btf[0]["offset"] : btf[0]["offset"] + btf[0]["size"]])
 
 
 def main():
@@ -307,6 +308,7 @@ def main():
             print("FAIL %s: found no struct_ops member (the reader is wrong or the object is unexpected)" % name)
             failed = True
             continue
+
         def known(sym):
             # CONFIG_* and LINUX_KERNEL_VERSION are libbpf's own externs (.kconfig), filled from the kernel config at load time:
             # they are not kernel symbols; a CONFIG_ option must at least be known to the image's kernel config
@@ -315,6 +317,7 @@ def main():
             if sym.startswith("CONFIG_"):
                 return sym in cfg
             return sym in kernel_funcs or sym in kernel_vars or sym in sysmap
+
         miss_req = sorted(s for s in req if not known(s))
         miss_weak = sorted(s for s in weak if not known(s) and not s.startswith("CONFIG_"))
         kconfig = sorted(s for s in (req | weak) if s.startswith("CONFIG_"))

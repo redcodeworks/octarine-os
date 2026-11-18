@@ -4,6 +4,7 @@
 The registry may answer a read right after a push or a copy with the PREVIOUS manifest of the tag (seen on GHCR 2026-11-14), or fail the read for a moment. Exit 0 as soon as one read shows
 the expected digest; exit 1 when after the last read the tag still shows another digest, absent or unreadable, with the last answer in the message.
 """
+
 import sys
 from pathlib import Path
 

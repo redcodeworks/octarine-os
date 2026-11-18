@@ -17,6 +17,7 @@ The decision is a pure function of its environment, so it can be tried locally (
 
 Anything missing or unreadable means build (fail safe): an image from before the labels existed has no LATEST_BASE or REPO_SAME and therefore gets one normal build that records them.
 """
+
 import os
 import sys
 import time

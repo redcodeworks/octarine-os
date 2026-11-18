@@ -16,6 +16,7 @@ Promote only when all hold:
 Anything else (schedule, dispatch, non-merge push, differing inputs, no image, disabled) means build. EXCEPT a registry that cannot be read (a read error, not an absent tag): that fails the plan,
 because "unreadable" is not "no tested image" and a rebuild on main would publish something that was never tested.
 """
+
 import os
 import sys
 from pathlib import Path

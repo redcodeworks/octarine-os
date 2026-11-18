@@ -1,4 +1,5 @@
 """The weekly pin bump: bump_pin (decision table of the chunkah pin) and bump_weekly (one independent pull request per pin) with real git (a bare origin and a clone), the fake GitHub API and stub bump_run/bump_checks."""
+
 import os
 import shutil
 import subprocess
@@ -61,7 +62,7 @@ def test_a_malformed_pin_is_badpin(pin_file, reg):
 
 
 # ---- bump_weekly
-STUB_RUN = '''import os, re, subprocess, sys
+STUB_RUN = """import os, re, subprocess, sys
 pin = sys.argv[1]
 new = os.environ.get("UPSTREAM_" + pin.upper(), "")
 if new == "fail":
@@ -74,7 +75,7 @@ if new == cur:
     sys.exit(0)
 open("pins.txt", "w").write(re.sub(rf"^{pin}=.*$", f"{pin}={new}", text, flags=re.M))
 subprocess.run(["git", "commit", "-q", "-a", "-m", f"Bump {pin} to {new}\\n\\n{pin} | {cur} | {new} | upstream | 3"], check=True)
-'''
+"""
 STUB_CHECKS = 'import os, sys\nopen(os.environ["DB"] + "/checks", "a").write(" ".join(sys.argv[1:]) + "\\n")\n'
 
 
@@ -105,12 +106,18 @@ def clone(tmp_path, github, monkeypatch):
         checks = db / "checks"
 
         def run(self, **env):
-            return subprocess.run([os.sys.executable, "-I", ".github/scripts/bump_weekly.py"], cwd=work, capture_output=True, text=True,
-                                  env={**os.environ, "DB": str(db), "BUMP_PINS": "chunkah brew bins", "BUMP_CHECKS_WAIT": "0", "GITHUB_REPOSITORY": "o/r", **env})
+            return subprocess.run(
+                [os.sys.executable, "-I", ".github/scripts/bump_weekly.py"],
+                cwd=work,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "DB": str(db), "BUMP_PINS": "chunkah brew bins", "BUMP_CHECKS_WAIT": "0", "GITHUB_REPOSITORY": "o/r", **env},
+            )
 
         def branches(self):
             out = git(origin, "for-each-ref", "--format=%(refname:short)", "refs/heads/bump/*")
             return sorted(out.split())
+
     return Clone()
 
 

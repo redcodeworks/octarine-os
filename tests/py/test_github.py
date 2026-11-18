@@ -1,5 +1,6 @@
 """The GitHub API as the scripts use it: the githubkit SDK directly (ci.github()) against the fake API. What the SDK does is what is tested: a 404 raises RequestFailed after ONE
 request, a transport error is retried by the retry decision of ci.py, and a connection that stays broken raises the SDK's own RequestError."""
+
 import pytest
 from githubkit.exception import RequestError, RequestFailed
 

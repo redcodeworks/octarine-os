@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Format the staged Python files with ruff and stage the result.
+# Opt-in: enabled with `just install-hooks`; it does nothing when uv or the locked ruff is missing.
+set -euo pipefail
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "pre-commit: uv is not installed, so the Python files were not formatted" >&2
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+mapfile -d '' files < <(git diff --cached --name-only --diff-filter=ACM -z -- '*.py')
+[[ ${#files[@]} -eq 0 ]] && exit 0
+
+if ! uv run --frozen --quiet ruff format -- "${files[@]}"; then
+    echo "pre-commit: ruff could not run (uv sync --frozen once to install it), so the Python files were not formatted" >&2
+    exit 0
+fi
+git add -- "${files[@]}"

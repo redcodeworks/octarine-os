@@ -3,6 +3,7 @@
 
 Prints the raw manifest or the image config JSON. Exit status (the contract the workflow steps read): 0 the answer is on stdout; 3 ABSENT; 4 READ ERROR, after the retries (RETRY_TRIES, RETRY_DELAY).
 """
+
 import sys
 from pathlib import Path
 

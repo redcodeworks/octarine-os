@@ -5,6 +5,7 @@ definitive, so they are NOT in a retry's `on` list and surface at once. `ReadErr
 `ci.NetworkError` is the same for the write calls (copy, push, sign). Callers decide what each means: a missing candidate may mean "build instead", an unreadable registry must
 never silently mean that.
 """
+
 import hashlib
 import json
 import re
@@ -60,6 +61,7 @@ def digest(image, tag):
 def settled(image, tag, want):
     """Read a tag back after a write until it shows the expected digest: the registry may answer right after a push or copy with the PREVIOUS manifest of the tag (seen on GHCR
     2026-11-14), or fail the read for a moment. Reads READBACK_TRIES (6) times, READBACK_WAIT (5) seconds apart; raises ReadError naming what it saw (digest, absent, unreadable)."""
+
     @ci.retry(attempts=ci.int_env("READBACK_TRIES", 6), delay=ci.int_env("READBACK_WAIT", 5), backoff=False, on=(ReadError,))
     def read_back():
         try:

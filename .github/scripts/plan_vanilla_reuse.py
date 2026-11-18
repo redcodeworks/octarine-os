@@ -9,6 +9,7 @@ docs-only change), and print key=value lines (for $GITHUB_OUTPUT). Usage: plan_v
 
 Environment: IMAGE (the registry image). Nothing is published or retagged: the image of the nearest earlier commit stays the `testing` image.
 """
+
 import sys
 from pathlib import Path
 

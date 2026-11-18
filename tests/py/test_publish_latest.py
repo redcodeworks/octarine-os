@@ -1,4 +1,5 @@
 """publish_latest.py (the one step that moves the `latest` of ONE image) against a fake registry (fakes/skopeo with REG), fake cosign and a throwaway git repository that plays main."""
+
 import pytest
 
 from conftest import git, make_repo, script

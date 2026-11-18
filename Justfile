@@ -371,10 +371,10 @@ bins-bump tag="latest":
     sed -i -e "s/^ARG BINS_TAG=.*/ARG BINS_TAG=${version}/" -e "s/^ARG BINS_DIGEST=.*/ARG BINS_DIGEST=sha256:${digest}/" Containerfile
     echo "Containerfile now pins ${ref}:${version}@sha256:${digest} (signature valid)"
 
-# Use this repository's git hooks (a gitleaks scan of what you push)
+# Use this repository's git hooks (ruff format of staged Python files on commit, a gitleaks scan on push)
 [group('Security')]
 install-hooks:
     #!/usr/bin/env bash
     set -euo pipefail
     git config core.hooksPath githooks
-    echo "Git hooks enabled from githooks/. The pre-push scan needs gitleaks: brew install gitleaks"
+    echo "Git hooks enabled from githooks/. The pre-push scan needs gitleaks (brew install gitleaks); the pre-commit format needs uv"

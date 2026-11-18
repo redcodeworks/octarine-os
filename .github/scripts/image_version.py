@@ -4,6 +4,7 @@
 It names no channel on purpose: promotion retags a tested digest as `latest` without changing the image, so a channel in the version would be wrong after the retag.
 Environment overrides (tests): VERSION_DATE, VERSION_SHA.
 """
+
 import os
 import sys
 import time

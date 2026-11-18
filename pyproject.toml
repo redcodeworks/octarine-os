@@ -12,7 +12,14 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "pytest",
+    "ruff>=0.17.5",
+]
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+# Formatter only (no lint rules). The scripts use long lines; 200 covers the 99th percentile, so the formatter does not rewrap them.
+line-length = 200

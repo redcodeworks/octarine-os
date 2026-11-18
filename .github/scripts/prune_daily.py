@@ -15,6 +15,7 @@ image of each variant `latest` (dx, gx; that is a label of the variant image, so
 DRY_RUN (default true) only prints the plan. API_BASE (e.g. users/<owner>/packages/container/<name>) is needed to delete. More than MAX_DELETES
 (default 30) versions in the plan: nothing is deleted and the run fails.
 """
+
 import json
 import os
 import re
@@ -56,7 +57,7 @@ def digest_of(v):
 
 
 def label(v):
-    return f'id={v["id"]} {digest_of(v)[:12]} {v["created_at"][:10]} tags={",".join(tags_of(v)) or "(none)"}'
+    return f"id={v['id']} {digest_of(v)[:12]} {v['created_at'][:10]} tags={','.join(tags_of(v)) or '(none)'}"
 
 
 def plan(versions):
@@ -70,8 +71,7 @@ def plan(versions):
             images.append(v)
     image_digests = {digest_of(v) for v in images}
     protect = {p.split(":")[-1] for p in PROTECT}
-    dailies = sorted((v for v in images if any(DAILY.match(t) for t in tags_of(v))),
-                     key=lambda v: datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")), reverse=True)
+    dailies = sorted((v for v in images if any(DAILY.match(t) for t in tags_of(v))), key=lambda v: datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")), reverse=True)
     kept, doomed = dailies[:KEEP], []
     for v in dailies[KEEP:]:
         tags = tags_of(v)

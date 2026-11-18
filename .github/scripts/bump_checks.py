@@ -11,6 +11,7 @@ suite), this script waits for that run and posts check runs named `test` and `se
 run `test` with the marker title. A GitHub API error ends the script with the SDK's error (bump_weekly.py ignores its exit status: the PR then lacks the checks and stays blocked, fail closed); a missing run only warns. Env: BUMP_BASE (the ref Test is dispatched on, default testing), BUMP_CHECKS_WAIT (seconds
 to wait for the dispatched run to appear, 90; 0 = do not wait), BUMP_CHECKS_POLL (5), BUMP_CHECKS_RUN_MAX (seconds to watch the run, 900).
 """
+
 import os
 import re
 import sys
@@ -86,8 +87,17 @@ def main(argv=None):
     for name in ("test", "secrets"):
         job = next((j for j in jobs if j.name == name), None)
         conclusion = "success" if job and job.conclusion == "success" else "failure"
-        rest.checks.create(data={"name": name, "head_sha": sha, "status": "completed", "conclusion": conclusion, "details_url": run.html_url,
-                                 "output": {"title": MARKER, "summary": f"The job `{name}` of the dispatched Test run {run.html_url} finished with {conclusion}."}}, **repo)
+        rest.checks.create(
+            data={
+                "name": name,
+                "head_sha": sha,
+                "status": "completed",
+                "conclusion": conclusion,
+                "details_url": run.html_url,
+                "output": {"title": MARKER, "summary": f"The job `{name}` of the dispatched Test run {run.html_url} finished with {conclusion}."},
+            },
+            **repo,
+        )
         ci.log.info(f"posted check run {name}={conclusion} on {sha[:7]}")
     return 0
 

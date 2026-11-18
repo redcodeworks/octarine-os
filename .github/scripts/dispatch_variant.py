@@ -10,6 +10,7 @@ Finding the run: the ids of the runs of this workflow on this branch are listed 
 seconds, so the poll waits for the title. No clock is used. No run found within the time fails the step (the base build stays green, this job is red, and re-running it dispatches again).
 The variant's run itself is not waited for.
 """
+
 import os
 import re
 import sys
@@ -31,10 +32,12 @@ def main(argv=None):
     ref, variant = os.environ["REF"], os.environ["VARIANT"]
     owner, name = os.environ["GITHUB_REPOSITORY"].split("/")
     repo = {"owner": owner, "repo": name}
-    for ok, msg in ((variant in ("dx", "gx"), f"unknown variant '{variant}'"),
-                    (re.fullmatch(r"[0-9a-f]{40}", args.sha), f"'{args.sha}' is not a full commit sha"),
-                    (not args.base_digest or re.fullmatch(r"sha256:[0-9a-f]{64}", args.base_digest), f"'{args.base_digest}' is not a sha256 digest"),
-                    (ref in ("main", "testing"), f"refusing to dispatch on '{ref}'")):
+    for ok, msg in (
+        (variant in ("dx", "gx"), f"unknown variant '{variant}'"),
+        (re.fullmatch(r"[0-9a-f]{40}", args.sha), f"'{args.sha}' is not a full commit sha"),
+        (not args.base_digest or re.fullmatch(r"sha256:[0-9a-f]{64}", args.base_digest), f"'{args.base_digest}' is not a sha256 digest"),
+        (ref in ("main", "testing"), f"refusing to dispatch on '{ref}'"),
+    ):
         if not ok:
             ci.log.error(msg)
             return 2

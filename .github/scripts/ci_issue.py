@@ -12,6 +12,7 @@ Environment: GITHUB_TOKEN (permission issues: write), GITHUB_REPOSITORY, SHA (th
 the failed jobs), LABEL (default ci-failure-dx), DOCS_URL (the CLAUDE.md section), NOW (default: today's date, for tests), and for the default build's alert (LABEL=ci-failure-default): ISSUE_TITLE,
 ISSUE_BODY (the text of a new issue), LABEL_DESC, FAIL_COMMENT and RECOVER_COMMENT.
 """
+
 import json
 import os
 import sys
@@ -30,7 +31,7 @@ def failed_jobs() -> str:
     """The names of the jobs of NEEDS_JSON (toJSON(needs)) whose result is failure."""
     try:
         return ", ".join(k for k, v in json.loads(env("NEEDS_JSON") or "{}").items() if v.get("result") == "failure")
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         return ""
 
 

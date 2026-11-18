@@ -4,6 +4,7 @@
 - every label whose key contains `version` (org.opencontainers.image.version, ostree version labels) must not contain `testing` or `latest`, and org.opencontainers.image.version must be present;
 - the line `IMAGE_VERSION=<value>` (os-release, the CI appends it to the labels) is required and follows the same rule; quotes around a value are ignored.
 """
+
 import sys
 from pathlib import Path
 

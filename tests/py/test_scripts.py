@@ -1,4 +1,5 @@
 """The scripts that move tags, pin the base, verify refs, file issues and open bump pull requests, run as real subprocesses against the fake registry, fake cosign/podman/sbverify and the fake GitHub API."""
+
 import json
 import os
 import subprocess
@@ -75,8 +76,11 @@ def pin(reg, tmp_path):
     def run(**extra):
         for name in ("env", "sum"):
             (tmp_path / name).write_text("")
-        return script("base_pin.py", extra={"BASE_IMAGE": BASE, "FEDORA_VERSION": "45", "KEY": str(tmp_path / "key.pub"), "GITHUB_ENV": str(tmp_path / "env"),
-                                            "GITHUB_STEP_SUMMARY": str(tmp_path / "sum"), **extra})
+        return script(
+            "base_pin.py",
+            extra={"BASE_IMAGE": BASE, "FEDORA_VERSION": "45", "KEY": str(tmp_path / "key.pub"), "GITHUB_ENV": str(tmp_path / "env"), "GITHUB_STEP_SUMMARY": str(tmp_path / "sum"), **extra},
+        )
+
     run.reg, run.tmp = reg, tmp_path
     return run
 
@@ -151,8 +155,12 @@ def test_a_malformed_kernel_or_one_of_another_fedora_is_refused(reg, kernel, fed
 
 
 # ---- ci_issue (fake GitHub API)
-ENV = {"SHA": "0123456789abcdef0123456789abcdef01234567", "RUN_URL": "https://example/run/9", "NOW": "2026-11-14",
-       "NEEDS_JSON": '{"plan":{"result":"success"},"build":{"result":"failure"},"sign":{"result":"skipped"}}'}
+ENV = {
+    "SHA": "0123456789abcdef0123456789abcdef01234567",
+    "RUN_URL": "https://example/run/9",
+    "NOW": "2026-11-14",
+    "NEEDS_JSON": '{"plan":{"result":"success"},"build":{"result":"failure"},"sign":{"result":"skipped"}}',
+}
 
 
 def test_the_first_failure_opens_one_issue_with_the_label_and_the_failed_job(github, fakes):
@@ -183,13 +191,17 @@ def test_a_recovery_without_an_open_issue_does_nothing(github, fakes):
 @pytest.fixture
 def secureboot(tmp_path, fakes):
     key = tmp_path / "key.der"
-    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/O=Test/CN=ublue kernel", "-days", "2", "-outform", "DER", "-out", str(key), "-keyout", str(tmp_path / "k")],
-                   check=True, capture_output=True)
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/O=Test/CN=ublue kernel", "-days", "2", "-outform", "DER", "-out", str(key), "-keyout", str(tmp_path / "k")],
+        check=True,
+        capture_output=True,
+    )
     (tmp_path / "junk.der").write_text("junk\n")
     (tmp_path / "vmlinuz").write_text("kernel\n")
 
     def run(url="key.der", **extra):
         return script("secureboot_check.py", "img:test", extra={"KERNEL_FILE": str(tmp_path / "vmlinuz"), "UBLUE_KEY_URL": f"file://{tmp_path / url}", **extra})
+
     run.log = fakes["LOG"]
     return run
 
@@ -215,10 +227,18 @@ def test_a_bad_key_download_fails_clearly_without_running_the_verification(secur
 def versions(n):
     def dg(k):
         return format(k, "064x")
+
     out = []
     for k in range(1, n + 1):
         d = f"202601{min(k, 28):02d}"
-        out.append({"id": 100 + k, "name": "sha256:" + dg(k), "created_at": f"2026-01-{min(k, 28):02d}T{k % 24:02d}:00:00Z", "metadata": {"container": {"tags": [f"daily-{d}", f"latest-{d}-abcdef{k % 10}", d]}}})
+        out.append(
+            {
+                "id": 100 + k,
+                "name": "sha256:" + dg(k),
+                "created_at": f"2026-01-{min(k, 28):02d}T{k % 24:02d}:00:00Z",
+                "metadata": {"container": {"tags": [f"daily-{d}", f"latest-{d}-abcdef{k % 10}", d]}},
+            }
+        )
     return out
 
 
@@ -245,4 +265,7 @@ def test_prune_refuses_more_deletions_than_the_limit():
 
 def test_prune_with_dry_run_off_deletes_through_the_api(github):
     p = prune(versions(16), DRY_RUN="false", API_BASE="users/o/packages/container/i", GITHUB_API_URL=github.url, GITHUB_TOKEN="t")
-    assert p.returncode == 0 and [r for r in github.requests if r[0] == "DELETE"] == [("DELETE", "/users/o/packages/container/i/versions/102"), ("DELETE", "/users/o/packages/container/i/versions/101")]
+    assert p.returncode == 0 and [r for r in github.requests if r[0] == "DELETE"] == [
+        ("DELETE", "/users/o/packages/container/i/versions/102"),
+        ("DELETE", "/users/o/packages/container/i/versions/101"),
+    ]

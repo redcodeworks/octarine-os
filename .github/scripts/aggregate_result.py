@@ -4,6 +4,7 @@
 Environment: PLAN, BUILD, PROMOTE, SIGN (job results: success, failure, cancelled, skipped), BUILD_WANTED, PROMOTE_WANTED (plan outputs), PUBLISH (build_push output `publish`).
 Exit 0 = pass. It means: planned, built (or promoted, or docs-only skipped) and, when anything was published, signed and verified. A skipped sign job is fine only when nothing was published.
 """
+
 import os
 import sys
 from pathlib import Path

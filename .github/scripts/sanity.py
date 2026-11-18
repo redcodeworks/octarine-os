@@ -3,6 +3,7 @@
 every workflow file is valid YAML (a broken one gives a "workflow file issue" with no job and no useful message). Everything else shows where it matters: the behavior tests are the
 separate `suite` job, and the image build fails in the step that needs a file or a config. Run from the repository root. The .archive/ folder (the kept shell originals) is skipped.
 """
+
 import sys
 from pathlib import Path
 

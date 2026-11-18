@@ -4,6 +4,7 @@
 Used where the RESULT of a verification decides something (promote, skip, reuse). Exit status: 0 verified; 5 NOT VERIFIED (cosign said the signature is missing or wrong; nothing is retried);
 4 READ ERROR (anything else, an image or tag that is not visible yet included; retried, still failing after the last try). cosign's stdout is discarded.
 """
+
 import sys
 from pathlib import Path
 

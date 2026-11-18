@@ -7,6 +7,7 @@ the tags differ although the content is the same (observed 2026-11-10 on octarin
 After every copy the digest of the tag is read back (registry.settled: polled, reads can lag a write) and must equal the pushed one.
 Output: `digests=<digest>` appended to $GITHUB_OUTPUT (when set), and printed. Tools: podman, skopeo.
 """
+
 import sys
 from pathlib import Path
 

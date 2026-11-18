@@ -10,6 +10,7 @@ Kinds: the image digest pin of chunkah (bump_pin.py), the Homebrew files image (
 image (`just bins-bump` is the pin writer: it resolves octarine-bins:latest, verifies the digest with keys/octarine-bins.pub and writes it; the scx, extest, Ghostty and builder pins live in the
 octarine-bins repository).
 """
+
 import json
 import os
 import re
@@ -39,7 +40,7 @@ def days(iso: str) -> str:
     """An ISO date -> whole days since then, or "unknown"."""
     try:
         return str((int(time.time()) - ci.epoch(iso)) // 86400)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return "unknown"
 
 
@@ -47,7 +48,7 @@ def image_age(ref: str) -> str:
     """Days since the linux/amd64 image of `ref` was created, or "unknown"."""
     try:
         return days(json.loads(registry.read("config", ref, linux_amd64=True)).get("created") or "")
-    except (registry.Absent, registry.ReadError, ValueError, AttributeError):
+    except registry.Absent, registry.ReadError, ValueError, AttributeError:
         return days("")
 
 
@@ -96,6 +97,7 @@ class Pin:
         def read_out(key):
             vals = [ln.split("=", 1)[1] for ln in lines if ln.startswith(f"{key}=")]
             return vals[-1] if vals else ""
+
         result, old, new, tag = read_out("result"), read_out("previous"), read_out("digest"), read_out("tag")
         self.current = old[:19]
         if rc not in (0, 10):
@@ -111,7 +113,7 @@ class Pin:
         try:
             tags = json.loads(ci.run(["skopeo", "list-tags", "docker://ghcr.io/ublue-os/brew"], capture=True).stdout)["Tags"]
             latest = sorted(t for t in tags if re.fullmatch(r"\d{8}", t))[-1]
-        except (ValueError, KeyError, TypeError, IndexError):
+        except ValueError, KeyError, TypeError, IndexError:
             latest = ""
         if not re.fullmatch(r"[0-9]{8}", latest):
             self.fail("cannot list the tags of ghcr.io/ublue-os/brew")
@@ -133,7 +135,7 @@ class Pin:
         ref = "ghcr.io/redcodeworks/octarine-bins"
         try:
             latest = registry.digest(ref, "latest")
-        except (registry.Absent, registry.ReadError):
+        except registry.Absent, registry.ReadError:
             self.fail(f"cannot resolve {ref}:latest")
         if latest == cur:
             self.status = f"nothing to bump: the pin equals {ref}:latest ({curtag})"
@@ -141,8 +143,11 @@ class Pin:
         if not just("bins-bump", "latest"):
             self.fail("just bins-bump failed (digest, signature or version label; nothing changed)")
         self.proposed = f"{containerfile_arg('BINS_TAG')} {containerfile_arg('BINS_DIGEST')[:19]}"
-        self.commit_pin(f"Bump the octarine-bins image to {self.proposed.split(' ')[0]}",
-                        f"a new octarine-bins digest, {ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries", image_age(f"{ref}:latest"))
+        self.commit_pin(
+            f"Bump the octarine-bins image to {self.proposed.split(' ')[0]}",
+            f"a new octarine-bins digest, {ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries",
+            image_age(f"{ref}:latest"),
+        )
 
 
 def main(argv=None):
