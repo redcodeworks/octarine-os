@@ -63,7 +63,7 @@ def is_pipeline_only(path: str) -> bool:
 def _inputs(kind: str, rev: str = "HEAD") -> str:
     """The hash of one kind (vanilla, dx or gx) at <rev>; SystemExit(1) for an unknown revision."""
     if subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{tree}}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
-        ci.err(f"inputs-hash: unknown revision '{rev}'")
+        ci.log.error(f"inputs-hash: unknown revision '{rev}'")
         raise SystemExit(1)
     tree = subprocess.run(["git", "ls-tree", "-r", "--full-tree", rev], stdout=subprocess.PIPE, text=True, check=True).stdout
     lines = []
@@ -108,22 +108,12 @@ class Unreadable(Exception):
 
 
 def lookup(tag: str) -> str:
-    """The digest of `testing-<sha>` of the image: $REGISTRY_LOOKUP (a command that prints the digest, exit 3 = absent, anything else = unreadable; the tests' fake registry) when set, else
-    the registry of $IMAGE. Raises registry.Absent or registry.ReadError."""
-    cmd = os.environ.get("REGISTRY_LOOKUP")
-    if cmd:
-        p = ci.capture([cmd, tag])
-        if p.returncode == 0:
-            return p.stdout.decode().strip()
-        raise (registry.Absent if p.returncode == 3 else registry.ReadError)(f"lookup exit {p.returncode}")
-    if not os.environ.get("IMAGE"):
-        raise SystemExit("IMAGE (or REGISTRY_LOOKUP): parameter null or not set")
-    return registry.digest(os.environ["IMAGE"], tag, quiet=True)
+    """The digest of `testing-<sha>` of the image named by $IMAGE. Raises registry.Absent or registry.ReadError."""
+    return registry.digest(os.environ["IMAGE"], tag)
 
 
 def nearest_image_for_inputs(tip: str, lookup_fn=None) -> tuple[str, str]:
-    """Walk the first-parent history back from <tip> (itself included) and find the nearest commit that has a published image `testing-<short sha>` (lookup_fn(tag) returns the digest, raises
-    registry.Absent or registry.ReadError; default: `lookup`). The walk stops, without a match, at the first commit whose vanilla_inputs differ from <tip>'s (a default-image change lies between).
+    """Walk the first-parent history back from <tip> (itself included) and find the nearest commit that has a published image `testing-<short sha>` (lookup_fn(tag) returns the digest, raises registry.Absent or registry.ReadError; default: `lookup`). The walk stops, without a match, at the first commit whose vanilla_inputs differ from <tip>'s (a default-image change lies between).
     Returns (tag, digest); raises NoImage (with the reason) or Unreadable."""
     lookup_fn = lookup_fn or lookup
     maximum = int(os.environ.get("MAX_WALK") or 50)
@@ -138,7 +128,7 @@ def nearest_image_for_inputs(tip: str, lookup_fn=None) -> tuple[str, str]:
                 digest = lookup_fn(f"testing-{sha}")
             except registry.Absent:
                 continue  # the lookup contract: 3 = the tag does not exist (keep walking)
-            except registry.RegistryError as e:
+            except registry.ReadError as e:
                 # anything else = the registry could not be read: that is an ERROR, never "no image"
                 raise Unreadable(f"could not read the registry while looking for testing-{sha} ({e}): not treating that as a missing image")
             if digest:
@@ -146,14 +136,14 @@ def nearest_image_for_inputs(tip: str, lookup_fn=None) -> tuple[str, str]:
     raise NoImage("no testing image found")
 
 
-def main(argv):
-    kinds = {"vanilla": vanilla_inputs, "dx": dx_inputs, "gx": gx_inputs}
-    if not argv or argv[0] not in kinds:
-        print("usage: inputs_hash.py vanilla|dx|gx [rev]", file=sys.stderr)
-        return 2
-    print(kinds[argv[0]](argv[1] if len(argv) > 1 else "HEAD"))
+def main(argv=None):
+    ap = ci.arg_parser(__doc__)
+    ap.add_argument("kind", choices=["vanilla", "dx", "gx"])
+    ap.add_argument("rev", nargs="?", default="HEAD")
+    args = ap.parse_args(argv)
+    print(_inputs(args.kind, args.rev))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

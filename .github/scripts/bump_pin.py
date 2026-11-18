@@ -19,7 +19,6 @@ Exit status and result (the decision table):
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -34,44 +33,43 @@ def sed_value(text: str, key: str) -> str:
     return m[1] if m else ""
 
 
-def main(argv):
-    image = argv[0] if argv else ""
-    if image != "chunkah":
-        print(f"::error::unknown image '{image}' (chunkah)")
-        return 3
+def main(argv=None):
+    ap = ci.arg_parser(__doc__)
+    ap.add_argument("image", choices=["chunkah"])
+    ap.parse_args(argv)
     file = Path(os.environ.get("CHUNKAH_ENV") or "config/chunkah.env")
     prefix, repo = "CHUNKAH", "quay.io/coreos/chunkah"
 
     def out(key, value):
-        ci.output(key, value)
+        ci.append_to("GITHUB_OUTPUT", f"{key}={value}")
 
     text = file.read_text() if file.is_file() else ""
     current = sed_value(text, f"{prefix}_DIGEST")
     current_tag = sed_value(text, f"{prefix}_TAG")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", current):
-        print(f"::error::{prefix}_DIGEST missing or malformed in {file}")
+        ci.log.error(f"{prefix}_DIGEST missing or malformed in {file}")
         out("result", "badpin")
         return 3
     out("previous", current)
 
-    p = ci.capture(["skopeo", "inspect", "--raw", f"docker://{repo}:latest"])
-    manifest = p.stdout.rstrip(b"\n") if p.returncode == 0 else b""
-    if not manifest:
-        print(f"::error::cannot resolve {repo}:latest (registry unreachable or the tag does not exist yet)")
+    try:
+        latest = registry.digest(repo, "latest")
+    except (registry.Absent, registry.ReadError):
+        ci.log.error(f"cannot resolve {repo}:latest (registry unreachable or the tag does not exist yet)")
         out("result", "unreachable")
         return 1
-    latest = registry.sha256_of(manifest)
     out("digest", latest)
 
-    verify = ["cosign", "verify", "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", "--certificate-identity-regexp", "^https://github.com/coreos/chunkah/", f"{repo}@{latest}"]
-    if ci.run(verify, stdout=subprocess.DEVNULL).returncode != 0:
-        print(f"::error::cosign verification failed for {repo}@{latest} ({file} is unchanged)")
+    try:
+        registry.cosign_check(["--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", "--certificate-identity-regexp", "^https://github.com/coreos/chunkah/", f"{repo}@{latest}"])
+    except (registry.NotVerified, registry.ReadError):
+        ci.log.error(f"cosign verification failed for {repo}@{latest} ({file} is unchanged)")
         out("result", "badsignature")
         return 2
-    print(f"{repo}:latest = {latest} (signature valid)")
+    ci.log.info(f"{repo}:latest = {latest} (signature valid)")
 
     if latest == current:
-        print(f"nothing to bump: {image} is pinned to {latest} ({current_tag})")
+        ci.log.info(f"nothing to bump: chunkah is pinned to {latest} ({current_tag})")
         out("result", "equal")
         out("tag", current_tag)
         return 0
@@ -79,22 +77,24 @@ def main(argv):
     # the pin keeps a dated tag for humans: find the one that points at the same digest, else fall back to latest
     tag = "latest"
     try:
-        tags = json.loads(ci.capture(["skopeo", "list-tags", f"docker://{repo}"]).stdout)["Tags"]
+        tags = json.loads(ci.run(["skopeo", "list-tags", f"docker://{repo}"], capture=True).stdout)["Tags"]
     except (ValueError, KeyError, TypeError):
         tags = []
     for t in sorted((x for x in tags if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", x)), reverse=True)[:10]:
-        raw = ci.capture(["skopeo", "inspect", "--raw", f"docker://{repo}:{t}"]).stdout
-        if registry.sha256_of(raw) == latest:
-            tag = t
-            break
+        try:
+            if registry.digest(repo, t) == latest:
+                tag = t
+                break
+        except (registry.Absent, registry.ReadError):
+            continue
     new = re.sub(rf"^{prefix}_TAG=.*$", lambda m: f"{prefix}_TAG={tag}", text, flags=re.M)
     new = re.sub(rf"^{prefix}_DIGEST=.*$", lambda m: f"{prefix}_DIGEST={latest}", new, flags=re.M)
     file.write_text(new)
-    print(f"{file} now pins {repo}:{tag}@{latest} (was {current_tag}@{current})")
+    ci.log.info(f"{file} now pins {repo}:{tag}@{latest} (was {current_tag}@{current})")
     out("result", "different")
     out("tag", tag)
     return 10
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

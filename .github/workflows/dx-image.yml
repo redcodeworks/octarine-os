@@ -365,7 +365,7 @@ jobs:
           if [[ "${CHANNEL}" == latest ]]; then
             # same tag as the daily run of the base (set by build.yml's scheduled run, which dispatches the dx workflow right after), so prune-daily.yml counts both packages alike
             today="daily-$(date -u +%Y%m%d)"
-            seen=$(IMAGE="${BASE_IMAGE}" uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${today}" 2> /dev/null || true)
+            seen=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${BASE_IMAGE}" "${today}" 2> /dev/null || true)
             if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
           fi
           # testing: the moving tag `testing` is NOT pushed here; the caller's sign job moves it to the digest once it is signed and verified, so a run cancelled
@@ -449,7 +449,7 @@ jobs:
           set -euo pipefail
           IMAGE="${IMAGE,,}"
           export IMAGE
-          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
             uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"

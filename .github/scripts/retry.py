@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-"""THE retry helper of the pipeline: run a command up to N times with a growing pause, for calls to the network (registries, apt, cosign's transparency and key lookups) that fail for a moment.
-Usage: retry.py [-n TRIES] [-d DELAY] [--] command [args...]   (defaults: RETRY_TRIES=3, RETRY_DELAY=5 seconds; the pause before try k+1 is DELAY*k)
+"""Run a command up to N times with a growing pause, for calls to the network (registries, apt, cosign's lookups) that fail for a moment. Usage: retry.py [-n TRIES] [-d DELAY] [--] command [args...]
 
-It changes nothing else: what is verified stays the same, a permanent failure (a bad signature, a missing package) runs out the tries and then fails with the command's own exit status and a
-clear message. stdout and stderr of the command pass through; the notices go to stderr as ::warning:: (every failed try) and ::error:: (the last one). Exit status: 0 when a try succeeded, else
-the status of the last try. Not for commands that must not run twice (a push that is not idempotent).
+Defaults: RETRY_TRIES (3) and RETRY_DELAY (5 seconds; the pause before try k+1 is DELAY*k). stdout and stderr of the command pass through. Exit status: 0 when a try succeeded, else the
+status of the last try. A permanent failure (a bad signature, a missing package) runs out the tries and fails with the command's own status. Not for commands that must not run twice.
 """
-import os
+import argparse
 import sys
 from pathlib import Path
 
@@ -14,30 +12,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci  # noqa: E402
 
 
-def main(argv):
-    tries = os.environ.get("RETRY_TRIES", "3")
-    delay = os.environ.get("RETRY_DELAY", "5")
-    while argv:
-        if argv[0] == "-n" and len(argv) > 1:
-            tries, argv = argv[1], argv[2:]
-        elif argv[0] == "-d" and len(argv) > 1:
-            delay, argv = argv[1], argv[2:]
-        elif argv[0] == "--":
-            argv = argv[1:]
-            break
-        else:
-            break
-    if not (tries.isdigit() and int(tries) >= 1):
-        print(f"retry.py: bad tries '{tries}'", file=sys.stderr)
-        return 2
-    if not delay.isdigit():
-        print(f"retry.py: bad delay '{delay}'", file=sys.stderr)
-        return 2
-    if not argv:
-        print("usage: retry.py [-n TRIES] [-d DELAY] [--] command [args...]", file=sys.stderr)
-        return 2
-    return ci.retry_command(argv, int(tries), int(delay))
+class Failed(ci.NetworkError):
+    def __init__(self, cmd, code):
+        super().__init__(f"{' '.join(cmd[:2])} failed (exit {code})")
+        self.code = code
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0], usage="retry.py [-n TRIES] [-d DELAY] [--] command [args...]")
+    ap.add_argument("-n", type=int, dest="tries", default=ci.int_env("RETRY_TRIES", 3))
+    ap.add_argument("-d", type=int, dest="delay", default=ci.int_env("RETRY_DELAY", 5))
+    ap.add_argument("command", nargs=argparse.REMAINDER)
+    args = ap.parse_args(argv)
+    cmd = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not cmd or args.tries < 1 or args.delay < 0:
+        ap.error("a command, TRIES of at least 1 and a DELAY of 0 or more are required")
+
+    @ci.retry(attempts=args.tries, delay=args.delay, on=(Failed,))
+    def attempt():
+        code = ci.run(cmd, stdin=None).returncode
+        if code:
+            raise Failed(cmd, code)
+
+    try:
+        attempt()
+    except Failed as e:
+        ci.log.error(f"{e}: a transient network error would have passed by now, so treat this as a real failure (bad signature, missing package or tag, or a longer outage)")
+        return e.code
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())

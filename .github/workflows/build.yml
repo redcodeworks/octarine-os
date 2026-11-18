@@ -592,7 +592,7 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euo pipefail
-          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
             uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"

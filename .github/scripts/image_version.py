@@ -13,7 +13,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci  # noqa: E402
 
 
-def main():
+def main(argv=None):
+    ci.arg_parser(__doc__).parse_args(argv)
     date = os.environ.get("VERSION_DATE") or time.strftime("%Y%m%d")
     sha = os.environ.get("VERSION_SHA") or ci.git("rev-parse", "--short", "HEAD")
     print(f"{date}-{sha}")

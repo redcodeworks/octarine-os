@@ -6,15 +6,14 @@ Usage: plan_promote.py <event> <ref> <after>
   source_tag=testing-<short sha>   (only when promote=true)
   source_digest=<digest>           (only when promote=true)
 
-Environment: PROMOTE_ENABLED (must be `true`), IMAGE (the registry image; its tags are looked up) or REGISTRY_LOOKUP (a command: `$REGISTRY_LOOKUP <tag>` prints the digest of that tag or exits
-non-zero when it does not exist, 3 = absent; the tests' fake registry).
+Environment: PROMOTE_ENABLED (must be `true`), IMAGE (the registry image; its `testing-<sha>` tags are looked up).
 
 Promote only when all hold:
   * event is push, ref is refs/heads/main, and <after> is a merge commit (two parents);
   * the default-image inputs (vanilla_inputs, inputs_hash.py: every file except docs and the dx-only files) of the testing side (<after>^2) and of <after> are equal;
   * walking first-parent history back from <after>^2, the nearest commit C that has a published `testing-<short sha>` image is reached without crossing a commit whose vanilla_inputs differ (so a
     docs-only or dx-only testing tip, which has no image of its own, promotes the image of the commit behind it).
-Anything else (schedule, dispatch, non-merge push, differing inputs, no image, disabled) means build. EXCEPT a registry that cannot be read (the lookup exits other than 0 or 3): that fails the plan,
+Anything else (schedule, dispatch, non-merge push, differing inputs, no image, disabled) means build. EXCEPT a registry that cannot be read (a read error, not an absent tag): that fails the plan,
 because "unreadable" is not "no tested image" and a rebuild on main would publish something that was never tested.
 """
 import os
@@ -27,16 +26,18 @@ import inputs_hash as ih  # noqa: E402
 
 
 def no(reason):
-    ci.err(f"no promote: {reason}")
+    ci.note(f"no promote: {reason}")
     print("promote=false")
     raise SystemExit(0)
 
 
-def main(argv):
-    if len(argv) < 2:
-        sys.exit("usage: plan_promote.py <event> <ref> <after>")
-    event, ref = argv[0], argv[1]
-    after = (argv[2] if len(argv) > 2 else "") or "HEAD"
+def main(argv=None):
+    ap = ci.arg_parser(__doc__)
+    ap.add_argument("event")
+    ap.add_argument("ref")
+    ap.add_argument("after", nargs="?", default="HEAD")
+    args = ap.parse_args(argv)
+    event, ref, after = args.event, args.ref, args.after or "HEAD"
     if os.environ.get("PROMOTE_ENABLED") != "true":
         no("PROMOTE_ENABLED is not 'true'")
     if not (event == "push" and ref == "refs/heads/main"):
@@ -52,14 +53,14 @@ def main(argv):
         tag, digest = ih.nearest_image_for_inputs(tip)
     except ih.Unreadable as e:
         # a registry read error is not "no tested image": falling back to a rebuild would put an UNTESTED build on latest. Fail the plan; a re-run decides again.
-        ci.err(f"::error::cannot decide whether a tested testing image exists for {tip}: {e}")
+        ci.log.error(f"cannot decide whether a tested testing image exists for {tip}: {e}")
         return 1
     except ih.NoImage as e:
         no(str(e))
-    ci.err(f"promote: {tag} ({digest}) covers {tip}")
+    ci.note(f"promote: {tag} ({digest}) covers {tip}")
     print(f"promote=true\nsource_tag={tag}\nsource_digest={digest}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main())
