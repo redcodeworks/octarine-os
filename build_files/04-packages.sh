@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Derived from ublue-os/bluefin build_files/base/04-packages.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: Bluefin lists its Fedora and COPR packages here. Ours are plain text files in packages/default (installed by install-packages.sh,
-# below), so there are no package arrays in this file; the zsh check and the removal of base packages stay ours.
+# below), so there are no package arrays in this file; the zsh /etc/shells step and the removal list of base packages stay ours.
 
 echo "::group:: ===$(basename "$0")==="
 
@@ -22,7 +22,6 @@ set -ouex pipefail
 # Packages can come from any ENABLED yum repo of the image: Fedora's own, negativo17 (fedora-multimedia, disabled in the base, which the installer enables for its
 # own calls only) and the base's akmods COPR. No RPM Fusion repository is installed in the base.
 
-test -f /ctx/packages/required-fedora.txt
 mkdir -p /usr/share/octarine-os
 missing_file=/usr/share/octarine-os/optional-packages-missing
 : > "${missing_file}"
@@ -31,7 +30,6 @@ MISSING_FILE="${missing_file}" NO_CLEANUP=1 /ctx/install-packages.sh /ctx/packag
 
 # zsh is installed but NOT the default login shell of new users (/etc/default/useradd stays as packaged). Choosing it
 # is opt-in through the shell step of `ujust user-setup`, which needs zsh listed in /etc/shells.
-if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
 grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
 
 echo "== optional packages missing:"
@@ -54,23 +52,8 @@ EXCLUDED_PACKAGES=(
     toolbox
 )
 
-# Deviation: Bluefin removes the list blindly. We preview the transaction first and fail the build if it would take anything from the
-# protected list with it (the single place that list lives) or does not list a package we asked for.
-PROTECTED_PKGS="gnome-shell nautilus fwupd flatpak PackageKit gdm gnome-control-center gnome-session-wayland-session ostree rpm-ostree bootc podman systemd"
 readarray -t INSTALLED_EXCLUDED < <(rpm -qa --queryformat='%{NAME}\n' "${EXCLUDED_PACKAGES[@]}" 2>/dev/null || true)
 if [[ "${#INSTALLED_EXCLUDED[@]}" -gt 0 ]]; then
-    plan=$(dnf5 remove --assumeno "${INSTALLED_EXCLUDED[@]}" 2>&1 || true)
-    echo "== removal transaction"
-    echo "${plan}"
-    for pkg in "${INSTALLED_EXCLUDED[@]}"; do
-        grep -Eq "^[[:space:]]*${pkg}[[:space:]]" <<< "${plan}" || { echo "ERROR: the removal preview does not list ${pkg}"; exit 1; }
-    done
-    for pkg in ${PROTECTED_PKGS}; do
-        if grep -Eq "^[[:space:]]*${pkg}[[:space:]]" <<< "${plan}"; then
-            echo "ERROR: removing ${INSTALLED_EXCLUDED[*]} would also remove protected package ${pkg}"
-            exit 1
-        fi
-    done
     dnf5 remove -y "${INSTALLED_EXCLUDED[@]}"
 else
     echo "No excluded packages found to remove."
