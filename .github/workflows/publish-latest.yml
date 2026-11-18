@@ -72,6 +72,9 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       # a checkout of another ref has no origin/main of its own: fetch it, the ancestor checks read it
       - name: Fetch main
         run: git fetch --no-tags origin main:refs/remotes/origin/main
@@ -100,4 +103,4 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run || false }}
           # writes only on main; any other ref is a dry run whatever the input says
           WRITE: ${{ github.ref == 'refs/heads/main' && 'true' || 'false' }}
-        run: .github/scripts/publish-latest.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/publish_latest.py

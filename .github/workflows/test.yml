@@ -102,7 +102,7 @@ jobs:
     steps:
       - name: Install the tools the tests need
         run: |
-          # a plain loop: the repository (and its retry.sh) is not checked out yet
+          # a plain loop: the repository (and its retry.py) is not checked out yet
           for attempt in 1 2 3; do
             dnf -y install --setopt=install_weak_deps=False --setopt=retries=5 \
               jq git python3 python3-pyyaml gawk \

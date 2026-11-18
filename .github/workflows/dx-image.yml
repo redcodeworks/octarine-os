@@ -215,12 +215,15 @@ jobs:
         if: steps.disk.outputs.low == 'true'
         uses: ublue-os/remove-unwanted-software@695eb75bc387dbcd9685a8e72d23439d8686cba6
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Set up just
         uses: ./.github/actions/setup-tool
         with:
           tool: just
 
-      # chunkah-ref.sh (run by `just rechunk`) verifies the chunkah image with cosign
+      # chunkah_ref.py (run by `just rechunk`) verifies the chunkah image with cosign
       - name: Set up cosign
         uses: ./.github/actions/setup-tool
         with:
@@ -251,7 +254,7 @@ jobs:
         run: |
           set -euo pipefail
           set -a; . ./config/image.env; set +a
-          version=$(.github/scripts/image-version.sh)
+          version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)
           sha=$(git rev-parse HEAD)
           # the variant's image id argument, and the keyword of the Artifact Hub label
           case "${VARIANT}" in
@@ -339,7 +342,7 @@ jobs:
             podman image inspect "${DX_NAME}:${CHANNEL}" \
               | jq -r '.[0].Config.Labels // {} | to_entries[] | "\(.key)=\(.value)"'
             podman run --rm "${DX_NAME}:${CHANNEL}" sh -c '. /etc/os-release && echo "IMAGE_VERSION=${IMAGE_VERSION:-}"'
-          } | .github/scripts/check-version-neutral.sh
+          } | uv run --frozen --no-dev python -I .github/scripts/check_version_neutral.py
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -359,7 +362,7 @@ jobs:
           if [[ "${CHANNEL}" == latest ]]; then
             # same tag as the daily run of the base (set by build.yml's scheduled run, which dispatches the dx workflow right after), so prune-daily.yml counts both packages alike
             today="daily-$(date -u +%Y%m%d)"
-            seen=$(IMAGE="${BASE_IMAGE}" .github/scripts/registry-digest.sh "${today}" 2> /dev/null || true)
+            seen=$(IMAGE="${BASE_IMAGE}" uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${today}" 2> /dev/null || true)
             if [[ "${seen}" == "${BASE_DIGEST}" ]]; then alias_tags="${alias_tags} ${today}"; fi
           fi
           # testing: the moving tag `testing` is NOT pushed here; the caller's sign job moves it to the digest once it is signed and verified, so a run cancelled
@@ -383,7 +386,7 @@ jobs:
         run: |
           set -euox pipefail
           # One push, the other tag is a registry-side copy of its digest (one manifest digest for every tag)
-          .github/scripts/push-tags.sh "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
+          uv run --frozen --no-dev python -I .github/scripts/push_tags.py "${DX_NAME}:${CHANNEL}" "${DX_IMAGE}" ${ALIAS_TAGS}
 
   # Build once, promote: retag the tested and signed testing image as latest and its dated alias, no rebuild. The digest
   # is compared before and after every copy; the signature belongs to the digest and is verified by the sign job.
@@ -408,6 +411,9 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ env.SHA }}
+
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
@@ -440,13 +446,12 @@ jobs:
           set -euo pipefail
           IMAGE="${IMAGE,,}"
           export IMAGE
-          lookup=.github/scripts/registry-digest.sh
-          now=$("${lookup}" "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            .github/scripts/retry.sh skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
-            # the read-back polls (registry-settled.sh): a registry may show the previous manifest or fail a read for a moment after a copy
-            .github/scripts/registry-settled.sh "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            # the read-back polls (registry_settled.py): a registry may show the previous manifest or fail a read for a moment after a copy
+            uv run --frozen --no-dev python -I .github/scripts/registry_settled.py "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
             echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 

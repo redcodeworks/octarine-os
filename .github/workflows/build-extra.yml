@@ -79,6 +79,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       - name: Dispatch this workflow for the variant
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
-          .github/scripts/retry.sh gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
+          uv run --frozen --no-dev python -I .github/scripts/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
           echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
 
   # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
@@ -136,6 +139,9 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ env.SHA }}
+
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

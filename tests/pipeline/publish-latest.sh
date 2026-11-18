@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/publish-latest.sh (the one step that moves the `latest` of ONE image: the default image or dx; each image publishes its own)
+# Tests .github/scripts/publish_latest.py (the one step that moves the `latest` of ONE image: the default image or dx; each image publishes its own)
 # with a fake registry (stub skopeo), a stub cosign and a throwaway git repository that plays main. Run: tests/pipeline/publish-latest.sh
 set -uo pipefail
 here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
-script="$here/.github/scripts/publish-latest.sh"
+script="$here/.github/scripts/publish_latest.py"
+py=$(command -v python3)
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0
@@ -13,7 +14,7 @@ check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 
 # ---- the git repository: main has c1 c2 c3, a side branch has an extra commit (not on main)
 mkdir -p "$root/repo/.github/scripts" "$root/bin" "$root/reg"
-cp "$here/.github/scripts/registry-digest.sh" "$here/.github/scripts/registry-read.sh" "$here/.github/scripts/registry-settled.sh" "$here/.github/scripts/cosign-check.sh" "$here/.github/scripts/retry.sh" "$root/repo/.github/scripts/"
+cp "$here/.github/scripts/ci.py" "$here/.github/scripts/registry.py" "$root/repo/.github/scripts/"
 cp "$script" "$root/repo/.github/scripts/"
 cd "$root/repo"
 git init -q -b main . && git config user.email t@example.invalid && git config user.name t
@@ -68,7 +69,7 @@ reset() {
     mk $D "$E0" "$c1" 2026-11-10T01:00:00Z "$V0" latest "latest-20261110-${c1:0:7}"
     : > "$root/reg/unsigned"
 }
-run() { rm -f "$root/gout"; PATH="$root/bin" GITHUB_OUTPUT="$root/gout" GITHUB_STEP_SUMMARY="$root/sum" bash "$root/repo/.github/scripts/publish-latest.sh" >"$root/out" 2>&1; rc=$?; }
+run() { rm -f "$root/gout"; PATH="$root/bin" GITHUB_OUTPUT="$root/gout" GITHUB_STEP_SUMMARY="$root/sum" "$py" -I "$root/repo/.github/scripts/publish_latest.py" >"$root/out" 2>&1; rc=$?; }
 latest() { cat "$root/reg/$1/tag/latest" 2>/dev/null; }
 ncopy() { grep -c 'skopeo copy' "$root/log"; }
 : > "$root/sum"

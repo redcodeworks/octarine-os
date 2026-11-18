@@ -83,16 +83,16 @@ def int_env(name: str, default: int) -> int:
     return int(value)
 
 
-def retry_command(cmd, tries: int | None = None, delay: int | None = None) -> int:
+def retry_command(cmd, tries: int | None = None, delay: int | None = None, quiet_stdout: bool = False) -> int:
     """THE retry of the pipeline: run a command up to `tries` times (RETRY_TRIES, 3) with a growing pause (RETRY_DELAY, 5 seconds times the try number) for calls to the
-    network (registries, apt, cosign's lookups). Output passes through; notices go to stderr as `::warning::` (every failed try) and `::error::` (the last). Returns 0 when a try
+    network (registries, apt, cosign's lookups). Output passes through (`quiet_stdout`: the command's stdout is discarded, the `> /dev/null` of the callers); notices go to stderr as `::warning::` (every failed try) and `::error::` (the last). Returns 0 when a try
     succeeded, else the exit status of the last try. Not for commands that must not run twice."""
     tries = int_env("RETRY_TRIES", 3) if tries is None else tries
     delay = int_env("RETRY_DELAY", 5) if delay is None else delay
     name = " ".join(cmd[:2])
     rc = 0
     for i in range(1, tries + 1):
-        rc = run(cmd).returncode
+        rc = run(cmd, stdout=subprocess.DEVNULL if quiet_stdout else None).returncode
         if rc == 0:
             return 0
         if i < tries:

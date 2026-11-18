@@ -46,11 +46,11 @@ is_variant_shared() {
 # (2026-11-16): the digest pin of octarine-bins in the Containerfile is an ordinary image input, so a bump rebuilds the image on testing.
 is_pipeline_only() {
     case "$1" in
-        .github/scripts/dispatch-variant.sh | .github/scripts/publish-latest.sh | .github/scripts/ci-issue.sh | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
+        .github/scripts/dispatch_variant.py | .github/scripts/publish_latest.py | .github/scripts/ci_issue.py | .github/scripts/sanity.sh | .github/scripts/prune-daily.py) return 0 ;;
         .github/scripts/bump-*.sh) return 0 ;;
         .github/workflows/publish-latest.yml | .github/workflows/rollback-latest.yml | .github/workflows/bump-pins.yml | .github/workflows/prune-daily.yml) return 0 ;;
         .github/workflows/require-testing-branch.yml | .github/workflows/test.yml) return 0 ;;
-        .github/workflows/build-nvidia.yml | .github/workflows/build-extra.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia-akmods-ref.sh | variants/nvidia/*) return 0 ;;
+        .github/workflows/build-nvidia.yml | .github/workflows/build-extra.yml | .github/scripts/nvidia-smoke.sh | .github/scripts/nvidia_akmods_ref.py | variants/nvidia/*) return 0 ;;
         .github/zizmor.yml | .github/dependabot.yml | .gitleaks.toml | githooks/*) return 0 ;;
         *) return 1 ;;
     esac
