@@ -112,6 +112,7 @@ kver=$(kernels); kver=${kver%%$'\n'*}
 check "exactly one kernel is installed" "one_kernel"
 check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "kernel_is_base"
 check "the initramfs for the kernel exists" "test -s ${modules_dir}/${kver}/initramfs.img"
+check "kernel-devel is not installed (a mismatched one came in through bcc once)" "! rpm -q kernel-devel"
 
 echo "== checks of the default image that still apply"
 check "release is Fedora" "grep -qx ID=fedora ${os_release}"
