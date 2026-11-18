@@ -18,7 +18,7 @@ def main(argv=None):
     ap.add_argument("tag")
     args = ap.parse_args(argv)
     try:
-        print(registry.digest(args.image, args.tag))
+        ci.result(registry.digest(args.image, args.tag))
     except registry.Absent as e:
         ci.log.error(str(e))
         return 3

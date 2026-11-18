@@ -77,14 +77,14 @@ def main(argv=None):
                 return 1
             p = ci.run(["openssl", "x509", "-in", str(crt), "-noout", "-fingerprint", "-sha256"], capture=True)
             fp = p.stdout.decode().strip() if p.returncode == 0 else "fingerprint unreadable"
-            print(f"== signing key: {url}", flush=True)
+            ci.log.info(f"== signing key: {url}")
             ci.run(["openssl", "x509", "-in", str(crt), "-noout", "-subject", "-enddate"], stderr=DEVNULL)
-            print(fp, flush=True)
+            ci.log.info(fp)
 
-            print(f"== kernel {kver} of {image}: sbverify --list", flush=True)
+            ci.log.info(f"== kernel {kver} of {image}: sbverify --list")
             ci.run(["sbverify", "--list", kernel])
             if ci.run(["sbverify", "--cert", str(crt), kernel]).returncode == 0:
-                print(f"Secure Boot: the kernel {kver} of {image} verifies against the Universal Blue kernel key ({fp})")
+                ci.log.info(f"Secure Boot: the kernel {kver} of {image} verifies against the Universal Blue kernel key ({fp})")
                 return 0
             ci.log.error(
                 f"Secureboot Signature Failed: the kernel {kver} of {image} does NOT verify against the Universal Blue kernel key ({fp}); it would not boot on a machine with that key "

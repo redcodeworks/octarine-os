@@ -58,7 +58,7 @@ def main(argv=None):
     except ci.NetworkError:
         ci.log.error(f"could not pull {ref}")
         return 1
-    print(ref)
+    ci.result(ref)
     return 0
 
 

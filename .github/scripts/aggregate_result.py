@@ -30,12 +30,12 @@ def expects_sign(build_wanted, promote_wanted, publish, build, promote) -> bool:
         case _, "true":
             if not (promote == "success" and build == "skipped"):
                 fail(f"The promotion did not succeed ({promote}, build {build})")
-            print("Promoted a tested image: no rebuild")
+            ci.log.info("Promoted a tested image: no rebuild")
             return True
         case _:
             if not (build == "skipped" and promote == "skipped"):
                 fail(f"Unexpected results (build {build}, promote {promote})")
-            print("Docs-only change or unchanged scheduled run: heavy build skipped")
+            ci.log.info("Docs-only change or unchanged scheduled run: heavy build skipped")
             return False
 
 
@@ -43,7 +43,7 @@ def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
     plan, build, promote, sign = (os.environ[n] for n in ("PLAN", "BUILD", "PROMOTE", "SIGN"))
     build_wanted, promote_wanted, publish = env("BUILD_WANTED", ""), env("PROMOTE_WANTED", ""), env("PUBLISH", "")
-    print(f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} publish={publish} sign={sign}")
+    ci.log.info(f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} publish={publish} sign={sign}")
     if plan != "success":
         fail("The plan job did not succeed")
     sign_expected = expects_sign(build_wanted, promote_wanted, publish, build, promote)
@@ -52,7 +52,7 @@ def main(argv=None):
             fail(f"Signing and verification did not succeed ({sign})")
     elif sign != "skipped":
         fail(f"Unexpected sign result {sign} with nothing published")
-    print("ok")
+    ci.log.info("ok")
     return 0
 
 

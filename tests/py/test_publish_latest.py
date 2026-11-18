@@ -60,7 +60,7 @@ def test_an_older_candidate_is_held_not_failed(world, fakes):
     cur = image(world, IMG, "latest-new", world["c3"], "2026-11-13T00:00:00Z", None, "latest")
     old = image(world, IMG, "latest-old", world["c1"], "2026-11-10T00:00:00Z")
     p = publish(world, fakes, IMAGE="default", DIGEST=old)
-    assert p.returncode == 0 and world["reg"].tag(IMG, "latest") == cur and not moved(world) and "latest held" in p.stdout
+    assert p.returncode == 0 and world["reg"].tag(IMG, "latest") == cur and not moved(world) and "latest held" in p.stderr
 
 
 def test_a_rollback_may_put_an_older_verified_image_under_latest(world, fakes):
@@ -88,7 +88,7 @@ def test_a_dry_run_moves_nothing(world, fakes):
     cur = image(world, IMG, "latest-cur", world["c1"], "2026-11-10T00:00:00Z", None, "latest")
     new = image(world, IMG, "latest-new", world["c3"], "2026-11-13T00:00:00Z")
     p = publish(world, fakes, IMAGE="default", DIGEST=new, DRY_RUN="true")
-    assert p.returncode == 0 and world["reg"].tag(IMG, "latest") == cur and "DRY RUN" in p.stdout
+    assert p.returncode == 0 and world["reg"].tag(IMG, "latest") == cur and "DRY RUN" in p.stderr
 
 
 def test_an_unreadable_latest_fails_the_run_instead_of_moving_unguarded(world, fakes):

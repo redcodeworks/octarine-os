@@ -37,7 +37,7 @@ def main(argv=None):
             digest = registry.digest(image, tag)
         except registry.Absent, registry.ReadError:
             continue
-        print(f"tag={tag}\ndigest={digest}\nref={image}@{digest}")
+        ci.result(f"tag={tag}\ndigest={digest}\nref={image}@{digest}")
         return 0
     ci.log.error(f"no {image} tag for kernel {kernel} (tried: {' '.join(tags)}). The akmods image may not be built for this kernel yet, or its tag form differs; nothing is published.")
     return 1

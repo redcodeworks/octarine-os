@@ -84,31 +84,31 @@ def main(argv=None):
     versions = read_versions(sys.stdin.read())
     dailies, kept, doomed, doomed_sigs = plan(versions)
     todo = doomed + doomed_sigs
-    print(f"{len(versions)} versions, {len(dailies)} with a daily tag, keeping the newest {KEEP}")
+    ci.log.info(f"{len(versions)} versions, {len(dailies)} with a daily tag, keeping the newest {KEEP}")
     for v in kept:
-        print(f"  keep   {label(v)}")
+        ci.log.info(f"  keep   {label(v)}")
     for v in dailies[KEEP:]:
         if v not in doomed:
-            print(f"  keep   (protected or carries another tag) {label(v)}")
+            ci.log.info(f"  keep   (protected or carries another tag) {label(v)}")
     for v in doomed:
-        print(f"  DELETE image {label(v)}")
+        ci.log.info(f"  DELETE image {label(v)}")
     for v in doomed_sigs:
-        print(f"  DELETE sig   {label(v)}")
+        ci.log.info(f"  DELETE sig   {label(v)}")
     if not todo:
-        print("Nothing to prune.")
+        ci.log.info("Nothing to prune.")
         return 0
     if len(todo) > MAX_DELETES:
         sys.exit(f"Refusing to delete {len(todo)} versions (limit {MAX_DELETES})")
     if DRY_RUN:
-        print(f"Dry run: {len(todo)} versions would be deleted.")
+        ci.log.info(f"Dry run: {len(todo)} versions would be deleted.")
         return 0
     if not API_BASE:
         sys.exit("API_BASE is required to delete")
     gh = ci.github()
     for v in todo:
         gh.request("DELETE", f"/{API_BASE}/versions/{v['id']}")
-        print(f"deleted {v['id']}")
-    print(f"Deleted {len(todo)} versions.")
+        ci.log.info(f"deleted {v['id']}")
+    ci.log.info(f"Deleted {len(todo)} versions.")
     return 0
 
 
