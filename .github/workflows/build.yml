@@ -191,13 +191,13 @@ jobs:
           # exit 5 of cosign_check.py = cosign said the signature is missing or wrong (building instead is the intended path); exit 4 = the registry could not be
           # read after the retries: that must NOT turn into a rebuild of untested content, so the Final decision fails the plan (unreadable=true)
           rc=0
-          uv run --frozen --no-dev python -I .github/scripts/cosign_check.py --key cosign.pub "${IMAGE}@${DIGEST}" || rc=$?
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/cosign_check.py --key cosign.pub "${IMAGE}@${DIGEST}" || rc=$?
           if [[ "${rc}" == 4 ]]; then echo "unreadable=true" >> "${GITHUB_OUTPUT}"; fi
           [[ "${rc}" == 0 ]] || exit 1
           echo "signature of ${DIGEST} is valid"
           # a reused image must not carry a different inputs label (an image from before the label has none: the commit decides)
           if [[ "${REUSE}" == true ]]; then
-            cfg=$(uv run --frozen --no-dev python -I .github/scripts/registry_read.py config "${IMAGE}@${DIGEST}") || { echo "unreadable=true" >> "${GITHUB_OUTPUT}"; exit 1; }
+            cfg=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_read.py config "${IMAGE}@${DIGEST}") || { echo "unreadable=true" >> "${GITHUB_OUTPUT}"; exit 1; }
             have=$(jq -r '.config.Labels["io.github.redcodeworks.octarine-os.vanilla-inputs"] // empty' <<<"${cfg}")
             [[ -z "${have}" || "${have}" == "${REUSE_INPUTS}" ]] || { echo "::error::${DIGEST} carries vanilla-inputs ${have}, this commit has ${REUSE_INPUTS}"; exit 1; }
           fi
@@ -335,7 +335,7 @@ jobs:
       - name: Verify the brew image signature (the pin changed)
         if: needs.plan.outputs.brew_pin_changed == 'true'
         run: |
-          uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key keys/ublue-os-brew-cosign.pub "${BREW_PIN}" > /dev/null
           echo "Signature of ${BREW_PIN} is valid"
 
       # The prebuilt binaries image (octarine-bins, built and signed by the octarine-bins repository with its own key) is pinned by digest in the Containerfile
@@ -359,7 +359,7 @@ jobs:
           digest=$(sed -n 's/^ARG BINS_DIGEST=//p' Containerfile)
           [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::BINS_DIGEST in the Containerfile is missing or malformed"; exit 1; }
           ref="ghcr.io/redcodeworks/octarine-bins@${digest}"
-          uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key keys/octarine-bins.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/octarine-bins.pub"; exit 1; }
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key keys/octarine-bins.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/octarine-bins.pub"; exit 1; }
           echo "Binaries image pinned: ghcr.io/redcodeworks/octarine-bins:${tag}@${digest} (signature valid)"
 
       # Fail early and clearly if the base image (BASE_IMAGE:FEDORA_VERSION, see the env block) cannot be pulled
@@ -373,7 +373,7 @@ jobs:
           pin_line=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/base_pin.py)
           BASE_PIN=${pin_line#BASE_PIN=}
           [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base_pin.py"; exit 1; }
-          if ! uv run --frozen --no-dev python -I .github/scripts/retry.py podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
+          if ! uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then
             echo "::error::Cannot pull the base image ${base}: does that tag exist? (list tags with: skopeo list-tags docker://${BASE_IMAGE})"
             exit 1
           fi
@@ -458,8 +458,8 @@ jobs:
       # signed kernel would not boot on a Secure Boot machine); the signer of the real kernel is printed. Not verifiable here: a real boot.
       - name: Secure Boot check of the kernel
         run: |
-          uv run --frozen --no-dev python -I .github/scripts/retry.py sudo apt-get update -qq
-          uv run --frozen --no-dev python -I .github/scripts/retry.py sudo apt-get install -y --no-install-recommends sbsigntool
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py sudo apt-get update -qq
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py sudo apt-get install -y --no-install-recommends sbsigntool
           uv run --frozen --no-dev python -I .github/scripts/secureboot_check.py "${IMAGE_NAME}:${DEFAULT_TAG}"
 
       # A promoted image keeps its build's version, so no version may name a channel
@@ -592,12 +592,12 @@ jobs:
           ALIAS_TAGS: ${{ steps.tags.outputs.alias_tags }}
         run: |
           set -euo pipefail
-          now=$(uv run --frozen --no-dev python -I .github/scripts/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
+          now=$(uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_digest.py "${IMAGE}" "${SOURCE_TAG}")
           [[ "${now}" == "${SOURCE_DIGEST}" ]] || { echo "::error::${SOURCE_TAG} is ${now}, the plan saw ${SOURCE_DIGEST}"; exit 1; }
           for tag in ${ALIAS_TAGS}; do
-            uv run --frozen --no-dev python -I .github/scripts/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py skopeo copy --all --preserve-digests "docker://${IMAGE}:${SOURCE_TAG}" "docker://${IMAGE}:${tag}"
             # the read-back polls (registry_settled.py): a registry may show the previous manifest or fail a read for a moment after a copy
-            uv run --frozen --no-dev python -I .github/scripts/registry_settled.py "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/registry_settled.py "${IMAGE}" "${tag}" "${SOURCE_DIGEST}"
             echo "promoted ${tag} -> ${SOURCE_DIGEST}"
           done
 
@@ -679,7 +679,7 @@ jobs:
         run: |
           set -euo pipefail
           for digest in ${DIGESTS}; do
-            uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key cosign.pub "${IMAGE}@${digest}" > /dev/null
             echo "signed: ${digest}"
           done
 
@@ -707,7 +707,7 @@ jobs:
         run: |
           set -euo pipefail
           for tag in ${ALIAS_TAGS}; do
-            uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
 
@@ -723,7 +723,7 @@ jobs:
           set -euo pipefail
           uv run --frozen --no-dev python -I .github/scripts/move_tags.py "${IMAGE}" "${DIGESTS}" ${MOVING_TAGS}
           for tag in ${MOVING_TAGS}; do
-            uv run --frozen --no-dev python -I .github/scripts/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
+            uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py cosign verify --key cosign.pub "${IMAGE}:${tag}" > /dev/null
             echo "signed: ${tag}"
           done
 

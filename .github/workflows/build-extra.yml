@@ -90,7 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'${HEAD_SHA}' is not a full commit sha"; exit 1; }
-          uv run --frozen --no-dev python -I .github/scripts/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
+          uv run --frozen --no-dev python -I .github/scripts/20-registry/retry.py gh workflow run build-extra.yml -R "${GITHUB_REPOSITORY}" --ref main -f "variant=${VARIANT}" -f "sha=${HEAD_SHA}"
           echo "Dispatched build-extra.yml for ${VARIANT} at ${HEAD_SHA}"
 
   # plan, build and promote: the reusable workflow. A dispatch on `main` (or a dry run anywhere). Signing is the `sign` job below.
