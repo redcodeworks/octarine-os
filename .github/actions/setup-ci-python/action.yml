@@ -1,9 +1,12 @@
 name: Set up the Python of the CI scripts
 description: >-
-  Installs uv (pinned) and the exact Python of .python-version as a uv-MANAGED interpreter (never the runner image's system Python: UV_PYTHON_PREFERENCE is only-managed).
-  There is NO cache of any kind (neither uv's nor the interpreter's): every job installs from the frozen lock, so the jobs that hold a signing key run only what was
-  just downloaded. The scripts then run with `uv run --frozen --no-dev python -I .github/scripts/<name>.py`: nothing is resolved at run time. The caller checks out the
-  repository first.
+  Installs uv (pinned) and the exact Python of .python-version as a uv-MANAGED interpreter (never the runner image's system Python: UV_PYTHON_PREFERENCE is only-managed), and
+  caches uv's download cache and that managed Python, keyed on uv.lock and .python-version, so a run reuses the locked dependencies and the interpreter instead of downloading them.
+  The scripts then run with `uv run --frozen --no-dev python -I .github/scripts/<name>.py`: nothing is resolved at run time. The caller checks out the repository first.
+inputs:
+  cache:
+    description: "true (default) restores and saves the uv cache and the managed Python; false installs from the frozen lock without any cache (the sign jobs, which hold the signing key)"
+    default: "true"
 runs:
   using: composite
   steps:
@@ -15,5 +18,8 @@ runs:
       uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       with:
         version: 0.13.7
-        enable-cache: false
-        cache-python: false
+        enable-cache: ${{ inputs.cache }}
+        cache-dependency-glob: |
+          uv.lock
+          .python-version
+        cache-python: ${{ inputs.cache }}
