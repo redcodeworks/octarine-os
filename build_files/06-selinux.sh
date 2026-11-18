@@ -11,6 +11,9 @@ set -eoux pipefail
 # (priority 400), which the image carries as /usr/etc.
 semodule -i /usr/share/octarine-os/selinux/octarine-local.cil
 modules=$(semodule -l)
-grep -qx 'octarine-local' <<< "${modules}" || { echo "ERROR: semodule -i succeeded but octarine-local is not listed"; exit 1; }
+grep -qx 'octarine-local' <<<"${modules}" || {
+	echo "ERROR: semodule -i succeeded but octarine-local is not listed"
+	exit 1
+}
 
 echo "::endgroup::"

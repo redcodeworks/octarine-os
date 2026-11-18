@@ -35,22 +35,31 @@ chmod +x "$bin/podman" "$bin/distrobox"
 sysbin="$root/sysbin"
 mkdir -p "$sysbin"
 for c in bash sh env cat grep awk tr cut sed mkdir rm dirname head tail id touch; do
-    p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
+	p=$(command -v "$c") && ln -sf "$p" "$sysbin/$c"
 done
 JUST=$(command -v just)
 
 # run ARGS...: runs a recipe with the fakes only on PATH; sets OUT and RC
 run() {
-    : >"$LOG"
-    OUT=$(PATH="$bin:$sysbin" "$JUST" --justfile "$justfile" "$@" 2>&1)
-    RC=$?
+	: >"$LOG"
+	OUT=$(PATH="$bin:$sysbin" "$JUST" --justfile "$justfile" "$@" 2>&1)
+	RC=$?
 }
-ok() { pass=$((pass + 1)); echo "ok   $1"; }
-bad() { failn=$((failn + 1)); echo "FAIL $1"; echo "$OUT" | sed 's/^/     | /'; echo "     log:"; sed 's/^/     | /' "$LOG"; }
+ok() {
+	pass=$((pass + 1))
+	echo "ok   $1"
+}
+bad() {
+	failn=$((failn + 1))
+	echo "FAIL $1"
+	echo "$OUT" | sed 's/^/     | /'
+	echo "     log:"
+	sed 's/^/     | /' "$LOG"
+}
 expect() { # name, condition...
-    local name=$1
-    shift
-    if "$@"; then ok "$name"; else bad "$name"; fi
+	local name=$1
+	shift
+	if "$@"; then ok "$name"; else bad "$name"; fi
 }
 logged() { grep -qxF -- "$1" "$LOG"; }
 line_no() { grep -nxF -- "$1" "$LOG" | head -1 | cut -d: -f1; }
@@ -86,9 +95,9 @@ expect "create: an unknown option exits 2" test "$RC" = 2
 # --- verbs
 touch "$HAS_BOX"
 for v in "setup" "start" "stop kafka" "restart all" "enable" "disable" "status" "logs postgres" "psql" "valkey-cli" "secrets export --replace" "backup /tmp/b --stop" "restore /tmp/x.sql" "render /tmp/r"; do
-    # shellcheck disable=SC2086
-    run datastore-box $v
-    expect "verb '$v' maps to: distrobox enter datastore -- datastore $v" logged "distrobox enter datastore -- datastore $v"
+	# shellcheck disable=SC2086
+	run datastore-box $v
+	expect "verb '$v' maps to: distrobox enter datastore -- datastore $v" logged "distrobox enter datastore -- datastore $v"
 done
 
 run datastore-box

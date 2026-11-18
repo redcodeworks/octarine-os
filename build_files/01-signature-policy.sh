@@ -13,17 +13,17 @@ set -eoux pipefail
 # this image able to switch to it later), so a machine on any of them can switch to another with
 # --enforce-container-sigpolicy. A machine can switch to a repository only once it has booted an image that carries its rule.
 if [[ -n "${IMAGE_ORG:-}" && -n "${IMAGE_NAME:-}" && -f /ctx/cosign.pub ]]; then
-    org="${IMAGE_ORG,,}"
-    name="${IMAGE_NAME,,}"
-    base_name="${name%-dx}"
-    base_name="${base_name%-gx}"
-    base_name="${base_name%-nvidia}"
-    refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx ghcr.io/${org}/${base_name}-nvidia-dx ghcr.io/${org}/${base_name}-gx ghcr.io/${org}/${base_name}-nvidia-gx ghcr.io/${org}/${base_name}-dx-gx"
-    key="/etc/pki/containers/${org}-${name}.pub"
-    install -Dm644 /ctx/cosign.pub "${key}"
-    printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
-        >"/etc/containers/registries.d/${org}-${name}.yaml"
-    python3 - "${key}" ${refs} <<'PY'
+	org="${IMAGE_ORG,,}"
+	name="${IMAGE_NAME,,}"
+	base_name="${name%-dx}"
+	base_name="${base_name%-gx}"
+	base_name="${base_name%-nvidia}"
+	refs="ghcr.io/${org}/${base_name} ghcr.io/${org}/${base_name}-nvidia ghcr.io/${org}/${base_name}-dx ghcr.io/${org}/${base_name}-nvidia-dx ghcr.io/${org}/${base_name}-gx ghcr.io/${org}/${base_name}-nvidia-gx ghcr.io/${org}/${base_name}-dx-gx"
+	key="/etc/pki/containers/${org}-${name}.pub"
+	install -Dm644 /ctx/cosign.pub "${key}"
+	printf 'docker:\n  ghcr.io/%s:\n    use-sigstore-attachments: true\n' "${org}" \
+		>"/etc/containers/registries.d/${org}-${name}.yaml"
+	python3 - "${key}" ${refs} <<'PY'
 import json
 import sys
 
@@ -41,7 +41,7 @@ with open(path, "w") as f:
     f.write("\n")
 PY
 else
-    echo "IMAGE_ORG, IMAGE_NAME or cosign.pub missing: not adding a signature policy for this image"
+	echo "IMAGE_ORG, IMAGE_NAME or cosign.pub missing: not adding a signature policy for this image"
 fi
 
 echo "::endgroup::"

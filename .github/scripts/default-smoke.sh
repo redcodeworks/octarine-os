@@ -6,7 +6,10 @@
 # `check "<description>" "<command>"`: the command runs under eval, so quote it as ONE string (tests/check-call-shape.sh
 # guards joined strings, which would pass vacuously). Run order matters nowhere; every failure is listed, exit 1 at the end.
 fail=0
-check() { if (eval "$2") >/dev/null 2>&1; then echo "PASS $1"; else echo "FAIL $1"; fail=1; fi; }
+check() { if (eval "$2") >/dev/null 2>&1; then echo "PASS $1"; else
+	echo "FAIL $1"
+	fail=1
+fi; }
 
 echo "== os-release (the Fedora release the base tag resolved to)"
 cat /etc/os-release
@@ -20,9 +23,9 @@ check "no flatpak-preinstall.service enabled (the recipe replaces it)" "! system
 # prebuilt binaries (the pinned octarine-bins image: scx, extest, ghostty): installed only; whether a scheduler loads is for a real machine to say
 check "schedulers.tsv manifest shipped and not empty" "test -s /usr/share/octarine-os/schedulers.tsv"
 for n in $(cut -f1 /usr/share/octarine-os/schedulers.tsv); do
-    check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
-    check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
-    check "scheduler $n has no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/$n 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
+	check "scheduler $n is executable and runs --version" "test -x /usr/bin/$n && /usr/bin/$n --version"
+	check "scheduler $n resolves every shared library (ldd shows no not found)" "out=\$(ldd /usr/bin/$n) && ! grep -q \"not found\" <<<\"\$out\""
+	check "scheduler $n has no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/$n 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
 done
 check "ghostty: no undefined symbol against this image (ldd -r)" "out=\$(ldd -r /usr/bin/ghostty 2>&1) && ! grep -qi \"undefined symbol\" <<<\"\$out\""
 echo "== libraries the shipped binaries link: the builder (BUILDINFO of the binaries image) next to this image"
@@ -53,35 +56,35 @@ check "enabled (global) podman.socket" "systemctl --global is-enabled podman.soc
 # are not in this image); the vendor check below is the OS's own policy and stays here
 CRITICAL="mutter pipewire wireplumber gdm ptyxis systemd pam-u2f snapper fuse-libs tailscale gnome-shell-extension-user-theme borgbackup steam-devices zsh jq skopeo solaar-udev gcc gcc-c++ make binutils"
 for p in $CRITICAL; do
-  check "package $p" "rpm -q $p"
-  # standing policy: required packages come from Fedora itself (outside repos only in optional lists)
-  check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
+	check "package $p" "rpm -q $p"
+	# standing policy: required packages come from Fedora itself (outside repos only in optional lists)
+	check "critical package $p has vendor Fedora Project" "test \"\$(rpm -q --qf %{VENDOR} $p)\" = \"Fedora Project\""
 done
 # Solaar is not in the image; solaar-udev keeps the Logitech device permissions (including uinput) for a Solaar Flatpak the user installs
 check "the Solaar GUI package is NOT installed" "! rpm -q solaar"
 check "solaar-udev rules are present and carry the uinput line" "grep -q uinput /usr/lib/udev/rules.d/42-logitech-unify-permissions.rules"
 # The VM-hosting set lives in the dx variant only: the meta packages must be absent here (the libguestfs tools stay)
 for p in libvirt qemu-kvm cockpit-machines virt-manager virt-viewer libvirt-nss; do
-  check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
+	check "VM-hosting package $p is NOT installed (dx only)" "! rpm -q $p"
 done
 check "libguestfs tools stay (guestfish)" "rpm -q guestfs-tools"
 # OPTIONAL packages (optional-fedora.txt and optional-negativo17.txt of the pinned octarine-bins image): informational only, never fail (the missing list is reported below)
 for p in gstreamer1-plugins-bad gstreamer1-plugins-ugly fish gum niri noctalia btrfs-assistant nautilus-python wtype socat gnome-shell-extension-gsconnect gnome-shell-extension-appindicator gnome-shell-extension-auto-move-windows \
-         gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
-         nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
-         cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
-         pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
-         restic rclone guestfs-tools libguestfs \
-         libguestfs-xfs virt-v2v; do
-  if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
+	gnome-shell-extension-caffeine gnome-shell-extension-dash-to-dock gpaste gnome-shell-extension-gpaste \
+	nautilus-gsconnect cockpit cockpit-podman cockpit-storaged cockpit-networkmanager \
+	cockpit-ostree cockpit-selinux cockpit-files cockpit-packagekit cockpit-sosreport cockpit-kdump \
+	pcp python3-pcp powertop iotop-c lm_sensors usbip podman-compose kind podman-docker podman-tui \
+	restic rclone guestfs-tools libguestfs \
+	libguestfs-xfs virt-v2v; do
+	if rpm -q $p >/dev/null 2>&1; then echo "INFO optional package $p installed"; else echo "INFO optional package $p NOT installed"; fi
 done
 # GPaste (optional, shipped but not enabled): when installed, the extension directory, its UUID and the compiled schema must be there
 if rpm -q gnome-shell-extension-gpaste >/dev/null 2>&1; then
-  check "GPaste extension directory and UUID" "grep -qF GPaste@gnome-shell-extensions.gnome.org /usr/share/gnome-shell/extensions/GPaste@gnome-shell-extensions.gnome.org/metadata.json"
-  check "GPaste schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.GPaste show-history | grep -q Alt"
-  check "GPaste daemon is D-Bus activated" "test -f /usr/share/dbus-1/services/org.gnome.GPaste.service"
+	check "GPaste extension directory and UUID" "grep -qF GPaste@gnome-shell-extensions.gnome.org /usr/share/gnome-shell/extensions/GPaste@gnome-shell-extensions.gnome.org/metadata.json"
+	check "GPaste schema compiled" "GSETTINGS_BACKEND=memory gsettings --schemadir /usr/share/glib-2.0/schemas get org.gnome.GPaste show-history | grep -q Alt"
+	check "GPaste daemon is D-Bus activated" "test -f /usr/share/dbus-1/services/org.gnome.GPaste.service"
 else
-  echo "INFO GPaste not installed (listed in optional-packages-missing)"
+	echo "INFO GPaste not installed (listed in optional-packages-missing)"
 fi
 # removed from the image (2026-11-13): the owner installs these as user extensions; they must not be shipped
 check "Just Perfection, ddterm and Freon are not shipped (packages and extension directories)" "! rpm -q gnome-shell-extension-just-perfection gnome-shell-extension-ddterm gnome-shell-extension-freon >/dev/null 2>&1 && ! ls -d /usr/share/gnome-shell/extensions/just-perfection-desktop@just-perfection /usr/share/gnome-shell/extensions/ddterm@amezin.github.com /usr/share/gnome-shell/extensions/freon@UshakovVasilii_Github.yahoo.com >/dev/null 2>&1"
@@ -133,7 +136,7 @@ check "dconf distro database holds our hot corner default" "grep -aq enable-hot-
 check "dconf distro database holds our button-layout default" "grep -aq button-layout /etc/dconf/db/distro"
 check "the fastfetch default configuration parses as JSON once the full-line // comments are removed" "grep -vE '^[[:space:]]*//' /etc/xdg/fastfetch/config.jsonc | jq -e ."
 for f in /usr/share/fish/vendor_conf.d/octarine-os-*.fish /usr/share/fish/vendor_functions.d/y.fish; do
-  check "fish accepts $f" "fish --no-execute $f"
+	check "fish accepts $f" "fish --no-execute $f"
 done
 check "niri config parts shipped (/etc/niri)" "test -s /etc/niri/config.kdl && test -s /etc/niri/40-binds.kdl && test -s /etc/niri/50-noctalia.kdl && test -s /etc/niri/35-gestures.kdl && test -s /etc/niri/45-workspaces.kdl && test -s /etc/niri/60-window-rules.kdl"
 check "niri-setup source files shipped" "test -s /usr/share/octarine-os/niri-setup/niri-portals.conf && test -s /usr/share/octarine-os/niri-setup/10-octarine-os.toml && test -s /usr/share/octarine-os/niri-setup/keybinds/standard.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/compact.kdl.in && test -s /usr/share/octarine-os/niri-setup/keybinds/hhkb.kdl.in"
@@ -141,10 +144,10 @@ check "niri accepts the shipped config when niri is installed" "! command -v nir
 
 # ujust recipes added with switch-image, toggle-updates, update and luks-tpm-unlock (jq and skopeo are in CRITICAL above)
 for u in rpm-ostreed-automatic.timer flatpak-system-update.timer brew-update.timer brew-upgrade.timer; do
-  check "update unit $u exists" "systemctl cat $u"
+	check "update unit $u exists" "systemctl cat $u"
 done
 for u in flatpak-user-update.timer octarine-distrobox-upgrade.timer octarine-distrobox-upgrade.service; do
-  check "user update unit $u exists" "test -f /usr/lib/systemd/user/$u"
+	check "user update unit $u exists" "test -f /usr/lib/systemd/user/$u"
 done
 check "jq and skopeo run" "jq --version && skopeo --version"
 check "staged automatic image updates are on by default (ujust toggle-updates is the user switch)" "systemctl is-enabled rpm-ostreed-automatic.timer && grep -qx AutomaticUpdatePolicy=stage /etc/rpm-ostreed.conf"
@@ -156,14 +159,14 @@ check "the assembled justfile parses (just --summary)" "just --justfile /usr/sha
 check "the experimental second launcher runs and lists the image own recipes without a base file import" "test -x /usr/bin/ojust && /usr/bin/ojust --list | grep -q toggle-motd && /usr/bin/ojust --list | grep -q niri-setup && ! grep -E ^import /usr/share/octarine-os/justfile | grep -q -- -base.just"
 has_recipe() { printf "%s\n" $summary | grep -qx -- "$1"; }
 for r in switch-image toggle-updates update luks-tpm-unlock toggle-motd toggle-user-motd; do
-  check "assembled justfile lists $r" "has_recipe $r"
+	check "assembled justfile lists $r" "has_recipe $r"
 done
 count_recipe() { printf "%s\n" $summary | grep -cx -- "$1"; }
 check "toggle-user-motd is listed exactly once (our wrapper of the base recipe)" "test \$(count_recipe toggle-user-motd) = 1"
 check "the base 00-default.just is kept as 00-default-base.just and ours imports it" "test -s /usr/share/ublue-os/just/00-default-base.just && grep -qF 00-default-base.just /usr/share/ublue-os/just/00-default.just"
 check "one motd script (executable) and the profile.d hook that calls it, interactive shells only" "test -x /usr/libexec/octarine-os/motd && grep -qF /usr/libexec/octarine-os/motd /etc/profile.d/user-motd.sh && grep -qF \"*i*)\" /etc/profile.d/user-motd.sh"
 for r in toggle-nvk setup-luks-tpm-unlock remove-luks-tpm-unlock; do
-  check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
+	check "assembled justfile does not list the base recipe $r" "! has_recipe $r"
 done
 check "flatpak preinstall list" "test -s /usr/share/flatpak/preinstall.d/gnome.preinstall"
 exit $fail

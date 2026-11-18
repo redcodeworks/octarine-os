@@ -7,15 +7,18 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scx-lib.sh
 . "${here}/scx-lib.sh"
 name=${1-}
-reg=$(scx_find_instance "${name}") || { scx_log "preflight: unknown scheduler instance"; exit 2; }
+reg=$(scx_find_instance "${name}") || {
+	scx_log "preflight: unknown scheduler instance"
+	exit 2
+}
 if [[ ! -r "${SCX_BTF}" ]]; then
-    scx_log "preflight ${name}: ${SCX_BTF} is missing (kernel without BTF), not starting"
-    exit 1
+	scx_log "preflight ${name}: ${SCX_BTF} is missing (kernel without BTF), not starting"
+	exit 1
 fi
 marker="$(scx_marker_dir)/${name}"
 if [[ -f "${marker}" && "$(head -c 200 "${marker}")" == "$(scx_kernel)" ]]; then
-    scx_log "preflight ${name}: disabled for kernel $(scx_kernel) after repeated load failures; remove ${marker} to try again"
-    exit 1
+	scx_log "preflight ${name}: disabled for kernel $(scx_kernel) after repeated load failures; remove ${marker} to try again"
+	exit 1
 fi
 : "${reg}"
 exit 0

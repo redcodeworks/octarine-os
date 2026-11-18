@@ -21,7 +21,10 @@ test -f "${missing_file}"
 MISSING_FILE="${missing_file}" /ctx/install-packages.sh /ctx/packages
 # Steam comes from negativo17 (fedora-multimedia, enabled for that call only by the installer): the gaming image is not one without it
 steam_from=$(dnf5 -q repoquery --installed steam --queryformat '%{from_repo}\n')
-[[ "${steam_from}" == fedora-multimedia ]] || { echo "ERROR: steam was installed from '${steam_from}', not from fedora-multimedia (negativo17)"; exit 1; }
+[[ "${steam_from}" == fedora-multimedia ]] || {
+	echo "ERROR: steam was installed from '${steam_from}', not from fedora-multimedia (negativo17)"
+	exit 1
+}
 echo "::endgroup::"
 
 echo "::group::gx: files (the Steam Big Picture gamescope session)"
@@ -35,26 +38,35 @@ echo "::endgroup::"
 echo "::group::gx: image identity and kernel check"
 # Image identity (os-release IMAGE_ID and IMAGE_VERSION): this variant's own, not the base image's. IMAGE_VERSION is the
 # version of THIS build (<YYYYMMDD>-<short sha>), passed in by the workflow; a promoted tag keeps it.
-set_os_release_field() { # key value: replace the line when it exists, append it otherwise
-    local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}"  # the override is for tests
-    if grep -q "^${key}=" "${file}"; then
-        sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
-    else
-        [[ -z "$(tail -c1 "${file}")" ]] || echo >> "${file}"
-        echo "${key}=\"${value}\"" >> "${file}"
-    fi
-    grep -qx "${key}=\"${value}\"" "${file}"
+set_os_release_field() {                                                  # key value: replace the line when it exists, append it otherwise
+	local key="$1" value="$2" file="${OS_RELEASE_FILE:-/usr/lib/os-release}" # the override is for tests
+	if grep -q "^${key}=" "${file}"; then
+		sed -i "s|^${key}=.*|${key}=\"${value}\"|" "${file}"
+	else
+		[[ -z "$(tail -c1 "${file}")" ]] || echo >>"${file}"
+		echo "${key}=\"${value}\"" >>"${file}"
+	fi
+	grep -qx "${key}=\"${value}\"" "${file}"
 }
 : "${IMAGE_VERSION:?IMAGE_VERSION build argument is missing}"
 image_id="${GX_IMAGE_ID:-octarine-os-gx}"
-[[ "${image_id}" =~ ^octarine-os(-nvidia|-dx)?-gx$ ]] || { echo "ERROR: GX_IMAGE_ID '${image_id}' is not octarine-os-gx, octarine-os-nvidia-gx or octarine-os-dx-gx"; exit 1; }
+[[ "${image_id}" =~ ^octarine-os(-nvidia|-dx)?-gx$ ]] || {
+	echo "ERROR: GX_IMAGE_ID '${image_id}' is not octarine-os-gx, octarine-os-nvidia-gx or octarine-os-dx-gx"
+	exit 1
+}
 set_os_release_field IMAGE_ID "${image_id}"
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
 IMAGE_ID_EXPECTED="${image_id}" bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == "${IMAGE_ID_EXPECTED}" ]]'
 
 after=$(kernel_of)
-[[ "${after}" == "${before}" ]] || { echo "ERROR: the gx install changed the kernel (${before} -> ${after})"; exit 1; }
-[[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || { echo "ERROR: /usr/lib/modules does not hold exactly ${before}"; exit 1; }
+[[ "${after}" == "${before}" ]] || {
+	echo "ERROR: the gx install changed the kernel (${before} -> ${after})"
+	exit 1
+}
+[[ "$(ls /usr/lib/modules | wc -l)" == 1 && "$(ls /usr/lib/modules)" == "${before}" ]] || {
+	echo "ERROR: /usr/lib/modules does not hold exactly ${before}"
+	exit 1
+}
 echo "gx layer installed for kernel ${before}"
 echo "::endgroup::"
 

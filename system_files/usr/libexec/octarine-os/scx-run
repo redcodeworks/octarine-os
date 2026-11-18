@@ -25,14 +25,22 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=scx-lib.sh
 . "${here}/scx-lib.sh"
 name=${1-}
-reg=$(scx_find_instance "${name}") || { scx_log "run: unknown scheduler instance"; exit 2; }
+reg=$(scx_find_instance "${name}") || {
+	scx_log "run: unknown scheduler instance"
+	exit 2
+}
 binary=$(scx_reg_get "${reg}" BINARY)
 flags=$(scx_reg_get "${reg}" FLAGS)
-[[ "${binary}" =~ ^/usr/bin/scx_[a-z0-9_]+$ ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
+[[ "${binary}" =~ ^/usr/bin/scx_[a-z0-9_]+$ ]] || {
+	scx_log "run ${name}: bad or missing binary '${binary}'"
+	exit 2
+}
 # test hook only (the units run with a clean environment): the registry value was validated above, a stub directory replaces /usr/bin
 [[ -z "${OCTARINE_SCX_BIN_DIR-}" ]] || binary="${OCTARINE_SCX_BIN_DIR}/${binary##*/}"
-[[ -x "${binary}" ]] || { scx_log "run ${name}: bad or missing binary '${binary}'"; exit 2; }
-
+[[ -x "${binary}" ]] || {
+	scx_log "run ${name}: bad or missing binary '${binary}'"
+	exit 2
+}
 
 unshare=${OCTARINE_SCX_UNSHARE:-/usr/bin/unshare}
 sh_bin=${OCTARINE_SCX_SH:-/usr/bin/sh}
@@ -56,13 +64,13 @@ exec "$envb" -i PATH=/usr/bin:/usr/sbin LANG=C "$@"'
 # shellcheck disable=SC2206  # the flags are a word list from the root-owned registry on purpose
 words=("${binary}" ${flags})
 if [[ -e "${boot_dir}/config-${rel}" || -e "${proc_config}" ]]; then
-    cmd=("${env_bin}" -i PATH=/usr/bin:/usr/sbin LANG=C "${words[@]}")
+	cmd=("${env_bin}" -i PATH=/usr/bin:/usr/sbin LANG=C "${words[@]}")
 elif [[ -r "${image_config}" ]]; then
-    scx_log "run ${name}: no kernel config at ${boot_dir}/config-${rel} or ${proc_config} (libbpf's two places): giving the scheduler ${image_config} as ${boot_dir}/config-${rel} in a private mount namespace"
-    cmd=("${unshare}" -m -- "${sh_bin}" -c "${ns_script}" octarine-scx "${mount_bin}" "${boot_dir}" "${rel}" "${image_config}" "${env_bin}" "${words[@]}")
+	scx_log "run ${name}: no kernel config at ${boot_dir}/config-${rel} or ${proc_config} (libbpf's two places): giving the scheduler ${image_config} as ${boot_dir}/config-${rel} in a private mount namespace"
+	cmd=("${unshare}" -m -- "${sh_bin}" -c "${ns_script}" octarine-scx "${mount_bin}" "${boot_dir}" "${rel}" "${image_config}" "${env_bin}" "${words[@]}")
 else
-    scx_log "run ${name}: WARNING: no kernel config at libbpf's places and none at ${image_config}; a scheduler that reads the kernel config will fail to load"
-    cmd=("${env_bin}" -i PATH=/usr/bin:/usr/sbin LANG=C "${words[@]}")
+	scx_log "run ${name}: WARNING: no kernel config at libbpf's places and none at ${image_config}; a scheduler that reads the kernel config will fail to load"
+	cmd=("${env_bin}" -i PATH=/usr/bin:/usr/sbin LANG=C "${words[@]}")
 fi
 
 got_term=0
@@ -70,19 +78,19 @@ trap 'got_term=1' TERM INT HUP
 "${cmd[@]}" &
 pid=$!
 while :; do
-    wait "${pid}"
-    rc=$?
-    kill -0 "${pid}" 2> /dev/null || break
+	wait "${pid}"
+	rc=$?
+	kill -0 "${pid}" 2>/dev/null || break
 done
 
 flag=""
 [[ -z "${INVOCATION_ID-}" ]] || flag="${SCX_RUN_DIR}/active-${INVOCATION_ID}"
 if [[ -n "${flag}" && -e "${flag}" ]]; then
-    rm -f -- "${flag}"
-    # it was active: a stop is a clean end, anything else keeps its status (Restart=on-failure restarts a crash)
-    if ((got_term == 1)); then exit 0; fi
-    scx_log "run ${name}: the scheduler exited with status ${rc} after having been active"
-    exit "${rc}"
+	rm -f -- "${flag}"
+	# it was active: a stop is a clean end, anything else keeps its status (Restart=on-failure restarts a crash)
+	if ((got_term == 1)); then exit 0; fi
+	scx_log "run ${name}: the scheduler exited with status ${rc} after having been active"
+	exit "${rc}"
 fi
 scx_log "run ${name}: the scheduler exited (status ${rc}) without having been verified active: a failed start, not restarted automatically (exit 75)"
 exit 75
