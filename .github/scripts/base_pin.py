@@ -81,7 +81,7 @@ def main(argv=None):
                 f"https://github.com/ublue-os/main/blob/main/cosign.pub and replace it only after reading why), the image is unsigned, or it was replaced. {tail}"
             )
         return 1
-    print(f"BASE_PIN={pin}")
+    ci.result(f"BASE_PIN={pin}")
     ci.append_to("GITHUB_ENV", f"BASE_PIN={pin}")
     ci.append_to("GITHUB_OUTPUT", f"pin={pin}")
     ci.append_to("GITHUB_STEP_SUMMARY", f"Base image: `{base}` resolved ONCE to `{pin}` and verified ({verified}) with `{key}`; the build is FROM that digest.")

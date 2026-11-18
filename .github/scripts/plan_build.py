@@ -31,31 +31,30 @@ def main(argv=None):
     args = ap.parse_args(argv)
     event, before, after, ref = args.event, args.before, args.after or "HEAD", args.ref
     if event in ("schedule", "workflow_dispatch"):
-        print("true")
+        ci.result("true")
         return 0
     if event != "push":
         ci.note(f"unknown event '{event}'")
         return 1
     if not before or re.fullmatch(r"0+", before) or not ci.git_ok("cat-file", "-e", f"{before}^{{commit}}") or not ci.git_ok("cat-file", "-e", f"{after}^{{commit}}"):
         ci.note(f"no usable base commit ('{before}'): building")
-        print("true")
+        ci.result("true")
         return 0
     changed = ci.git("diff", "--name-only", before, after).splitlines()
     if not changed:
         ci.note("empty diff: building")
-        print("true")
+        ci.result("true")
         return 0
-    for f in changed:
-        if not docs_only.is_docs(f):
-            ci.note(f"non-docs file changed ({f}): building")
-            print("true")
-            return 0
+    if code := next((f for f in changed if not docs_only.is_docs(f)), None):
+        ci.note(f"non-docs file changed ({code}): building")
+        ci.result("true")
+        return 0
     if ref == "refs/heads/testing":
         ci.note(f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip")
-        print("true")
+        ci.result("true")
         return 0
     ci.note(f"only docs changed ({len(changed)} files): skipping the heavy build")
-    print("false")
+    ci.result("false")
     return 0
 
 

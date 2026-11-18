@@ -28,7 +28,7 @@ import inputs_hash as ih  # noqa: E402
 
 def no(reason):
     ci.note(f"no promote: {reason}")
-    print("promote=false")
+    ci.result("promote=false")
     raise SystemExit(0)
 
 
@@ -59,7 +59,7 @@ def main(argv=None):
     except ih.NoImage as e:
         no(str(e))
     ci.note(f"promote: {tag} ({digest}) covers {tip}")
-    print(f"promote=true\nsource_tag={tag}\nsource_digest={digest}")
+    ci.result(f"promote=true\nsource_tag={tag}\nsource_digest={digest}")
     return 0
 
 

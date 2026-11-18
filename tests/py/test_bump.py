@@ -165,7 +165,7 @@ def test_a_failing_pin_turns_the_run_red_and_the_other_pins_still_get_their_pull
 
 def test_a_dry_run_pushes_and_creates_nothing(clone):
     p = clone.run(DRY_RUN="1", UPSTREAM_CHUNKAH="2", UPSTREAM_BREW="2", UPSTREAM_BINS="1")
-    assert p.returncode == 0 and p.stdout.count("would open") == 2 and not clone.api.created and clone.branches() == []
+    assert p.returncode == 0 and p.stderr.count("would open") == 2 and not clone.api.created and clone.branches() == []
 
 
 def test_a_real_run_from_a_checkout_that_is_not_origin_testing_is_refused(clone):

@@ -184,7 +184,7 @@ def test_a_recovery_comments_and_closes_the_issue(github, fakes):
 
 def test_a_recovery_without_an_open_issue_does_nothing(github, fakes):
     p = script("ci_issue.py", "recover", extra=ENV)
-    assert p.returncode == 0 and not github.comments and not github.updates and "nothing to close" in p.stdout
+    assert p.returncode == 0 and not github.comments and not github.updates and "nothing to close" in p.stderr
 
 
 # ---- secureboot_check
@@ -209,7 +209,7 @@ def secureboot(tmp_path, fakes):
 def test_a_kernel_that_verifies_against_the_downloaded_key_passes(secureboot):
     p = secureboot()
     log = open(secureboot.log).read()
-    assert p.returncode == 0 and "verifies against the Universal Blue" in p.stdout and "Fingerprint=" in p.stdout and "sbverify --list" in log and log.count("sbverify --cert") == 1
+    assert p.returncode == 0 and "verifies against the Universal Blue" in p.stderr and "Fingerprint=" in p.stderr and "sbverify --list" in log and log.count("sbverify --cert") == 1
 
 
 def test_a_kernel_that_does_not_verify_fails_the_build_and_lists_the_signatures(secureboot):
@@ -248,14 +248,14 @@ def prune(vs, **env):
 
 def test_prune_keeps_the_newest_fourteen_daily_builds():
     p = prune(versions(20))
-    assert p.returncode == 0 and p.stdout.count("DELETE image") == 6 and "Dry run: 6 versions would be deleted." in p.stdout
+    assert p.returncode == 0 and p.stderr.count("DELETE image") == 6 and "Dry run: 6 versions would be deleted." in p.stderr
 
 
 def test_prune_never_deletes_a_protected_digest_or_a_version_with_another_tag():
     vs = versions(20)
     vs[0]["metadata"]["container"]["tags"].append("latest")
     p = prune(vs, PROTECT=vs[1]["name"])
-    assert p.stdout.count("DELETE image") == 4
+    assert p.stderr.count("DELETE image") == 4
 
 
 def test_prune_refuses_more_deletions_than_the_limit():
