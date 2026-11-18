@@ -1,0 +1,61 @@
+# OPTIONAL packages of the octarine-os dx image (/packages/optional-fedora.txt): Fedora's own repositories, ONE transaction that never fails the build; when it fails
+# it is retried once as a whole, then package by package, and what still cannot be installed is printed as "OPTIONAL PACKAGE MISSING: <name>" and written to
+# MISSING_FILE (installer/install.sh). Niche tools whose absence must not stop the image (a Fedora release renames or retires one now and then).
+# One token per line; blank lines and #-comments ignored.
+
+# --- Scientific libraries ---
+hdf5-devel
+flexiblas-devel
+openblas-devel
+
+# --- Hardware and system tools ---
+vulkan-tools
+libva-utils
+clinfo
+setools-console
+lm_sensors
+lsscsi
+nicstat
+traceroute
+waypipe
+evtest
+xset
+xrefresh
+dbus-tools
+
+# --- Packaging and image tooling ---
+debugedit
+dwz
+appstream-compose
+flatpak-builder
+guestfs-tools
+virt-v2v
+supermin
+osbuild
+
+# --- Virtualization extras ---
+virt-manager
+virt-viewer
+libvirt-nss
+qemu-user-binfmt
+qemu-user-static
+genisoimage
+osbuild-selinux
+udica
+
+# --- Tracing and performance ---
+bcc
+bpftop
+bpftrace
+sysprof
+tiptop
+trace-cmd
+numactl
+
+# --- Developer extras ---
+git-subtree
+git-svn
+android-tools
+dbus-x11
+ydotool
+cascadia-code-fonts

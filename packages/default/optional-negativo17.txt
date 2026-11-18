@@ -1,0 +1,6 @@
+# OPTIONAL packages from negativo17 (repository id fedora-multimedia, https://negativo17.org; the base enables it, the installer also enables it for this call):
+# the multimedia stack whose GStreamer plugins replace the -free variants of the base. ONE transaction, retried and then one by one (installer/install.sh), never
+# fails the build; a failed transaction leaves the -free packages in place (dnf5 is atomic). The RPM Fusion *-freeworld packages are not used. No negativo17
+# equivalent of mesa-va-drivers-freeworld exists.
+gstreamer1-plugins-bad
+gstreamer1-plugins-ugly

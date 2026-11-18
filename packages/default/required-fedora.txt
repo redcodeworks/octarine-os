@@ -1,0 +1,33 @@
+# REQUIRED packages of the octarine-os image (ghcr.io/redcodeworks/octarine-bins, /packages/required-fedora.txt): Fedora's own repositories, ONE strict dnf5
+# transaction (installer/install.sh): a name that cannot be installed fails the build instead of shipping an image without something that must be there.
+# Standing policy: only Fedora packages here (octarine-os's smoke test checks that every one has the RPM vendor "Fedora Project"); anything from another source
+# goes into an optional list, or, when the image cannot work without it, into required-negativo17.txt / required-copr.txt by a decision of the owner.
+# One token per line; blank lines and #-comments ignored. Syntax and policy: CLAUDE.md, "The package lists".
+#
+# distrobox, ffmpeg, pam-u2f and solaar-udev already ship in silverblue-main (dnf5 skips what is installed); they are named anyway so they stay if the base drops one.
+# solaar-udev: the Logitech udev rules for the Solaar Flatpak and any host-side Solaar (the Solaar GUI package is NOT in the image).
+# gcc, gcc-c++, make and binutils (the linker ld, ar, as): compilers and a linker are useful on any image, not only a developer one (owner, 2026-11-14). dnf5 adds
+# glibc-devel, libstdc++-devel, libxcrypt-devel and kernel-headers as dependencies. cmake, ninja, meson and the development-tools group are in the dx list.
+
+# --- Security, login and backup ---
+pam-u2f
+snapper
+borgbackup
+tailscale
+fuse-libs
+
+# --- Shell and tools ---
+zsh
+jq
+skopeo
+
+# --- Desktop and hardware ---
+gnome-shell-extension-user-theme
+steam-devices
+solaar-udev
+
+# --- Compilers and linker ---
+gcc
+gcc-c++
+make
+binutils

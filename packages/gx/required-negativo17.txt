@@ -1,0 +1,9 @@
+# REQUIRED packages from negativo17 (repository id fedora-multimedia, https://negativo17.org): ONE strict dnf5 transaction (installer/install.sh) AFTER required-fedora.txt,
+# with that repository enabled for the call only. A package that cannot be installed fails the build. The CONSUMER must have the repository configured (the Universal
+# Blue base ships it). One entry per line, as in required-fedora.txt. Steam is why gx exists: an image without it is not a gaming image, so it is required.
+#
+# Resolved on Fedora 45 from fedora-multimedia (steam 1.0.0.87-4.fc45, dnf5 repoquery 2026-11-16).
+# Steam's own dependencies also come from negativo17 when it is enabled, because it is newer than Fedora for them:
+# Mesa (mesa-* x86_64 and i686, 26.2.7 against Fedora's 26.2.6), libva, and the codec libraries (libavcodec and
+# friends, x264/x265, openh264, ...); see gx/README.md.
+steam

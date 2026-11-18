@@ -1,0 +1,62 @@
+# OPTIONAL packages of the octarine-os image from Fedora's own repositories (/packages/optional-fedora.txt): ONE dnf5 transaction that never fails the build.
+# When it fails it is retried once as a whole, then package by package; whatever still cannot be installed is printed as "OPTIONAL PACKAGE MISSING: <name>" and written
+# to the file octarine-os names in MISSING_FILE (/usr/share/octarine-os/optional-packages-missing), which its smoke test turns into CI warnings.
+# One token per line; blank lines and #-comments ignored. The sections only group the list for readers.
+#
+# niri and noctalia are optional here but the OS build fails when they end up missing (its check_session_packages): an image without a session is broken.
+# fish is optional: nothing in the image depends on it and it is never a login shell (bash is); a user who starts fish from their terminal needs it installed.
+
+# --- Session and desktop ---
+niri
+noctalia
+fish
+gum
+btrfs-assistant
+nautilus-python
+wtype
+socat
+gtk4-layer-shell
+gnome-shell-extension-gsconnect
+gnome-shell-extension-appindicator
+gnome-shell-extension-auto-move-windows
+gnome-shell-extension-caffeine
+gnome-shell-extension-dash-to-dock
+gnome-shell-extension-gpaste
+gpaste
+nautilus-gsconnect
+
+# --- Monitoring, backup and network tools ---
+powertop
+iotop-c
+lm_sensors
+usbip
+restic
+rclone
+
+# --- Cockpit (host modules) ---
+cockpit
+cockpit-podman
+cockpit-storaged
+cockpit-networkmanager
+cockpit-ostree
+cockpit-selinux
+cockpit-files
+cockpit-packagekit
+cockpit-sosreport
+cockpit-kdump
+
+# --- Metrics history (pcp; the OS enables its units only when it is installed) ---
+pcp
+python3-pcp
+
+# --- Containers ---
+podman-compose
+kind
+podman-docker
+podman-tui
+
+# --- libguestfs ---
+guestfs-tools
+libguestfs
+libguestfs-xfs
+virt-v2v

@@ -1,0 +1,142 @@
+# REQUIRED packages of the octarine-os dx image (ghcr.io/redcodeworks/octarine-bins-dx, /packages/required-fedora.txt): Fedora's own repositories, ONE strict dnf5
+# transaction (installer/install.sh): a name that cannot be installed fails the build. The toolchain, the -devel libraries and the core of VM hosting.
+# One token per line; blank lines and #-comments ignored (@group-id is a package group; a|b are ALTERNATIVES for a package whose name differs between Fedora
+# releases: the first one that exists is installed, newest name first). Syntax and policy: CLAUDE.md, "The package lists".
+# (the developer list moved here from octarine-images' dev-packages on 2026-11-16; the VM-hosting set from octarine-os's variants/dx/packages/extras.txt)
+#
+# - Do NOT add ffmpeg-free-devel: libGLU cannot install once Fedora's mesa is excluded in favour of another Mesa.
+# - ROCm (rocminfo rocm-smi rocm-hip rocm-opencl hipcc, about 3 GiB) is deliberately NOT in this image: `ujust hardware-setup` (step rocm) provides it in a rootless distrobox.
+# - The default image already carries gcc, gcc-c++, make and binutils; dnf5 skips what is installed.
+
+# --- Groups ---
+@c-development
+@development-tools
+
+# --- Build chain and debugging ---
+autoconf
+automake
+binutils
+bison
+byacc
+ccache
+cscope
+ctags
+diffstat
+direnv
+doxygen
+elfutils
+fastfetch
+fish
+flex
+gcc
+gcc-c++
+gdb
+gettext
+glibc-devel
+glibc-locale-source
+indent
+libffi-devel
+libtool
+ltrace
+make
+patch
+patchutils
+perf
+pinentry
+pkgconf
+pkgconf-pkg-config
+strace
+subversion
+systemtap
+util-linux-script
+valgrind
+zoxide
+cmake
+ninja-build
+meson
+gcc-gfortran
+clang
+protobuf-compiler
+protobuf-devel
+
+# --- Language and compression libraries ---
+python3-devel
+openssl-devel
+zlib-ng-compat-devel
+bzip2-devel
+xz-devel
+readline-devel
+sqlite-devel
+ncurses-devel
+libxml2-devel
+libxslt-devel
+libcurl-devel
+libuuid-devel
+libyaml-devel
+gdbm-devel
+libzstd-devel
+lz4-devel
+snappy-devel
+pcre2-devel
+libicu-devel
+
+# --- Databases, directory and auth ---
+libpq-devel
+mariadb-connector-c-devel
+openldap-devel
+cyrus-sasl-devel
+krb5-devel
+
+# --- GLib, imaging, graphics, audio ---
+glib2-devel
+cairo-devel
+cairo-gobject-devel
+gobject-introspection-devel
+libjpeg-turbo-devel
+libpng-devel
+freetype-devel
+libtiff-devel
+libwebp-devel
+lcms2-devel
+openjpeg-devel
+libva-devel
+libdrm-devel
+alsa-lib-devel
+pulseaudio-libs-devel
+pipewire-devel
+mesa-libGL-devel
+libX11-devel
+wayland-devel
+libxkbcommon-devel
+
+# --- System libraries ---
+systemd-devel
+dbus-devel
+libusb1-devel
+libselinux-devel
+pam-devel
+libcap-devel
+libseccomp-devel
+gnutls-devel
+libgcrypt-devel
+
+# --- Git library ---
+# Fedora 45 renamed libgit2-devel to libgit2_1.9-devel
+libgit2_1.9-devel|libgit2-devel
+
+# --- VM hosting ---
+# The default image does not ship the VM-hosting set (libvirt and qemu-kvm meta packages, cockpit-machines): dx is the only place it comes from.
+# The default image keeps the libguestfs tools, which pull in libvirt libraries and QEMU pieces as dependencies.
+libvirt
+qemu-kvm
+cockpit-machines
+virt-install
+virtiofsd
+swtpm
+swtpm-tools
+dnsmasq
+edk2-ovmf
+
+# --- Language toolchain managers (from dnf; SDKMAN and nvm are runtime installs) ---
+uv
+rustup
