@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/plan-promote.sh in a temporary git repository with a fake registry lookup.
+# Tests .github/scripts/plan_promote.py in a temporary git repository with a fake registry lookup.
 set -euo pipefail
-script=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/.github/scripts/plan-promote.sh
+script=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/.github/scripts/plan_promote.py
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 mkdir "${tmp}/fake" "${tmp}/repo"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/aggregate-result.sh with fixed job results.
+# Tests .github/scripts/aggregate_result.py with fixed job results.
 set -euo pipefail
-script=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/.github/scripts/aggregate-result.sh
+script=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)/.github/scripts/aggregate_result.py
 fail=0
 t() { # name want plan bw pw publish build promote sign
     local rc=0

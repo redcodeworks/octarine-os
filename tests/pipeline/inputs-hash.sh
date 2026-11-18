@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/inputs-hash.sh (the three input hashes: vanilla, dx, gx) and plan-vanilla-reuse.sh (the decision table of a push
-# to testing) in a temporary git repository with a fake registry lookup. Run: tests/pipeline/inputs-hash.sh
+# Tests .github/scripts/inputs_hash.py (the three input hashes: vanilla, dx, gx) and plan_vanilla_reuse.py (the decision table of a push
+# to testing) in a temporary git repository with a fake registry lookup. Run: tests/pipeline/inputs_hash.py
 set -uo pipefail
 here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
-hash="$here/.github/scripts/inputs-hash.sh"
-reuse="$here/.github/scripts/plan-vanilla-reuse.sh"
+hash="$here/.github/scripts/inputs_hash.py"
+reuse="$here/.github/scripts/plan_vanilla_reuse.py"
 tmp=$(mktemp -d)
 trap 'rm -rf "${tmp}"' EXIT
 fail=0
@@ -26,7 +26,7 @@ sha() { git rev-parse --short=7 "$1"; }
 
 mkdir -p system_files variants/dx/system_files variants/gx .github/workflows .github/scripts tests docs keys
 echo a > variants/gx/f; echo a > .github/scripts/gx-smoke.sh
-echo a > .github/workflows/dx-image.yml; echo a > .github/workflows/build-variant.yml; echo a > .github/workflows/build-extra.yml; echo a > .github/scripts/plan-dx.sh; echo a > .github/scripts/aggregate-dx.sh
+echo a > .github/workflows/dx-image.yml; echo a > .github/workflows/build-variant.yml; echo a > .github/workflows/build-extra.yml; echo a > .github/scripts/plan_dx.py; echo a > .github/scripts/aggregate_dx.py
 echo a > system_files/x; echo a > variants/dx/f; echo a > variants/dx/system_files/g
 echo a > .github/workflows/build.yml; echo a > .github/scripts/dx-smoke.sh
 echo a > tests/dx-image.sh; echo a > tests/other.sh; echo a > README.md; echo a > docs/n.md; echo a > keys/redcodeworks-toolbox-cosign.pub
@@ -47,7 +47,7 @@ g1=$(g)
 echo b >> .github/scripts/gx-smoke.sh; commit gx2
 eq "gx-smoke.sh is gx-only: vanilla_inputs equal" "$(v)" "${v0}"; ne "...gx_inputs differ" "$(g)" "${g1}"; eq "...dx_inputs equal" "$(d)" "${d1}"
 d1=$(d); g1=$(g)
-for f in .github/workflows/dx-image.yml .github/workflows/build-variant.yml .github/scripts/plan-dx.sh .github/scripts/aggregate-dx.sh keys/redcodeworks-toolbox-cosign.pub; do
+for f in .github/workflows/dx-image.yml .github/workflows/build-variant.yml .github/scripts/plan_dx.py .github/scripts/aggregate_dx.py keys/redcodeworks-toolbox-cosign.pub; do
     echo b >> "${f}"; commit "shared ${f}"
     eq "shared file ${f}: vanilla_inputs equal" "$(v)" "${v0}"; ne "...dx_inputs differ" "$(d)" "${d1}"; ne "...gx_inputs differ" "$(g)" "${g1}"
     d1=$(d); g1=$(g)
@@ -70,7 +70,7 @@ echo b >> config/image.env; commit imageenv
 ne "config/image.env is an image input" "$(v)" "${ci}"; ci=$(v)
 
 
-# ---- plan-vanilla-reuse.sh: a push to testing; the registry holds testing-<sha> for the commits in FAKE_TAGS
+# ---- plan_vanilla_reuse.py: a push to testing; the registry holds testing-<sha> for the commits in FAKE_TAGS
 cat > "${tmp}/fake/lookup" <<'EOS'
 #!/usr/bin/env bash
 [[ -z "${FAKE_READ_ERROR:-}" ]] || exit 4  # the registry cannot be read (contract: 3 = absent, other = read error)

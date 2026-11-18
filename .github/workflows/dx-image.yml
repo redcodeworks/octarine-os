@@ -4,13 +4,13 @@ name: dx image (reusable)
 # each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
 # Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
 # concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
-# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
+# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
 # NO SIGNING HERE: the sign job lives in each caller (`environment: signing`, the composite action .github/actions/sign-images) because the
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed
 # 2026-11-16 on two runs: with a declared workflow_call secret and without one). The `summary` job hands the plan, build and promote results, the
 # digests, the image name and the tags to the caller (a caller sees only one job result for a called workflow, and the sign job and
-# .github/scripts/aggregate-dx.sh need them). Design in CLAUDE.md ("dx image").
+# .github/scripts/aggregate_dx.py need them). Design in CLAUDE.md ("dx image").
 on:
   workflow_call:
     inputs:
@@ -136,6 +136,9 @@ jobs:
           ref: ${{ env.SHA }}
           fetch-depth: 0
 
+      - name: Set up the CI Python
+        uses: ./.github/actions/setup-ci-python
+
       # The commit must be a full sha that is the ref's tip or one of its ancestors (the ref may have moved on): nothing off the branch is ever built
       - name: Check the commit belongs to the branch
         run: |
@@ -166,7 +169,7 @@ jobs:
           VARIANT: ${{ inputs.variant }}
           FORCE: ${{ inputs.force }}
           PROMOTE_FROM_TESTING: ${{ inputs.promote_from_testing }}
-        run: .github/scripts/plan-dx.sh
+        run: uv run --frozen --no-dev python -I .github/scripts/plan_dx.py
 
   build:
     name: Build ${{ inputs.variant }} image
@@ -237,7 +240,7 @@ jobs:
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
 
-      # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
+      # The digest comes from the plan job; it was verified there (plan_dx.py, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
         run: |
           set -euo pipefail

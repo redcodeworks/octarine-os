@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests .github/scripts/plan-dx.sh (skip, promote or build, per channel) with stub skopeo and cosign in a temporary git
-# repository. Run: tests/pipeline/plan-dx.sh
+# Tests .github/scripts/plan_dx.py (skip, promote or build, per channel) with stub skopeo and cosign in a temporary git
+# repository. Run: tests/pipeline/plan_dx.py
 set -uo pipefail
 here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
-plan="$here/.github/scripts/plan-dx.sh"
+plan="$here/.github/scripts/plan_dx.py"
 root=$(mktemp -d)
 trap 'rm -rf -- "$root"' EXIT
 fail=0
@@ -17,8 +17,8 @@ git config user.email t@example.invalid; git config user.name t
 echo a > variants/dx/f; echo a > variants/gx/f; echo a > x; git add -A; git commit -qm one
 echo b >> x; git add -A; git commit -qm two
 echo c >> variants/dx/f; git add -A; git commit -qm "three (dx only)"
-inputs=$("$here/.github/scripts/inputs-hash.sh" dx HEAD)
-inputs_gx=$("$here/.github/scripts/inputs-hash.sh" gx HEAD)
+inputs=$("$here/.github/scripts/inputs_hash.py" dx HEAD)
+inputs_gx=$("$here/.github/scripts/inputs_hash.py" gx HEAD)
 sha7=$(git rev-parse --short=7 HEAD)
 older7=$(git rev-parse --short=7 HEAD~1)
 
@@ -61,7 +61,7 @@ cfgx() { # tag base-digest inputs (an image of the gx variant: the label is gx-i
 run() { # channel [force]; outputs in $root/out; VARIANT in the environment (dx by default)
     : > "$root/out"; : > "$root/sum"
     PATH="$root/bin:$PATH" CHANNEL="$1" FORCE="${2:-false}" VARIANT="${VARIANT:-dx}" GITHUB_REPOSITORY_OWNER=RedCodeWorks \
-        GITHUB_OUTPUT="$root/out" GITHUB_STEP_SUMMARY="$root/sum" bash "$plan" > "$root/log" 2>&1
+        GITHUB_OUTPUT="$root/out" GITHUB_STEP_SUMMARY="$root/sum" python3 -I "$plan" > "$root/log" 2>&1
 }
 get() { sed -n "s/^$1=//p" "$root/out"; }
 expect() { # name build promote source_tag

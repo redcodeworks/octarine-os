@@ -126,8 +126,8 @@ build $target_image=image_name $tag=default_tag:
         # The full commit this image was built from (the scheduled skip check compares its content with main)
         LABELS+=("--label" "org.opencontainers.image.revision=$(git rev-parse HEAD)")
         # The hash of the files that make the default image (not docs, not the dx-only files): a push whose hash is equal
-        # needs no new image, see .github/scripts/inputs-hash.sh
-        LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(.github/scripts/inputs-hash.sh vanilla)")
+        # needs no new image, see .github/scripts/inputs_hash.py
+        LABELS+=("--label" "io.github.redcodeworks.octarine-os.vanilla-inputs=$(uv run --frozen --no-dev python -I .github/scripts/inputs_hash.py vanilla)")
     fi
 
     # The pinned prebuilt binaries image this build installed from (the digest reference: the exact binaries of this image, for a rollback)
@@ -174,7 +174,7 @@ rechunk $target_image=image_name $tag=default_tag:
     podman inspect "${target_image}:${tag}" > "${CHUNKAH_CONFIG_FILE}"
 
     # The optional packages that did not install (build.sh writes the list into the image) become a LABEL, so the daily's skip check can see a degraded latest and
-    # rebuild it instead of keeping it for up to a week (plan-skip.sh): "none" or a comma separated list; no label when the image has no such file
+    # rebuild it instead of keeping it for up to a week (plan_skip.py): "none" or a comma separated list; no label when the image has no such file
     MISSING_LABEL=()
     if missing="$(podman run --rm --network none "${target_image}:${tag}" cat /usr/share/octarine-os/optional-packages-missing 2> /dev/null)"; then
       csv="$(printf '%s\n' "${missing}" | grep -v '^$' | paste -sd, - || true)"
