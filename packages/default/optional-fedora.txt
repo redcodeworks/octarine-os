@@ -3,7 +3,6 @@
 # to the file octarine-os names in MISSING_FILE (/usr/share/octarine-os/optional-packages-missing), which its smoke test turns into CI warnings.
 # One token per line; blank lines and #-comments ignored. The sections only group the list for readers.
 #
-# niri and noctalia are optional here but the OS build fails when they end up missing (its check_session_packages): an image without a session is broken.
 # fish is optional: nothing in the image depends on it and it is never a login shell (bash is); a user who starts fish from their terminal needs it installed.
 
 # --- Session and desktop ---
