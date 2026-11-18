@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Tests for the chunkah rechunk: the verified pin (.github/scripts/chunkah-ref.sh with a fake cosign), the Justfile recipe and its use in
+# Tests for the chunkah rechunk: the verified pin (.github/scripts/chunkah_ref.py with a fake cosign), the Justfile recipe and its use in
 # every image workflow. Nothing is pulled or run. Run: tests/supply/chunkah.sh. Needs: bash, python3 with PyYAML.
 set -uo pipefail
-export RETRY_DELAY=0  # retry.sh must not slow the failing-verification cases
+export RETRY_DELAY=0  # the retry must not slow the failing-verification cases
 here=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 root=$(mktemp -d); trap 'rm -rf -- "$root"' EXIT
 pass=0; failn=0; rc=0
 ok() { pass=$((pass + 1)); echo "ok   $1"; }
 bad() { failn=$((failn + 1)); echo "FAIL $1"; [ -f "$root/run" ] && sed 's/^/     run: /' "$root/run"; }
 check() { local d=$1; shift; if "$@" >"$root/out" 2>&1; then ok "$d"; else bad "$d"; fi; }
+py=$(command -v python3)
 bin="$root/bin"; mkdir -p "$bin"
 printf '#!/usr/bin/env bash\necho "cosign $*" >>"$LOG"\nexit "${COSIGN_RC:-0}"\n' >"$bin/cosign"; chmod +x "$bin/cosign"
 printf '#!/usr/bin/env bash\necho "podman $*" >>"$LOG"\nexit "${PODMAN_RC:-0}"\n' >"$bin/podman"; chmod +x "$bin/podman"
 export LOG="$root/log"
-ref() { : >"$LOG"; env "$@" PATH="$bin:$PATH" bash "$here/.github/scripts/chunkah-ref.sh" "${ENVF:-$here/config/chunkah.env}" >"$root/run" 2>&1; rc=$?; }
+ref() { : >"$LOG"; env "$@" PATH="$bin:$PATH" "$py" -I "$here/.github/scripts/chunkah_ref.py" "${ENVF:-$here/config/chunkah.env}" >"$root/run" 2>&1; rc=$?; }
 d=$(sed -n 's/^CHUNKAH_DIGEST=//p' "$here/config/chunkah.env")
 ref X=1
 check "chunkah-ref: the pin in config/chunkah.env is verified keyless (OIDC issuer, coreos/chunkah identity) and printed as image@digest" bash -c "[ $rc = 0 ] && grep -qx 'quay.io/coreos/chunkah@$d' '$root/run' && grep -q 'cosign verify --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-identity-regexp ^https://github.com/coreos/chunkah/ quay.io/coreos/chunkah@$d' '$LOG'"

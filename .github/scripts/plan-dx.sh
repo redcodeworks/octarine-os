@@ -56,7 +56,7 @@ trap 'rm -f "${tmp}"' EXIT
 
 # Registry reads follow ONE contract (registry-read.sh): exit 3 = the tag does not exist, exit 4 = the registry could not be read (retried). An unreadable registry is an
 # ERROR here wherever a "missing" answer would send the plan down another path (a different base, a rebuild instead of a promotion); it never means "absent".
-rr="${here}/registry-read.sh"
+rr="${here}/registry_read.py"
 # The digest of the raw manifest of <image ref>; exit 3 absent, 4 unreadable
 raw_digest_of() {
     local rc=0
@@ -66,7 +66,7 @@ raw_digest_of() {
 }
 base_digest_of() { raw_digest_of "${base}:$1"; }
 # cosign verify with the verdict told apart: 0 verified, 5 not verified, 4 could not be completed (retried)
-verify() { "${here}/cosign-check.sh" --key cosign.pub "$1"; }
+verify() { "${here}/cosign_check.py" --key cosign.pub "$1"; }
 
 if [[ "${channel}" == testing ]]; then
     # nearest_image_for_inputs (inputs-hash.sh) asks REGISTRY_LOOKUP for the digest of testing-<sha>
