@@ -12,6 +12,7 @@ Rules:
                                 the builds of the earlier pushes), so the workflow's reuse step decides (plan_vanilla_reuse.py: reuse only an image with equal default-image inputs, else build)
 The workflow keeps the required check names by always running an aggregate job; it never uses a workflow-level `paths:` filter, because required checks of a skipped workflow stay pending forever.
 """
+
 import re
 import sys
 from pathlib import Path

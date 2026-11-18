@@ -1,4 +1,5 @@
 """The readers that keep "could not read" apart from "is not there" (registry.py and the scripts around it), with fake skopeo and cosign."""
+
 import hashlib
 
 import pytest

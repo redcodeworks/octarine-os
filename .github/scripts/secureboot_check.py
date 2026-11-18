@@ -12,6 +12,7 @@ file:// URL works, which is how the test stubs the download).
 4. `sbverify --cert <key>` decides: exit 0 verified; exit 1 otherwise ("Secureboot Signature Failed"). The Fedora signature is NOT checked.
 Trust: the key is fetched live from the main branch of github.com/ublue-os/akmods on every run (see docs/signing-keys.md). Tools: podman (unless KERNEL_FILE), sbverify (sbsigntool/sbsigntools), curl, openssl.
 """
+
 import os
 import subprocess
 import sys
@@ -85,8 +86,10 @@ def main(argv=None):
             if ci.run(["sbverify", "--cert", str(crt), kernel]).returncode == 0:
                 print(f"Secure Boot: the kernel {kver} of {image} verifies against the Universal Blue kernel key ({fp})")
                 return 0
-            ci.log.error(f"Secureboot Signature Failed: the kernel {kver} of {image} does NOT verify against the Universal Blue kernel key ({fp}); it would not boot on a machine with that key "
-                         "enrolled (the signatures it does carry are listed above)")
+            ci.log.error(
+                f"Secureboot Signature Failed: the kernel {kver} of {image} does NOT verify against the Universal Blue kernel key ({fp}); it would not boot on a machine with that key "
+                "enrolled (the signatures it does carry are listed above)"
+            )
             return 1
         finally:
             if cid:

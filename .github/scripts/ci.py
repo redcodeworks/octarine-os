@@ -4,6 +4,7 @@
 The scripts run through uv with the locked dependencies (`uv run --frozen python -I .github/scripts/<name>.py`). `-I` keeps the script's own directory off sys.path, so each
 script adds it back with two lines (see any script) before it imports this module.
 """
+
 import argparse
 import contextlib
 import functools
@@ -128,6 +129,7 @@ def retry(*, on, attempts=None, delay=None, backoff=True):
     What it re-raises: after the last try, the last error itself (same type, so callers catch it as before) with ` (failed N attempts)` added to its message.
     Not for calls that must not run twice. Every failed try logs a warning.
     """
+
     def decorate(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -143,7 +145,9 @@ def retry(*, on, attempts=None, delay=None, backoff=True):
                     wait = pause * i if backoff else pause
                     log.warning(f"{fn.__name__}: try {i}/{tries} failed ({text(str(e), 200)}); retrying in {wait} s")
                     time.sleep(wait)
+
         return wrapper
+
     return decorate
 
 

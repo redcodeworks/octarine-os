@@ -7,6 +7,7 @@ Prints three lines: tag=<tag>, digest=sha256:<64 hex>, ref=<image>@<digest>. Exi
 tag exists. It NEVER falls back to the moving `main-<fedora>` tag: a mismatched kernel module would not load. The kernel-specific tag has the form `main-<fedora>-<kernel release>` with or
 without the architecture suffix (the form is UNVERIFIED, so both are tried). Environment: AKMODS_IMAGE (default ghcr.io/ublue-os/akmods-nvidia-lts).
 """
+
 import os
 import re
 import sys
@@ -34,7 +35,7 @@ def main(argv=None):
     for tag in tags:
         try:
             digest = registry.digest(image, tag)
-        except (registry.Absent, registry.ReadError):
+        except registry.Absent, registry.ReadError:
             continue
         print(f"tag={tag}\ndigest={digest}\nref={image}@{digest}")
         return 0

@@ -1,4 +1,5 @@
 """The scripts that decide what the pipeline builds, promotes or reuses (inputs_hash, plan_promote, plan_vanilla_reuse, plan_dx) in real git repositories against the fake registry."""
+
 import subprocess
 from pathlib import Path
 
@@ -30,22 +31,39 @@ def repo(tmp_path):
     r = tmp_path / "repo"
     r.mkdir()
     git(r, "init", "-q", "-b", "testing", ".")
-    commit(r, "base", files={"system_files/x": "a", "variants/dx/f": "a", "variants/gx/f": "a", "README.md": "a", "docs/n.md": "a", "tests/t.sh": "a", "keys/redcodeworks-toolbox-cosign.pub": "a",
-                             ".github/workflows/dx-image.yml": "a", ".github/scripts/plan_dx.py": "a", ".github/workflows/test.yml": "a"})
+    commit(
+        r,
+        "base",
+        files={
+            "system_files/x": "a",
+            "variants/dx/f": "a",
+            "variants/gx/f": "a",
+            "README.md": "a",
+            "docs/n.md": "a",
+            "tests/t.sh": "a",
+            "keys/redcodeworks-toolbox-cosign.pub": "a",
+            ".github/workflows/dx-image.yml": "a",
+            ".github/scripts/plan_dx.py": "a",
+            ".github/workflows/test.yml": "a",
+        },
+    )
     return r
 
 
-@pytest.mark.parametrize("change, moves", [
-    ({"README.md": "b"}, ()),                                            # docs: no image input
-    ({"docs/n.md": "b"}, ()),
-    ({"tests/t.sh": "b"}, ()),                                          # tests are no input of any image
-    ({".github/workflows/test.yml": "b"}, ()),                         # pipeline-only
-    ({"system_files/x": "b"}, (0,)),                                    # the default image
-    ({"variants/dx/f": "b"}, (1,)),                                    # dx only
-    ({"variants/gx/f": "b"}, (2,)),                                    # gx only
-    ({".github/workflows/dx-image.yml": "b"}, (1, 2)),                 # shared by both variants
-    ({".github/scripts/plan_dx.py": "b"}, (1, 2)),
-])
+@pytest.mark.parametrize(
+    "change, moves",
+    [
+        ({"README.md": "b"}, ()),  # docs: no image input
+        ({"docs/n.md": "b"}, ()),
+        ({"tests/t.sh": "b"}, ()),  # tests are no input of any image
+        ({".github/workflows/test.yml": "b"}, ()),  # pipeline-only
+        ({"system_files/x": "b"}, (0,)),  # the default image
+        ({"variants/dx/f": "b"}, (1,)),  # dx only
+        ({"variants/gx/f": "b"}, (2,)),  # gx only
+        ({".github/workflows/dx-image.yml": "b"}, (1, 2)),  # shared by both variants
+        ({".github/scripts/plan_dx.py": "b"}, (1, 2)),
+    ],
+)
 def test_which_input_hashes_a_change_moves(repo, change, moves):
     before = hashes(repo)
     commit(repo, "change", files=change)

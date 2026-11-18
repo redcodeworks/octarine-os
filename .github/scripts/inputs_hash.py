@@ -13,6 +13,7 @@ All hash the sorted `git ls-tree -r` entries (mode, blob id, path) that pass the
 dx files leaves vanilla_inputs and gx_inputs equal; a change that touches only the default image leaves dx_inputs and gx_inputs equal; a change to a shared file (the reusable workflow, the plan
 script, the toolbox key) moves both variant hashes and not vanilla_inputs.
 """
+
 import hashlib
 import os
 import subprocess
@@ -51,11 +52,18 @@ def is_pipeline_only(path: str) -> bool:
         return True
     if path.startswith(".github/scripts/bump_") and path.endswith(".py"):
         return True
-    if path in (".github/workflows/publish-latest.yml", ".github/workflows/rollback-latest.yml", ".github/workflows/bump-pins.yml", ".github/workflows/prune-daily.yml",
-                ".github/workflows/require-testing-branch.yml", ".github/workflows/test.yml"):
+    if path in (
+        ".github/workflows/publish-latest.yml",
+        ".github/workflows/rollback-latest.yml",
+        ".github/workflows/bump-pins.yml",
+        ".github/workflows/prune-daily.yml",
+        ".github/workflows/require-testing-branch.yml",
+        ".github/workflows/test.yml",
+    ):
         return True
-    if (path in (".github/workflows/build-nvidia.yml", ".github/workflows/build-extra.yml", ".github/scripts/nvidia-smoke.sh", ".github/scripts/nvidia_akmods_ref.py")
-            or path.startswith("variants/nvidia/")):
+    if path in (".github/workflows/build-nvidia.yml", ".github/workflows/build-extra.yml", ".github/scripts/nvidia-smoke.sh", ".github/scripts/nvidia_akmods_ref.py") or path.startswith(
+        "variants/nvidia/"
+    ):
         return True
     return path in (".github/zizmor.yml", ".github/dependabot.yml", ".gitleaks.toml") or path.startswith("githooks/")
 

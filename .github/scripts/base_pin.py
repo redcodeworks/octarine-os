@@ -9,6 +9,7 @@ manifest LIST whose own digest carries no signature, the linux/amd64 child it na
 exit 1 with an error that names a rotated key as one possible cause (compare keys/ublue-os-main-cosign.pub with https://github.com/ublue-os/main/blob/main/cosign.pub). Exit 1 too when the tag
 cannot be resolved.
 """
+
 import json
 import os
 import re
@@ -75,8 +76,10 @@ def main(argv=None):
         elif re.search("no signatures found", joined, re.I) and not re.search("no matching signatures", joined, re.I):
             ci.log.error(f"no signature is visible for {base} ({pin}) yet: Universal Blue may still be publishing it (a re-run in a while usually passes); the build stops. {tail}")
         else:
-            ci.log.error(f"{base} ({pin}) is not signed by {key}: the build stops. Possible causes: Universal Blue rotated its signing key (compare {key} with "
-                         f"https://github.com/ublue-os/main/blob/main/cosign.pub and replace it only after reading why), the image is unsigned, or it was replaced. {tail}")
+            ci.log.error(
+                f"{base} ({pin}) is not signed by {key}: the build stops. Possible causes: Universal Blue rotated its signing key (compare {key} with "
+                f"https://github.com/ublue-os/main/blob/main/cosign.pub and replace it only after reading why), the image is unsigned, or it was replaced. {tail}"
+            )
         return 1
     print(f"BASE_PIN={pin}")
     ci.append_to("GITHUB_ENV", f"BASE_PIN={pin}")

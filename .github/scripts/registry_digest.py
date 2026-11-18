@@ -3,6 +3,7 @@
 
 Exit status (the contract the workflow steps read): 0 the digest is printed; 3 the tag does not exist; 4 the registry could not be read after the retries.
 """
+
 import sys
 from pathlib import Path
 

@@ -25,6 +25,7 @@ After a vanilla promote, octarine-os:latest has the digest of the tested octarin
 Candidates for the promotion: the `testing` tag, then `testing-<short sha>` of the newest MAX_WALK commits of HEAD (the testing commits are the second parents of the merges on main); each must carry
 both labels and a valid signature. Every lookup that fails means build, never skip.
 """
+
 import os
 import re
 import sys
@@ -191,8 +192,16 @@ def main(argv=None):
     if not build and not promote:
         ci.log.info(f"::notice::base unchanged, nothing to build ({channel}: {digest})")
     os.environ["GITHUB_OUTPUT"]  # required: the plan's answer goes there
-    for key, value in (("build", str(build).lower()), ("promote", str(promote).lower()), ("channel", channel), ("base_tag", base_tag), ("base_digest", digest), ("inputs", inputs),
-                       ("source_tag", source_tag), ("source_digest", source_digest)):
+    for key, value in (
+        ("build", str(build).lower()),
+        ("promote", str(promote).lower()),
+        ("channel", channel),
+        ("base_tag", base_tag),
+        ("base_digest", digest),
+        ("inputs", inputs),
+        ("source_tag", source_tag),
+        ("source_digest", source_digest),
+    ):
         ci.append_to("GITHUB_OUTPUT", f"{key}={value}")
     return 0
 

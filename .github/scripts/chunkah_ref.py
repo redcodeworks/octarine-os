@@ -4,6 +4,7 @@ issuer, an identity under https://github.com/coreos/chunkah/). Usage: chunkah_re
 
 Fails (exit 1) when the pin is malformed or the verification fails: a rechunk never runs an unverified image. The tag in config/chunkah.env is only a label.
 """
+
 import os
 import re
 import sys
@@ -49,7 +50,7 @@ def main(argv=None):
     ref = f"{image}@{digest}"
     try:
         registry.cosign_check(["--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", "--certificate-identity-regexp", "^https://github.com/coreos/chunkah/", ref])
-    except (registry.NotVerified, registry.ReadError):
+    except registry.NotVerified, registry.ReadError:
         ci.log.error(f"cosign verification of {ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)")
         return 1
     try:

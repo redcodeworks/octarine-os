@@ -12,6 +12,7 @@ pin lines, and any subset can be merged in any order. Rules:
 Every new PR gets the required `test` and `secrets` check runs from bump_checks.py (keyed by its commit sha, so parallel PRs do not collide). DRY_RUN=1 does every decision locally and
 prints what it would open, keep or close, pushing and opening nothing. A real run needs HEAD to be origin/testing (the workflow checks testing out).
 """
+
 import os
 import subprocess
 import sys
@@ -25,8 +26,10 @@ sys.path.insert(0, str(HERE))
 import ci  # noqa: E402
 
 NOTES = {
-    "bins": (" The new octarine-bins digest (the prebuilt binaries) was verified with `keys/octarine-bins.pub`; the testing build after the merge is the first OS build with those binaries "
-             "(its ldd, 32-bit, terminfo and file-conflict checks run there). Check the scheduler READMEs when the schedulers change."),
+    "bins": (
+        " The new octarine-bins digest (the prebuilt binaries) was verified with `keys/octarine-bins.pub`; the testing build after the merge is the first OS build with those binaries "
+        "(its ldd, 32-bit, terminfo and file-conflict checks run there). Check the scheduler READMEs when the schedulers change."
+    ),
 }
 BODY = """One commit, one pin; this pull request is independent of the other bump pull requests (merge any subset, in any order, and close the rest).
 

@@ -4,6 +4,7 @@
 A registry-side copy that keeps the digest, then a read-back (registry.settled). The one step that runs AFTER signing, so a run cancelled at any earlier point leaves `testing` on the previous
 signed image (octarine-bins does the same: push by immutable tag, sign, verify, only then move `testing`). Exit 1 when a copy fails (after the retries) or the read-back still shows another digest.
 """
+
 import re
 import sys
 from pathlib import Path

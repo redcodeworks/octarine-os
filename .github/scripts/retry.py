@@ -4,6 +4,7 @@
 Defaults: RETRY_TRIES (3) and RETRY_DELAY (5 seconds; the pause before try k+1 is DELAY*k). stdout and stderr of the command pass through. Exit status: 0 when a try succeeded, else the
 status of the last try. A permanent failure (a bad signature, a missing package) runs out the tries and fails with the command's own status. Not for commands that must not run twice.
 """
+
 import argparse
 import sys
 from pathlib import Path

@@ -26,6 +26,7 @@ What it refuses (exit 1) and what it holds back (exit 0 with a notice):
   * an unreadable registry is a FAILURE (a read error is never "no latest yet" and never "unsigned"): nothing moves, a re-run decides again.
 Idempotent: a `latest` that already has the digest is left alone; nothing new = a green no-op.
 """
+
 import os
 import re
 import sys

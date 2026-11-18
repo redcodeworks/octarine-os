@@ -3,6 +3,7 @@
 GITHUB_OUTPUT set, as `groups=<json>`. (tests/py, the pytest suite of the CI scripts, is not a group: it has its own job.) Fails when a tests/*.sh sits outside a group (it would never run) or a group directory has no *.sh. Run from anywhere:
 `python3 -I .github/scripts/plan_tests.py`.
 """
+
 import json
 import sys
 from pathlib import Path
