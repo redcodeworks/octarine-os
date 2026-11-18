@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Builds the gx layer of octarine-os-gx: the gaming package lists of the pinned octarine-bins-gx image (bind-mounted at /binaries; its /packages/install.sh installs them
-# in its own order: required Fedora, required negativo17 (Steam), required COPR (Sunshine, exact version), optional Fedora) and its binary components (none yet). The kernel
+# Builds the gx layer of octarine-os-gx: the gaming package lists (packages/gx, copied to /ctx/packages; build_files/install-packages.sh installs them
+# in its own order: required Fedora, required negativo17 (Steam), required COPR (Sunshine, exact version), optional Fedora). The kernel
 # must be exactly the same before and after (nothing here may pull in a new one), and no third-party repository may stay enabled (validate-repos.sh).
 set -euo pipefail
 # Log groups: GitHub Actions folds each "::group::" ... "::endgroup::" pair in the build log (plain text elsewhere); never nested. The trap
@@ -9,23 +9,20 @@ trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::gx.sh fa
 
 kernel_of() { rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core; }
 
-echo "::group::gx: gaming packages (octarine-bins-gx)"
+echo "::group::gx: gaming packages (packages/gx)"
 before=$(kernel_of)
 echo "Kernel of the base image: ${before}"
-test -f /binaries/packages/install.sh
+test -f /ctx/packages/required-fedora.txt
 # dnf5-plugins provides `dnf5 copr` for the COPR list (the base ships it already: then this is a no-op that fails when it is ever missing). Not part of the installer.
 dnf5 -y install --setopt=strict=1 dnf5-plugins
 # What cannot be installed of the optional list is APPENDED to the file the default image's build created (the installer never truncates it).
 missing_file=/usr/share/octarine-os/optional-packages-missing
 test -f "${missing_file}"
-MISSING_FILE="${missing_file}" bash /binaries/packages/install.sh
+MISSING_FILE="${missing_file}" /ctx/install-packages.sh /ctx/packages
 # Steam comes from negativo17 (fedora-multimedia, enabled for that call only by the installer): the gaming image is not one without it
 steam_from=$(dnf5 -q repoquery --installed steam --queryformat '%{from_repo}\n')
 [[ "${steam_from}" == fedora-multimedia ]] || { echo "ERROR: steam was installed from '${steam_from}', not from fedora-multimedia (negativo17)"; exit 1; }
 echo "::endgroup::"
-
-# The binary components of the gx image: none yet (an empty COMPONENTS is valid for an empty required list); the script prints its own log group
-BINARIES_REQUIRED="" /ctx/install-binaries.sh
 
 echo "::group::gx: files (the Steam Big Picture gamescope session)"
 # gx-only files: the GDM session, its wrapper and the documented defaults (Sunshine and Steam bring their own units, udev rules and firewall services)

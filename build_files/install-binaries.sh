@@ -13,10 +13,9 @@
 #
 # Which components are present is told by /binaries/COMPONENTS (the component names, one per line). Every component is required: the `required` list below
 # must match the components octarine-bins builds, and a component that is missing, unknown or cannot be installed fails the build.
-# The list is PER IMAGE: the default image installs the base octarine-bins image (BINARIES_REQUIRED unset: `scx extest ghostty`); the dx and gx layers call this
-# script on their own octarine-bins-dx / -gx image with BINARIES_REQUIRED="" (no component yet: COMPONENTS exists and is EMPTY, which is valid only for an empty
-# list). A component those images get later is unknown here until this reader learns it (reader first). A top-level `packages/` directory (the package lists and
-# their installer, run by the build scripts, see octarine-bins's CLAUDE.md) is not a component and is allowed in every image.
+# Only the default image installs binaries (the dx and gx layers have none since 2026-11-18; BINARIES_REQUIRED="" still means an EMPTY list, valid for an empty
+# COMPONENTS). A component the binaries image gets later is unknown here until this reader learns it (reader first). A top-level `packages/` directory in the binaries
+# image (the package lists it carried until 2026-11-18) is not a component and is still allowed.
 #
 # Runtime libraries: build dependencies never travel (the binaries image is FROM scratch), so after installing, every ELF file must
 # find its shared libraries in THIS image: a 64-bit file must resolve with ldd (no "not found"), a 32-bit one (extest, loaded into

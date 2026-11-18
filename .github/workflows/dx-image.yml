@@ -2,8 +2,7 @@
 name: dx image (reusable)
 # The shared plan, build and promote jobs of the variant images, called by build-variant.yml (octarine-os-dx and octarine-os-gx, the two required variants, one run
 # each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
-# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), the pinned binaries image that is verified (dx:
-# octarine-bins-dx, gx: octarine-bins-gx) and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
+# Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
 # concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
 # by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan-dx.sh) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
@@ -221,11 +220,6 @@ jobs:
         with:
           tool: just
 
-      - name: Set up cosign
-        uses: ./.github/actions/setup-tool
-        with:
-          tool: cosign
-
       - name: Image names
         id: names
         run: |
@@ -233,28 +227,6 @@ jobs:
           echo "BASE_IMAGE=ghcr.io/${owner}/${BASE_NAME}" >> "${GITHUB_ENV}"
           echo "DX_IMAGE=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_ENV}"
           echo "image=ghcr.io/${owner}/${DX_NAME}" >> "${GITHUB_OUTPUT}"
-
-      # The variant's binaries image (octarine-bins-dx or octarine-bins-gx: the package lists, their installer and the variant's binary components; built and signed
-      # by the octarine-bins repository with its own key) is PINNED by digest in variants/<variant>/Containerfile (ARG BINS_DX_DIGEST or BINS_GX_DIGEST, changed only by
-      # a bump PR). Every build verifies the PINNED digest with keys/octarine-bins.pub and records it in the image's bins-dx or bins-gx label: a hand-edited digest
-      # cannot ship unverified. No `latest` is read here. The Containerfile reads the pin itself.
-      - name: Verify the pinned binaries image of the variant
-        run: |
-          set -euo pipefail
-          case "${VARIANT}" in
-              dx) list=octarine-bins-dx; label=bins-dx; prefix=BINS_DX ;;
-              gx) list=octarine-bins-gx; label=bins-gx; prefix=BINS_GX ;;
-              *) echo "::error::unknown variant '${VARIANT}'"; exit 1 ;;
-          esac
-          file="variants/${VARIANT}/Containerfile"
-          tag=$(sed -n "s/^ARG ${prefix}_TAG=//p" "${file}")
-          digest=$(sed -n "s/^ARG ${prefix}_DIGEST=//p" "${file}")
-          [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::${prefix}_DIGEST in ${file} is missing or malformed"; exit 1; }
-          ref="ghcr.io/redcodeworks/${list}@${digest}"
-          .github/scripts/retry.sh cosign verify --key keys/octarine-bins.pub "${ref}" > /dev/null || { echo "::error::the signature of ${ref} does not verify with keys/octarine-bins.pub"; exit 1; }
-          echo "${list} image pinned: ghcr.io/redcodeworks/${list}:${tag}@${digest} (signature valid)"
-          echo "LIST_REF=${ref}" >> "${GITHUB_ENV}"
-          echo "LIST_LABEL=${label}" >> "${GITHUB_ENV}"
 
       # The digest comes from the plan job; it was verified there (plan-dx.sh, cosign.pub); pull it and read its kernel
       - name: Verify and pull the base image, read its kernel
@@ -306,7 +278,6 @@ jobs:
             --label "org.opencontainers.image.base.digest=${BASE_DIGEST}" \
             --label "io.github.redcodeworks.octarine-os.${VARIANT}-tree=$(git rev-parse "HEAD:variants/${VARIANT}")" \
             --label "io.github.redcodeworks.octarine-os.${VARIANT}-inputs=${INPUTS}" \
-            --label "io.github.redcodeworks.octarine-os.${LIST_LABEL}=${LIST_REF}" \
             --label "io.artifacthub.package.readme-url=https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${sha:0:7}/README.md" \
             --label "io.artifacthub.package.deprecated=false" \
             --label "io.artifacthub.package.keywords=${IMAGE_KEYWORDS},${keyword}" \
