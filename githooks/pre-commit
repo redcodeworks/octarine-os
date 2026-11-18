@@ -1,21 +1,41 @@
 #!/usr/bin/env bash
-# Format the staged Python files with ruff and stage the result.
-# Opt-in: enabled with `just install-hooks`; it does nothing when uv or the locked ruff is missing.
+# Format the staged files and stage the result: Python with ruff, shell with shfmt, both with their defaults (no configuration files).
+# Opt-in: enabled with `just install-hooks`; a missing tool is reported and skipped, never a failure.
 set -euo pipefail
 
-if ! command -v uv >/dev/null 2>&1; then
-    echo "pre-commit: uv is not installed, so the Python files were not formatted" >&2
-    exit 0
-fi
+cd "$(git rev-parse --show-toplevel)"
 
-root=$(git rev-parse --show-toplevel)
-cd "$root"
+# staged() PATTERN...: the added or modified staged files that match, NUL separated
+staged() {
+	git diff --cached --name-only --diff-filter=ACM -z -- "$@"
+}
 
-mapfile -d '' files < <(git diff --cached --name-only --diff-filter=ACM -z -- '*.py')
-[[ ${#files[@]} -eq 0 ]] && exit 0
+format_python() {
+	local files
+	mapfile -d "" files < <(staged "*.py")
+	[[ ${#files[@]} -eq 0 ]] && return 0
+	if ! command -v uv >/dev/null 2>&1; then
+		echo "pre-commit: uv is not installed, so the Python files were not formatted" >&2
+		return 0
+	fi
+	if ! uv run --frozen --quiet ruff format -- "${files[@]}"; then
+		echo "pre-commit: ruff could not run (uv sync --frozen once to install it), so the Python files were not formatted" >&2
+		return 0
+	fi
+	git add -- "${files[@]}"
+}
 
-if ! uv run --frozen --quiet ruff format -- "${files[@]}"; then
-    echo "pre-commit: ruff could not run (uv sync --frozen once to install it), so the Python files were not formatted" >&2
-    exit 0
-fi
-git add -- "${files[@]}"
+format_shell() {
+	local files
+	mapfile -d "" files < <(staged "*.sh" ":!.archive")
+	[[ ${#files[@]} -eq 0 ]] && return 0
+	if ! command -v shfmt >/dev/null 2>&1; then
+		echo "pre-commit: shfmt is not installed, so the shell files were not formatted (brew install shfmt)" >&2
+		return 0
+	fi
+	shfmt -w -- "${files[@]}"
+	git add -- "${files[@]}"
+}
+
+format_python
+format_shell

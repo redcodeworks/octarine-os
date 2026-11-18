@@ -44,7 +44,7 @@ by hand: no test reads the README (removed 2026-11-16, see "What the tests may a
   environment), `require-testing-branch.yml` (details under "CI and
   signing flow").
 - `config/`: `image.env` (IMAGE_NAME, REPO_NAME and the label values; the Justfile loads it with `set dotenv-path`, the workflows read it by path; renamed from the template's `image-template.env` on 2026-11-14) and `chunkah.env` (the chunkah pin). Both are image-build inputs (any path outside `docs/`, `tests/` and top-level `*.md` is). `docs/` holds `CONFIG-GUIDE.md` (moved from the root 2026-11-14); `artifacthub-repo.yml` (template stub) was deleted the same day.
-- `githooks/pre-push`: gitleaks scan; `githooks/pre-commit`: `ruff format` (locked dev dependency, line-length 200, formatter only, no lint rules, no CI check) on the staged Python files, re-staged; both opt-in with `just install-hooks`, both skip quietly when their tool is missing.
+- `githooks/pre-push`: gitleaks scan; `githooks/pre-commit`: `ruff format` (locked dev dependency) on the staged Python files and `shfmt -w` on the staged `*.sh` files (not `.archive/`), re-staged; ruff and shfmt run with their defaults, no configuration files (Kevin, 2026-11-18), no CI format check; both hooks are opt-in with `just install-hooks` and skip quietly when their tool is missing (shfmt: `brew install shfmt`).
 
 ## CI scripts are Python (2026-11-18, Kevin: CI scripts only; the octarine-bins pattern, `octarine-bins/docs/python-conversion.md` is the maintainers' note)
 
