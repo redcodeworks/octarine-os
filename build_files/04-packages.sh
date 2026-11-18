@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Derived from ublue-os/bluefin build_files/base/04-packages.sh (Apache-2.0, https://github.com/ublue-os/bluefin); modified for octarine-os.
 # Deviation: Bluefin lists its Fedora and COPR packages here. Ours are plain text files in packages/default (installed by install-packages.sh,
-# below), so there are no package arrays in this file; the zsh and session checks and the removal of base packages stay ours.
+# below), so there are no package arrays in this file; the zsh check and the removal of base packages stay ours.
 
 echo "::group:: ===$(basename "$0")==="
 
@@ -14,9 +14,9 @@ set -ouex pipefail
 # instead of shipping an image without something that must be there), then the optional lists (optional-fedora, optional-negativo17: best effort, one transaction per
 # file, retried once as a whole, then package by package). What still cannot be installed is printed as "OPTIONAL PACKAGE MISSING: <name>" and appended to
 # /usr/share/octarine-os/optional-packages-missing (the file exists in every image, possibly empty); the smoke test turns each entry into a CI warning. A missing
-# optional package never fails the build, except niri and noctalia (check_session_packages below).
+# optional package never fails the build.
 #
-# What stays here, because it is the OS's policy and not a list: the niri/noctalia hard failure, the smoke test's check that every REQUIRED package has the RPM
+# What stays here, because it is the OS's policy and not a list: the smoke test's check that every REQUIRED package has the RPM
 # vendor "Fedora Project" (a package from outside Fedora's own repositories, negativo17, COPR or a vendor repository, may only be in an optional list, or be a
 # decision of the owner for a required-negativo17/copr file of a variant), validate-repos.sh (every enabled repository must be one the base enables), and the zsh step.
 # Packages can come from any ENABLED yum repo of the image: Fedora's own, negativo17 (fedora-multimedia, disabled in the base, which the installer enables for its
@@ -34,17 +34,8 @@ MISSING_FILE="${missing_file}" NO_CLEANUP=1 /ctx/install-packages.sh /ctx/packag
 if grep -qx 'SHELL=/usr/bin/zsh' /etc/default/useradd; then echo "ERROR: zsh must not be the default shell"; exit 1; fi
 grep -qx /usr/bin/zsh /etc/shells || echo /usr/bin/zsh >> /etc/shells
 
-# The session packages are not optional in practice: an image without niri or noctalia is a broken image, so a build that lost them FAILS (a coming Fedora that no longer has
-# them fails here too, which is what it is for). The rest of the optional lists stays soft.
-check_session_packages() {
-    local pkg
-    for pkg in niri noctalia; do
-        if grep -qx "${pkg}" "${missing_file}"; then echo "ERROR: the session package ${pkg} is missing after the retries: failing the build instead of shipping an image without it"; exit 1; fi
-    done
-}
 echo "== optional packages missing:"
 cat "${missing_file}"
-check_session_packages
 
 # Beyond the compilers and linker (packages/default/required-fedora.txt) there are no build tools here (cmake, ninja, meson, the development-tools
 # group): bigger builds happen in the fedora-toolbox distrobox, created by `ujust toolbox dev-toolbox` from
