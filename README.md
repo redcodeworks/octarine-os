@@ -174,5 +174,5 @@ I have only tested it on my own machine and will not actively maintain it beyond
 ### Fork it
 
 If you find something valuable here, you are encouraged to fork it: change the image name and organization,
-generate your own signing key, and adjust the package list and files under `system_files/` to your taste. The
+generate your own signing key, and adjust the package lists (plain text files under `packages/`, one per image kind) and the files under `system_files/` to your taste. The
 steps are in `CLAUDE.md`.

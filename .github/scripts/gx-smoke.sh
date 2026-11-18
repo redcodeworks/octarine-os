@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks run INSIDE the built octarine-os-gx image (dx-image.yml mounts this file and runs it with bash when the variant is gx):
-# the REQUIRED gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends: the required lists of the pinned octarine-bins-gx image), where they
+# the REQUIRED gaming packages (Steam, gamescope, MangoHud, GameMode, Sunshine and friends: the required lists in packages/gx), where they
 # came from, that no third-party repository is left enabled, Sunshine's file capability, rules and units, the kernel of the base image, and the checks of the
 # default image's smoke test that still apply to a layer on top of it. EVERY check here is mandatory, except the optional packages of the gx list, which are
 # only reported (INFO; what could not be installed is also in /usr/share/octarine-os/optional-packages-missing).
@@ -38,7 +38,7 @@ same_mesa() { local a b; a=$(evr_of mesa-vulkan-drivers.x86_64); b=$(evr_of mesa
 enabled_repos() { dnf5 repolist --enabled 2>/dev/null | sed -n '2,$p' | sed 's/ .*//'; }
 no_third_party_repo() { local r; r=$(enabled_repos); [ -n "${r}" ] && ! grep -qE '^(rpmfusion|copr:copr.fedorainfracloud.org:lizardbyte|google-chrome)' <<<"${r}"; }
 
-echo "== required gaming packages (required-fedora, required-negativo17, required-copr of octarine-bins-gx): both architectures where a 32-bit game needs them"
+echo "== required gaming packages (required-fedora, required-negativo17, required-copr of packages/gx): both architectures where a 32-bit game needs them"
 for p in steam gamescope Sunshine steam-devices; do
     check "package ${p}" "rpm -q ${p}"
 done
