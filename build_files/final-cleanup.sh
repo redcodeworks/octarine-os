@@ -14,7 +14,7 @@ echo "::group::final-cleanup.sh"
 trap 'rc=$?; echo "::endgroup::"; if (( rc != 0 )); then echo "::error::final-cleanup.sh failed (exit ${rc})"; fi' EXIT
 shopt -s dotglob nullglob
 
-rm -rf /boot/* || true
+rm -rf /boot/*
 for d in /run /tmp; do find "${d}" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2> /dev/null || true; done
 
 # package-manager state and crash dumps are no image content
