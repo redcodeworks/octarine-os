@@ -56,15 +56,27 @@ def main(argv=None):
     try:
         latest = registry.digest(repo, "latest")
     except registry.Absent, registry.ReadError:
-        ci.log.error(f"cannot resolve {repo}:latest (registry unreachable or the tag does not exist yet)")
+        ci.log.error(
+            f"cannot resolve {repo}:latest (registry unreachable or the tag does not exist yet)"
+        )
         out("result", "unreachable")
         return 1
     out("digest", latest)
 
     try:
-        registry.cosign_check(["--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", "--certificate-identity-regexp", "^https://github.com/coreos/chunkah/", f"{repo}@{latest}"])
+        registry.cosign_check(
+            [
+                "--certificate-oidc-issuer",
+                "https://token.actions.githubusercontent.com",
+                "--certificate-identity-regexp",
+                "^https://github.com/coreos/chunkah/",
+                f"{repo}@{latest}",
+            ]
+        )
     except registry.NotVerified, registry.ReadError:
-        ci.log.error(f"cosign verification failed for {repo}@{latest} ({file} is unchanged)")
+        ci.log.error(
+            f"cosign verification failed for {repo}@{latest} ({file} is unchanged)"
+        )
         out("result", "badsignature")
         return 2
     ci.log.info(f"{repo}:latest = {latest} (signature valid)")
@@ -78,18 +90,26 @@ def main(argv=None):
     # the pin keeps a dated tag for humans: find the one that points at the same digest, else fall back to latest
     tag = "latest"
     try:
-        tags = json.loads(ci.run(["skopeo", "list-tags", f"docker://{repo}"], capture=True).stdout)["Tags"]
+        tags = json.loads(
+            ci.run(["skopeo", "list-tags", f"docker://{repo}"], capture=True).stdout
+        )["Tags"]
     except ValueError, KeyError, TypeError:
         tags = []
-    for t in sorted((x for x in tags if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", x)), reverse=True)[:10]:
+    for t in sorted(
+        (x for x in tags if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", x)), reverse=True
+    )[:10]:
         try:
             if registry.digest(repo, t) == latest:
                 tag = t
                 break
         except registry.Absent, registry.ReadError:
             continue
-    new = re.sub(rf"^{prefix}_TAG=.*$", lambda m: f"{prefix}_TAG={tag}", text, flags=re.M)
-    new = re.sub(rf"^{prefix}_DIGEST=.*$", lambda m: f"{prefix}_DIGEST={latest}", new, flags=re.M)
+    new = re.sub(
+        rf"^{prefix}_TAG=.*$", lambda m: f"{prefix}_TAG={tag}", text, flags=re.M
+    )
+    new = re.sub(
+        rf"^{prefix}_DIGEST=.*$", lambda m: f"{prefix}_DIGEST={latest}", new, flags=re.M
+    )
     file.write_text(new)
     ci.log.info(f"{file} now pins {repo}:{tag}@{latest} (was {current_tag}@{current})")
     out("result", "different")

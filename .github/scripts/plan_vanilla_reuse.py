@@ -37,11 +37,15 @@ def main(argv=None):
     try:
         tag, digest = ih.nearest_image_for_inputs(after)
     except ih.Unreadable as e:
-        ci.log.warning(f"registry read error while looking for a reusable testing image (building instead): {e}")
+        ci.log.warning(
+            f"registry read error while looking for a reusable testing image (building instead): {e}"
+        )
         no(str(e))
     except ih.NoImage as e:
         no(str(e))
-    ci.note(f"reuse: {tag} ({digest}) was built from the same default-image inputs as {after}")
+    ci.note(
+        f"reuse: {tag} ({digest}) was built from the same default-image inputs as {after}"
+    )
     ci.result(f"reuse=true\nsource_tag={tag}\nsource_digest={digest}")
     return 0
 

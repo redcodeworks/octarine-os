@@ -47,7 +47,10 @@ def days(iso: str) -> str:
 def image_age(ref: str) -> str:
     """Days since the linux/amd64 image of `ref` was created, or "unknown"."""
     try:
-        return days(json.loads(registry.read("config", ref, linux_amd64=True)).get("created") or "")
+        return days(
+            json.loads(registry.read("config", ref, linux_amd64=True)).get("created")
+            or ""
+        )
     except registry.Absent, registry.ReadError, ValueError, AttributeError:
         return days("")
 
@@ -80,8 +83,16 @@ class Pin:
             self.fail(f"the writer changed nothing for {self.proposed}")
         for f in changed:
             if f not in self.files:
-                self.fail(f"the writer changed {f}, which is not one of the pin files ({' '.join(self.files)})")
-        ci.git("commit", "-q", "-a", "-m", f"{subject}\n\n{self.name} | {self.current} | {self.proposed} | {upstream} | {age}")
+                self.fail(
+                    f"the writer changed {f}, which is not one of the pin files ({' '.join(self.files)})"
+                )
+        ci.git(
+            "commit",
+            "-q",
+            "-a",
+            "-m",
+            f"{subject}\n\n{self.name} | {self.current} | {self.proposed} | {upstream} | {age}",
+        )
         self.status = f"moved {self.current} to {self.proposed}"
 
     def chunkah(self):
@@ -91,14 +102,22 @@ class Pin:
         with tempfile.TemporaryDirectory() as d:
             go = Path(d) / "out"
             go.touch()
-            rc = subprocess.run([sys.executable, "-I", str(HERE / "bump_pin.py"), self.name], env={**os.environ, "GITHUB_OUTPUT": str(go)}).returncode
+            rc = subprocess.run(
+                [sys.executable, "-I", str(HERE / "bump_pin.py"), self.name],
+                env={**os.environ, "GITHUB_OUTPUT": str(go)},
+            ).returncode
             lines = go.read_text().splitlines()
 
         def read_out(key):
             vals = [ln.split("=", 1)[1] for ln in lines if ln.startswith(f"{key}=")]
             return vals[-1] if vals else ""
 
-        result, old, new, tag = read_out("result"), read_out("previous"), read_out("digest"), read_out("tag")
+        result, old, new, tag = (
+            read_out("result"),
+            read_out("previous"),
+            read_out("digest"),
+            read_out("tag"),
+        )
         self.current = old[:19]
         if rc not in (0, 10):
             self.fail(f"the check failed ({result or f'exit {rc}'})")
@@ -106,12 +125,19 @@ class Pin:
             self.status = "nothing to bump: the pin equals latest"
         else:
             self.proposed = f"{tag} {new[:19]}"
-            self.commit_pin(f"Bump the {self.name} pin to latest ({tag})", src, image_age(ref))
+            self.commit_pin(
+                f"Bump the {self.name} pin to latest ({tag})", src, image_age(ref)
+            )
 
     def brew(self):
         self.current = containerfile_arg("BREW_TAG")
         try:
-            tags = json.loads(ci.run(["skopeo", "list-tags", "docker://ghcr.io/ublue-os/brew"], capture=True).stdout)["Tags"]
+            tags = json.loads(
+                ci.run(
+                    ["skopeo", "list-tags", "docker://ghcr.io/ublue-os/brew"],
+                    capture=True,
+                ).stdout
+            )["Tags"]
             latest = sorted(t for t in tags if re.fullmatch(r"\d{8}", t))[-1]
         except ValueError, KeyError, TypeError, IndexError:
             latest = ""
@@ -123,8 +149,14 @@ class Pin:
         self.files = ["Containerfile"]
         self.proposed = latest
         if not just("brew-bump", latest):
-            self.fail(f"just brew-bump {latest} failed (digest or signature; nothing changed)")
-        self.commit_pin(f"Bump the Homebrew files image to {latest}", f"ghcr.io/ublue-os/brew:{latest}, cosign signature verified", image_age(f"ghcr.io/ublue-os/brew:{latest}"))
+            self.fail(
+                f"just brew-bump {latest} failed (digest or signature; nothing changed)"
+            )
+        self.commit_pin(
+            f"Bump the Homebrew files image to {latest}",
+            f"ghcr.io/ublue-os/brew:{latest}, cosign signature verified",
+            image_age(f"ghcr.io/ublue-os/brew:{latest}"),
+        )
 
     def bins(self):
         self.files = ["Containerfile"]
@@ -141,8 +173,12 @@ class Pin:
             self.status = f"nothing to bump: the pin equals {ref}:latest ({curtag})"
             return
         if not just("bins-bump", "latest"):
-            self.fail("just bins-bump failed (digest, signature or version label; nothing changed)")
-        self.proposed = f"{containerfile_arg('BINS_TAG')} {containerfile_arg('BINS_DIGEST')[:19]}"
+            self.fail(
+                "just bins-bump failed (digest, signature or version label; nothing changed)"
+            )
+        self.proposed = (
+            f"{containerfile_arg('BINS_TAG')} {containerfile_arg('BINS_DIGEST')[:19]}"
+        )
         self.commit_pin(
             f"Bump the octarine-bins image to {self.proposed.split(' ')[0]}",
             f"a new octarine-bins digest, {ref}:latest verified with keys/octarine-bins.pub; its testing build is the first OS build with these binaries",

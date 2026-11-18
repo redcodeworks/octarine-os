@@ -40,7 +40,9 @@ L_REV = "org.opencontainers.image.revision"
 L_CREATED = "org.opencontainers.image.created"
 L_BASE = "org.opencontainers.image.base.digest"
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
-TAG_RE = re.compile(r"latest-[0-9a-f]{7}|latest-[0-9]{8}-[0-9a-f]{7}|[0-9]{8}-[0-9a-f]{7}")
+TAG_RE = re.compile(
+    r"latest-[0-9a-f]{7}|latest-[0-9]{8}-[0-9a-f]{7}|[0-9]{8}-[0-9a-f]{7}"
+)
 
 
 class Stop(SystemExit):
@@ -52,13 +54,17 @@ class Stop(SystemExit):
 
 
 def read_error(what):
-    raise Stop(f"could not read the registry ({what}): a read error, not a missing image or tag; nothing was moved")
+    raise Stop(
+        f"could not read the registry ({what}): a read error, not a missing image or tag; nothing was moved"
+    )
 
 
 def label(image, digest, key):
     """One label of image@digest; a registry that cannot be read (or does not show a digest it just named) fails the run."""
     try:
-        return registry.labels(registry.read("config", f"{image}@{digest}")).get(key) or ""
+        return (
+            registry.labels(registry.read("config", f"{image}@{digest}")).get(key) or ""
+        )
     except registry.RegistryError:
         read_error(f"labels of {image}@{digest}")
 
@@ -120,19 +126,27 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         ctag = os.environ.get("TAG", "")
         if ctag:
             if not TAG_RE.fullmatch(ctag):
-                raise Stop(f"'{ctag}' is not a dated tag of {img} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused")
+                raise Stop(
+                    f"'{ctag}' is not a dated tag of {img} (latest-<sha7>, latest-<date>-<sha7> or <date>-<sha7>); testing-* and latest are refused"
+                )
             cand = tag_digest(img, ctag)
             if cand is None:
                 raise Stop(f"{img}:{ctag} does not exist")
         elif which == "default":
-            for c in ci.git("rev-list", "--first-parent", f"--max-count={max_walk}", main_ref).split():
+            for c in ci.git(
+                "rev-list", "--first-parent", f"--max-count={max_walk}", main_ref
+            ).split():
                 ctag = f"latest-{ci.git('rev-parse', '--short=7', c)}"
                 if cand := tag_digest(img, ctag):
                     break
             else:
-                raise Stop(f"no published latest-<sha7> within the newest {max_walk} commits of {main_ref}")
+                raise Stop(
+                    f"no published latest-<sha7> within the newest {max_walk} commits of {main_ref}"
+                )
         else:
-            raise Stop(f"{img}: a dated tag is required (TAG), there is no main commit to look it up by")
+            raise Stop(
+                f"{img}: a dated tag is required (TAG), there is no main commit to look it up by"
+            )
     if not DIGEST_RE.fullmatch(cand):
         raise Stop(f"'{cand}' is not a sha256 digest")
 
@@ -149,9 +163,13 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         rev = label(bimg, base, L_REV)
         root_desc = f"{bimg}@{base} (the base of {img}@{cand})"
     if not is_commit(rev):
-        raise Stop(f"{root_desc}: its revision label '{rev}' is not a commit of this repository")
+        raise Stop(
+            f"{root_desc}: its revision label '{rev}' is not a commit of this repository"
+        )
     if not ci.git_ok("merge-base", "--is-ancestor", rev, main_ref):
-        raise Stop(f"{root_desc} was built from {rev}, which is not on {main_ref}: only images built from main are published as latest")
+        raise Stop(
+            f"{root_desc} was built from {rev}, which is not on {main_ref}: only images built from main are published as latest"
+        )
 
     # ---- 3. ordering guard: never move latest backwards
     def older(candidate, current):
@@ -159,22 +177,32 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
         cr, ur = label(img, candidate, L_REV), label(img, current, L_REV)
         cc, uc = label(img, candidate, L_CREATED), label(img, current, L_CREATED)
         if not is_commit(ur):
-            ci.log.warning(f"the image under {img}:latest has no usable revision label ({ur or 'none'}): the ordering guard cannot compare")
+            ci.log.warning(
+                f"the image under {img}:latest has no usable revision label ({ur or 'none'}): the ordering guard cannot compare"
+            )
             return False
         if cr == ur:
             return bool(cc and uc and cc < uc)
         return ci.git_ok("merge-base", "--is-ancestor", cr, ur)
 
-    cur = tag_digest(img, "latest") or ""  # absent means none yet; a read error fails the run (it must not look like "nothing is published", which would move latest unguarded)
+    cur = (
+        tag_digest(img, "latest") or ""
+    )  # absent means none yet; a read error fails the run (it must not look like "nothing is published", which would move latest unguarded)
     if back == "true":
-        ci.log.info("ROLLBACK: the ordering guard is skipped; an older verified image may be put under latest")
+        ci.log.info(
+            "ROLLBACK: the ordering guard is skipped; an older verified image may be put under latest"
+        )
     elif cur and cur != cand and older(cand, cur):
-        ci.summary(f"latest held: {img}:latest ({cur}) is newer than the candidate {cand}; nothing was moved{f' (reason: {reason})' if reason else ''}")
+        ci.summary(
+            f"latest held: {img}:latest ({cur}) is newer than the candidate {cand}; nothing was moved{f' (reason: {reason})' if reason else ''}"
+        )
         return 0
 
     # ---- 4. plan
     if cur == cand:
-        ci.summary(f"latest unchanged: {img}:latest is already {cand}; nothing new was built")
+        ci.summary(
+            f"latest unchanged: {img}:latest is already {cand}; nothing new was built"
+        )
         return 0
     plan = f"{img}: latest {cur or 'none'} -> {cand} ({ctag or 'from the build run'}, main commit {rev[:7]})"
     if dry == "true" or write != "true":
@@ -185,13 +213,17 @@ def publish(img, bimg, which, main_ref, max_walk, dry, write, reason, back):
     # ---- 5. move; the copy is read back and verified
     try:
         registry.copy(f"{img}@{cand}", f"{img}:latest")
-        registry.settled(img, "latest", cand)  # the read-back polls (a registry may show the previous manifest right after a copy)
+        registry.settled(
+            img, "latest", cand
+        )  # the read-back polls (a registry may show the previous manifest right after a copy)
     except ci.NetworkError as e:
         raise Stop(str(e))
     except registry.ReadError:
         raise Stop(f"{img}:latest does not show {cand} after the copy")
     must_be_signed(f"{img}:latest", fresh=True)
-    ci.summary(f"{'ROLLBACK, ' if back == 'true' else ''}latest moved: {plan}{'; reason: ' + reason if reason else ''}")
+    ci.summary(
+        f"{'ROLLBACK, ' if back == 'true' else ''}latest moved: {plan}{'; reason: ' + reason if reason else ''}"
+    )
     ci.append_to("GITHUB_OUTPUT", "moved=true")
     return 0
 

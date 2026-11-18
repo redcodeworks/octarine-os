@@ -36,7 +36,12 @@ def main(argv=None):
     if event != "push":
         ci.note(f"unknown event '{event}'")
         return 1
-    if not before or re.fullmatch(r"0+", before) or not ci.git_ok("cat-file", "-e", f"{before}^{{commit}}") or not ci.git_ok("cat-file", "-e", f"{after}^{{commit}}"):
+    if (
+        not before
+        or re.fullmatch(r"0+", before)
+        or not ci.git_ok("cat-file", "-e", f"{before}^{{commit}}")
+        or not ci.git_ok("cat-file", "-e", f"{after}^{{commit}}")
+    ):
         ci.note(f"no usable base commit ('{before}'): building")
         ci.result("true")
         return 0
@@ -50,7 +55,9 @@ def main(argv=None):
         ci.result("true")
         return 0
     if ref == "refs/heads/testing":
-        ci.note(f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip")
+        ci.note(
+            f"only docs changed ({len(changed)} files) on testing: the reuse check decides whether an image already covers the tip"
+        )
         ci.result("true")
         return 0
     ci.note(f"only docs changed ({len(changed)} files): skipping the heavy build")

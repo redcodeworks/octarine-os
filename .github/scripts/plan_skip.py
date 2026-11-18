@@ -37,7 +37,9 @@ def decide() -> str:
         return f"build: not main ({env('REF') or 'unset'})"
     base_now, latest_base = env("BASE_NOW", ""), env("LATEST_BASE", "")
     if not (base_now and latest_base):
-        return f"build: base digest unknown (now '{base_now}', in latest '{latest_base}')"
+        return (
+            f"build: base digest unknown (now '{base_now}', in latest '{latest_base}')"
+        )
     if base_now != latest_base:
         return "build: base image changed"
     missing = env("LATEST_MISSING", "")

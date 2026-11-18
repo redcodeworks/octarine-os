@@ -23,7 +23,10 @@ def commit(repo, message, **files):
 
 
 def hashes(repo, rev="HEAD"):
-    return tuple(script("inputs_hash.py", kind, rev, cwd=repo).stdout.strip() for kind in ("vanilla", "dx", "gx"))
+    return tuple(
+        script("inputs_hash.py", kind, rev, cwd=repo).stdout.strip()
+        for kind in ("vanilla", "dx", "gx")
+    )
 
 
 @pytest.fixture
@@ -93,17 +96,35 @@ def merged(repo):
     docs = commit(repo, "docs", files={"README.md": "b"})
     git(repo, "checkout", "-q", "main")
     git(repo, "merge", "-q", "--no-ff", "-m", "promote", "testing")
-    return {"repo": repo, "code": code, "docs": docs, "after": git(repo, "rev-parse", "HEAD")}
+    return {
+        "repo": repo,
+        "code": code,
+        "docs": docs,
+        "after": git(repo, "rev-parse", "HEAD"),
+    }
 
 
 def promote(m, **extra):
-    return script("plan_promote.py", "push", "refs/heads/main", m["after"], cwd=m["repo"], extra={"PROMOTE_ENABLED": "true", "IMAGE": IMAGE, **extra})
+    return script(
+        "plan_promote.py",
+        "push",
+        "refs/heads/main",
+        m["after"],
+        cwd=m["repo"],
+        extra={"PROMOTE_ENABLED": "true", "IMAGE": IMAGE, **extra},
+    )
 
 
-def test_a_docs_only_testing_tip_promotes_the_image_of_the_commit_behind_it(merged, reg):
+def test_a_docs_only_testing_tip_promotes_the_image_of_the_commit_behind_it(
+    merged, reg
+):
     reg.put(IMAGE, f"testing-{short(merged['repo'], merged['code'])}", "tested")
     out = outputs(promote(merged))
-    assert out["promote"] == "true" and out["source_tag"] == f"testing-{short(merged['repo'], merged['code'])}" and out["source_digest"] == reg.tag(IMAGE, out["source_tag"])
+    assert (
+        out["promote"] == "true"
+        and out["source_tag"] == f"testing-{short(merged['repo'], merged['code'])}"
+        and out["source_digest"] == reg.tag(IMAGE, out["source_tag"])
+    )
 
 
 def test_no_tested_image_means_build(merged, reg):
@@ -115,9 +136,15 @@ def test_a_default_image_change_between_the_tip_and_the_image_means_build(merged
     assert outputs(promote(merged))["promote"] == "false"
 
 
-def test_an_unreadable_registry_fails_the_plan_instead_of_rebuilding_untested_content(merged, reg):
+def test_an_unreadable_registry_fails_the_plan_instead_of_rebuilding_untested_content(
+    merged, reg
+):
     p = promote(merged, REG_READ_ERROR=IMAGE)
-    assert p.returncode == 1 and "cannot decide" in p.stderr and "promote=true" not in p.stdout
+    assert (
+        p.returncode == 1
+        and "cannot decide" in p.stderr
+        and "promote=true" not in p.stdout
+    )
 
 
 @pytest.mark.parametrize("extra", [{"PROMOTE_ENABLED": "false"}])
@@ -127,20 +154,38 @@ def test_promotion_can_be_disabled(merged, reg, extra):
 
 
 def test_a_push_that_is_not_a_merge_does_not_promote(merged, reg):
-    p = script("plan_promote.py", "push", "refs/heads/main", merged["code"], cwd=merged["repo"], extra={"PROMOTE_ENABLED": "true", "IMAGE": IMAGE})
+    p = script(
+        "plan_promote.py",
+        "push",
+        "refs/heads/main",
+        merged["code"],
+        cwd=merged["repo"],
+        extra={"PROMOTE_ENABLED": "true", "IMAGE": IMAGE},
+    )
     assert outputs(p)["promote"] == "false"
 
 
 def reuse(repo, after, **extra):
-    return script("plan_vanilla_reuse.py", "push", "refs/heads/testing", after, cwd=repo, extra={"IMAGE": IMAGE, **extra})
+    return script(
+        "plan_vanilla_reuse.py",
+        "push",
+        "refs/heads/testing",
+        after,
+        cwd=repo,
+        extra={"IMAGE": IMAGE, **extra},
+    )
 
 
-def test_a_dx_only_or_docs_only_change_reuses_the_default_image_of_the_commit_behind(repo, reg):
+def test_a_dx_only_or_docs_only_change_reuses_the_default_image_of_the_commit_behind(
+    repo, reg
+):
     code = commit(repo, "code", files={"system_files/x": "b"})
     reg.put(IMAGE, f"testing-{short(repo, code)}", "tested")
     tip = commit(repo, "docs", files={"README.md": "b"})
     out = outputs(reuse(repo, tip))
-    assert out["reuse"] == "true" and out["source_tag"] == f"testing-{short(repo, code)}"
+    assert (
+        out["reuse"] == "true" and out["source_tag"] == f"testing-{short(repo, code)}"
+    )
 
 
 def test_a_default_image_change_at_the_tip_builds(repo, reg):
@@ -153,17 +198,31 @@ def test_a_default_image_change_at_the_tip_builds(repo, reg):
 def test_an_unreadable_registry_builds_instead_of_reusing(repo, reg):
     tip = commit(repo, "docs", files={"README.md": "b"})
     p = reuse(repo, tip, REG_READ_ERROR=IMAGE)
-    assert p.returncode == 0 and outputs(p)["reuse"] == "false" and "building instead" in p.stderr
+    assert (
+        p.returncode == 0
+        and outputs(p)["reuse"] == "false"
+        and "building instead" in p.stderr
+    )
 
 
 def test_only_a_push_to_testing_reuses(repo, reg):
-    p = script("plan_vanilla_reuse.py", "push", "refs/heads/main", "HEAD", cwd=repo, extra={"IMAGE": IMAGE})
+    p = script(
+        "plan_vanilla_reuse.py",
+        "push",
+        "refs/heads/main",
+        "HEAD",
+        cwd=repo,
+        extra={"IMAGE": IMAGE},
+    )
     assert outputs(p)["reuse"] == "false"
 
 
 # ---- plan_dx: skip, promote or build per channel
 DX = "ghcr.io/redcodeworks/octarine-os-dx"
-BASE_LABEL, INPUTS_LABEL = "org.opencontainers.image.base.digest", "io.github.redcodeworks.octarine-os.dx-inputs"
+BASE_LABEL, INPUTS_LABEL = (
+    "org.opencontainers.image.base.digest",
+    "io.github.redcodeworks.octarine-os.dx-inputs",
+)
 
 
 @pytest.fixture
@@ -171,23 +230,47 @@ def dx_world(repo, reg, tmp_path):
     (repo / "cosign.pub").write_text("key\n")
     base = reg.put(IMAGE, "latest", "the base")
     inputs = hashes(repo)[1]
-    return {"repo": repo, "reg": reg, "base": base, "inputs": inputs, "out": tmp_path / "plan-out"}
+    return {
+        "repo": repo,
+        "reg": reg,
+        "base": base,
+        "inputs": inputs,
+        "out": tmp_path / "plan-out",
+    }
 
 
 def plan_dx(w, **extra):
     w["out"].write_text("")
-    p = script("plan_dx.py", cwd=w["repo"], extra={"CHANNEL": "latest", "GITHUB_REPOSITORY_OWNER": "RedCodeWorks", "GITHUB_OUTPUT": str(w["out"]), **extra})
+    p = script(
+        "plan_dx.py",
+        cwd=w["repo"],
+        extra={
+            "CHANNEL": "latest",
+            "GITHUB_REPOSITORY_OWNER": "RedCodeWorks",
+            "GITHUB_OUTPUT": str(w["out"]),
+            **extra,
+        },
+    )
     return p, dict(line.split("=", 1) for line in w["out"].read_text().splitlines())
 
 
 def publish_dx(w, tag, base=None, inputs=None, content=None):
-    return w["reg"].put(DX, tag, content or f"dx {tag}", {BASE_LABEL: base or w["base"], INPUTS_LABEL: inputs or w["inputs"]})
+    return w["reg"].put(
+        DX,
+        tag,
+        content or f"dx {tag}",
+        {BASE_LABEL: base or w["base"], INPUTS_LABEL: inputs or w["inputs"]},
+    )
 
 
 def test_unchanged_base_and_inputs_skip(dx_world):
     publish_dx(dx_world, "latest")
     p, out = plan_dx(dx_world)
-    assert p.returncode == 0 and (out["build"], out["promote"]) == ("false", "false") and out["base_digest"] == dx_world["base"]
+    assert (
+        p.returncode == 0
+        and (out["build"], out["promote"]) == ("false", "false")
+        and out["base_digest"] == dx_world["base"]
+    )
 
 
 def test_a_changed_base_builds(dx_world):
@@ -208,14 +291,20 @@ def test_a_signed_tested_image_with_the_same_labels_is_promoted(dx_world):
     publish_dx(dx_world, "latest", inputs="sha256:other")
     digest = publish_dx(dx_world, f"testing-{short(dx_world['repo'], 'HEAD')}")
     p, out = plan_dx(dx_world)
-    assert (out["build"], out["promote"], out["source_digest"]) == ("false", "true", digest)
+    assert (out["build"], out["promote"], out["source_digest"]) == (
+        "false",
+        "true",
+        digest,
+    )
 
 
 def test_a_matching_image_whose_signature_does_not_verify_is_not_promoted(dx_world):
     publish_dx(dx_world, "latest", inputs="sha256:other")
     publish_dx(dx_world, f"testing-{short(dx_world['repo'], 'HEAD')}")
     p, out = plan_dx(dx_world, COSIGN_MODE="nosig")
-    assert p.returncode == 1  # the base itself must verify first: nothing is built on an unverified base
+    assert (
+        p.returncode == 1
+    )  # the base itself must verify first: nothing is built on an unverified base
 
 
 def test_an_unreadable_published_image_never_skips(dx_world):

@@ -42,7 +42,13 @@ def fakes(tmp_path, monkeypatch):
 def script(name, *args, cwd=None, env=None, extra=None):
     """Run a script of .github/scripts the way a workflow does (`python3 -I`); returns the CompletedProcess with text output."""
     e = {**os.environ, **(env or {}), **(extra or {})}
-    return subprocess.run([sys.executable, "-I", str(SCRIPTS / name), *args], cwd=cwd, env=e, capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / name), *args],
+        cwd=cwd,
+        env=e,
+        capture_output=True,
+        text=True,
+    )
 
 
 def git(repo, *args):
@@ -51,7 +57,13 @@ def git(repo, *args):
         check=True,
         capture_output=True,
         text=True,
-        env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
     ).stdout.strip()
 
 
@@ -64,7 +76,10 @@ def load_fake(name):
 
 
 github_api = load_fake("github_api")
-fixture, pull = github_api.fixture, github_api.pull  # captured GitHub answers for the tests to adjust
+fixture, pull = (
+    github_api.fixture,
+    github_api.pull,
+)  # captured GitHub answers for the tests to adjust
 
 
 @pytest.fixture
@@ -98,7 +113,9 @@ class Registry:
         (d / "tags").mkdir(parents=True, exist_ok=True)
         (d / "cfg").mkdir(exist_ok=True)
         (d / "tags" / tag).write_bytes(data)
-        (d / "cfg" / hexdigest).write_text(json.dumps({"config": {"Labels": labels or {}}}))
+        (d / "cfg" / hexdigest).write_text(
+            json.dumps({"config": {"Labels": labels or {}}})
+        )
         return f"sha256:{hexdigest}"
 
     def tag(self, image, tag):
@@ -106,7 +123,11 @@ class Registry:
         import hashlib
 
         f = self.directory(image) / "tags" / tag
-        return f"sha256:{hashlib.sha256(f.read_bytes()).hexdigest()}" if f.exists() else None
+        return (
+            f"sha256:{hashlib.sha256(f.read_bytes()).hexdigest()}"
+            if f.exists()
+            else None
+        )
 
 
 @pytest.fixture

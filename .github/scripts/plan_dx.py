@@ -89,16 +89,26 @@ def main(argv=None):
             base_tag = mine
         except registry.Absent:
             try:
-                found, _ = ih.nearest_image_for_inputs("HEAD", lambda tag: raw_digest_of(f"{base}:{tag}"))
+                found, _ = ih.nearest_image_for_inputs(
+                    "HEAD", lambda tag: raw_digest_of(f"{base}:{tag}")
+                )
                 base_tag = found
-                ci.log.info(f"No {base}:{mine} (the default build was reused): using the nearest earlier {base_tag}, built from the same default-image inputs")
+                ci.log.info(
+                    f"No {base}:{mine} (the default build was reused): using the nearest earlier {base_tag}, built from the same default-image inputs"
+                )
             except ih.Unreadable:
-                die("Could not read the registry while looking for an earlier testing image (a read error, not a missing image): not falling back to the floating tag")
+                die(
+                    "Could not read the registry while looking for an earlier testing image (a read error, not a missing image): not falling back to the floating tag"
+                )
             except ih.NoImage:
                 base_tag = "testing"
-                ci.log.warning(f"No {base}:{mine} and no earlier testing image with the same default-image inputs: falling back to the floating {base}:testing")
+                ci.log.warning(
+                    f"No {base}:{mine} and no earlier testing image with the same default-image inputs: falling back to the floating {base}:testing"
+                )
         except registry.ReadError:
-            die(f"Could not read {base}:{mine} (a registry read error, not a missing tag): not falling back to another base")
+            die(
+                f"Could not read {base}:{mine} (a registry read error, not a missing tag): not falling back to another base"
+            )
     pin = env("BASE_DIGEST_PIN") or ""
     if pin:
         # The default image this run is meant for, handed over by the pipeline that just published it (channel latest on main). `latest` is not moved before dx has passed, so it is NOT the base here:
@@ -122,7 +132,9 @@ def main(argv=None):
         except registry.ReadError:
             die(f"Cannot read {base}:{base_tag}")
     if verdict(f"{base}@{digest}") != "verified":
-        die(f"The base {base}@{digest} did not verify (or could not be checked: see the message above): nothing is built on it")
+        die(
+            f"The base {base}@{digest} did not verify (or could not be checked: see the message above): nothing is built on it"
+        )
     ci.log.info(f"Base image {base}:{base_tag} = {digest} (signature valid)")
 
     inputs = {"dx": ih.dx_inputs, "gx": ih.gx_inputs}[variant]("HEAD")
@@ -147,9 +159,13 @@ def main(argv=None):
         if rc == "absent":
             ci.log.info(f"No published {dx}:{channel} yet")
         else:
-            ci.log.warning(f"{dx}:{channel} could not be read (a read error): building, never skipping on a failed read")
+            ci.log.warning(
+                f"{dx}:{channel} could not be read (a read error): building, never skipping on a failed read"
+            )
     if force == "true":
-        decision = f"forced: building although the published image is {cur_base or 'unknown'}"
+        decision = (
+            f"forced: building although the published image is {cur_base or 'unknown'}"
+        )
     elif cur_base and cur_base == digest and cur_inputs == inputs:
         # No signature check here: the moving tags (`testing`, and `latest` by Publish latest) are moved only AFTER their digest is signed and verified, so a published tag is always a signed image
         # (a run cancelled earlier leaves the previous one in place)
@@ -158,33 +174,48 @@ def main(argv=None):
     else:
         if cur_base:
             if cur_base != digest:
-                ci.log.info(f"The published {variant} image was built from {cur_base}, the base is now {digest}")
+                ci.log.info(
+                    f"The published {variant} image was built from {cur_base}, the base is now {digest}"
+                )
             if cur_inputs != inputs:
-                ci.log.info(f"The {variant} inputs changed since the published {variant} image ({cur_inputs} -> {inputs})")
+                ci.log.info(
+                    f"The {variant} inputs changed since the published {variant} image ({cur_inputs} -> {inputs})"
+                )
         decision = "building"
         if channel == "latest" and (env("PROMOTE_FROM_TESTING") or "true") == "true":
             maximum = env("MAX_WALK") or "60"
-            tags = ["testing"] + [f"testing-{ci.git('rev-parse', '--short=7', c)}" for c in ci.git("rev-list", f"--max-count={maximum}", "HEAD").split()]
+            tags = ["testing"] + [
+                f"testing-{ci.git('rev-parse', '--short=7', c)}"
+                for c in ci.git("rev-list", f"--max-count={maximum}", "HEAD").split()
+            ]
             for t in tags:
                 rc, t_base, t_inputs = labels_of(t)
                 if rc == "absent":
                     continue  # no such candidate tag
                 if rc != "ok":
-                    die(f"Could not read the labels of {dx}:{t} (a registry read error, not a missing tag): not building instead of promoting")
+                    die(
+                        f"Could not read the labels of {dx}:{t} (a registry read error, not a missing tag): not building instead of promoting"
+                    )
                 if not (t_base == digest and t_inputs == inputs):
                     continue
                 try:
                     d = raw_digest_of(f"{dx}:{t}")
                 except registry.ReadError as e:
-                    die(f"Could not read the manifest of {dx}:{t} ({e}): not building instead of promoting")
+                    die(
+                        f"Could not read the manifest of {dx}:{t} ({e}): not building instead of promoting"
+                    )
                 answer = verdict(f"{dx}@{d}")
                 if answer == "verified":
                     build, promote, source_tag, source_digest = False, True, t, d
                     decision = f"promoting {t} ({source_digest}): same base digest and {variant} inputs, signed"
                     break
                 if answer == "unfinished":
-                    die(f"Could not complete the signature check of {dx}:{t} (a read error, not a bad signature): not building instead of promoting")
-                ci.log.warning(f"{t} matches but its signature does not verify; not promoting it")
+                    die(
+                        f"Could not complete the signature check of {dx}:{t} (a read error, not a bad signature): not building instead of promoting"
+                    )
+                ci.log.warning(
+                    f"{t} matches but its signature does not verify; not promoting it"
+                )
             if not promote:
                 decision = f"building (no tested testing image with this base digest and these {variant} inputs)"
     ci.log.info(f"{variant} {channel}: {decision}")

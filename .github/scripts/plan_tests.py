@@ -17,10 +17,14 @@ def main(argv=None):
     tests = Path(__file__).resolve().parents[2] / "tests"
     stray = sorted(p.name for p in tests.glob("*.sh"))
     if stray:
-        ci.log.error(f"tests/{stray[0]} is outside a group: move it into a tests/<group>/ directory ({' '.join(stray)})")
+        ci.log.error(
+            f"tests/{stray[0]} is outside a group: move it into a tests/<group>/ directory ({' '.join(stray)})"
+        )
         return 1
     groups = []
-    for d in sorted(p for p in tests.iterdir() if p.is_dir() and p.name != "py"):  # tests/py is the pytest suite: its own job, not a shell group
+    for d in sorted(
+        p for p in tests.iterdir() if p.is_dir() and p.name != "py"
+    ):  # tests/py is the pytest suite: its own job, not a shell group
         if not list(d.glob("*.sh")):
             ci.log.error(f"the test group tests/{d.name} has no *.sh")
             return 1

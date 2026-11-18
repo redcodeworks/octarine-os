@@ -38,12 +38,20 @@ SKIP_ENV = {
         ({"LATEST_CREATED": "2026-10-01T00:00:00Z"}, "build: latest is 38 days old"),
         ({"MAX_AGE_DAYS": "x"}, "build: MAX_AGE_DAYS is not a number"),
         ({"SIGNED": "false"}, "build: latest is not verified as signed"),
-        ({"LATEST_MISSING": "zsh,fish"}, "build: latest was built with optional packages missing"),
-        ({"LATEST_MISSING": ""}, "skipped"),  # an image from before the label skips as before
+        (
+            {"LATEST_MISSING": "zsh,fish"},
+            "build: latest was built with optional packages missing",
+        ),
+        (
+            {"LATEST_MISSING": ""},
+            "skipped",
+        ),  # an image from before the label skips as before
     ],
 )
 def test_plan_skip(override, want):
-    p = script("plan_skip.py", env={k: "" for k in SKIP_ENV}, extra={**SKIP_ENV, **override})
+    p = script(
+        "plan_skip.py", env={k: "" for k in SKIP_ENV}, extra={**SKIP_ENV, **override}
+    )
     assert p.stdout.startswith(want), p.stdout
 
 
@@ -68,37 +76,149 @@ def push_repo(tmp_path, *changes):
         ("workflow_dispatch", "README.md", "", "true"),
         ("push", "system_files/x", "refs/heads/main", "true"),
         ("push", "README.md", "refs/heads/main", "false"),  # docs only: no heavy build
-        ("push", "README.md", "refs/heads/testing", "true"),  # testing: the reuse check decides
+        (
+            "push",
+            "README.md",
+            "refs/heads/testing",
+            "true",
+        ),  # testing: the reuse check decides
         ("push", "docs/a.md", "refs/heads/main", "false"),
     ],
 )
 def test_plan_build(tmp_path, event, changed, ref, want):
     repo, ids = push_repo(tmp_path, changed)
-    assert script("plan_build.py", event, ids[0], ids[1], ref, cwd=repo).stdout.strip() == want
+    assert (
+        script("plan_build.py", event, ids[0], ids[1], ref, cwd=repo).stdout.strip()
+        == want
+    )
 
 
 def test_plan_build_builds_for_an_unusable_base_commit(tmp_path):
     repo, ids = push_repo(tmp_path, "README.md")
-    assert script("plan_build.py", "push", "0" * 40, ids[1], "refs/heads/main", cwd=repo).stdout.strip() == "true"
+    assert (
+        script(
+            "plan_build.py", "push", "0" * 40, ids[1], "refs/heads/main", cwd=repo
+        ).stdout.strip()
+        == "true"
+    )
 
 
 def aggregate(name, **env):
-    return script(name, env={k: "" for k in ("PLAN", "BUILD", "PROMOTE", "SIGN", "BUILD_WANTED", "PROMOTE_WANTED", "PUBLISH", "DRY_RUN")}, extra=env)
+    return script(
+        name,
+        env={
+            k: ""
+            for k in (
+                "PLAN",
+                "BUILD",
+                "PROMOTE",
+                "SIGN",
+                "BUILD_WANTED",
+                "PROMOTE_WANTED",
+                "PUBLISH",
+                "DRY_RUN",
+            )
+        },
+        extra=env,
+    )
 
 
 @pytest.mark.parametrize(
     "env, ok",
     [
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="success", BUILD_WANTED="true", PUBLISH="true"), True),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="skipped", BUILD_WANTED="true", PUBLISH="false"), True),
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="success", SIGN="success", PROMOTE_WANTED="true"), True),
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"), True),  # docs-only
-        (dict(PLAN="failure", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"), False),
-        (dict(PLAN="success", BUILD="failure", PROMOTE="skipped", SIGN="skipped", BUILD_WANTED="true"), False),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="failure", BUILD_WANTED="true", PUBLISH="true"), False),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="success", BUILD_WANTED="true", PUBLISH="false"), False),  # signed although nothing was published
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="success", SIGN="failure", PROMOTE_WANTED="true"), False),
-        (dict(PLAN="success", BUILD="success", PROMOTE="success", SIGN="success", BUILD_WANTED="false", PROMOTE_WANTED="false"), False),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="success",
+                BUILD_WANTED="true",
+                PUBLISH="true",
+            ),
+            True,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="skipped",
+                BUILD_WANTED="true",
+                PUBLISH="false",
+            ),
+            True,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="skipped",
+                PROMOTE="success",
+                SIGN="success",
+                PROMOTE_WANTED="true",
+            ),
+            True,
+        ),
+        (
+            dict(PLAN="success", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"),
+            True,
+        ),  # docs-only
+        (
+            dict(PLAN="failure", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="failure",
+                PROMOTE="skipped",
+                SIGN="skipped",
+                BUILD_WANTED="true",
+            ),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="failure",
+                BUILD_WANTED="true",
+                PUBLISH="true",
+            ),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="success",
+                BUILD_WANTED="true",
+                PUBLISH="false",
+            ),
+            False,
+        ),  # signed although nothing was published
+        (
+            dict(
+                PLAN="success",
+                BUILD="skipped",
+                PROMOTE="success",
+                SIGN="failure",
+                PROMOTE_WANTED="true",
+            ),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="success",
+                SIGN="success",
+                BUILD_WANTED="false",
+                PROMOTE_WANTED="false",
+            ),
+            False,
+        ),
     ],
 )
 def test_aggregate_result(env, ok):
@@ -108,15 +228,74 @@ def test_aggregate_result(env, ok):
 @pytest.mark.parametrize(
     "env, ok",
     [
-        (dict(PLAN="skipped", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"), True),
-        (dict(PLAN="skipped", BUILD="success", PROMOTE="skipped", SIGN="skipped"), False),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="success", BUILD_WANTED="true"), True),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="failure", BUILD_WANTED="true"), False),
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="success", SIGN="success", PROMOTE_WANTED="true"), True),
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"), True),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="skipped"), False),
-        (dict(PLAN="success", BUILD="skipped", PROMOTE="skipped", SIGN="skipped", DRY_RUN="true", BUILD_WANTED="true"), True),
-        (dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="success", DRY_RUN="true", BUILD_WANTED="true"), False),
+        (
+            dict(PLAN="skipped", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"),
+            True,
+        ),
+        (
+            dict(PLAN="skipped", BUILD="success", PROMOTE="skipped", SIGN="skipped"),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="success",
+                BUILD_WANTED="true",
+            ),
+            True,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="failure",
+                BUILD_WANTED="true",
+            ),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="skipped",
+                PROMOTE="success",
+                SIGN="success",
+                PROMOTE_WANTED="true",
+            ),
+            True,
+        ),
+        (
+            dict(PLAN="success", BUILD="skipped", PROMOTE="skipped", SIGN="skipped"),
+            True,
+        ),
+        (
+            dict(PLAN="success", BUILD="success", PROMOTE="skipped", SIGN="skipped"),
+            False,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="skipped",
+                PROMOTE="skipped",
+                SIGN="skipped",
+                DRY_RUN="true",
+                BUILD_WANTED="true",
+            ),
+            True,
+        ),
+        (
+            dict(
+                PLAN="success",
+                BUILD="success",
+                PROMOTE="skipped",
+                SIGN="success",
+                DRY_RUN="true",
+                BUILD_WANTED="true",
+            ),
+            False,
+        ),
     ],
 )
 def test_aggregate_dx(env, ok):
@@ -124,20 +303,49 @@ def test_aggregate_dx(env, ok):
 
 
 def version_check(*lines):
-    return subprocess.run([sys.executable, "-I", str(SCRIPTS / "check_version_neutral.py")], input="".join(f"{line}\n" for line in lines), capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, "-I", str(SCRIPTS / "check_version_neutral.py")],
+        input="".join(f"{line}\n" for line in lines),
+        capture_output=True,
+        text=True,
+    )
 
 
 def test_version_labels_must_not_name_a_channel():
-    assert version_check("org.opencontainers.image.version=20261108-abc1234", 'IMAGE_VERSION="20261108-abc1234"').returncode == 0
-    assert version_check("org.opencontainers.image.version=testing-abc", "IMAGE_VERSION=1").returncode == 1
-    assert version_check("org.opencontainers.image.version=1", "IMAGE_VERSION=latest").returncode == 1
-    assert version_check("IMAGE_VERSION=1").returncode == 1  # the OCI version label is required
-    assert version_check("org.opencontainers.image.version=1").returncode == 1  # and so is IMAGE_VERSION
+    assert (
+        version_check(
+            "org.opencontainers.image.version=20261108-abc1234",
+            'IMAGE_VERSION="20261108-abc1234"',
+        ).returncode
+        == 0
+    )
+    assert (
+        version_check(
+            "org.opencontainers.image.version=testing-abc", "IMAGE_VERSION=1"
+        ).returncode
+        == 1
+    )
+    assert (
+        version_check(
+            "org.opencontainers.image.version=1", "IMAGE_VERSION=latest"
+        ).returncode
+        == 1
+    )
+    assert (
+        version_check("IMAGE_VERSION=1").returncode == 1
+    )  # the OCI version label is required
+    assert (
+        version_check("org.opencontainers.image.version=1").returncode == 1
+    )  # and so is IMAGE_VERSION
 
 
 def test_a_captured_result_is_alone_on_stdout():
     """A workflow captures stdout with `$(...)`: the reason a script logs (info) goes to stderr, stdout holds only the result."""
     p = script("plan_build.py", "push", "0" * 40, "HEAD", "refs/heads/main")
-    assert p.returncode == 0 and p.stdout == "true\n" and "no usable base commit" in p.stderr
+    assert (
+        p.returncode == 0
+        and p.stdout == "true\n"
+        and "no usable base commit" in p.stderr
+    )
     p = script("plan_skip.py", env={k: "" for k in SKIP_ENV}, extra=SKIP_ENV)
     assert p.stdout.count("\n") == 1 and p.stdout.startswith("skipped:")

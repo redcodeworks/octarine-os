@@ -25,9 +25,13 @@ def main(argv=None):
     first, *others = args.tags
     try:
         digest = registry.push(args.local_image, f"{args.registry_image}:{first}")
-        registry.settled(args.registry_image, first, digest)  # podman's digestfile is the manifest it wrote; the registry must agree before anything is copied
+        registry.settled(
+            args.registry_image, first, digest
+        )  # podman's digestfile is the manifest it wrote; the registry must agree before anything is copied
         for tag in others:
-            registry.copy(f"{args.registry_image}@{digest}", f"{args.registry_image}:{tag}")
+            registry.copy(
+                f"{args.registry_image}@{digest}", f"{args.registry_image}:{tag}"
+            )
             registry.settled(args.registry_image, tag, digest)
     except (ci.NetworkError, registry.ReadError) as e:
         ci.log.error(str(e))

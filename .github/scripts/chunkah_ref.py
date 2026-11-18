@@ -30,7 +30,9 @@ def parse_env(path: Path) -> dict:
 
 def main(argv=None):
     ap = ci.arg_parser(__doc__)
-    ap.add_argument("file", nargs="?", default=os.environ.get("CHUNKAH_ENV") or "config/chunkah.env")
+    ap.add_argument(
+        "file", nargs="?", default=os.environ.get("CHUNKAH_ENV") or "config/chunkah.env"
+    )
     file = Path(ap.parse_args(argv).file)
     if not file.is_file():
         ci.log.error(f"{file} not found")
@@ -49,12 +51,24 @@ def main(argv=None):
         return 1
     ref = f"{image}@{digest}"
     try:
-        registry.cosign_check(["--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", "--certificate-identity-regexp", "^https://github.com/coreos/chunkah/", ref])
+        registry.cosign_check(
+            [
+                "--certificate-oidc-issuer",
+                "https://token.actions.githubusercontent.com",
+                "--certificate-identity-regexp",
+                "^https://github.com/coreos/chunkah/",
+                ref,
+            ]
+        )
     except registry.NotVerified, registry.ReadError:
-        ci.log.error(f"cosign verification of {ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)")
+        ci.log.error(
+            f"cosign verification of {ref} failed: the chunkah image is not trusted, nothing is rechunked (a changed signing identity upstream, or a bad pin: check config/chunkah.env)"
+        )
         return 1
     try:
-        registry.pull(ref)  # now, with retries, so `just rechunk` does not pull inside its single `podman run`
+        registry.pull(
+            ref
+        )  # now, with retries, so `just rechunk` does not pull inside its single `podman run`
     except ci.NetworkError:
         ci.log.error(f"could not pull {ref}")
         return 1

@@ -28,7 +28,20 @@ DEVNULL = subprocess.DEVNULL
 @ci.retry(on=(ci.NetworkError,))
 def download(url, target):
     """curl the key (curl's own --retry covers only some errors; the decorator covers the rest of a transient failure of github.com)."""
-    proc = ci.run(["curl", "--fail", "--silent", "--show-error", "--retry", "3", "-L", "-o", str(target), url])
+    proc = ci.run(
+        [
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--retry",
+            "3",
+            "-L",
+            "-o",
+            str(target),
+            url,
+        ]
+    )
     if proc.returncode != 0:
         raise ci.NetworkError(f"curl failed (exit {proc.returncode})")
 
@@ -37,7 +50,10 @@ def main(argv=None):
     ap = ci.arg_parser(__doc__)
     ap.add_argument("image")
     image = ap.parse_args(argv).image
-    url = os.environ.get("UBLUE_KEY_URL") or "https://github.com/ublue-os/akmods/raw/main/certs/public_key.der"
+    url = (
+        os.environ.get("UBLUE_KEY_URL")
+        or "https://github.com/ublue-os/akmods/raw/main/certs/public_key.der"
+    )
     cid = ""
     with tempfile.TemporaryDirectory() as tmp:
         work = Path(tmp)
@@ -50,17 +66,32 @@ def main(argv=None):
                     sys.stderr.buffer.write(p.stderr)
                     return p.returncode
                 cid = p.stdout.decode().strip()
-                p = ci.run(["podman", "run", "--rm", "--entrypoint", "ls", image, "/usr/lib/modules"], capture=True)
+                p = ci.run(
+                    [
+                        "podman",
+                        "run",
+                        "--rm",
+                        "--entrypoint",
+                        "ls",
+                        image,
+                        "/usr/lib/modules",
+                    ],
+                    capture=True,
+                )
                 kvers = p.stdout.decode().strip()
                 if p.returncode != 0:
                     sys.stderr.buffer.write(p.stderr)
                     return p.returncode
                 if len(kvers.split()) != 1:
-                    ci.log.error(f"{image} holds not exactly one kernel under /usr/lib/modules: {kvers}")
+                    ci.log.error(
+                        f"{image} holds not exactly one kernel under /usr/lib/modules: {kvers}"
+                    )
                     return 1
                 kver = kvers
                 kernel = str(work / "vmlinuz")
-                rc = ci.run(["podman", "cp", f"{cid}:/usr/lib/modules/{kver}/vmlinuz", kernel]).returncode
+                rc = ci.run(
+                    ["podman", "cp", f"{cid}:/usr/lib/modules/{kver}/vmlinuz", kernel]
+                ).returncode
                 if rc != 0:
                     return rc
 
@@ -70,21 +101,58 @@ def main(argv=None):
             except ci.NetworkError:
                 pass
             if not der.is_file() or der.stat().st_size == 0:
-                ci.log.error(f"could not download the Universal Blue kernel signing key from {url}: the Secure Boot check cannot run (a network or upstream problem, not necessarily the kernel)")
+                ci.log.error(
+                    f"could not download the Universal Blue kernel signing key from {url}: the Secure Boot check cannot run (a network or upstream problem, not necessarily the kernel)"
+                )
                 return 1
-            if ci.run(["openssl", "x509", "-inform", "DER", "-in", str(der), "-out", str(crt)], stderr=DEVNULL).returncode != 0:
+            if (
+                ci.run(
+                    [
+                        "openssl",
+                        "x509",
+                        "-inform",
+                        "DER",
+                        "-in",
+                        str(der),
+                        "-out",
+                        str(crt),
+                    ],
+                    stderr=DEVNULL,
+                ).returncode
+                != 0
+            ):
                 ci.log.error(f"the file downloaded from {url} is not a DER certificate")
                 return 1
-            p = ci.run(["openssl", "x509", "-in", str(crt), "-noout", "-fingerprint", "-sha256"], capture=True)
-            fp = p.stdout.decode().strip() if p.returncode == 0 else "fingerprint unreadable"
+            p = ci.run(
+                [
+                    "openssl",
+                    "x509",
+                    "-in",
+                    str(crt),
+                    "-noout",
+                    "-fingerprint",
+                    "-sha256",
+                ],
+                capture=True,
+            )
+            fp = (
+                p.stdout.decode().strip()
+                if p.returncode == 0
+                else "fingerprint unreadable"
+            )
             ci.log.info(f"== signing key: {url}")
-            ci.run(["openssl", "x509", "-in", str(crt), "-noout", "-subject", "-enddate"], stderr=DEVNULL)
+            ci.run(
+                ["openssl", "x509", "-in", str(crt), "-noout", "-subject", "-enddate"],
+                stderr=DEVNULL,
+            )
             ci.log.info(fp)
 
             ci.log.info(f"== kernel {kver} of {image}: sbverify --list")
             ci.run(["sbverify", "--list", kernel])
             if ci.run(["sbverify", "--cert", str(crt), kernel]).returncode == 0:
-                ci.log.info(f"Secure Boot: the kernel {kver} of {image} verifies against the Universal Blue kernel key ({fp})")
+                ci.log.info(
+                    f"Secure Boot: the kernel {kver} of {image} verifies against the Universal Blue kernel key ({fp})"
+                )
                 return 0
             ci.log.error(
                 f"Secureboot Signature Failed: the kernel {kver} of {image} does NOT verify against the Universal Blue kernel key ({fp}); it would not boot on a machine with that key "
