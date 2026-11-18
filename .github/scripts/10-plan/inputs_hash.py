@@ -96,7 +96,7 @@ def is_pipeline_only(path: str) -> bool:
         ".github/scripts/30-publish/dispatch_variant.py",
         ".github/scripts/30-publish/publish_latest.py",
         ".github/scripts/40-report/ci_issue.py",
-        ".github/scripts/sanity.py",
+        ".github/scripts/70-check/sanity.py",
         ".github/scripts/50-bump/prune_daily.py",
     ):
         return True

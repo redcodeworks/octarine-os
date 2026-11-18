@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 jobs:
-  # Stage 1 of the pipeline (the required check): only the OBVIOUS, in about 10 s (.github/scripts/sanity.py): `bash -n` on the shell scripts, a compile of the Python ones and a parse of the workflow files.
+  # Stage 1 of the pipeline (the required check): only the OBVIOUS, in about 10 s (.github/scripts/70-check/sanity.py): `bash -n` on the shell scripts, a compile of the Python ones and a parse of the workflow files.
   # Stage 2 is the image build on testing, which shows the complicated problems.
   # It runs for every push (a documentation-only one included: it is fast) and for the dispatched `Test of <sha>` runs of the bump workflow.
   test:
@@ -52,7 +52,7 @@ jobs:
         uses: ./.github/actions/setup-ci-python
 
       - name: Sanity checks
-        run: uv run --frozen --no-dev python -I .github/scripts/sanity.py
+        run: uv run --frozen --no-dev python -I .github/scripts/70-check/sanity.py
 
       - name: Set up just
         uses: ./.github/actions/setup-tool

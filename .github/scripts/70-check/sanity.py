@@ -14,7 +14,7 @@ from pathlib import Path
 import yaml
 
 here = Path(__file__).resolve().parent
-sys.path[:0] = [str(here / "00-lib"), str(here)]
+sys.path[:0] = [str(here.parent / "00-lib"), str(here)]
 import ci  # noqa: E402
 
 ARCHIVE = ".archive/"  # the kept shell scripts: inert, never checked as live code
