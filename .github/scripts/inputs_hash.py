@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The three input hashes that decide which image has to be built (one place, tested by tests/pipeline/inputs-hash.sh).
+"""The three input hashes that decide which image has to be built (one place, tested by tests/py/test_plan.py).
 
   inputs_hash.py vanilla|dx|gx [<rev>]     print the hash of <rev> (default HEAD)
 
