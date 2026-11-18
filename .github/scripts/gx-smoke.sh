@@ -108,6 +108,8 @@ done
 check "sudoers valid" "visudo -c"
 check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd SHELL=/usr/bin/zsh"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
+check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
+check "enabled rpm-ostreed-automatic.timer" "systemctl is-enabled rpm-ostreed-automatic.timer"
 check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"
 check "menu helper library shipped" "test -s ${share_dir}/octarine-os/lib/menu.sh"
@@ -118,7 +120,7 @@ if [ "${EXPECT_IMAGE_ID:-}" = octarine-os-dx-gx ]; then
 else
     check "no dev-only recipe (ujust dev is dx only)" "! grep -q 70-octarine-dev ${share_dir}/ublue-os/justfile"
 fi
-for p in pam-u2f snapper tailscale borgbackup zsh distrobox; do
+for p in mutter pipewire wireplumber gdm ptyxis systemd pam-u2f snapper tailscale borgbackup zsh distrobox; do
     check "package ${p}" "rpm -q ${p}"
 done
 check "firefox removed" "! rpm -q firefox"

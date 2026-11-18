@@ -162,6 +162,8 @@ from the owner's fork) that `ujust gaming-setup` installs for Steam, and the [sc
 
 The gx image installs [Steam](https://store.steampowered.com) (Valve; packaged by [negativo17](https://negativo17.org)), [gamescope](https://github.com/ValveSoftware/gamescope) (Valve), [MangoHud](https://github.com/flightlessmango/MangoHud), [GameMode](https://github.com/FeralInteractive/gamemode) (Feral Interactive) and [Sunshine](https://github.com/LizardByte/Sunshine) (LizardByte, GPL-3.0), each under its own license; Fedora packages them, except Steam (negativo17) and Sunshine (the LizardByte COPR).
 
+The numbered build scripts are derived from Bluefin's [build_files/base](https://github.com/ublue-os/bluefin/tree/main/build_files/base) (Universal Blue, Apache-2.0).
+
 This image builds on [Universal Blue](https://universal-blue.org)'s `silverblue-main` base, its Homebrew files image and its image template (the template is Apache-2.0). The firewall service definition for GSConnect is from the GSConnect developers (GPL-2.0-or-later, noted in the file).
 
 ## About this repo

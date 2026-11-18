@@ -112,6 +112,7 @@ kver=$(kernels); kver=${kver%%$'\n'*}
 check "exactly one kernel is installed" "one_kernel"
 check "the kernel is the one of the base image (${BASE_KERNEL:-unset})" "kernel_is_base"
 check "the initramfs for the kernel exists" "test -s ${modules_dir}/${kver}/initramfs.img"
+check "kernel-devel is not installed (a mismatched one came in through bcc once)" "! rpm -q kernel-devel"
 
 echo "== checks of the default image that still apply"
 check "release is Fedora" "grep -qx ID=fedora ${os_release}"
@@ -125,11 +126,13 @@ done
 check "sudoers valid" "visudo -c"
 check "new users do not default to zsh" "! has_text ${etc_dir}/default/useradd SHELL=/usr/bin/zsh"
 check "enabled brew-setup.service" "systemctl is-enabled brew-setup.service"
+check "enabled brew-update.timer" "systemctl is-enabled brew-update.timer"
+check "enabled rpm-ostreed-automatic.timer" "systemctl is-enabled rpm-ostreed-automatic.timer"
 check "enabled (global) podman.socket" "systemctl --global is-enabled podman.socket"
 check "ujust custom recipes" "test -f ${share_dir}/ublue-os/just/60-custom.just"
 check "menu helper library shipped" "test -s ${share_dir}/octarine-os/lib/menu.sh"
 check "dev-toolbox definition" "has_text ${share_dir}/ublue-os/distrobox/dev-toolbox.ini '[dev-toolbox]'"
-for p in pam-u2f snapper tailscale borgbackup zsh distrobox; do
+for p in mutter pipewire wireplumber gdm ptyxis systemd pam-u2f snapper tailscale borgbackup zsh distrobox; do
     check "package ${p}" "rpm -q ${p}"
 done
 check "firefox removed" "! rpm -q firefox"
