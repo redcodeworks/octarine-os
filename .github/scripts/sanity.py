@@ -19,19 +19,33 @@ def tracked(*patterns):
     return [f for f in ci.git("ls-files", *patterns).splitlines() if not f.startswith(ARCHIVE)]
 
 
+def bad_shell(f):
+    return [f"bash -n {f}"] if ci.run(["bash", "-n", f]).returncode != 0 else []
+
+
+def bad_python(f):
+    try:
+        compile(Path(f).read_text(), f, "exec")
+    except SyntaxError as e:
+        return [f"{f} does not compile: {e}"]
+    return []
+
+
+def bad_workflow(f):
+    try:
+        yaml.safe_load(f.read_text())
+    except yaml.YAMLError as e:
+        return [f"{f} does not parse: {e}"]
+    return []
+
+
 def problems():
-    found = [f"bash -n {f}" for f in tracked("*.sh", "githooks/pre-push") if ci.run(["bash", "-n", f]).returncode != 0]
-    for f in tracked("*.py"):
-        try:
-            compile(Path(f).read_text(), f, "exec")
-        except SyntaxError as e:
-            found.append(f"{f} does not compile: {e}")
-    for f in sorted(Path(".github/workflows").glob("*.yml")):
-        try:
-            yaml.safe_load(f.read_text())
-        except yaml.YAMLError as e:
-            found.append(f"{f} does not parse: {e}")
-    return found
+    checks = (
+        *map(bad_shell, tracked("*.sh", "githooks/pre-push")),
+        *map(bad_python, tracked("*.py")),
+        *map(bad_workflow, sorted(Path(".github/workflows").glob("*.yml"))),
+    )
+    return [problem for found in checks for problem in found]
 
 
 def main(argv=None):

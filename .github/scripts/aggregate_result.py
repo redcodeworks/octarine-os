@@ -20,6 +20,25 @@ def fail(message):
     raise SystemExit(1)
 
 
+def expects_sign(build_wanted, promote_wanted, publish, build, promote) -> bool:
+    """Check the build and promote results against what the plan wanted; whether a signature is expected."""
+    match build_wanted, promote_wanted:
+        case "true", _:
+            if not (build == "success" and promote == "skipped"):
+                fail(f"The image build did not succeed ({build}, promote {promote})")
+            return publish == "true"
+        case _, "true":
+            if not (promote == "success" and build == "skipped"):
+                fail(f"The promotion did not succeed ({promote}, build {build})")
+            print("Promoted a tested image: no rebuild")
+            return True
+        case _:
+            if not (build == "skipped" and promote == "skipped"):
+                fail(f"Unexpected results (build {build}, promote {promote})")
+            print("Docs-only change or unchanged scheduled run: heavy build skipped")
+            return False
+
+
 def main(argv=None):
     ci.arg_parser(__doc__).parse_args(argv)
     plan, build, promote, sign = (os.environ[n] for n in ("PLAN", "BUILD", "PROMOTE", "SIGN"))
@@ -27,21 +46,7 @@ def main(argv=None):
     print(f"plan={plan} build wanted={build_wanted} build={build} promote wanted={promote_wanted} promote={promote} publish={publish} sign={sign}")
     if plan != "success":
         fail("The plan job did not succeed")
-    match build_wanted, promote_wanted:
-        case "true", _:
-            if not (build == "success" and promote == "skipped"):
-                fail(f"The image build did not succeed ({build}, promote {promote})")
-            sign_expected = publish == "true"
-        case _, "true":
-            if not (promote == "success" and build == "skipped"):
-                fail(f"The promotion did not succeed ({promote}, build {build})")
-            sign_expected = True
-            print("Promoted a tested image: no rebuild")
-        case _:
-            if not (build == "skipped" and promote == "skipped"):
-                fail(f"Unexpected results (build {build}, promote {promote})")
-            sign_expected = False
-            print("Docs-only change or unchanged scheduled run: heavy build skipped")
+    sign_expected = expects_sign(build_wanted, promote_wanted, publish, build, promote)
     if sign_expected:
         if sign != "success":
             fail(f"Signing and verification did not succeed ({sign})")
