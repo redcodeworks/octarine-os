@@ -60,6 +60,7 @@ def wait_for_completion(rest, repo, run_id, run_max, poll):
     run or None.
     """
     deadline = time.monotonic() + run_max
+
     # poll until the run is completed or the time is up
     while True:
         run = rest.actions.get_workflow_run(run_id=run_id, **repo).parsed_data
@@ -97,6 +98,7 @@ def main(argv=None):
         ci.int_env("BUMP_CHECKS_POLL", 5),
         ci.int_env("BUMP_CHECKS_RUN_MAX", 900),
     )
+
     # only a full commit sha can carry check runs
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         warn(f"bump checks for {branch}: not a commit sha '{sha}', nothing posted")
@@ -104,12 +106,14 @@ def main(argv=None):
     existing = rest.checks.list_for_ref(
         ref=sha, per_page=100, **repo
     ).parsed_data.check_runs
+
     # a commit that already has its reported checks needs nothing more
     if any(r.name == "test" and r.output.title == MARKER for r in existing):
         ci.log.info(f"{sha[:7]} already has its reported checks")
         return 0
     title = f"Test of {sha}"
     run_id = find_run(rest, repo, title)
+
     # dispatch the Test workflow only when no run exists yet
     if run_id is None:
         rest.actions.create_workflow_dispatch(
@@ -117,6 +121,7 @@ def main(argv=None):
         )
         ci.log.info(f"Dispatched the Test workflow on {base} for {sha[:7]} ({branch})")
     waited = 0
+
     # a poll, not a retry: the dispatched run does not exist yet for a moment
     while (
         run_id is None and waited < wait_s
@@ -124,6 +129,7 @@ def main(argv=None):
         time.sleep(poll)
         waited += poll
         run_id = find_run(rest, repo, title)
+
     # no run appeared in time: post nothing and say so
     if run_id is None:
         warn(
@@ -131,6 +137,7 @@ def main(argv=None):
         )
         return 0
     run = wait_for_completion(rest, repo, run_id, run_max, 20)
+
     # a run that did not finish posts nothing
     if run is None:
         warn(
@@ -140,6 +147,7 @@ def main(argv=None):
     jobs = rest.actions.list_jobs_for_workflow_run(
         run_id=run_id, per_page=100, **repo
     ).parsed_data.jobs
+
     # post one check run per required job with that job's real conclusion
     for name in ("test", "secrets"):
         # a job that is missing counts as a failure

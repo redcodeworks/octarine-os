@@ -68,6 +68,7 @@ def main(argv=None):
     text = file.read_text() if file.is_file() else ""
     current = sed_value(text, f"{prefix}_DIGEST")
     current_tag = sed_value(text, f"{prefix}_TAG")
+
     # a malformed current pin is a mistake in the file, not something to bump over
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", current):
         ci.log.error(f"{prefix}_DIGEST missing or malformed in {file}")
@@ -115,6 +116,7 @@ def main(argv=None):
     # the pin keeps a dated tag for humans: find the one that points at the same digest,
     # else fall back to latest
     tag = "latest"
+
     # the dated tags let a human read the pin; find the one with this digest
     try:
         tags = json.loads(
@@ -122,6 +124,7 @@ def main(argv=None):
         )["Tags"]
     except ValueError, KeyError, TypeError:
         tags = []
+
     # check the ten newest dated tags for one with the same digest
     for t in sorted(
         (x for x in tags if re.fullmatch(r"latest-\d{8}-[0-9a-f]{7}", x)), reverse=True

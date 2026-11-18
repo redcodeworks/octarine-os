@@ -113,6 +113,7 @@ class Pin:
     def commit_pin(self, subject, upstream, age):
         """The pin was written; check that only its files changed, commit them."""
         changed = ci.git("diff", "--name-only").split()
+
         # the writer must have changed something
         if not changed:
             self.fail(f"the writer changed nothing for {self.proposed}")
@@ -141,6 +142,7 @@ class Pin:
         self.files = ["config/chunkah.env"]
         ref = "quay.io/coreos/chunkah:latest"
         src = f"{ref}, keyless cosign signature verified"
+
         # bump_pin.py reports through a GITHUB_OUTPUT file of its own
         with tempfile.TemporaryDirectory() as d:
             go = Path(d) / "out"
@@ -167,6 +169,7 @@ class Pin:
             read_out("tag"),
         )
         self.current = old[:19]
+
         # exit 0 (current) and 10 (changed) are the only successful results
         if rc not in (0, 10):
             self.fail(f"the check failed ({result or f'exit {rc}'})")
@@ -187,6 +190,7 @@ class Pin:
         sets the status to "nothing to bump" when the pin is current.
         """
         self.current = containerfile_arg("BREW_TAG")
+
         # list the dated tags of the brew image and take the newest
         try:
             tags = json.loads(
@@ -199,6 +203,7 @@ class Pin:
             latest = sorted(t for t in tags if re.fullmatch(r"\d{8}", t))[-1]
         except ValueError, KeyError, TypeError, IndexError:
             latest = ""
+
         # a malformed newest tag means the listing failed
         if not re.fullmatch(r"[0-9]{8}", latest):
             self.fail("cannot list the tags of ghcr.io/ublue-os/brew")
@@ -208,6 +213,7 @@ class Pin:
             return
         self.files = ["Containerfile"]
         self.proposed = latest
+
         # the recipe verifies the digest and signature, then rewrites the Containerfile
         if not just("brew-bump", latest):
             self.fail(
@@ -229,16 +235,19 @@ class Pin:
         """
         self.files = ["Containerfile"]
         cur, curtag = containerfile_arg("BINS_DIGEST"), containerfile_arg("BINS_TAG")
+
         # the pinned digest must be well formed before comparing
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", cur):
             self.fail("BINS_DIGEST in the Containerfile is missing or malformed")
         self.current = f"{curtag} {cur[:19]}"
         ref = "ghcr.io/redcodeworks/octarine-bins"
+
         # latest must resolve to a digest
         try:
             latest = registry.digest(ref, "latest")
         except registry.Absent, registry.ReadError:
             self.fail(f"cannot resolve {ref}:latest")
+
         # equal digests mean nothing to bump
         if latest == cur:
             self.status = f"nothing to bump: the pin equals {ref}:latest ({curtag})"
@@ -268,6 +277,7 @@ def main(argv=None):
     ap = ci.arg_parser(__doc__)
     ap.add_argument("pin", help="chunkah, brew or bins")
     pin = Pin(ap.parse_args(argv).pin)
+
     # any failure restores the working tree and ends with a FAILED summary line
     try:
         # the check starts from a clean tree so that only the writer's change is

@@ -117,6 +117,7 @@ def close_pr(number, branch, comment):
 def open_pr(branch, title, body, base):
     """Open the pull request and return its URL."""
     gh = ci.github()
+
     # a rejected creation usually means the setting that lets Actions open PRs is off
     try:
         return gh.rest.pulls.create(
@@ -144,6 +145,7 @@ def main(argv=None):
     os.chdir(os.environ.get("REPO_ROOT") or HERE.parents[1])
     base = os.environ.get("BUMP_BASE", "testing")
     pins = os.environ.get("BUMP_PINS", "").split()
+
     # without pins there is nothing to do and that is a mistake in the call
     if not pins:
         ci.log.error(
@@ -151,11 +153,13 @@ def main(argv=None):
         )
         return 1
     dry = bool(os.environ.get("DRY_RUN"))
+
     # the base must be fetchable to compare against
     if git("fetch", "-q", "origin", base).returncode != 0:
         ci.log.error(f"cannot fetch {base}")
         return 1
     start = git("rev-parse", "HEAD").stdout.strip()
+
     # a real run must start from the tip of the base branch
     if not dry and start != git("rev-parse", f"origin/{base}").stdout.strip():
         ci.log.error(
