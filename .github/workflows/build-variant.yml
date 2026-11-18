@@ -16,7 +16,7 @@ run-name: ${{ inputs.variant }} ${{ inputs.channel }} ${{ inputs.sha || github.s
 # it was dispatched on and is recorded on that branch, so a change here runs on `testing` before it is promoted and the README can show a badge per branch. It never
 # runs for pull requests or feature branches (the plan job's guard; a DRY RUN is the one exception, it writes nothing). `sha` is the commit the pipeline built: the ref
 # may have moved on since, so every job checks out exactly that commit, and the plan job refuses a commit that is not an ancestor of the ref. The plan job
-# (.github/scripts/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
+# (.github/scripts/10-plan/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes or builds by comparing the published image's labels (base digest and
 # <variant>-inputs) with the current ones. Tags: `<channel>` and `<channel>-<date>-<sha>` (testing: `testing` and `testing-<sha>`), signed with the repository key in the
 # `signing` environment. The result job is the check `Build <variant> and push image` ONLY when the built commit is the tip of the ref (otherwise it is named `Build
 # <variant> (older commit)`, so a green check can never appear on a commit whose own build has not run); the commit status of the same name is always posted on the

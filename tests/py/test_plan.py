@@ -58,7 +58,7 @@ def repo(tmp_path):
             "tests/t.sh": "a",
             "keys/redcodeworks-toolbox-cosign.pub": "a",
             ".github/workflows/dx-image.yml": "a",
-            ".github/scripts/plan_dx.py": "a",
+            ".github/scripts/10-plan/plan_dx.py": "a",
             ".github/workflows/test.yml": "a",
         },
     )
@@ -76,7 +76,7 @@ def repo(tmp_path):
         ({"variants/dx/f": "b"}, (1,)),  # dx only
         ({"variants/gx/f": "b"}, (2,)),  # gx only
         ({".github/workflows/dx-image.yml": "b"}, (1, 2)),  # shared by both variants
-        ({".github/scripts/plan_dx.py": "b"}, (1, 2)),
+        ({".github/scripts/10-plan/plan_dx.py": "b"}, (1, 2)),
     ],
 )
 def test_which_input_hashes_a_change_moves(repo, change, moves):

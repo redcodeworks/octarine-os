@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 here = Path(__file__).resolve().parent
-sys.path[:0] = [str(here / "00-lib"), str(here)]
+sys.path[:0] = [str(here.parent / "00-lib"), str(here)]
 import ci  # noqa: E402
 import docs_only  # noqa: E402
 import registry  # noqa: E402
@@ -74,7 +74,7 @@ def is_variant_shared(path: str) -> bool:
     return path in (
         ".github/workflows/dx-image.yml",
         ".github/workflows/build-variant.yml",
-        ".github/scripts/plan_dx.py",
+        ".github/scripts/10-plan/plan_dx.py",
         ".github/scripts/aggregate_dx.py",
         "keys/redcodeworks-toolbox-cosign.pub",
     )
@@ -120,7 +120,7 @@ def is_pipeline_only(path: str) -> bool:
         ".github/workflows/build-nvidia.yml",
         ".github/workflows/build-extra.yml",
         ".github/scripts/nvidia-smoke.sh",
-        ".github/scripts/nvidia_akmods_ref.py",
+        ".github/scripts/10-plan/nvidia_akmods_ref.py",
     ) or path.startswith("variants/nvidia/"):
         return True
     return path in (

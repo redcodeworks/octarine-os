@@ -367,7 +367,7 @@ minutes). Triggers: `push` with `branches-ignore: [main]` (testing included sinc
 Jobs `test`, `plan-tests`, `suite (<group>)`, `secrets` and `zizmor` (since 2026-11-17 the workflow audit lives here: `zizmor.yml` was deleted so one workflow holds every branch check; `test`, `secrets` skip on the schedule, `plan-tests`/`suite` run on pushes only, `zizmor` runs on pushes and the schedule, never on dispatch); `test` and `secrets` have these exact names because they are required checks (`suite` is not):
 
 - `test` (Kevin, 2026-11-16, two stages; "we are over-engineering to catch errors that will be shown later"): stage 1 is the fast required `test` check, only the cheapest obvious things, on the host runner without a container (about 10 s): `.github/scripts/sanity.py` runs `bash -n` on every tracked shell script and parses the workflow files (a broken one gives a "workflow file issue" with no job and no message). Since 2026-11-16 (Kevin, after a format nit failed a 15-minute image build) the `test` job also runs `just check` (pinned `just` through the setup-tool action; the build jobs of `build.yml`, `build-variant.yml` and `build-extra.yml` no longer repeat it). No shellcheck, no JSON/TOML parse and no path check: each shows where it matters. Stage 2 is the image build on `testing` (the smoke test of the image build); a problem that needs the real image is not for the initial CI. It runs for every push, documentation-only ones included, and for the dispatched `Test of <sha>` runs of the bump workflow (`bump_checks.py` posts the conclusions of `test` and `secrets` from that run).
-- `plan-tests` and `suite` (2026-11-17): the shell behavior tests live in group directories (since 2026-11-18 only `tests/image/` and `tests/recipes/`; the pipeline and supply tests moved to the pytest suite `tests/py/`, see "CI scripts are Python"); the former `tests/pipeline/` (the decisions that first run on main, schedule or publish: plan, promote, publish-latest, prune, aggregate, inputs-hash, move-tags, ci-issue, transient-reads), `tests/supply/` (pins and bumps: base-pin, bump-weekly, chunkah), `tests/image/` (what the image build and its runtime helpers do: install-binaries, validate-repos, secureboot-check, schedulers) and `tests/recipes/` (the ujust recipes: datastore-box, gaming-setup, hardware-setup, luks-tpm-unlock, switch-image, user-setup). The directory tree is the one list: `.github/scripts/plan_tests.py` (job `plan-tests`, host runner, checkout only, skipped for dispatched runs like `suite`) prints the groups as JSON and FAILS when a `tests/*.sh` sits outside a group or a group directory has no `*.sh`. `suite` is a matrix over that list (`suite (<group>)`, `fail-fast: false`); each job runs `tests/<group>/*.sh` one after the other by a plain shell loop (`timeout` 600 s per test, PASS or FAIL per test, a failing test prints its output) in a plain `registry.fedoraproject.org/fedora:45` container (floating tag on purpose: a Fedora change that breaks a script shows here); not a required check, and there is no aggregate `suite` result job (add one only if `suite` ever becomes required, since the matrix names are not a stable check name). A new test goes into a group directory (a new group is a new directory with at least one test); no workflow change. Every test finds the repository root with `git rev-parse --show-toplevel` from its own location, so the depth of a test never matters; `tests/**` stays docs-only for the image build (`docs_only.py`). The tests make their own temp directories and run as an ordinary user (the container runs as root; some recipes and tests refuse root).
+- `plan-tests` and `suite` (2026-11-17): the shell behavior tests live in group directories (since 2026-11-18 only `tests/image/` and `tests/recipes/`; the pipeline and supply tests moved to the pytest suite `tests/py/`, see "CI scripts are Python"); the former `tests/pipeline/` (the decisions that first run on main, schedule or publish: plan, promote, publish-latest, prune, aggregate, inputs-hash, move-tags, ci-issue, transient-reads), `tests/supply/` (pins and bumps: base-pin, bump-weekly, chunkah), `tests/image/` (what the image build and its runtime helpers do: install-binaries, validate-repos, secureboot-check, schedulers) and `tests/recipes/` (the ujust recipes: datastore-box, gaming-setup, hardware-setup, luks-tpm-unlock, switch-image, user-setup). The directory tree is the one list: `.github/scripts/10-plan/plan_tests.py` (job `plan-tests`, host runner, checkout only, skipped for dispatched runs like `suite`) prints the groups as JSON and FAILS when a `tests/*.sh` sits outside a group or a group directory has no `*.sh`. `suite` is a matrix over that list (`suite (<group>)`, `fail-fast: false`); each job runs `tests/<group>/*.sh` one after the other by a plain shell loop (`timeout` 600 s per test, PASS or FAIL per test, a failing test prints its output) in a plain `registry.fedoraproject.org/fedora:45` container (floating tag on purpose: a Fedora change that breaks a script shows here); not a required check, and there is no aggregate `suite` result job (add one only if `suite` ever becomes required, since the matrix names are not a stable check name). A new test goes into a group directory (a new group is a new directory with at least one test); no workflow change. Every test finds the repository root with `git rev-parse --show-toplevel` from its own location, so the depth of a test never matters; `tests/**` stays docs-only for the image build (`docs_only.py`). The tests make their own temp directories and run as an ordinary user (the container runs as root; some recipes and tests refuse root).
   No documentation-only shortcut (removed 2026-11-16, Kevin: the fast `test` makes it redundant; the image build's own docs-only plan, `plan_build.py` and `docs_only.py`, is a different thing and stays): a documentation push runs `test`, `suite` and `secrets` like any other. The loop unsets `GITHUB_OUTPUT`, `GITHUB_ENV`, `GITHUB_STEP_SUMMARY` and `GITHUB_PATH` (the runner points them at files the test user cannot write); tests set the ones they need themselves. The tests use stubs for podman,
   skopeo, cosign, brew and the network, so none is skipped in CI. The `suite` container runs as root, so the tests run as an ordinary user (some recipes and tests refuse root). A new test script needs no workflow change.
 - `secrets`: gitleaks over the full history, pinned release and sha256, `curl --retry`.
@@ -485,7 +485,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 - **Rechunk with chunkah (2026-11-14; Kevin's rule: adopt it when Universal Blue does, and Aurora and Bazzite's main repo do).**
   `just rechunk` (every image workflow: default, dx, nvidia-dx; the NVIDIA variant is a layer and is not rechunked) runs the chunkah image
   with Aurora's flags (`--compressed --max-layers 256 --prune /sysroot/ --label ostree.commit- --label ostree.final-diffid- --config <podman inspect>`).
-  The image is pinned by digest in `config/chunkah.env` and `.github/scripts/chunkah_ref.py` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
+  The image is pinned by digest in `config/chunkah.env` and `.github/scripts/10-plan/chunkah_ref.py` verifies its keyless cosign signature (GitHub Actions OIDC issuer,
   identity regexp `^https://github.com/coreos/chunkah/`) before every use and fails closed; `bump-pins.yml` (matrix entry `chunkah`, `bump_pin.py chunkah`)
   moves the digest to `latest` weekly, after the same verification, as a pull request into `testing`. The recipe prints and writes to the job summary the time,
   the layer count and the size. Measured before (last green testing run 43615118757, rpm-ostree): rechunk step 300 s, job `Build image` 674 s, dx job 920 s,
@@ -502,7 +502,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   Expected: only `usr/lib/initrd-release` differs from the previous image's initramfs. UNVERIFIED until a boot of the testing image and a member-by-member comparison of the initramfs.
   Undo: `git revert` the commit; `rpm-ostree compose build-chunked-oci` came back from git history.
 - **Version.** Every build, testing or main, stamps `org.opencontainers.image.version` (what `bootc status`
-  shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/image_version.py`, never a channel
+  shows as the version) with `<YYYYMMDD>-<short sha>` from `.github/scripts/10-plan/image_version.py`, never a channel
  . A promoted image keeps the version it was built with, which is why it must
   be channel-neutral: the retag cannot change it. After the rechunk the build checks, with
   `check_version_neutral.py`, that the version label (and any other `*version*` label) is present and contains
@@ -525,7 +525,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   every event but `schedule` on main (push, dispatch, `testing`, pull requests) mean build. A skip sets `build=false`
   in the final plan decision, the build, promote and sign jobs are skipped and the aggregate `Build and push image`
   passes (like a docs-only push) with the summary line "skipped: base, repo and age unchanged". The decision is
-  `.github/scripts/plan_skip.py` (pure function of its environment; tests: `tests/pipeline/plan-skip.sh`). The labels are set by
+  `.github/scripts/10-plan/plan_skip.py` (pure function of its environment; tests: `tests/pipeline/plan-skip.sh`). The labels are set by
   `just build` and re-passed by the rechunk. Failure modes: a stale or unavailable registry lookup builds (costs minutes,
   never skips wrongly); a base digest label from a different lookup method would build every day (the build computes the
   label the same way the plan does).
@@ -544,10 +544,10 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `testing`'s: the first run on each branch downloads, then it is a hit. A cached binary that does not run is ignored
   and reinstalled. Bumping a tool means changing the version in the action (and the installer's `with:`).
 - **No debounce (removed 2026-11-16).** The 90 s wait at the start of the `plan` job is gone; a newer push to `testing` cancels the older run again since the tags are moved after signing (see "Cancelling"), so a burst builds the newest tip.
-- **Docs-only skip.** A `plan` job always runs `.github/scripts/plan_build.py` (tested by
+- **Docs-only skip.** A `plan` job always runs `.github/scripts/10-plan/plan_build.py` (tested by
   `tests/plan-build.sh`). When every file changed in the range (push: `github.event.before` to the sha; pull
   request: base to head) is docs-only, it sets `build=false`: top-level `*.md`, `docs/**`, `LICENSE`, `.gitignore`
-  (the list is `is_docs` in `.github/scripts/docs_only.py`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
+  (the list is `is_docs` in `.github/scripts/10-plan/docs_only.py`, one place, sourced by the plan scripts). The heavy `build_push` job (named `Build image`) and
   `sign` are then skipped, and the aggregate `build_result` job, named exactly `Build and push image`, passes.
   An unknown or all-zero before-SHA, the schedule, `workflow_dispatch` and any other changed file always build.
   Exception (2026-11-16): a push to `testing` is never skipped by its own diff (`plan_build.py` gets `github.ref` as a fourth argument and prints
@@ -583,7 +583,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
 
 ## Input hashes and dx on testing
 
-- **Three hashes, one script.** `.github/scripts/inputs_hash.py` (tests: `tests/pipeline/inputs-hash.sh`) hashes the sorted
+- **Three hashes, one script.** `.github/scripts/10-plan/inputs_hash.py` (tests: `tests/pipeline/inputs-hash.sh`) hashes the sorted
   `git ls-tree -r` entries (mode, blob id, path) of a commit that pass a filter, so the result does not depend on commit ids or
   dates. `dx_inputs` covers the dx-only paths (`is_dx_only`): `variants/dx/**`,
   `.github/scripts/dx-smoke.sh`, plus the paths both variants share (`is_variant_shared`: `.github/workflows/dx-image.yml`, `.github/workflows/build-variant.yml` (one file for both, so editing it rebuilds dx AND gx, 2026-11-17),
@@ -605,7 +605,7 @@ The image workflows used to start with `ublue-os/remove-unwanted-software` (38 s
   `vanilla_inputs` of the `latest` revision with HEAD instead of the git tree, so a dx-only change does not rebuild `latest` the next day.
 - **dx on testing (`build-variant.yml`).** Since 2026-11-13 dx is DISPATCHED (bullet "How dx is started" below), no longer started by `workflow_run`; the plan, tags and channels below are unchanged. Channels: `testing` (after a testing build; base
   `octarine-os:testing-<sha7>` of the triggering commit, see below; tags `testing` and `testing-<sha7>`; no `-<date>-` tag), `latest` (after a main build). Every checkout is `inputs.sha`, the commit the pipeline built (a manual dispatch without it: the ref's tip).
-  `.github/scripts/plan_dx.py` (tests: `tests/pipeline/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
+  `.github/scripts/10-plan/plan_dx.py` (tests: `tests/pipeline/plan-dx.sh`) decides per channel from the published `octarine-os-dx:<channel>` labels
   `org.opencontainers.image.base.digest` and `io.github.redcodeworks.octarine-os.dx-inputs` (new; `dx-tree` is still written but no longer compared):
   skip only when BOTH equal the current base digest (raw manifest digest of the verified base, see "Base of the testing channel" below) and `dx_inputs` of the
   commit; on `latest` otherwise look for a promotable testing image (candidates `testing`, then `testing-<sha7>` of the newest 60 commits of
@@ -723,7 +723,7 @@ main); the images never wait for each other.** The default image (`octarine-os`)
   workflow `env:` block (`.github/workflows/build.yml`) and repeated as `ARG` defaults in the `Containerfile` (keep
   them in sync); the repository variables `BASE_IMAGE` and `FEDORA_VERSION` override the workflow defaults. CI and
   `just build` pass both as build args; for a local experiment `FEDORA_VERSION=46 just build` works.
-- **Floating base with safeguards (2026-11-14; Kevin chose to keep the base FLOATING so `latest` keeps getting base fixes daily).** `.github/scripts/base_pin.py`
+- **Floating base with safeguards (2026-11-14; Kevin chose to keep the base FLOATING so `latest` keeps getting base fixes daily).** `.github/scripts/10-plan/base_pin.py`
   (step `Check the base image can be pulled` of `build.yml`) resolves `${BASE_IMAGE}:${FEDORA_VERSION}` to a manifest digest ONCE at the start of
   the run (sha256 of `skopeo inspect --raw`), verifies its cosign signature with the vendored `keys/ublue-os-main-cosign.pub` (the key of github.com/ublue-os/main, compared
   with the upstream file on 2026-11-14: identical; the list digest, or for a manifest list the linux/amd64 child) and FAILS the build if it does not verify, with an error that
@@ -1052,7 +1052,7 @@ Shipped to everyone who uses the image as-is (moved here from the README's forme
   | `octarine-os-nvidia` | `octarine-os-nvidia` | its own build's `<YYYYMMDD>-<short sha>` | `nvidia.sh` |
   | `octarine-os-dx` (`latest`) | `octarine-os-dx` | its own build's version | `dx.sh` |
 
-- The version string is `.github/scripts/image_version.py`, the same string as the `org.opencontainers.image.version` label (the
+- The version string is `.github/scripts/10-plan/image_version.py`, the same string as the `org.opencontainers.image.version` label (the
   label). It reaches the build as the build argument `IMAGE_VERSION` (`just build` passes it; the nvidia and dx
   workflows pass `--build-arg IMAGE_VERSION`). The variants override both fields with
   their OWN build's version, never the base's. A promoted image (testing to `latest`) is a retag of the tested digest, so it keeps
@@ -1281,7 +1281,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   default image's own kargs file) and rebuilds the initramfs with dracut. No rechunk (a layer on a chunked image). `silverblue-nvidia` was
   retired by Universal Blue (notice of 7 Nov 2026), which is why the variant starts from our image instead.
 - **Kernel match (the main risk).** The workflow reads the kernel inside the pulled base (`rpm -q kernel-core`) and
-  `.github/scripts/nvidia_akmods_ref.py` picks the akmods tag pinned to exactly that kernel: `main-<fedora>-<kernel with arch>`
+  `.github/scripts/10-plan/nvidia_akmods_ref.py` picks the akmods tag pinned to exactly that kernel: `main-<fedora>-<kernel with arch>`
   or without the arch suffix (the tag form is unverified, both are tried), resolved to a digest with skopeo. No such tag, a
   kernel of another Fedora release or a malformed kernel fails the job loudly and publishes nothing; the moving `main-<fedora>`
   tag is never used. `nvidia.sh` also asserts the kernel is unchanged by the install. Base and akmods digests are logged and
@@ -1324,7 +1324,7 @@ Plan modes are pure (`--list`, `--no`, for `ujust dev` `--no`): no distrobox is 
   `.github/scripts/dx-smoke.sh`.
 - **The dx lists (`packages/dx/`, in this repository since 2026-11-18; before that the octarine-bins-dx image, pinned by digest, from 2026-11-16).** `required-fedora.txt` and `optional-fedora.txt`, installed by `build_files/install-packages.sh` (the same script as the other two images; see "Package lists" under the default image). The dx `Containerfile` copies the script and `packages/dx` into its `ctx` stage; `dx.sh` runs `MISSING_FILE=... /ctx/install-packages.sh /ctx/packages` (misses are appended to the default image's `optional-packages-missing`). There is no binaries image, no pin, no verify step in `dx-image.yml` and no `bins-dx` label any more; a dx list change is a dx input (`inputs_hash.py`), so the dx testing build is the first with it. `keys/redcodeworks-toolbox-cosign.pub` stays in the dx image's `ctx` only for the datastore bundle signature policy (`dx.sh`).
 - **Workflow rules (`build-variant.yml`).** Since 2026-11-10 dx also builds on `testing` and promotes on `main`; the flow, the plan decision table, the
-  input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/plan_dx.py`. The text below
+  input hashes and the result check are in "Input hashes and dx on testing" above, and the plan logic is `.github/scripts/10-plan/plan_dx.py`. The text below
   describes the earlier main-only version where it still applies (the build steps, labels, sign job, concurrency). Triggers: `workflow_run` of "Build container image" (`completed`,
   `branches: [main, testing]`; `workflow_run` workflows run from the default branch's file, so the workflow cannot be run from `testing`
   or a feature branch and the first run of a changed file happens only after promotion) and `workflow_dispatch` (inputs `channel`, `force`). The

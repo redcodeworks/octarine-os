@@ -103,7 +103,7 @@ jobs:
 
       - name: List the test groups
         id: plan
-        run: uv run --frozen --no-dev python -I .github/scripts/plan_tests.py
+        run: uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_tests.py
 
   # The behavior tests (tests/<group>/*.sh), one matrix job per group (`suite (<group>)`), on a plain Fedora container (floating tag on purpose: a Fedora change that breaks a
   # script shows here). NOT a required check: it is informative and freely cancelable (a newer push replaces it; a watching agent may cancel it and merge once `test` and

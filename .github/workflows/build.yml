@@ -3,7 +3,7 @@ name: Build container image
 # Branch model: pushes to `testing` publish the `testing` image (immutable tags first, `testing` moved after signing; a newer push cancels an older run); `main` is protected and only changes
 # through a pull request from `testing`, whose merge publishes `latest`. Every push runs the workflow (no
 # path filter) so the required "Build and push image" check always exists for the commit being promoted:
-# the plan job skips the heavy build when only docs changed (list in .github/scripts/plan_build.py) and the
+# the plan job skips the heavy build when only docs changed (list in .github/scripts/10-plan/plan_build.py) and the
 # aggregate job named "Build and push image" then passes without it. There is no pull_request trigger: a dev branch
 # is checked by test.yml, the image is built when the change is merged into `testing`. A push whose default-image inputs
 # (inputs_hash.py: everything but docs and the files only the dx or gx images use) equal those of an already published, signed `testing`
@@ -74,7 +74,7 @@ jobs:
           AFTER: ${{ github.sha }}
           REF: ${{ github.ref }}
         run: |
-          build=$(uv run --frozen --no-dev python -I .github/scripts/plan_build.py "${EVENT}" "${BEFORE}" "${AFTER}" "${REF}")
+          build=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_build.py "${EVENT}" "${BEFORE}" "${AFTER}" "${REF}")
           echo "build=${build}" >> "${GITHUB_OUTPUT}"
           echo "Build image: ${build}"
 
@@ -102,7 +102,7 @@ jobs:
           echo "image=${registry,,}/${IMAGE_NAME,,}" >> "${GITHUB_OUTPUT}"
 
       # Scheduled refresh: skip the build when nothing changed since the published `latest` (decision rules and
-      # failure modes in .github/scripts/plan_skip.py; any lookup that fails means build, never skip)
+      # failure modes in .github/scripts/10-plan/plan_skip.py; any lookup that fails means build, never skip)
       - name: Set up cosign (scheduled skip check)
         if: github.event_name == 'schedule'
         uses: ./.github/actions/setup-tool
@@ -127,7 +127,7 @@ jobs:
           repo_same=false
           # equal default-image inputs count as the same repository (docs-only, dx-only and gx-only changes do not rebuild it)
           if [[ -n "${revision}" ]] && git cat-file -e "${revision}^{commit}" 2>/dev/null \
-              && [[ "$(uv run --frozen --no-dev python -I .github/scripts/inputs_hash.py vanilla "${revision}")" == "$(uv run --frozen --no-dev python -I .github/scripts/inputs_hash.py vanilla HEAD)" ]]; then
+              && [[ "$(uv run --frozen --no-dev python -I .github/scripts/10-plan/inputs_hash.py vanilla "${revision}")" == "$(uv run --frozen --no-dev python -I .github/scripts/10-plan/inputs_hash.py vanilla HEAD)" ]]; then
             repo_same=true
           fi
           signed=false
@@ -137,7 +137,7 @@ jobs:
           fi
           decision=$(EVENT="${GITHUB_EVENT_NAME}" REF="${GITHUB_REF}" BASE_NOW="${base_now}" LATEST_BASE="${latest_base}" \
             REPO_SAME="${repo_same}" LATEST_CREATED="${created}" MAX_AGE_DAYS="${SCHEDULED_REBUILD_MAX_AGE_DAYS}" SIGNED="${signed}" \
-            LATEST_MISSING="${latest_missing}" uv run --frozen --no-dev python -I .github/scripts/plan_skip.py)
+            LATEST_MISSING="${latest_missing}" uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_skip.py)
           echo "${decision}"
           echo "${decision}" >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${decision}" == skipped:* ]]; then echo "skip=true" >> "${GITHUB_OUTPUT}"; fi
@@ -154,7 +154,7 @@ jobs:
           REF: ${{ github.ref }}
           AFTER: ${{ github.sha }}
         run: |
-          uv run --frozen --no-dev python -I .github/scripts/plan_promote.py "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
+          uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_promote.py "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
 
       # A push to testing whose default-image inputs equal those of a published testing image (a dx-only or gx-only change) needs no
       # build: the plan ends green and the aggregate check passes (see CLAUDE.md "dx image" and plan_vanilla_reuse.py)
@@ -167,7 +167,7 @@ jobs:
           REF: ${{ github.ref }}
           AFTER: ${{ github.sha }}
         run: |
-          uv run --frozen --no-dev python -I .github/scripts/plan_vanilla_reuse.py "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
+          uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_vanilla_reuse.py "${EVENT}" "${REF}" "${AFTER}" | tee -a "${GITHUB_OUTPUT}"
 
       - name: Set up cosign
         if: steps.promote.outputs.promote == 'true' || steps.reuse.outputs.reuse == 'true'
@@ -370,7 +370,7 @@ jobs:
           echo "BASE_REF=${base}" >> "${GITHUB_ENV}"
           # the floating tag is resolved to a digest ONCE here and its signature is verified with the pinned Universal Blue key (fail closed);
           # everything after this step uses that digest, so one run uses one base
-          pin_line=$(uv run --frozen --no-dev python -I .github/scripts/base_pin.py)
+          pin_line=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/base_pin.py)
           BASE_PIN=${pin_line#BASE_PIN=}
           [[ "${BASE_PIN}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::no base digest from base_pin.py"; exit 1; }
           if ! uv run --frozen --no-dev python -I .github/scripts/retry.py podman pull "${BASE_IMAGE}@${BASE_PIN}" >/dev/null; then

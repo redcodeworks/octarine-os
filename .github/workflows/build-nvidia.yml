@@ -101,7 +101,7 @@ jobs:
       - name: Resolve the akmods image for this kernel
         run: |
           set -euo pipefail
-          out=$(uv run --frozen --no-dev python -I .github/scripts/nvidia_akmods_ref.py "${BASE_KERNEL}" "${FEDORA_VERSION}")
+          out=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/nvidia_akmods_ref.py "${BASE_KERNEL}" "${FEDORA_VERSION}")
           echo "${out}"
           echo "AKMODS_REF=$(sed -n 's/^ref=//p' <<<"${out}")" >> "${GITHUB_ENV}"
           echo "AKMODS_TAG=$(sed -n 's/^tag=//p' <<<"${out}")" >> "${GITHUB_ENV}"
@@ -124,7 +124,7 @@ jobs:
       - name: Build the image
         run: |
           set -euo pipefail
-          version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)
+          version=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/image_version.py)
           podman build -f variants/nvidia/Containerfile \
             --build-arg "BASE_REF=${BASE_REF}" \
             --build-arg "AKMODS_REF=${AKMODS_REF}" \

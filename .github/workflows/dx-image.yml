@@ -4,7 +4,7 @@ name: dx image (reusable)
 # each) and build-extra.yml (octarine-os-dx-gx, octarine-os-nvidia-dx and octarine-os-nvidia-gx, dispatch only). The input `variant` (dx or gx) is the LAYER: it selects the
 # Containerfile (variants/<variant>/Containerfile), the inputs hash and its label (<variant>-inputs, <variant>-tree), and the smoke script (.github/scripts/<variant>-smoke.sh); everything else is the same. Each caller keeps its own triggers,
 # concurrency group, run-name, guards, SIGN job and RESULT job: the required checks `Build dx and push image` and `Build gx and push image` and their commit statuses are posted
-# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
+# by build-variant.yml only (a job of this workflow could not carry that name), build-extra.yml never posts one. The plan job (.github/scripts/10-plan/plan_dx.py) resolves the base digest, verifies its signature and skips, promotes
 # or builds by comparing the labels of the published image; promote only when the plan finds a tested testing image (promote_from_testing).
 # NO SIGNING HERE: the sign job lives in each caller (`environment: signing`, the composite action .github/actions/sign-images) because the
 # environment secret SIGNING_SECRET did not reach a job inside this reusable workflow (an empty key, "getting signer: reading key", observed
@@ -169,7 +169,7 @@ jobs:
           VARIANT: ${{ inputs.variant }}
           FORCE: ${{ inputs.force }}
           PROMOTE_FROM_TESTING: ${{ inputs.promote_from_testing }}
-        run: uv run --frozen --no-dev python -I .github/scripts/plan_dx.py
+        run: uv run --frozen --no-dev python -I .github/scripts/10-plan/plan_dx.py
 
   build:
     name: Build ${{ inputs.variant }} image
@@ -257,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           set -a; . ./config/image.env; set +a
-          version=$(uv run --frozen --no-dev python -I .github/scripts/image_version.py)
+          version=$(uv run --frozen --no-dev python -I .github/scripts/10-plan/image_version.py)
           sha=$(git rev-parse HEAD)
           # the variant's image id argument, and the keyword of the Artifact Hub label
           case "${VARIANT}" in

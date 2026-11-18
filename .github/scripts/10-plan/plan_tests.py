@@ -4,7 +4,7 @@ directory tree is the only list). Prints the groups as a JSON array on stdout an
 GITHUB_OUTPUT set, as `groups=<json>`. (tests/py, the pytest suite of the CI scripts, is
 not a group: it has its own job.) Fails when a tests/*.sh sits outside a group (it would
 never run) or a group directory has no *.sh. Run from anywhere: `python3 -I
-.github/scripts/plan_tests.py`.
+.github/scripts/10-plan/plan_tests.py`.
 """
 
 import json
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 here = Path(__file__).resolve().parent
-sys.path[:0] = [str(here / "00-lib"), str(here)]
+sys.path[:0] = [str(here.parent / "00-lib"), str(here)]
 import ci  # noqa: E402
 
 
@@ -25,7 +25,7 @@ def main(argv=None):
     *.sh or no group exists.
     """
     ci.arg_parser(__doc__).parse_args(argv)
-    tests = Path(__file__).resolve().parents[2] / "tests"
+    tests = Path(__file__).resolve().parents[3] / "tests"
     # a *.sh directly under tests/ belongs to no group
     stray = sorted(p.name for p in tests.glob("*.sh"))
 
