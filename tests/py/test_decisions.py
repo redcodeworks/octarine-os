@@ -1,4 +1,6 @@
-"""The decision scripts that are pure functions of their environment or arguments: plan_skip, plan_build, the aggregate results, the channel-neutral version check."""
+"""The decision scripts that are pure functions of their environment or arguments:
+plan_skip, plan_build, the aggregate results, the channel-neutral version check.
+"""
 
 import subprocess
 import sys
@@ -49,6 +51,14 @@ SKIP_ENV = {
     ],
 )
 def test_plan_skip(override, want):
+    """plan_skip answers with a `skipped` or `build:` line for each environment
+    variation.
+
+    The override changes one variable of a fully skippable scheduled run; the output
+    must start with the expected text.
+    """
+    # every variable the script reads starts empty so the host environment cannot leak
+    # in
     p = script(
         "plan_skip.py", env={k: "" for k in SKIP_ENV}, extra={**SKIP_ENV, **override}
     )
@@ -56,10 +66,14 @@ def test_plan_skip(override, want):
 
 
 def push_repo(tmp_path, *changes):
-    """A repository with a base commit and one commit per entry of `changes` (a list of file names); returns (repo, [commit ids]) with the base first."""
+    """A repository with a base commit and one commit per entry of `changes` (a list of
+    file names); returns (repo, [commit ids]) with the base first.
+    """
     repo = tmp_path / "r"
     ids = make_repo(repo, "base")
     (repo / "docs").mkdir()
+
+    # one commit per changed file
     for name in changes:
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text("x\n")
@@ -86,6 +100,7 @@ def push_repo(tmp_path, *changes):
     ],
 )
 def test_plan_build(tmp_path, event, changed, ref, want):
+    """plan_build prints true or false for the event, the changed file and the ref."""
     repo, ids = push_repo(tmp_path, changed)
     assert (
         script("plan_build.py", event, ids[0], ids[1], ref, cwd=repo).stdout.strip()
@@ -94,6 +109,7 @@ def test_plan_build(tmp_path, event, changed, ref, want):
 
 
 def test_plan_build_builds_for_an_unusable_base_commit(tmp_path):
+    """An unusable base commit (all zeros) leaves nothing to diff: the plan builds."""
     repo, ids = push_repo(tmp_path, "README.md")
     assert (
         script(
@@ -104,6 +120,8 @@ def test_plan_build_builds_for_an_unusable_base_commit(tmp_path):
 
 
 def aggregate(name, **env):
+    """Run an aggregate script with every input variable empty except the given ones."""
+    # every variable the aggregates read starts empty
     return script(
         name,
         env={
@@ -222,6 +240,7 @@ def aggregate(name, **env):
     ],
 )
 def test_aggregate_result(env, ok):
+    """aggregate_result exits 0 exactly for the job results that match the plan."""
     assert (aggregate("aggregate_result.py", **env).returncode == 0) is ok
 
 
@@ -299,10 +318,15 @@ def test_aggregate_result(env, ok):
     ],
 )
 def test_aggregate_dx(env, ok):
+    """aggregate_dx passes (exit 0) exactly for the job results that match the plan."""
     assert (aggregate("aggregate_dx.py", **env).returncode == 0) is ok
 
 
 def version_check(*lines):
+    """Run check_version_neutral.py with the lines on stdin; returns the
+    CompletedProcess.
+    """
+    # the script reads KEY=VALUE lines from stdin
     return subprocess.run(
         [sys.executable, "-I", str(SCRIPTS / "check_version_neutral.py")],
         input="".join(f"{line}\n" for line in lines),
@@ -312,6 +336,9 @@ def version_check(*lines):
 
 
 def test_version_labels_must_not_name_a_channel():
+    """Version labels pass when dated and fail when they name a channel or a key is
+    missing.
+    """
     assert (
         version_check(
             "org.opencontainers.image.version=20261108-abc1234",
@@ -340,12 +367,15 @@ def test_version_labels_must_not_name_a_channel():
 
 
 def test_a_captured_result_is_alone_on_stdout():
-    """A workflow captures stdout with `$(...)`: the reason a script logs (info) goes to stderr, stdout holds only the result."""
+    """A workflow captures stdout with `$(...)`: the reason a script logs (info) goes to
+    stderr, stdout holds only the result.
+    """
     p = script("plan_build.py", "push", "0" * 40, "HEAD", "refs/heads/main")
     assert (
         p.returncode == 0
         and p.stdout == "true\n"
         and "no usable base commit" in p.stderr
     )
+    # every variable the script reads starts empty, then a full skippable run is set
     p = script("plan_skip.py", env={k: "" for k in SKIP_ENV}, extra=SKIP_ENV)
     assert p.stdout.count("\n") == 1 and p.stdout.startswith("skipped:")
