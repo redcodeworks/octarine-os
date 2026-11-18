@@ -220,6 +220,12 @@ jobs:
         with:
           tool: just
 
+      # chunkah-ref.sh (run by `just rechunk`) verifies the chunkah image with cosign
+      - name: Set up cosign
+        uses: ./.github/actions/setup-tool
+        with:
+          tool: cosign
+
       - name: Image names
         id: names
         run: |
