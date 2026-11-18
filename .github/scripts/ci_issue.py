@@ -150,6 +150,7 @@ Later failures are added to this issue as comments; it closes itself when `lates
             ci.log.info(f"commented on #{number} for {run_url}")
         return 0
     number = open_issue()
+
     # recover: only an open issue can be closed
     if number is None:
         ci.log.info(f"no open {label} issue: nothing to close")

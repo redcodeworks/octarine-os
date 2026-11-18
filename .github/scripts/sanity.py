@@ -92,6 +92,7 @@ def main(argv=None):
     """
     ci.arg_parser(__doc__).parse_args(argv)
     found = problems()
+
     # one error annotation per problem
     for problem in found:
         ci.log.error(problem)

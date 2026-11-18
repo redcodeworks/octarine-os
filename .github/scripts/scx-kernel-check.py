@@ -84,6 +84,7 @@ def parse_btf(blob):
     magic, version, flags, hdr_len, type_off, type_len, str_off, str_len = (
         struct.unpack_from("<HBBIIIII", blob, 0)
     )
+
     # the magic number tells BTF from any other data
     if magic != BTF_MAGIC:
         raise CheckError("not BTF (magic %#x)" % magic)
@@ -100,6 +101,7 @@ def parse_btf(blob):
     types = [{"kind": 0, "name": "", "members": []}]
     pos = hdr_len + type_off
     end = pos + type_len
+
     # walk the type records one after another
     while pos < end:
         name_off, info, size_type = struct.unpack_from("<III", blob, pos)
@@ -168,6 +170,7 @@ def elf_sections(data):
     e_shoff = struct.unpack_from("<Q", data, 40)[0]
     e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHH", data, 58)
     raw = []
+
     # read every section header
     for i in range(e_shnum):
         o = e_shoff + i * e_shentsize
@@ -187,6 +190,7 @@ def elf_sections(data):
     shstr = raw[e_shstrndx]
     strtab = data[shstr[2] : shstr[2] + shstr[3]]
     out = []
+
     # resolve each section name through the section name string table
     for sh_name, sh_type, off, size, link, info, ent in raw:
         end = strtab.find(b"\0", sh_name)
@@ -242,6 +246,7 @@ def embedded_bpf_objects(path):
     """
     data = open(path, "rb").read()
     found = []
+
     # every ELF header inside the binary is a candidate for an embedded object
     for m in re.finditer(b"\x7fELF\x02\x01\x01", data):
         start = m.start()
@@ -266,6 +271,7 @@ def analyse_object(obj):
     machine, _, secs = elf_sections(obj)
     syms = elf_symbols(obj, secs)
     required, weak = set(), set()
+
     # collect the imports of the object: required and weak
     for s in syms:
         # undefined (SHN_UNDEF), global or weak symbols are the imports
@@ -273,6 +279,7 @@ def analyse_object(obj):
             (weak if s["bind"] == 2 else required).add(s["name"])
     # collect the BTF section of the object
     btf_sec = [s for s in secs if s["name"] == ".BTF"]
+
     # without BTF the object's struct_ops members cannot be named
     if not btf_sec:
         raise CheckError("the BPF object has no .BTF section")
@@ -283,14 +290,17 @@ def analyse_object(obj):
     ops = [
         t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"
     ]
+
     # an object without that struct is not a sched_ext scheduler
     if not ops:
         raise CheckError("the BPF object's BTF has no struct sched_ext_ops")
     by_off = {}
+
     # member offsets in bytes, to match relocations against
     for mname, mbits in ops[0]["members"]:
         by_off.setdefault(mbits // 8, mname)
     members = set()
+
     # each struct_ops relocation section names the members the object sets
     for i, s in enumerate(secs):
         # a relocation section (SHT_REL) against a struct_ops section
@@ -310,6 +320,7 @@ def decompress_vmlinuz(path):
     setup header.
     """
     data = open(path, "rb").read()
+
     # a bzImage carries the setup header magic at 0x202
     if data[0x202:0x206] != b"HdrS":
         raise CheckError("vmlinuz is not an x86 bzImage")
@@ -322,6 +333,7 @@ def decompress_vmlinuz(path):
         b"\xfd7zXZ\x00": ["xz", "-dc"],
         b"\x1f\x8b": ["gzip", "-dc"],
     }
+
     # find the compression of the payload by its magic bytes
     for magic, cmd in tools.items():
         # the tool that matches the magic unpacks the payload
@@ -354,6 +366,7 @@ def kernel_btf(kernel_dir):
     _, _, secs = elf_sections(vmlinux)
     # the BTF section of the unpacked vmlinux
     btf = [s for s in secs if s["name"] == ".BTF"]
+
     # a kernel without BTF cannot be compared against
     if not btf:
         raise CheckError("the kernel has no .BTF section")
@@ -381,6 +394,7 @@ def main():
     # 1. the kernel config
     cfg = {}
     cfg_path = os.path.join(args.kernel_dir, "config")
+
     # an unreadable config fails the check
     try:
         # read every `CONFIG_X=value` and `# CONFIG_X is not set` line
@@ -396,6 +410,7 @@ def main():
     except OSError as e:
         print("FAIL kernel config unreadable: %s" % e)
         return 1
+
     # the options without which no scheduler can load
     for key in (
         "CONFIG_SCHED_CLASS_EXT",
@@ -414,6 +429,7 @@ def main():
 
     # 2. the kernel's BTF and symbols
     types = None
+
     # read the kernel's BTF; without it the symbol comparison is skipped with a warning
     try:
         types = kernel_btf(args.kernel_dir)
@@ -423,6 +439,7 @@ def main():
             "WARN kernel BTF could not be read (%s): the comparison below is skipped, only the config check counts"
             % e
         )
+
     # without BTF only the config check counts
     if types is None:
         return 1 if failed else 0
@@ -434,6 +451,7 @@ def main():
     kops = [
         t for t in types if t["kind"] == Kind.STRUCT and t["name"] == "sched_ext_ops"
     ]
+
     # a kernel without it has no usable sched_ext
     if not kops:
         print(
@@ -443,6 +461,7 @@ def main():
     # the member names of the kernel's struct sched_ext_ops
     kernel_members = {m for m, _ in kops[0]["members"]}
     sysmap = set()
+
     # System.map adds kernel variables that BTF may not list
     try:
         # each line is address, type, name
@@ -456,6 +475,7 @@ def main():
 
     # 3. each scheduler binary
     names = args.names
+
     # no names on the command line: read them from the manifest
     if not names:
         names = []
@@ -464,6 +484,7 @@ def main():
             # blank and comment lines are skipped
             if line.strip() and not line.startswith("#"):
                 names.append(line.split("\t")[0])
+
     # an empty manifest leaves nothing to check
     if not names:
         print("FAIL no scheduler to check")
@@ -480,6 +501,7 @@ def main():
         for m in ("unshare", "--bind", "config-${rel}", "/usr/lib/modules")
     )
     needing = []
+
     # check each scheduler in turn
     for name in names:
         path = os.path.join(args.binary_dir, name)

@@ -97,6 +97,7 @@ def summary(line: str) -> None:
     fails the step).
     """
     log.info(line)
+
     # a summary that cannot be written must never fail the step
     try:
         append_to("GITHUB_STEP_SUMMARY", line)
@@ -119,6 +120,7 @@ def int_env(name: str, default: int) -> int:
     number; a value that is not a number exits with a message through SystemExit.
     """
     value = os.environ.get(name, str(default))
+
     # only digits are valid: no sign, no unit, no empty string
     if not value.isdigit():
         raise SystemExit(f"{name} must be a number, got '{value}'")
@@ -156,6 +158,7 @@ def git(*args: str) -> str:
 def group(title: str):
     """A collapsible group in the Actions log: `with ci.group("sign"):`."""
     print(f"::group::{title}", flush=True)
+
     # the group is closed even when the body raises
     try:
         yield

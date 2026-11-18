@@ -54,6 +54,7 @@ def read_versions(text):
     Receives the text; returns one list with the versions of every page.
     """
     decoder, versions, pos = json.JSONDecoder(), [], 0
+
     # one raw_decode per page: the pages follow each other without a separator
     while True:
         # skip the whitespace between pages
@@ -93,6 +94,7 @@ def plan(versions):
     cosign signatures of deleted images or of images that no longer exist.
     """
     sigs, images = {}, []
+
     # signature versions (only sha256-<digest>.sig tags) are kept apart from images
     for v in versions:
         tags = tags_of(v)
@@ -145,6 +147,7 @@ def main(argv=None):
     ci.log.info(
         f"{len(versions)} versions, {len(dailies)} with a daily tag, keeping the newest {KEEP}"
     )
+
     # log what stays and what goes
     for v in kept:
         ci.log.info(f"  keep   {label(v)}")
@@ -153,6 +156,7 @@ def main(argv=None):
         # a daily that is not doomed is protected or carries another tag
         if v not in doomed:
             ci.log.info(f"  keep   (protected or carries another tag) {label(v)}")
+
     # each image to delete
     for v in doomed:
         ci.log.info(f"  DELETE image {label(v)}")
@@ -174,6 +178,7 @@ def main(argv=None):
     if not API_BASE:
         sys.exit("API_BASE is required to delete")
     gh = ci.github()
+
     # delete one version at a time, logging each
     for v in todo:
         gh.request("DELETE", f"/{API_BASE}/versions/{v['id']}")

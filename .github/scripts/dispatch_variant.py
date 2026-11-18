@@ -67,6 +67,7 @@ def main(argv=None):
         ),
         None,
     )
+
     # refuse before anything is dispatched
     if problem:
         ci.log.error(problem)
@@ -94,6 +95,7 @@ def main(argv=None):
         "sha": args.sha,
         **({"base_digest": args.base_digest} if args.base_digest else {}),
     }
+
     # a rejected dispatch is reported with the SDK's own message
     try:
         rest.actions.create_workflow_dispatch(
@@ -105,6 +107,7 @@ def main(argv=None):
             f"could not dispatch {WORKFLOW} on {ref} (channel {args.channel}, {args.sha}): {e}"
         )
         return 1
+
     # a poll, not a retry: the dispatched run does not exist yet for a moment
     for i in range(1, tries + 1):
         # the new run: right title and branch, and not one of the earlier runs
