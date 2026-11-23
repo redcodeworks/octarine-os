@@ -91,8 +91,6 @@ chmod 0600 "${img}"
 
 set_os_release_field IMAGE_ID octarine-os-nvidia
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
-# the boot menu entry (ostree titles it from PRETTY_NAME): name, build version and kernel, so the entries can be told apart
-set_os_release_field PRETTY_NAME "octarineOS ${IMAGE_VERSION} (kernel $(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core))"
 bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == octarine-os-nvidia ]]'
 # The build log itself shows whether the modules landed (listing to a file: no SIGPIPE from head)
 lst=$(mktemp)

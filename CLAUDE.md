@@ -33,7 +33,7 @@ by hand: no test reads the README (removed 2026-11-16, see "What the tests may a
   Fedora major upgrade: set the variable (the owner runs `gh variable set FEDORA_VERSION --body 46`; undo
   `gh variable delete`), run the build workflow on `testing` (changing a variable starts no build), `bootc switch`
   to the `testing` image, soak about a week, keep a deployment pinned, then merge; promotion only retags a tested digest.
-- `build_files/build.sh` is the orchestrator, in the shape of Bluefin's `build_files/shared/build.sh` (2026-11-18, Kevin: Bluefin's build is the baseline, our changes are commented deviations; both repos are Apache-2.0; every file derived from a Bluefin file carries a header naming it, no NOTICE is needed because Bluefin's `NOTICE.common` covers vendored files we do not use). It owns the log-group trap and the system_files copy, and runs `00-image-info.sh`, `01-signature-policy.sh`, `04-packages.sh`, `06-selinux.sh`, `07-branding.sh`, `10-binaries.sh`, `17-cleanup.sh` (services), `18-workarounds.sh`, `19-initramfs.sh` (Bluefin's `rpm -qa` kernel version), `21-image-identity.sh` (IMAGE_ID, IMAGE_VERSION and PRETTY_NAME, AFTER dracut), then `validate-repos.sh` and `final-cleanup.sh`; each script has one `::group::` and its own `set` line. Not used from Bluefin: `03-install-kernel-akmods.sh` (we keep the base kernel), its `validate-repos.sh` and `clean-stage.sh` (ours are stricter or do the bootc-lint work). Overall (log sections as `::group::`, see "Image build steps added 2026-11-14"): guard against secrets in `system_files`, rename the base recipe files `10-update.just` and
+- `build_files/build.sh` is the orchestrator, in the shape of Bluefin's `build_files/shared/build.sh` (2026-11-18, Kevin: Bluefin's build is the baseline, our changes are commented deviations; both repos are Apache-2.0; every file derived from a Bluefin file carries a header naming it, no NOTICE is needed because Bluefin's `NOTICE.common` covers vendored files we do not use). It owns the log-group trap and the system_files copy, and runs `00-image-info.sh`, `01-signature-policy.sh`, `04-packages.sh`, `06-selinux.sh`, `07-branding.sh`, `10-binaries.sh`, `17-cleanup.sh` (services), `18-workarounds.sh`, `19-initramfs.sh` (Bluefin's `rpm -qa` kernel version), `21-image-identity.sh` (IMAGE_ID and IMAGE_VERSION, AFTER dracut), then `validate-repos.sh` and `final-cleanup.sh`; each script has one `::group::` and its own `set` line. Not used from Bluefin: `03-install-kernel-akmods.sh` (we keep the base kernel), its `validate-repos.sh` and `clean-stage.sh` (ours are stricter or do the bootc-lint work). Overall (log sections as `::group::`, see "Image build steps added 2026-11-14"): guard against secrets in `system_files`, rename the base recipe files `10-update.just` and
   `30-distrobox.just` to `*-base.just` (our files of the same names import them; a missing one fails the build), copy
   `system_files` (which overwrites the base's `15-luks.just`, `40-nvidia.just` and `50-akmods.just` with ours), fail if a
   `toggle-nvk` recipe is still installed, generate the
@@ -1747,15 +1747,3 @@ Defined in `system_files/usr/share/ublue-os/just/60-custom.just`; tests in `test
 - The base image may carry `/etc/brlapi.key` (brltty's API key, generated at package install and so identical
   in every copy of a public image) and a copy of `/sysroot/ostree/repo/objects`; neither is created by this
   repo's Containerfile or `build.sh`. Findings are with the hub for follow-up.
-
-## Boot menu: version, kernel and five deployments (2026-11-23)
-
-- PRETTY_NAME is `octarineOS <IMAGE_VERSION> (kernel <kernel-core version>)`, written next to IMAGE_VERSION in `21-image-identity.sh` and in
-  `variants/{dx,gx,nvidia}/*.sh` (each variant has its own IMAGE_VERSION, so each rewrites it; keep the four lines identical). ostree builds the BLS title
-  from PRETTY_NAME at deploy time, so GRUB shows version and kernel. The same string appears in GNOME About, the console login banner,
-  systemd's boot messages, `hostnamectl` and fastfetch's OS line. The smoke scripts check its format; the version part stays channel-neutral
-  (`check_version_neutral.py` reads keys that contain `version`, not PRETTY_NAME).
-- Retention: ostree has no "keep N"; it keeps booted, rollback, staged and pinned deployments. `octarine-keep-deployments.service` (enabled in
-  `17-cleanup.sh`, `ExecStart=-` so a failure never degrades the system) runs `/usr/libexec/octarine-os/keep-deployments` at each boot: pin the booted
-  deployment, unpin pinned ones after the fifth in `ostree admin status` order (never the booted one). A hand pin is one of the five by recency.
-  Tested with a fake `ostree` in `tests/image/keep-deployments.sh`. Undo: disable the unit, `ostree admin pin --unpin <n>`.

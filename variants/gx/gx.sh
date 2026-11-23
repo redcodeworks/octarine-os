@@ -56,8 +56,6 @@ image_id="${GX_IMAGE_ID:-octarine-os-gx}"
 }
 set_os_release_field IMAGE_ID "${image_id}"
 set_os_release_field IMAGE_VERSION "${IMAGE_VERSION}"
-# the boot menu entry (ostree titles it from PRETTY_NAME): name, build version and kernel, so the entries can be told apart
-set_os_release_field PRETTY_NAME "octarineOS ${IMAGE_VERSION} (kernel $(rpm -q --queryformat '%{VERSION}-%{RELEASE}.%{ARCH}\n' kernel-core))"
 IMAGE_ID_EXPECTED="${image_id}" bash -c '. /usr/lib/os-release && [[ "${IMAGE_ID}" == "${IMAGE_ID_EXPECTED}" ]]'
 
 after=$(kernel_of)

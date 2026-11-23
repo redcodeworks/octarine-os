@@ -136,7 +136,7 @@ check "kernel-devel is not installed (a mismatched one came in through bcc once)
 
 echo "== checks of the default image that still apply"
 check "release is Fedora" "grep -qx ID=fedora ${os_release}"
-check "pretty name" "grep -qE '^PRETTY_NAME=\"octarineOS [0-9]{8}-[0-9a-f]{7,} \(kernel [^)]+\)\"\$' ${os_release}"
+check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' ${os_release}"
 check "image id" "grep -qx 'IMAGE_ID=\"${EXPECT_IMAGE_ID:-octarine-os-dx}\"' ${os_release}"
 check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"${version_re}\"\$' ${os_release}"
 check "signature policy parses" "python3 -m json.tool ${policy_file}"

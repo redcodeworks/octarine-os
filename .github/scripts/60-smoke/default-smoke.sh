@@ -105,7 +105,6 @@ check "kernel-devel is not installed (05-override-install.sh)" "! rpm -q kernel-
 for p in fwupd flatpak gnome-shell; do check "package $p still installed" "rpm -q $p"; done
 check "Bazaar in the preinstall list" "grep -qF \"[Flatpak Preinstall io.github.kolunmi.Bazaar]\" /usr/share/flatpak/preinstall.d/tools.preinstall"
 check "image version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' /etc/os-release"
-check "pretty name has version and kernel" "grep -qE '^PRETTY_NAME=\"octarineOS [0-9]{8}-[0-9a-f]{7,} \(kernel [^)]+\)\"\$' /etc/os-release"
 
 check "signature policy parses" "python3 -m json.tool /etc/containers/policy.json"
 check "signature policy covers this image" "grep -q $REF /etc/containers/policy.json"
