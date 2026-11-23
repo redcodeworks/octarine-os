@@ -19,12 +19,6 @@ For a variant (the developer image `octarine-os-dx`, the gamer image `octarine-o
 
 To go back to the previous deployment: `sudo bootc rollback`, then reboot.
 
-The boot menu (GRUB) lists the five newest images you booted, each titled with its version and kernel, for example
-`octarineOS 20261122-69cc88c (kernel 7.3.4-300.fc45.x86_64)`; pick an older one there to boot it. A small boot-time service
-(`octarine-keep-deployments.service`) pins the running deployment and releases the pins beyond the fifth, so the set builds up
-over the next updates (one new entry per update). To undo: `sudo systemctl disable octarine-keep-deployments.service`, and
-`sudo ostree admin pin --unpin <n>` (the numbers are in `ostree admin status`) for entries you no longer want.
-
 ## 2. Run some `ujust` recipes
 
 After the first boot, in a terminal on the desktop. Each recipe explains itself with `--help`, and the checklists let you

@@ -117,7 +117,7 @@ present)
 	check "kernel arguments file blacklists nouveau and sets modeset" "grep -q nvidia-drm.modeset=1 '${kargs_file}' && grep -q rd.driver.blacklist=nouveau '${kargs_file}'"
 	check "nouveau is blacklisted for modprobe" "grep -qx 'blacklist nouveau' '${modprobe_file}'"
 	check "the NVIDIA SELinux module is installed" "semodule -l | grep -qi nvidia"
-	check "pretty name" "grep -qE '^PRETTY_NAME=\"octarineOS [0-9]{8}-[0-9a-f]{7,} \(kernel [^)]+\)\"\$' '${os_release}'"
+	check "pretty name" "grep -qx 'PRETTY_NAME=\"octarineOS\"' '${os_release}'"
 	check "image id (${expect_image_id})" "grep -qx 'IMAGE_ID=\"${expect_image_id}\"' '${os_release}'"
 	check "image version has the build's version format" "grep -qE '^IMAGE_VERSION=\"[0-9]{8}-[0-9a-f]{7,}\"\$' '${os_release}'"
 	case "${expect_image_id}" in
