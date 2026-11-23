@@ -12,8 +12,8 @@ ARG BREW_IMAGE=ghcr.io/ublue-os/brew:${BREW_TAG}@${BREW_DIGEST}
 # (the weekly bump-pins.yml or `just bins-bump [tag]`, which resolve the digest and verify it with cosign before writing it); CI
 # verifies the pinned digest on every build, logs it and records it in an image label. BINS_TAG (the image's `<date>-<sha>` version) is only for humans. build.sh installs the files under /usr
 # (the package lists of the images are text files in this repository, packages/<kind>, installed by build_files/install-packages.sh).
-ARG BINS_TAG=20261117-f1507cc
-ARG BINS_DIGEST=sha256:7f762f58d7773656e51c4cf28d9fe2bf63e1b7dc9c5e03dd70c799c1dc8ebfe9
+ARG BINS_TAG=20261118-1516ef7
+ARG BINS_DIGEST=sha256:2013643ae88f20d86c4599f955f4f978025519124e6217e14acc367bff032994
 ARG BINS_IMAGE=ghcr.io/redcodeworks/octarine-bins:${BINS_TAG}@${BINS_DIGEST}
 # Base image selection (see the base image comment below); declared here, before the first FROM
 ARG BASE_IMAGE=ghcr.io/ublue-os/silverblue-main
