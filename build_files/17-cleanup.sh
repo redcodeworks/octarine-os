@@ -27,6 +27,9 @@ fi
 # lowest file name wins in systemd presets).
 systemctl preset brew-setup.service brew-update.timer brew-upgrade.timer
 
+# Boot menu: keep the five newest deployments (pins the booted one, unpins the older ones; see docs/CONFIG-GUIDE.md)
+systemctl enable octarine-keep-deployments.service
+
 # Rootless Podman API socket for every user (socket-activated, so it costs nothing until used)
 systemctl --global enable podman.socket
 
