@@ -1,0 +1,34 @@
+#!/usr/bin/bash
+# Run at each boot by octarine-keep-deployments.service: keep the five newest deployments as boot menu entries.
+# ostree only keeps the booted, the rollback, the staged and the PINNED deployments and removes the rest at the next deploy, and it has no
+# "keep N" setting. So: pin the booted deployment, and unpin every pinned deployment after the fifth (newest first, as `ostree admin status`
+# lists them). The booted one is never unpinned, so a rollback into an old deployment keeps it. A hand pin counts like any other pin.
+# Undo: `systemctl disable octarine-keep-deployments.service`, and `sudo ostree admin pin --unpin <n>` for the entries you no longer want.
+
+set -eoux pipefail
+
+KEEP="${KEEP_DEPLOYMENTS:-5}" # the override is for tests
+
+# One line per change, "pin <n>" or "unpin <n>", from the text of `ostree admin status` (n is the deployment index `ostree admin pin` takes:
+# the staged deployment, when there is one, is index 0). An entry line starts with two columns ("* " marks the booted one) and "default <checksum>.<serial>".
+plan() {
+	awk -v keep="${KEEP}" '
+		/^[* ] [^ ]+ [0-9a-f]+\.[0-9]+/ { n++; if ($1 == "*") booted = n - 1; next }
+		/^ +Pinned: yes/ { pinned[n - 1] = 1 }
+		END {
+			if (booted != "" && !(booted in pinned)) { print "pin " booted; pinned[booted] = 1 }
+			kept = 0
+			for (i = 0; i < n; i++) {
+				if (!(i in pinned)) continue
+				if (++kept > keep && i != booted) print "unpin " i
+			}
+		}'
+}
+
+ostree admin status | plan | while read -r action index; do
+	if [[ "${action}" == unpin ]]; then
+		ostree admin pin --unpin "${index}"
+	else
+		ostree admin pin "${index}"
+	fi
+done

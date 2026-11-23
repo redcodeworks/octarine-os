@@ -1,0 +1,13 @@
+[Unit]
+Description=Keep the five newest deployments as boot menu entries (octarineOS)
+Documentation=https://github.com/redcodeworks/octarine-os/blob/main/docs/CONFIG-GUIDE.md
+ConditionPathExists=/run/ostree-booted
+
+[Service]
+Type=oneshot
+# The leading "-" ignores a failure (ostree busy with an update, say): the next boot tries again, and a failed pin must never turn the system degraded.
+ExecStart=-/usr/libexec/octarine-os/keep-deployments
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target
